@@ -73,14 +73,15 @@ use crate::provisioning::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSpec, ContainerBackend, Contract, EnvRequirement, EnvSourceKind,
-    ExecutionContext, ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment,
-    ExtensionKind, FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind,
-    NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
-    RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod,
+    ExecutionContext, ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment, ExtensionKind,
+    FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
+    NativePrerequisiteActivationSpec, ReadinessProbeTargetKind, RemoteBackend, RequirementSurface,
+    RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod,
     TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskRuntimeSpec,
     TaskServiceEnvBindingFormat, TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement,
+    TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider, ToolAcquisitionSpec,
+    ToolRequirement,
     ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
     parse_readiness_duration_spec, task_target_env_name,
 };
@@ -90,6 +91,7 @@ use crate::toolchains::declared_toolchain_contract;
 use crate::toolchains::{
     ToolchainCommandSpec, declared_toolchain_fulfillment_commands,
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
+    requirement_surface_with_toolchain_owned_tools_for_required_tools,
 };
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
@@ -1145,6 +1147,12 @@ pub enum RunError {
     ToolchainFulfillmentFailed {
         task: String,
         toolchain: String,
+        details: String,
+    },
+    #[error("task `{task}` tool `{tool}` failed run-path activation: {details}")]
+    ToolActivationFailed {
+        task: String,
+        tool: String,
         details: String,
     },
     #[error("task `{task}` orchestrator `{orchestrator}` failed run-path preparation: {details}")]
@@ -7696,6 +7704,17 @@ fn execute_task_with_hooks(
 
     let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
+    maybe_activate_command_acquisition_tools_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        &backend,
+        &prep_env,
+        current_os,
+        state,
+    )?;
+
     maybe_prepare_task_orchestrator_on_run_path(
         contract,
         contract_path,
@@ -8085,7 +8104,20 @@ fn execute_task_with_hooks(
         }
     };
     let prepared_execution = if let Some((selection, spec)) = orchestrator_execution {
-        wrap_prepared_execution_for_orchestrator(prepared_execution, &backend, selection, spec)?
+        match &prepared_execution {
+            PreparedTaskExecution::Preparation { prepare }
+                if selection.mode == crate::schema::TaskExecutionOrchestratorMode::Exec
+                    && prepare_supports_exec_orchestrator(prepare) =>
+            {
+                prepared_execution
+            }
+            _ => wrap_prepared_execution_for_orchestrator(
+                prepared_execution,
+                &backend,
+                selection,
+                spec,
+            )?,
+        }
     } else {
         prepared_execution
     };
@@ -9340,13 +9372,21 @@ fn execute_prepare_task(
         });
     }
 
-    let command = prepare_task_shell_command(task_name, task, prepare, backend)?;
+    let command = prepare_task_shell_command(None, task_name, task, prepare, backend)?;
+    let prepared_execution = wrapped_prepare_execution_for_orchestrator(
+        contract,
+        task,
+        task_name,
+        prepare,
+        backend,
+        PreparedTaskExecution::Shell { command, cwd: None },
+    )?;
     execute_task_command(
         contract,
         task,
         task_name,
         runtime,
-        &PreparedTaskExecution::Shell { command, cwd: None },
+        &prepared_execution,
         working_dir,
         env_overrides,
         path_export,
@@ -9531,12 +9571,26 @@ fn execute_helm_dependency_hydration_prepare(
             alias,
             repository.clone(),
         ];
+        let prepared_execution = wrapped_prepare_execution_for_orchestrator(
+            contract,
+            task,
+            task_name,
+            &crate::schema::TaskPrepareSpec::DependencyHydration(
+                crate::schema::TaskDependencyHydrationPrepareSpec {
+                    medium: crate::schema::TaskDependencyHydrationMedium::PackageDependencies,
+                    source: crate::schema::TaskDependencyHydrationSourceSpec::Helm(source.clone()),
+                    targets: Vec::new(),
+                },
+            ),
+            backend,
+            prepared_structured_command_for_backend(backend, "helm", args),
+        )?;
         let output = execute_task_command(
             contract,
             task,
             task_name,
             runtime,
-            &prepared_structured_command_for_backend(backend, "helm", args),
+            &prepared_execution,
             resolved_working_dir.as_path(),
             &helm_env,
             path_export,
@@ -9562,12 +9616,19 @@ fn execute_helm_dependency_hydration_prepare(
         }
     }
 
-    let output = execute_task_command(
+    let prepared_execution = wrapped_prepare_execution_for_orchestrator(
         contract,
         task,
         task_name,
-        runtime,
-        &prepared_structured_command_for_backend(
+        &crate::schema::TaskPrepareSpec::DependencyHydration(
+            crate::schema::TaskDependencyHydrationPrepareSpec {
+                medium: crate::schema::TaskDependencyHydrationMedium::PackageDependencies,
+                source: crate::schema::TaskDependencyHydrationSourceSpec::Helm(source.clone()),
+                targets: Vec::new(),
+            },
+        ),
+        backend,
+        prepared_structured_command_for_backend(
             backend,
             "helm",
             vec![
@@ -9576,6 +9637,13 @@ fn execute_helm_dependency_hydration_prepare(
                 String::from("."),
             ],
         ),
+    )?;
+    let output = execute_task_command(
+        contract,
+        task,
+        task_name,
+        runtime,
+        &prepared_execution,
         chart_working_dir.as_path(),
         &helm_env,
         path_export,
@@ -9755,6 +9823,40 @@ fn prepared_structured_command_spec_for_backend(
     }
 }
 
+fn wrapped_prepare_execution_for_orchestrator(
+    contract: Option<&Contract>,
+    task: Option<&TaskSpec>,
+    task_name: &str,
+    prepare: &crate::schema::TaskPrepareSpec,
+    backend: &ResolvedExecutionBackend,
+    execution: PreparedTaskExecution,
+) -> Result<PreparedTaskExecution, RunError> {
+    let Some(contract) = contract else {
+        return Ok(execution);
+    };
+    let Some(task) = task else {
+        return Ok(execution);
+    };
+    if !prepare_supports_exec_orchestrator(prepare) {
+        return Ok(execution);
+    }
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let Some(selection) = task.orchestrator_for_backend(backend_kind) else {
+        return Ok(execution);
+    };
+    if selection.mode != crate::schema::TaskExecutionOrchestratorMode::Exec {
+        return Ok(execution);
+    }
+    let Some(orchestrator) = contract.orchestrators.get(selection.ref_name.as_str()) else {
+        return Ok(execution);
+    };
+    wrap_prepared_execution_for_orchestrator(execution, backend, selection, orchestrator).map_err(
+        |_| RunError::InvalidTaskExecution {
+            task: task_name.to_string(),
+        },
+    )
+}
+
 fn shell_command_for_structured_command(
     command: &crate::schema::TaskCommandSpec,
     quote_style: ShellQuoteStyle,
@@ -9784,17 +9886,20 @@ fn shell_command_for_structured_command(
 }
 
 fn prepare_task_shell_command(
+    contract: Option<&Contract>,
     _task_name: &str,
     task: Option<&TaskSpec>,
     prepare: &crate::schema::TaskPrepareSpec,
     backend: &ResolvedExecutionBackend,
 ) -> Result<String, RunError> {
     let quote_style = shell_quote_style_for_backend(backend);
-    match prepare {
+    let command = match prepare {
         crate::schema::TaskPrepareSpec::Sequence(spec) => Ok(spec
             .steps
             .iter()
-            .map(|step| prepare_sequence_step_shell_preview(_task_name, task, step, backend))
+            .map(|step| {
+                prepare_sequence_step_shell_preview(contract, _task_name, task, step, backend)
+            })
             .collect::<Result<Vec<_>, _>>()?
             .join(" && ")),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => match &spec.source {
@@ -10088,10 +10193,20 @@ fn prepare_task_shell_command(
             }?;
             Ok(base_command)
         }
-    }
+    }?;
+    wrap_prepare_shell_preview_for_orchestrator(contract, task, prepare, backend, command)
+}
+
+fn prepare_supports_exec_orchestrator(prepare: &crate::schema::TaskPrepareSpec) -> bool {
+    matches!(
+        prepare,
+        crate::schema::TaskPrepareSpec::DependencyHydration(_)
+            | crate::schema::TaskPrepareSpec::ToolBootstrap(_)
+    )
 }
 
 fn prepare_sequence_step_shell_preview(
+    contract: Option<&Contract>,
     task_name: &str,
     task: Option<&TaskSpec>,
     step: &crate::schema::TaskPrepareSequenceStepSpec,
@@ -10100,6 +10215,7 @@ fn prepare_sequence_step_shell_preview(
     match step {
         crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
             prepare_task_shell_command(
+                contract,
                 task_name,
                 task,
                 &crate::schema::TaskPrepareSpec::DependencyHydration(spec.clone()),
@@ -10108,6 +10224,7 @@ fn prepare_sequence_step_shell_preview(
         }
         crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => {
             prepare_task_shell_command(
+                contract,
                 task_name,
                 task,
                 &crate::schema::TaskPrepareSpec::ToolBootstrap(spec.clone()),
@@ -10115,6 +10232,7 @@ fn prepare_sequence_step_shell_preview(
             )
         }
         crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => prepare_task_shell_command(
+            contract,
             task_name,
             task,
             &crate::schema::TaskPrepareSpec::Sequence(spec.clone()),
@@ -10146,6 +10264,48 @@ fn prepare_sequence_step_shell_preview(
             spec.service.trim(),
             spec.volume.trim()
         )),
+    }
+}
+
+fn wrap_prepare_shell_preview_for_orchestrator(
+    contract: Option<&Contract>,
+    task: Option<&TaskSpec>,
+    prepare: &crate::schema::TaskPrepareSpec,
+    backend: &ResolvedExecutionBackend,
+    command: String,
+) -> Result<String, RunError> {
+    let Some(contract) = contract else {
+        return Ok(command);
+    };
+    let Some(task) = task else {
+        return Ok(command);
+    };
+    if !prepare_supports_exec_orchestrator(prepare) {
+        return Ok(command);
+    }
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let Some(selection) = task.orchestrator_for_backend(backend_kind) else {
+        return Ok(command);
+    };
+    if selection.mode != crate::schema::TaskExecutionOrchestratorMode::Exec {
+        return Ok(command);
+    }
+    let Some(orchestrator) = contract.orchestrators.get(selection.ref_name.as_str()) else {
+        return Ok(command);
+    };
+    match wrap_prepared_execution_for_orchestrator(
+        PreparedTaskExecution::Shell { command, cwd: None },
+        backend,
+        selection,
+        orchestrator,
+    )? {
+        PreparedTaskExecution::Shell { command, .. } => Ok(command),
+        PreparedTaskExecution::NativeCommand { exe, args, .. } => {
+            Ok(shell_quote_command_argv(backend, exe.as_str(), &args))
+        }
+        _ => Err(RunError::InvalidTaskExecution {
+            task: selection.ref_name.clone(),
+        }),
     }
 }
 
@@ -11985,6 +12145,69 @@ fn maybe_activate_corepack_shims_on_run_path(
     Ok(())
 }
 
+fn maybe_activate_command_acquisition_tools_on_run_path(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task: &TaskSpec,
+    backend: &ResolvedExecutionBackend,
+    env_overrides: &BTreeMap<String, String>,
+    current_os: &str,
+    state: &mut TaskRunState,
+) -> Result<(), RunError> {
+    if !matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return Ok(());
+    }
+
+    let target_os = target_os_for_toolchain_backend(backend, current_os);
+    let surface =
+        selected_task_activation_requirement_surface_for_run_path(contract, task, backend, target_os);
+    for (tool_name, acquisition) in command_activation_actions_for_requirement_surface(
+        &surface,
+        target_os,
+    ) {
+        if probe_backend_command_version(backend, contract_working_dir(contract_path), &tool_name)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            continue;
+        }
+
+        let cache_key = format!(
+            "tool-activate:{}:{}",
+            tool_name,
+            toolchain_fulfillment_cache_key(tool_name.as_str(), backend)
+        );
+        if !state.fulfilled_toolchain_keys.insert(cache_key) {
+            continue;
+        }
+
+        let command_spec = command_activation_command_spec(&acquisition);
+        let command_display = render_toolchain_command(backend, command_spec.clone());
+        let step_label = format!("tool-activate:{tool_name}");
+        let output = run_backend_argv_command_captured_with_env(
+            &step_label,
+            command_spec.program,
+            &command_spec.args,
+            contract_working_dir(contract_path),
+            env_overrides,
+            backend,
+        )?;
+        state.stdout.push_str(&output.stdout);
+        state.stderr.push_str(&output.stderr);
+        if output.exit_code != 0 {
+            return Err(RunError::ToolActivationFailed {
+                task: task_name.to_string(),
+                tool: tool_name,
+                details: command_failure_detail(&command_display, &output),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn maybe_prepare_task_orchestrator_on_run_path(
     contract: &Contract,
     contract_path: &Path,
@@ -12070,6 +12293,108 @@ fn orchestrator_command_specs(
             commands
         }
         crate::schema::OrchestratorKind::Devenv => Vec::new(),
+    }
+}
+
+fn selected_task_activation_requirement_surface_for_run_path(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: &ResolvedExecutionBackend,
+    target_os: &str,
+) -> RequirementSurface {
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
+    let mut surface = task.scoped_requirement_surface_for_execution(backend_kind, context_name);
+    for (name, requirement) in &surface.tools.clone() {
+        surface.tools.insert(
+            name.clone(),
+            contract.resolve_scoped_tool_requirement(name, requirement),
+        );
+    }
+    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend_kind, target_os) {
+        let requirement = contract
+            .tools
+            .get(exe.as_str())
+            .cloned()
+            .unwrap_or(crate::schema::ToolRequirement::Simple(String::from("*")));
+        surface.tools.insert(exe, requirement);
+    }
+    if let Some(context_name) = context_name
+        && let Some((_, context)) = named_execution_context(contract, context_name)
+    {
+        surface.merge(&contract.resolved_context_requirement_surface(context));
+    }
+    let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
+    requirement_surface_with_toolchain_owned_tools_for_required_tools(
+        contract,
+        &surface,
+        &contract
+            .task_toolchain_names_for_execution(task, backend_kind, context_name)
+            .into_iter()
+            .collect(),
+        target_os,
+        Some(&required_tool_names),
+    )
+}
+
+fn command_activation_actions_for_requirement_surface(
+    requirement_surface: &RequirementSurface,
+    target_os: &str,
+) -> Vec<(String, ToolAcquisitionSpec)> {
+    requirement_surface
+        .tools
+        .iter()
+        .filter_map(|(name, requirement)| {
+            requirement
+                .acquisition_for_os(target_os)
+                .filter(|acquisition| {
+                    acquisition.provider == ToolAcquisitionProvider::Command
+                })
+                .cloned()
+                .map(|acquisition| (name.clone(), acquisition))
+        })
+        .collect()
+}
+
+fn command_activation_command_spec(acquisition: &ToolAcquisitionSpec) -> ToolchainCommandSpec {
+    let shell = acquisition
+        .shell
+        .expect("validated command acquisition shell");
+    let run = acquisition
+        .run
+        .as_deref()
+        .expect("validated command acquisition run");
+    match shell {
+        crate::schema::NativePrerequisiteActivationShell::Sh => ToolchainCommandSpec {
+            program: "sh",
+            args: vec![String::from("-lc"), run.to_string()],
+        },
+        crate::schema::NativePrerequisiteActivationShell::Bash => ToolchainCommandSpec {
+            program: "bash",
+            args: vec![String::from("-lc"), run.to_string()],
+        },
+        crate::schema::NativePrerequisiteActivationShell::Zsh => ToolchainCommandSpec {
+            program: "zsh",
+            args: vec![String::from("-lc"), run.to_string()],
+        },
+        crate::schema::NativePrerequisiteActivationShell::Pwsh => ToolchainCommandSpec {
+            program: "pwsh",
+            args: vec![
+                String::from("-NoProfile"),
+                String::from("-NonInteractive"),
+                String::from("-Command"),
+                run.to_string(),
+            ],
+        },
+        crate::schema::NativePrerequisiteActivationShell::Cmd => ToolchainCommandSpec {
+            program: "cmd",
+            args: vec![
+                String::from("/d"),
+                String::from("/s"),
+                String::from("/c"),
+                run.to_string(),
+            ],
+        },
     }
 }
 
@@ -44567,6 +44892,7 @@ tasks:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let devbox_path = bin_dir.join("devbox");
+        let node_path = bin_dir.join("node");
         fs::write(
             &devbox_path,
             r#"#!/bin/sh
@@ -44581,9 +44907,24 @@ exit 0
 "#,
         )
         .unwrap();
+        fs::write(
+            &node_path,
+            r#"#!/bin/sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf 'v24.0.0\n'
+  exit 0
+fi
+printf 'node stub\n'
+"#,
+        )
+        .unwrap();
         let mut permissions = fs::metadata(&devbox_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&devbox_path, permissions).unwrap();
+        let mut node_permissions = fs::metadata(&node_path).unwrap().permissions();
+        node_permissions.set_mode(0o755);
+        fs::set_permissions(&node_path, node_permissions).unwrap();
 
         let original_path = env::var_os("PATH");
         let joined_path =
@@ -44608,6 +44949,250 @@ exit 0
         let log = fs::read_to_string(bin_dir.join("devbox.log")).unwrap();
         assert!(log.contains("install"), "{log}");
         assert!(log.contains("run -- git --version"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn devbox_orchestrator_wraps_dependency_hydration_prepare() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+toolchains:
+  node:
+    version: "*"
+    package_managers:
+      pnpm: "*"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let devbox_path = bin_dir.join("devbox");
+        let node_path = bin_dir.join("node");
+        fs::write(
+            &devbox_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "${1:-}" = "--version" ]; then
+  printf '0.14.2\n'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$script_dir/devbox.log"
+exit 0
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &node_path,
+            r#"#!/bin/sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf 'v24.0.0\n'
+  exit 0
+fi
+printf 'node stub\n'
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&devbox_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&devbox_path, permissions).unwrap();
+        let mut node_permissions = fs::metadata(&node_path).unwrap().permissions();
+        node_permissions.set_mode(0o755);
+        fs::set_permissions(&node_path, node_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("devbox orchestrator should wrap prepare execution");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let log = fs::read_to_string(bin_dir.join("devbox.log")).unwrap();
+        assert!(log.contains("install"), "{log}");
+        assert!(log.contains("run -- sh -lc"), "{log}");
+        assert!(log.contains("pnpm"), "{log}");
+        assert!(log.contains("install"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_acquisition_runs_before_devbox_orchestrator_prepare() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let node_path = bin_dir.join("node");
+        let activation_log = fixture.path().join("activation.log");
+        let devbox_log = fixture.path().join("devbox.log");
+        fs::write(
+            &node_path,
+            r#"#!/bin/sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf 'v24.0.0\n'
+  exit 0
+fi
+printf 'node stub\n'
+"#,
+        )
+        .unwrap();
+        let mut node_permissions = fs::metadata(&node_path).unwrap().permissions();
+        node_permissions.set_mode(0o755);
+        fs::set_permissions(&node_path, node_permissions).unwrap();
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+toolchains:
+  node:
+    version: "*"
+    package_managers:
+      pnpm: "*"
+tools:
+  devbox:
+    version: "*"
+    acquisition:
+      provider: command
+      shell: sh
+      run: |
+        printf 'activated\n' > '{activation_log}'
+        cat > '{devbox_path}' <<'EOF'
+        #!/bin/sh
+        set -eu
+        if [ "${{1:-}}" = "--version" ]; then
+          printf '0.14.2\n'
+          exit 0
+        fi
+        printf '%s\n' "$*" >> '{devbox_log}'
+        exit 0
+        EOF
+        chmod +x '{devbox_path}'
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+                activation_log = activation_log.display(),
+                devbox_path = bin_dir.join("devbox").display(),
+                devbox_log = devbox_log.display(),
+            ),
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&contract, &fixture.path().join("ota.yaml"), "setup")
+            .expect("command acquisition should activate devbox before orchestrator preparation");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(fs::read_to_string(activation_log).unwrap(), "activated\n");
+        let log = fs::read_to_string(devbox_log).unwrap();
+        assert!(log.contains("install"), "{log}");
+        assert!(log.contains("run -- sh -lc"), "{log}");
     }
 
     #[cfg(unix)]
@@ -58648,7 +59233,8 @@ tasks:
         };
 
         let command =
-            super::prepare_task_shell_command("setup", Some(task), prepare, &backend).unwrap();
+            super::prepare_task_shell_command(None, "setup", Some(task), prepare, &backend)
+                .unwrap();
 
         assert_eq!(
             command,
@@ -59485,7 +60071,13 @@ tasks:
         );
 
         let command =
-            super::prepare_task_shell_command("setup:docker:images", None, &prepare, &backend)
+            super::prepare_task_shell_command(
+                None,
+                "setup:docker:images",
+                None,
+                &prepare,
+                &backend,
+            )
                 .unwrap();
 
         assert_eq!(
@@ -59514,7 +60106,8 @@ tasks:
         );
 
         let command =
-            super::prepare_task_shell_command("setup:tooling", None, &prepare, &backend).unwrap();
+            super::prepare_task_shell_command(None, "setup:tooling", None, &prepare, &backend)
+                .unwrap();
 
         assert_eq!(
             command,
@@ -59545,7 +60138,13 @@ tasks:
         );
 
         let command =
-            super::prepare_task_shell_command("setup:docker:images", None, &prepare, &backend)
+            super::prepare_task_shell_command(
+                None,
+                "setup:docker:images",
+                None,
+                &prepare,
+                &backend,
+            )
                 .unwrap();
 
         assert_eq!(
@@ -60075,7 +60674,8 @@ tasks:
         };
 
         let command =
-            super::prepare_task_shell_command("setup", Some(task), prepare, &backend).unwrap();
+            super::prepare_task_shell_command(None, "setup", Some(task), prepare, &backend)
+                .unwrap();
 
         assert_eq!(
             command,
@@ -60193,7 +60793,8 @@ tasks:
         };
 
         let command =
-            super::prepare_task_shell_command("setup", Some(task), prepare, &backend).unwrap();
+            super::prepare_task_shell_command(None, "setup", Some(task), prepare, &backend)
+                .unwrap();
 
         assert_eq!(
             command,

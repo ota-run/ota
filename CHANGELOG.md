@@ -26,8 +26,15 @@
 
 ## Unreleased
 
-### Added
-
+- widened orchestrator-mediated first-class prepare execution so command-backed
+  `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` can now run through
+  `execution.orchestrator.mode: exec` for declared orchestrators such as `devbox` and `devenv`,
+  while mixed/native `prepare.kind: sequence` remains outside orchestrator mediation in the
+  current slice; validator, dry-run preview, and runner behavior now all agree on that boundary
+- fixed native run-path activation ordering for command-acquired tools so repo-owned binaries such
+  as `devbox` can now be activated from `tools.<name>.acquisition.provider: command` before
+  orchestrator preparation or other selected task execution depends on them, instead of failing
+  early with a missing-binary spawn error
 - widened `ota detect` with the first V11.2 source-family ingestion step: repo-owned
   `mise.toml [tools]` entries now contribute high-confidence runtime and Node package-manager
   inference with explicit precedence over `.tool-versions` while still yielding to more specific
@@ -48,7 +55,6 @@
   (`source_class` on inferred/comparison entries and `metadata.ota.detect.field_source_class` on
   detect-written contracts) so ecosystem-source convergence can stay explicit without inventing a
   parallel detector artifact
-
 - widened `ota tasks --use` and `ota tasks --safe --use` so the runnable task surface now shows
   command preview, safety posture, declared effects, runnable mode commands, task dry-run JSON,
   and the receipt follow-up command directly in one operator-facing view instead of leaving

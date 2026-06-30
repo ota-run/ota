@@ -2130,7 +2130,8 @@ Task-effect rules:
     - `bunx playwright install [browsers...]`
     - `bunx playwright install --with-deps [browsers...]`
 - `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
-- `prepare` is not orchestrator-managed in the current shipped slice
+- `execution.orchestrator.mode: exec` can mediate command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap`
+- mixed/native `prepare.kind: sequence` stays outside orchestrator mediation in the current shipped slice
 
 Example:
 
@@ -2169,6 +2170,48 @@ tasks:
         - .venv
       network: true
       network_kind: dependency_hydration
+```
+
+Command-backed prepare mediation example:
+
+```yaml
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+
+toolchains:
+  node:
+    version: "*"
+    package_managers:
+      pnpm: "*"
+
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
 ```
 
 `execution` fields:

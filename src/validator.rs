@@ -3343,6 +3343,7 @@ fn validate_task_mode_execution(
             contract,
             task_name,
             "task",
+            task.prepare.as_ref(),
             has_fallback_execution,
             task.run.is_some(),
             task.script.is_some(),
@@ -3492,10 +3493,18 @@ fn validate_task_mode_execution(
             );
         }
         if let Some(orchestrator) = branch.orchestrator.as_ref() {
+            let effective_prepare = branch.prepare.as_ref().or_else(|| {
+                if has_mode_execution_body(branch) {
+                    None
+                } else {
+                    task.prepare.as_ref()
+                }
+            });
             validate_task_execution_orchestrator(
                 contract,
                 task_name,
                 &format!("task mode `{mode_name}`"),
+                effective_prepare,
                 has_fallback_execution,
                 branch.run.is_some() || (!has_mode_execution_body(branch) && task.run.is_some()),
                 branch.script.is_some()
@@ -3555,6 +3564,7 @@ fn validate_task_execution_orchestrator(
     contract: &Contract,
     task_name: &str,
     scope: &str,
+    prepare: Option<&crate::schema::TaskPrepareSpec>,
     has_fallback_execution: bool,
     has_run: bool,
     has_script: bool,
@@ -3630,12 +3640,22 @@ fn validate_task_execution_orchestrator(
                 )));
             }
             if has_prepare {
-                errors.push(ValidationError::new(format!(
-                    "{scope} `{task_name}` uses `execution.orchestrator.mode: exec`, but first-class `prepare` execution is not orchestrator-managed in this slice"
-                )));
+                if let Some(prepare) = prepare && !prepare_supports_exec_orchestrator(prepare) {
+                    errors.push(ValidationError::new(format!(
+                        "{scope} `{task_name}` uses `execution.orchestrator.mode: exec`, but only command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` are orchestrator-managed in this slice"
+                    )));
+                }
             }
         }
     }
+}
+
+fn prepare_supports_exec_orchestrator(prepare: &crate::schema::TaskPrepareSpec) -> bool {
+    matches!(
+        prepare,
+        crate::schema::TaskPrepareSpec::DependencyHydration(_)
+            | crate::schema::TaskPrepareSpec::ToolBootstrap(_)
+    )
 }
 
 fn validate_task_compose_invocation(
@@ -38375,6 +38395,91 @@ orchestrators:
             rendered
                 .iter()
                 .any(|error| error.contains("kind `devenv` does not support `prepare.install`")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_exec_orchestrator_for_command_backed_prepare() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devbox:
+    kind: devbox
+toolchains:
+  node:
+    version: "*"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("command-backed prepare should allow orchestrator exec mediation");
+    }
+
+    #[test]
+    fn rejects_exec_orchestrator_for_prepare_sequence() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devbox:
+    kind: devbox
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_directory
+          path: .ota/tmp
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("mixed native prepare sequences should stay outside orchestrator exec")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "only command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` are orchestrator-managed in this slice"
+            )),
             "{rendered:?}"
         );
     }

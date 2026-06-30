@@ -16047,9 +16047,11 @@ fn run_preview_summary(
     preconditions_report: &DoctorReport,
     overrides: ExecutionOverrides,
 ) -> DoctorSummary {
+    let activation_surface =
+        selected_task_closure_activation_requirement_surface(contract, task_name, overrides)
+            .unwrap_or_default();
     let activation_actions = requirement_surface_activation_actions(
-        &selected_task_activation_requirement_surface(contract, task_name, overrides)
-            .unwrap_or_default(),
+        &activation_surface,
         requirement_target_os_for_backend(
             effective_task_execution(contract, task_name, overrides).backend,
         ),
@@ -16352,7 +16354,8 @@ fn build_run_preview_plan(
     persist_logs: bool,
 ) -> RunPreviewPlan {
     let direct_requirements =
-        selected_task_requirement_surface(contract, task_name, overrides).unwrap_or_default();
+        selected_task_closure_requirement_surface(contract, task_name, overrides)
+            .unwrap_or_default();
     let effective_execution = effective_task_execution(contract, task_name, overrides);
     let effective_depends_on = contract
         .tasks
@@ -16361,6 +16364,8 @@ fn build_run_preview_plan(
         .unwrap_or_default();
     let target_os = requirement_target_os_for_backend(effective_execution.backend);
     let mut plan = RunPreviewPlan::default();
+    let closure_toolchain_names =
+        selected_task_closure_toolchain_names(contract, task_name, overrides);
     let requested_backend_source = contract
         .tasks
         .get(task_name)
@@ -16413,8 +16418,8 @@ fn build_run_preview_plan(
         .collect::<BTreeSet<_>>();
     for toolchain_line in selected_task_toolchain_preview_actions(
         contract,
-        task_name,
-        overrides,
+        &closure_toolchain_names,
+        target_os,
         &required_tool_names,
     ) {
         plan.requirement_lines.push(toolchain_line);
@@ -16476,7 +16481,7 @@ fn build_run_preview_plan(
         ));
     }
     let activation_surface =
-        selected_task_activation_requirement_surface(contract, task_name, overrides)
+        selected_task_closure_activation_requirement_surface(contract, task_name, overrides)
             .unwrap_or_default();
     for action in requirement_surface_activation_actions(
         &activation_surface,
@@ -16490,7 +16495,9 @@ fn build_run_preview_plan(
         effective_task_execution(contract, task_name, overrides).backend,
         Backend::Native
     ) {
-        for action in selected_task_native_activation_actions(contract, task_name, overrides) {
+        for action in
+            selected_task_closure_native_activation_actions(contract, task_name, overrides)
+        {
             plan.actions
                 .push(render_up_preview_native_activation_action(&action));
         }
@@ -16945,16 +16952,13 @@ fn selected_task_requirement_surface(
 
 fn selected_task_toolchain_preview_actions(
     contract: &Contract,
-    task_name: &str,
-    overrides: ExecutionOverrides,
+    toolchain_names: &BTreeSet<String>,
+    target_os: &str,
     required_tool_names: &BTreeSet<String>,
 ) -> Vec<String> {
-    let target_os = requirement_target_os_for_backend(
-        effective_task_execution(contract, task_name, overrides).backend,
-    );
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
-    for toolchain_name in selected_task_scoped_toolchain_names(contract, task_name, overrides) {
+    for toolchain_name in toolchain_names {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -16974,12 +16978,31 @@ fn selected_task_toolchain_preview_actions(
     actions
 }
 
-fn selected_task_activation_requirement_surface(
+fn selected_task_closure_requirement_surface(
     contract: &Contract,
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
-    let requirement_surface = selected_task_requirement_surface(contract, task_name, overrides)?;
+    let run_plan = crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+        .ok();
+    let effective = effective_task_execution(contract, task_name, overrides);
+    requirement_surface_for_run_plan_steps(
+        contract,
+        run_plan
+            .as_ref()
+            .map(|plan| plan.steps.as_slice())
+            .unwrap_or(&[]),
+        effective.backend,
+    )
+    .or_else(|| selected_task_requirement_surface(contract, task_name, overrides))
+}
+
+fn selected_task_closure_activation_requirement_surface(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<RequirementSurface> {
+    let requirement_surface = selected_task_closure_requirement_surface(contract, task_name, overrides)?;
     let required_tool_names = requirement_surface
         .tools
         .keys()
@@ -16990,13 +17013,27 @@ fn selected_task_activation_requirement_surface(
         requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &requirement_surface,
-            &selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect(),
+            &selected_task_closure_toolchain_names(contract, task_name, overrides),
             requirement_target_os_for_backend(effective_backend),
             Some(&required_tool_names),
         ),
     )
+}
+
+fn selected_task_closure_toolchain_names(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> BTreeSet<String> {
+    let run_plan = crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+        .ok();
+    if let Some(plan) = run_plan.as_ref() {
+        let names = toolchain_names_for_run_plan_steps(contract, &plan.steps);
+        if !names.is_empty() {
+            return names;
+        }
+    }
+    selected_task_scoped_toolchain_names(contract, task_name, overrides)
 }
 
 fn selected_task_native_activation_actions(
@@ -17031,6 +17068,146 @@ fn selected_task_native_activation_actions(
             prerequisite_name: native_name,
             activation: activation.clone(),
         });
+    }
+    actions
+}
+
+fn selected_task_closure_native_activation_actions(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Vec<NativeRequirementActivationAction> {
+    let run_plan = crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+        .ok();
+    if let Some(plan) = run_plan.as_ref() {
+        let actions = native_activation_actions_for_run_plan_steps(contract, &plan.steps);
+        if !actions.is_empty() {
+            return actions;
+        }
+    }
+    selected_task_native_activation_actions(contract, task_name, overrides)
+}
+
+fn requirement_surface_for_run_plan_steps(
+    contract: &Contract,
+    steps: &[crate::runner::RunPlanStep],
+    requested_backend: Backend,
+) -> Option<RequirementSurface> {
+    if steps.is_empty() {
+        return None;
+    }
+
+    let mut surface = RequirementSurface::default();
+    let mut retains_global_tool_fallback = false;
+    for step in steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        let scoped =
+            task.scoped_requirement_surface_for_execution(step.backend, step.context.as_deref());
+        if matches!(step.backend, Backend::Native) && scoped.tools.is_empty() {
+            retains_global_tool_fallback = true;
+        }
+        for (name, requirement) in &scoped.runtimes {
+            surface.runtimes.insert(
+                name.clone(),
+                contract.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &scoped.tools {
+            surface.tools.insert(
+                name.clone(),
+                contract.resolve_scoped_tool_requirement(name, requirement),
+            );
+        }
+        if let Some(exe) =
+            task.effective_command_launch_executable_for_backend(step.backend, current_os())
+        {
+            let requirement = contract
+                .tools
+                .get(exe.as_str())
+                .cloned()
+                .unwrap_or(crate::schema::ToolRequirement::Simple(String::from("*")));
+            surface.tools.insert(exe, requirement);
+        }
+        if let Some(context_name) = step.context.as_deref()
+            && let Some((_, context)) = named_execution_context(contract, context_name)
+        {
+            surface.merge(&contract.resolved_context_requirement_surface(context));
+        }
+        if matches!(step.backend, Backend::Native) {
+            let scoped_native =
+                task.scoped_native_requirements_for_execution(step.backend, step.context.as_deref());
+            surface.merge(
+                &contract.native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
+            );
+        }
+    }
+
+    if surface.runtimes.is_empty() {
+        surface.runtimes = contract.runtimes.clone();
+    }
+    if retains_global_tool_fallback && matches!(requested_backend, Backend::Native) {
+        for (name, requirement) in &contract.tools {
+            surface
+                .tools
+                .entry(name.clone())
+                .or_insert_with(|| requirement.clone());
+        }
+    }
+
+    Some(surface)
+}
+
+fn toolchain_names_for_run_plan_steps(
+    contract: &Contract,
+    steps: &[crate::runner::RunPlanStep],
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for step in steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        names.extend(
+            contract.task_toolchain_names_for_execution(task, step.backend, step.context.as_deref()),
+        );
+    }
+    names
+}
+
+fn native_activation_actions_for_run_plan_steps(
+    contract: &Contract,
+    steps: &[crate::runner::RunPlanStep],
+) -> Vec<NativeRequirementActivationAction> {
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for step in steps {
+        if !matches!(step.backend, Backend::Native) {
+            continue;
+        }
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        for native_name in
+            task.scoped_native_requirements_for_execution(step.backend, step.context.as_deref())
+        {
+            if !seen.insert(native_name.clone()) {
+                continue;
+            }
+            let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(current_requirement_platform()) else {
+                continue;
+            };
+            let Some(activation) = platform.activation.as_ref() else {
+                continue;
+            };
+            actions.push(NativeRequirementActivationAction {
+                prerequisite_name: native_name,
+                activation: activation.clone(),
+            });
+        }
     }
     actions
 }
@@ -56707,6 +56884,122 @@ tasks:
         assert_eq!(dependency_steps[0]["backend"], "native");
         assert_eq!(dependency_steps[0]["backend_selection_source"], "default");
         assert_eq!(dependency_steps[2]["task"], "lint");
+    }
+
+    #[test]
+    fn run_dry_run_json_includes_dependency_activation_truth_for_aggregate_task() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+toolchains:
+  node:
+    version: "*"
+    package_managers:
+      pnpm: "*"
+tools:
+  devbox:
+    version: "*"
+    acquisition:
+      provider: command
+      shell: bash
+      run: curl -fsSL https://get.jetify.com/devbox | bash -s -- -f
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+    internal: true
+  test:
+    command:
+      exe: pnpm
+      args:
+        - run
+        - test
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+    depends_on:
+      - setup
+  verify:
+    aggregate:
+      tasks:
+        - test
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        let actions = json["plan"]["actions"]
+            .as_array()
+            .expect("actions array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            actions.contains(&"activate tool `devbox` via `bash` command"),
+            "{actions:?}"
+        );
+        let requirements = json["plan"]["requirement_lines"]
+            .as_array()
+            .expect("requirement lines array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            requirements
+                .iter()
+                .any(|line| line.contains("tool `devbox` version `*`, acquisition `command`")),
+            "{requirements:?}"
+        );
+        assert_ne!(json["preview_status"], "RUNNABLE");
     }
 
     #[test]

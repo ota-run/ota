@@ -153,6 +153,9 @@ tasks:
 Use `mode: task` when the task body is the orchestrator task name.
 Use `mode: exec` when the task body is a normal command that should run inside the orchestrated
 environment.
+Command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` also
+support `mode: exec` in the current shipped slice.
+Mixed/native `prepare.kind: sequence` does not.
 
 Shipped mediation semantics:
 
