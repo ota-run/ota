@@ -39,7 +39,10 @@ V7.2 is complete and archived.
 V8 is complete and archived.
 V9 is complete and archived.
 V9.1 is complete and archived.
-V10 is active.
+V10 is complete and archived.
+V11 is planned.
+V11.1 is active.
+V11.2 is planned.
 
 ## V1 archive
 
@@ -55,8 +58,7 @@ V10 is active.
 - keep `ota agents` visible as a first-class derived adoption surface
 - keep the premium UX review loop green when text/help surfaces change
 - hold enterprise-facing scope behind the adoption readiness gate
-- keep the V10 semantic snapshot, assumption diff, and failure-correlation slice narrow and
-  reviewable
+- keep the V11.1 execution-governance visibility and proof slice narrow and reviewable
 - keep the canonical roadmap aligned with the spec repo versioning
 
 ## V2 archive
@@ -78,12 +80,11 @@ V10 is active.
 
 ## Active version
 
-- [V10 plan](docs/planning/v10/plan.md)
+- [V11.1 plan](docs/planning/v11.1/plan.md)
 
 ## Next planned version
 
 - [V11 plan](docs/planning/v11/plan.md)
-- [V11.1 plan](docs/planning/v11.1/plan.md)
 - [V11.2 plan](docs/planning/v11.2/plan.md)
 
 ## Implemented foundation
@@ -95,14 +96,14 @@ V10 is active.
 
 ## Near-term next steps
 
-- keep the V10 semantic contract surfaces stable and reviewable
+- preserve the shipped V10 semantic snapshot and correlation foundation
 - preserve the shipped repo/workspace trust baseline
 - keep docs and active planning aligned with the canonical spec repo
 - keep extension and editor surfaces contract-bound
 - avoid widening into generic plugin-runtime scope
-- stage V11 completion truth, reviewer evidence, and local/CI/agent convergence as the next
-  planned version after the semantic snapshot thread
-- make V11.1 execution governance visibility and proof the first concrete post-`1.6.22` slice
+- stage V11 completion truth, reviewer evidence, and local/CI/agent convergence on top of the
+  shipped semantic snapshot foundation
+- make V11.1 execution governance visibility and proof the active `1.6.23` slice
 - make V11.2 source convergence and detection governance the next disciplined widening slice after
   V11.1
 

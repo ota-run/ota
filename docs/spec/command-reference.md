@@ -290,7 +290,8 @@ Current behavior:
   extra guidance
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
-- `--use` keeps the usage line but also shows `description` and `notes` when present
+- `--use` keeps the usage line but also shows command preview, safety posture, declared effects,
+  dry-run JSON, receipt follow-up guidance, plus `description` and `notes` when present
 - `--safe` and `--unsafe` are mutually exclusive filters over the effective safe set
   (`safe_for_agent: true` plus `agent.safe_tasks`)
 - `--via <native|container>` filters to tasks runnable through the selected backend lane
@@ -319,8 +320,10 @@ Common operator lanes:
 
 - `ota tasks --safe`: show only effective agent-safe tasks
 - `ota tasks --unsafe`: show only non-safe tasks
-- `ota tasks --safe --use`: show safe tasks plus canonical run commands
-- `ota tasks --unsafe --use`: show non-safe tasks plus canonical run commands
+- `ota tasks --safe --use`: show safe tasks plus canonical run commands, safety posture, and
+  machine-readable follow-up commands
+- `ota tasks --unsafe --use`: show non-safe tasks plus canonical run commands, review posture, and
+  machine-readable follow-up commands
 - `ota tasks --via native`: filter to tasks runnable through native execution
 - `ota tasks --via container`: filter to tasks runnable through container execution
 

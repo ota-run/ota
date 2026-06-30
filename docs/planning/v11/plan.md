@@ -24,7 +24,7 @@
 
 # V11 Plan
 
-Status: planned.
+Status: active version frame.
 
 Release target:
 

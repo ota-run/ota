@@ -24,7 +24,7 @@
 
 # V11.1 Plan
 
-Status: planned.
+Status: active.
 
 Release target:
 

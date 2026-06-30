@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened `ota tasks --use` and `ota tasks --safe --use` so the runnable task surface now shows
+  command preview, safety posture, declared effects, runnable mode commands, task dry-run JSON,
+  and the receipt follow-up command directly in one operator-facing view instead of leaving
+  execution-governance proof split across separate commands or implicit inference
 - fixed JSON schema compatibility for provisioning diagnostics so `ota run --dry-run --json`
   previews that include nullable provisioning fields (`source`, `source_config`,
   `approved_version`, and related optional metadata) now validate against published

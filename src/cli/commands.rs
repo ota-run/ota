@@ -39541,6 +39541,57 @@ fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> Stri
     parts.join("; ")
 }
 
+fn render_task_safety_posture_text(task: &TaskSummary<'_>) -> String {
+    let mut signals = Vec::new();
+
+    if task.launch.is_some() {
+        signals.push(String::from("launch/service lifecycle"));
+    }
+
+    if task.effects.network {
+        signals.push(match task.effects.network_kind {
+            Some(crate::schema::TaskNetworkEffectKind::DependencyHydration) => {
+                String::from("networked dependency hydration")
+            }
+            Some(crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
+                String::from("live or staging integration test")
+            }
+            Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
+                String::from("contract-owned tool bootstrap")
+            }
+            Some(crate::schema::TaskNetworkEffectKind::Broad) | None => {
+                String::from("broad network access")
+            }
+        });
+    }
+
+    if !task.effects.adapter_state.is_empty() {
+        signals.push(format!(
+            "adapter state `{}`",
+            task.effects.adapter_state.join(", ")
+        ));
+    }
+
+    if !task.effects.external_state.is_empty() {
+        signals.push(format!(
+            "external state `{}`",
+            task.effects.external_state.join(", ")
+        ));
+    }
+
+    if task.safe_for_agent {
+        if signals.is_empty() {
+            String::from("agent-safe routine repo-scoped lane")
+        } else {
+            format!("agent-safe lane with {}", signals.join("; "))
+        }
+    } else if signals.is_empty() {
+        String::from("review-required lane")
+    } else {
+        format!("review-required lane with {}", signals.join("; "))
+    }
+}
+
 fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
     match launch.kind {
         "command" => {
@@ -40236,7 +40287,10 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
     for task in tasks {
         let usage = render_task_use_command(task);
+        let command_preview = render_task_command_preview(task);
         let mode_branches = render_task_mode_branches_filtered(task, false);
+        let effects = render_task_effects_text(&task.effects);
+        let safety_posture = render_task_safety_posture_text(task);
         output.push_str(&format!("\n\n{} {}", info_bullet(), paint(task.name, "1")));
         push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
         output.push_str(&format!(
@@ -40249,6 +40303,11 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_key("Use:"),
             paint_code(&usage)
         ));
+        push_rendered_field(
+            &mut output,
+            "Command Preview:",
+            render_non_placeholder(&command_preview),
+        );
         let mode_commands = render_task_mode_commands(task);
         if let Some(launch) = task.launch.as_ref() {
             output.push_str(&format!(
@@ -40271,6 +40330,13 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 render_non_placeholder(&mode_branches),
             );
         }
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Safe For Agent:"),
+            if task.safe_for_agent { "true" } else { "false" }
+        ));
+        push_rendered_field(&mut output, "Safety Posture:", Some(safety_posture));
+        push_rendered_field(&mut output, "Effects:", render_non_placeholder(&effects));
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
@@ -40294,7 +40360,17 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 output.push_str(&format!("\n    {command}"));
             }
         }
+        output.push_str(&format!(
+            "\n  {} `{}`",
+            paint_key("Dry Run JSON:"),
+            paint_code(&format!("ota run {} --dry-run --json", task.name))
+        ));
     }
+    output.push_str(&format!(
+        "\n\n  {} `{}`",
+        paint_key("Receipt After Run:"),
+        paint_code("ota receipt --json --archive")
+    ));
     output
 }
 
@@ -52022,6 +52098,18 @@ tasks:
 
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
 
+        assert!(
+            rendered.contains("Command Preview: ./scripts/api/run-api-tests.sh"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Safe For Agent: true"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Safety Posture: agent-safe routine repo-scoped lane"),
+            "{rendered}"
+        );
         assert!(rendered.contains("\n  Inputs\n"), "{rendered}");
         assert!(
             rendered.contains("--base-url  optional   API base URL for the live suite"),
@@ -52033,6 +52121,103 @@ tasks:
         );
         assert!(
             rendered.contains("                         Run mode for the API suite"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Dry Run JSON: `ota run api:automation:tests --dry-run --json`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Receipt After Run: `ota receipt --json --archive`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_use_text_surfaces_safety_effects_and_mode_branches() {
+        let task = TaskSummary {
+            name: "verify:live",
+            context: Some("tooling"),
+            default_mode: None,
+            effective_default_mode: "container",
+            description: Some("Run the live verification lane"),
+            notes: None,
+            category: None,
+            env: BTreeMap::new(),
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: BTreeMap::new(),
+            kind: "command",
+            run: None,
+            script: None,
+            command: Some(crate::output::TaskCommandSummary {
+                exe: "pnpm",
+                args: vec!["test:live"],
+                cwd: None,
+            }),
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: None,
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary {
+                writes: Vec::new(),
+                network: true,
+                network_kind: Some(crate::schema::TaskNetworkEffectKind::IntegrationTest),
+                adapter_state: Vec::new(),
+                external_state: vec![String::from("staging_api")],
+            },
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: vec![crate::output::TaskModeView {
+                mode: "container",
+                context: Some("tooling"),
+                depends_on: Vec::new(),
+                env_files: Vec::new(),
+                adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+                lifecycle: None,
+                kind: Some("command"),
+                run: None,
+                script: None,
+                command: None,
+                compose: None,
+                launch: None,
+                prepare: None,
+                has_runtime: false,
+            }],
+            supports_native_mode_override: true,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
+
+        assert!(
+            rendered.contains("Command Preview: pnpm test:live"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Safe For Agent: false"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Safety Posture: review-required lane with live or staging integration test; external state `staging_api`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Effects: network=integration_test; external_state=staging_api"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Runnable Modes:\n    default (container): `ota run verify:live`\n    native: `ota run verify:live --mode native`"),
             "{rendered}"
         );
     }

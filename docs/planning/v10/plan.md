@@ -24,7 +24,7 @@
 
 # V10 Plan
 
-Status: planned.
+Status: complete and archived.
 
 Release target:
 
@@ -43,7 +43,7 @@ V10 theme:
 - assumption diffs
 - failure correlation
 
-This is the next post-`1.6.21` implementation slice.
+This was the `1.6.22` implementation slice.
 
 The goal is not another contract versioning system. The goal is to make Ota better at answering:
 
