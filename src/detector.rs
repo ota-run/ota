@@ -709,6 +709,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
 
     detect_package_json(&root, &mut builder)?;
     detect_composer_json(&root, &mut builder)?;
+    detect_devcontainer_json(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_ruby_version_file(&root, &mut builder)?;
@@ -719,6 +720,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_go_mod(&root, &mut builder)?;
     detect_rust_toolchain_files(&root, &mut builder)?;
     detect_tool_versions(&root, &mut builder)?;
+    detect_mise_toml(&root, &mut builder)?;
     detect_pyproject(&root, &mut builder)?;
     detect_pipfile(&root, &mut builder)?;
     detect_uv_lock(&root, &mut builder)?;
@@ -873,6 +875,46 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     Ok(())
 }
 
+fn detect_devcontainer_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join(".devcontainer").join("devcontainer.json");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let devcontainer: JsonValue =
+        serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
+
+    if let Some(image) = devcontainer.get("image").and_then(JsonValue::as_str)
+        && let Some(version) = devcontainer_node_image_version(image)
+    {
+        builder.set_runtime(
+            "node".to_string(),
+            normalize_detected_runtime_version(&version),
+            ".devcontainer/devcontainer.json#image".to_string(),
+            Confidence::High,
+        );
+    }
+
+    for command_field in ["postCreateCommand", "updateContentCommand"] {
+        if let Some(command) = devcontainer.get(command_field).and_then(JsonValue::as_str)
+            && let Some(package_manager) = command_package_manager_token(command)
+        {
+            builder.set_tool(
+                package_manager.to_string(),
+                "*".to_string(),
+                format!(".devcontainer/devcontainer.json#{command_field}"),
+                Confidence::High,
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || !trimmed.contains("||") {
@@ -888,6 +930,42 @@ fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
     }
 
     Some(normalized.join(" || "))
+}
+
+fn devcontainer_node_image_version(image: &str) -> Option<String> {
+    let image_without_digest = image.split('@').next()?.trim();
+    let (repository, tag) = image_without_digest.rsplit_once(':')?;
+    let image_name = repository.rsplit('/').next().unwrap_or(repository);
+    if !image_name.contains("node") {
+        return None;
+    }
+
+    let version = tag
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect::<String>();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+fn command_package_manager_token(command: &str) -> Option<&'static str> {
+    let mut matches = command
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        .filter_map(|token| match token {
+            "pnpm" => Some("pnpm"),
+            "npm" => Some("npm"),
+            "yarn" => Some("yarn"),
+            "bun" => Some("bun"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    matches.sort_unstable();
+    matches.dedup();
+    (matches.len() == 1).then(|| matches[0])
 }
 
 fn normalize_detected_node_engine_branch(value: &str) -> Option<String> {
@@ -1151,6 +1229,109 @@ fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
     }
 
     Ok(())
+}
+
+fn detect_mise_toml(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("mise.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+    let Some(tools) = document.get("tools").and_then(TomlValue::as_table) else {
+        return Ok(());
+    };
+
+    for (tool, value) in tools {
+        let Some(version) = mise_tool_version(value) else {
+            continue;
+        };
+        let source = format!("mise.toml#tools.{tool}");
+
+        match tool.as_str() {
+            "node" | "nodejs" => builder.set_runtime(
+                "node".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "python" => builder.set_runtime(
+                "python".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "go" | "golang" => builder.set_runtime(
+                "go".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "rust" => builder.set_runtime(
+                "rust".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "java" => builder.set_runtime(
+                "java".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "ruby" => builder.set_runtime(
+                "ruby".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "dotnet" => builder.set_runtime(
+                "dotnet".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "php" => builder.set_runtime(
+                "php".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "elixir" => builder.set_runtime(
+                "elixir".to_string(),
+                normalize_detected_runtime_version(&version),
+                source,
+                Confidence::High,
+            ),
+            "pnpm" | "npm" | "yarn" | "bun" => builder.set_tool(
+                tool.to_string(),
+                version,
+                source,
+                Confidence::High,
+            ),
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn mise_tool_version(value: &TomlValue) -> Option<String> {
+    match value {
+        TomlValue::String(version) => Some(version.trim().to_string()).filter(|v| !v.is_empty()),
+        TomlValue::Integer(version) => Some(version.to_string()),
+        TomlValue::Array(values) => values.iter().find_map(mise_tool_version),
+        TomlValue::Table(table) => table.get("version").and_then(mise_tool_version),
+        _ => None,
+    }
+}
+
+fn normalize_detected_runtime_version(value: &str) -> String {
+    value.trim().trim_start_matches('v').to_string()
 }
 
 fn detect_python_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -5447,22 +5628,25 @@ fn source_priority(field: &str, source: &str) -> u8 {
         "runtimes.node" => match source {
             ".nvmrc" => 4,
             ".node-version" => 3,
-            ".tool-versions" => 2,
-            "package.json#engines.node" => 1,
+            "mise.toml#tools.node" | "mise.toml#tools.nodejs" => 2,
+            ".tool-versions" => 1,
+            "package.json#engines.node" => 0,
             _ => 0,
         },
         "runtimes.python" => match source {
             ".python-version" => 4,
-            ".tool-versions" => 3,
-            "pyproject.toml#project.requires-python" => 2,
-            "setup.cfg#options.python_requires" => 2,
-            "pyproject.toml#tool.poetry.dependencies.python" => 1,
-            "Pipfile#requires.python_full_version" => 1,
-            "Pipfile#requires.python_version" => 1,
+            "mise.toml#tools.python" => 3,
+            ".tool-versions" => 2,
+            "pyproject.toml#project.requires-python" => 1,
+            "setup.cfg#options.python_requires" => 1,
+            "pyproject.toml#tool.poetry.dependencies.python" => 0,
+            "Pipfile#requires.python_full_version" => 0,
+            "Pipfile#requires.python_version" => 0,
             _ => 0,
         },
         "runtimes.go" => match source {
-            "go.mod#go" => 2,
+            "go.mod#go" => 3,
+            "mise.toml#tools.go" | "mise.toml#tools.golang" => 2,
             ".tool-versions" => 1,
             _ => 0,
         },
@@ -5471,40 +5655,46 @@ fn source_priority(field: &str, source: &str) -> u8 {
             ".sdkmanrc#java" => 4,
             "build.gradle.kts#java.toolchain" => 3,
             "build.gradle#java.toolchain" => 3,
+            "mise.toml#tools.java" => 2,
             "pom.xml#maven.compiler.release" => 2,
             "pom.xml#maven.compiler.target" => 2,
             "pom.xml#maven.compiler.source" => 2,
             ".tool-versions" => 1,
-            "pom.xml#java.version" => 1,
+            "pom.xml#java.version" => 0,
             _ => 0,
         },
         "runtimes.rust" => match source {
-            "rust-toolchain.toml#toolchain.channel" => 3,
-            "rust-toolchain" => 2,
+            "rust-toolchain.toml#toolchain.channel" => 4,
+            "rust-toolchain" => 3,
+            "mise.toml#tools.rust" => 2,
             ".tool-versions" => 1,
-            "Cargo.toml#package.rust-version" => 1,
+            "Cargo.toml#package.rust-version" => 0,
             _ => 0,
         },
         "runtimes.php" => match source {
             "composer.json#config.platform.php" => 3,
             "composer.json#require.php" => 2,
-            ".tool-versions" => 1,
+            "mise.toml#tools.php" => 1,
+            ".tool-versions" => 0,
             _ => 0,
         },
         "runtimes.ruby" => match source {
             ".ruby-version" => 3,
             "Gemfile#ruby" => 2,
-            ".tool-versions" => 1,
+            "mise.toml#tools.ruby" => 1,
+            ".tool-versions" => 0,
             _ => 0,
         },
         "runtimes.dotnet" => match source {
             "global.json#sdk.version" => 3,
-            ".tool-versions" => 1,
+            "mise.toml#tools.dotnet" => 1,
+            ".tool-versions" => 0,
             _ => 0,
         },
         "runtimes.elixir" => match source {
             "mix.exs#project.elixir" => 2,
-            ".tool-versions" => 1,
+            "mise.toml#tools.elixir" => 1,
+            ".tool-versions" => 0,
             _ => 0,
         },
         "runtimes.scala" => match source {
@@ -5576,11 +5766,15 @@ fn source_priority(field: &str, source: &str) -> u8 {
         },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
+            "package.json#packageManager" => 3,
+            "mise.toml#tools.pnpm" => 2,
+            "mise.toml#tools.npm" => 2,
+            "mise.toml#tools.yarn" => 2,
+            "mise.toml#tools.bun" => 2,
             "build.gradle.kts" => 2,
             "build.gradle" => 2,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "stack.yaml" => 3,
-            "package.json#packageManager" => 2,
             "composer.json" => 2,
             "Gemfile" => 2,
             "dotnet-project" => 2,
@@ -5686,7 +5880,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{Confidence, detect_repo};
+    use super::{Confidence, InferenceSourceClass, detect_repo};
     use crate::schema::{
         EnvSource, EnvSourceKind, ServiceManagerKind, ServiceReadinessKind, ToolchainProvider,
     };
@@ -8220,6 +8414,228 @@ name = "ota-api"
                 .get("dev")
                 .map(|task| task.run.as_str()),
             Some("pnpm dev")
+        );
+    }
+
+    #[test]
+    fn detects_mise_toml_runtime_and_package_manager_truth() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "mise.toml",
+            r#"[tools]
+node = "24.11.0"
+pnpm = "10.5.2"
+python = { version = "3.12.4" }
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| (
+                    toolchain.provider,
+                    toolchain.version.as_str(),
+                    toolchain.package_managers.get("pnpm").map(String::as_str)
+                )),
+            Some((ToolchainProvider::Corepack, "24.11.0", Some("10.5.2")))
+        );
+        assert_eq!(
+            report.contract.runtimes.get("python"),
+            Some(&String::from("3.12.4"))
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "toolchains.node.version"
+                    && inference.source == "mise.toml#tools.node"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "toolchains.node.package_managers.pnpm"
+                    && inference.source == "mise.toml#tools.pnpm"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+    }
+
+    #[test]
+    fn preserves_mise_alias_source_paths_in_inference() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "mise.toml",
+            r#"[tools]
+nodejs = "24.11.0"
+golang = "1.24.1"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "runtimes.node"
+                    && inference.source == "mise.toml#tools.nodejs"
+                    && inference.confidence == Confidence::High
+            })
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "runtimes.go"
+                    && inference.source == "mise.toml#tools.golang"
+                    && inference.confidence == Confidence::High
+            })
+        );
+    }
+
+    #[test]
+    fn prefers_mise_toml_over_tool_versions_for_node_and_package_manager() {
+        let fixture = Fixture::new();
+        fixture.write(".tool-versions", "node 20.14.0\npnpm 9.0.0\n");
+        fixture.write(
+            "mise.toml",
+            r#"[tools]
+node = "22.9.0"
+pnpm = "10.1.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| (
+                    toolchain.version.as_str(),
+                    toolchain.package_managers.get("pnpm").map(String::as_str)
+                )),
+            Some(("22.9.0", Some("10.1.0")))
+        );
+    }
+
+    #[test]
+    fn prefers_nvmrc_over_mise_toml_for_node_runtime() {
+        let fixture = Fixture::new();
+        fixture.write(".nvmrc", "20\n");
+        fixture.write(
+            "mise.toml",
+            r#"[tools]
+node = "22.9.0"
+pnpm = "10.1.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| toolchain.version.as_str()),
+            Some("20")
+        );
+    }
+
+    #[test]
+    fn prefers_package_json_package_manager_over_mise_toml() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.4.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(
+            "mise.toml",
+            r#"[tools]
+pnpm = "9.9.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tools.get("pnpm").map(String::as_str),
+            Some("10.4.0")
+        );
+    }
+
+    #[test]
+    fn detects_devcontainer_node_image_and_package_manager() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".devcontainer/devcontainer.json",
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+  "postCreateCommand": "pnpm install --frozen-lockfile"
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.runtimes.get("node"), Some(&String::from("24")));
+        assert_eq!(report.contract.tools.get("pnpm"), Some(&String::from("*")));
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "runtimes.node"
+                    && inference.source == ".devcontainer/devcontainer.json#image"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tools.pnpm"
+                    && inference.source == ".devcontainer/devcontainer.json#postCreateCommand"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+    }
+
+    #[test]
+    fn prefers_package_json_and_nvmrc_over_devcontainer_truth() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.4.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+        fixture.write(
+            ".devcontainer/devcontainer.json",
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+  "postCreateCommand": "npm install"
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| (
+                    toolchain.version.as_str(),
+                    toolchain.package_managers.get("pnpm").map(String::as_str)
+                )),
+            Some(("22", Some("10.4.0")))
         );
     }
 

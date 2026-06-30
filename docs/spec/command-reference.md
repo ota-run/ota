@@ -2467,7 +2467,9 @@ Current detect sources:
 - `npm-shrinkwrap.json`
 - `.nvmrc`
 - `.node-version`
+- `.devcontainer/devcontainer.json`
 - `.tool-versions`
+- `mise.toml`
 - `pyproject.toml`
 - `Pipfile`
 - `uv.lock`
@@ -2616,6 +2618,12 @@ Current precedence is conservative:
 - when confidence is equal, more repo-specific runtime sources win before generic version-manager aggregation
 - when confidence is equal for project names, `package.json` wins over conflicting Python or Go manifest names
 - when confidence is equal for package-manager tools, `package.json#packageManager` wins over conflicting `.tool-versions` values
+- repo-owned `mise.toml#tools.*` runtime and Node package-manager truth wins over conflicting
+  `.tool-versions` values, but still yields to more specific repo-local markers such as `.nvmrc`,
+  `.python-version`, or `package.json#packageManager`
+- `.devcontainer/devcontainer.json` can contribute high-confidence Node image and bootstrap
+  package-manager truth, but those hints remain lower precedence than repo-local runtime markers,
+  `package.json#packageManager`, and `mise.toml`
 - when `package.json#packageManager` is present for versioned `pnpm` or `yarn`,
   `package.json#engines.node` is treated as high-confidence `toolchains.node` runtime truth;
   without a package manager signal, it stays conservative
@@ -2625,6 +2633,11 @@ Current precedence is conservative:
 - `uv.lock` can contribute `uv` tool inference conservatively
 - `requirements.txt` can contribute `pip` tool inference conservatively
 - `setup.cfg` can contribute project name and `python` runtime inference conservatively
+- `mise.toml` can contribute high-confidence runtime and Node package-manager inference from
+  repo-owned `[tools]` entries
+- `.devcontainer/devcontainer.json` can contribute high-confidence Node runtime inference from the
+  declared image and Node package-manager inference from `postCreateCommand` /
+  `updateContentCommand`
 - for example, `.nvmrc`, `.node-version`, `.python-version`, `.java-version`, `.sdkmanrc`, `go.mod`, `rust-toolchain.toml`, and `rust-toolchain` win over conflicting `.tool-versions` runtime values
 
 Write behavior:

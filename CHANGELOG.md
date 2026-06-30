@@ -28,6 +28,14 @@
 
 ### Added
 
+- widened `ota detect` with the first V11.2 source-family ingestion step: repo-owned
+  `mise.toml [tools]` entries now contribute high-confidence runtime and Node package-manager
+  inference with explicit precedence over `.tool-versions` while still yielding to more specific
+  repo-local markers such as `.nvmrc`, `.python-version`, and `package.json#packageManager`
+- widened `ota detect` again in the same V11.2 source-family lane so
+  `.devcontainer/devcontainer.json` now contributes high-confidence Node image and bootstrap
+  package-manager inference while still yielding to stronger repo-local runtime and package-manager
+  truth
 - detect JSON and detect-written metadata now publish additive detector source-class governance
   (`source_class` on inferred/comparison entries and `metadata.ota.detect.field_source_class` on
   detect-written contracts) so ecosystem-source convergence can stay explicit without inventing a
