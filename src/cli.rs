@@ -23127,6 +23127,101 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_manual_task_drift_from_high_confidence_taskfile_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("Taskfile.yml"),
+            r#"
+version: "3"
+tasks:
+  test:
+    cmds:
+      - cargo test
+"#,
+        )
+        .expect("write Taskfile.yml");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "External source drift: `tasks.test.run` differs from high-confidence repo source"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("Taskfile.yml#tasks.test")
+                }),
+            "expected a Taskfile task governance drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_manual_task_drift_from_high_confidence_justfile_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("justfile"),
+            r#"
+test:
+  cargo test
+"#,
+        )
+        .expect("write justfile");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "External source drift: `tasks.test.run` differs from high-confidence repo source"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("justfile#test")
+                }),
+            "expected a justfile task governance drift warning"
+        );
+    }
+
+    #[test]
     fn services_text_lists_service_details() {
         let fixture = ContractFixture::new(
             r#"

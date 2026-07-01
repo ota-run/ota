@@ -178,7 +178,11 @@ fn is_governed_external_environment_source(source: &str) -> bool {
 }
 
 fn is_governed_task_command_source(source: &str) -> bool {
-    source.starts_with("package.json#scripts.") || source.starts_with("devbox.json#shell.scripts.")
+    source.starts_with("package.json#scripts.")
+        || source.starts_with("devbox.json#shell.scripts.")
+        || source.starts_with("Taskfile.yml#tasks.")
+        || source.starts_with("Taskfile.yaml#tasks.")
+        || source.starts_with("justfile#")
 }
 
 fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {

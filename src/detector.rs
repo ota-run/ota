@@ -712,6 +712,8 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_devcontainer_json(&root, &mut builder)?;
     detect_devbox_json(&root, &mut builder)?;
     detect_devenv_nix(&root, &mut builder);
+    detect_taskfile(&root, &mut builder)?;
+    detect_justfile(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_ruby_version_file(&root, &mut builder)?;
@@ -966,6 +968,117 @@ fn detect_devenv_nix(root: &Path, builder: &mut DetectBuilder) {
         "devenv.nix".to_string(),
         Confidence::High,
     );
+}
+
+fn detect_taskfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let source = ["Taskfile.yml", "Taskfile.yaml"]
+        .into_iter()
+        .find(|name| root.join(name).exists());
+    let Some(source) = source else {
+        return Ok(());
+    };
+
+    let contents = read_file(&root.join(source))?;
+    let taskfile: YamlValue = serde_yaml::from_str(&contents).map_err(|source_error| {
+        DetectError::Parse {
+            path: source.to_string(),
+            message: source_error.to_string(),
+        }
+    })?;
+
+    builder.set_tool(
+        "task".to_string(),
+        "*".to_string(),
+        source.to_string(),
+        Confidence::High,
+    );
+
+    if let Some(tasks) = taskfile.get("tasks").and_then(YamlValue::as_mapping) {
+        for name in tasks.keys().filter_map(YamlValue::as_str) {
+            if is_promotable_task_runner_task_name(name) {
+                builder.set_task(
+                    name.to_string(),
+                    format!("task {name}"),
+                    format!("{source}#tasks.{name}"),
+                    Confidence::High,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_justfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("justfile");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+
+    builder.set_tool(
+        "just".to_string(),
+        "*".to_string(),
+        "justfile".to_string(),
+        Confidence::High,
+    );
+
+    for name in extract_justfile_recipe_names(&contents) {
+        if is_promotable_task_runner_task_name(&name) {
+            builder.set_task(
+                name.clone(),
+                format!("just {name}"),
+                format!("justfile#{name}"),
+                Confidence::High,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn is_promotable_task_runner_task_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':'))
+}
+
+fn extract_justfile_recipe_names(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for raw_line in contents.lines() {
+        let line = raw_line.trim_end();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with("import ")
+            || line.starts_with("mod ")
+            || line.starts_with("set ")
+            || line.starts_with("alias ")
+            || line.starts_with("export ")
+            || raw_line.starts_with(char::is_whitespace)
+        {
+            continue;
+        }
+
+        let Some((head, _)) = line.split_once(':') else {
+            continue;
+        };
+        let candidate = head.trim();
+        if candidate.is_empty() || candidate.contains(' ') || candidate.contains('=') {
+            continue;
+        }
+
+        let name = candidate.trim_start_matches('@');
+        if name.starts_with('_') {
+            continue;
+        }
+        if is_promotable_task_runner_task_name(name) {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
@@ -8745,6 +8858,91 @@ pnpm = "9.9.0"
                     && inference.confidence == Confidence::High
             })
         );
+    }
+
+    #[test]
+    fn detects_taskfile_tasks() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Taskfile.yml",
+            r#"
+version: "3"
+tasks:
+  test:
+    cmds:
+      - cargo test
+  lint:
+    cmds:
+      - cargo clippy
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("task"), Some(&String::from("*")));
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("task test")
+        );
+        assert_eq!(
+            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            Some("task lint")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.source == "Taskfile.yml#tasks.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::High
+        }));
+    }
+
+    #[test]
+    fn detects_justfile_recipes() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "justfile",
+            r#"
+set shell := ["bash", "-cu"]
+
+test:
+  cargo test
+
+lint:
+  cargo clippy
+
+_private:
+  echo hidden
+
+@fmt:
+  cargo fmt
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("just"), Some(&String::from("*")));
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("just test")
+        );
+        assert_eq!(
+            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            Some("just lint")
+        );
+        assert_eq!(
+            report.contract.tasks.get("fmt").map(|task| task.run.as_str()),
+            Some("just fmt")
+        );
+        assert!(
+            !report.contract.tasks.contains_key("_private"),
+            "private just recipes should not be promoted as public task truth"
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.source == "justfile#test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]

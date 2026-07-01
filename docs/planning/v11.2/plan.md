@@ -41,6 +41,18 @@ V11.2 theme:
 
 - source convergence and detection governance
 
+This slice is the repo-truth convergence layer for later execution widening.
+
+It should make later decisions about:
+
+- container-backed setup and dependency hydration
+- deterministic VCS/bootstrap materialization
+- richer browser/runtime bootstrap ownership
+- host-derived adapter env projection
+
+materially easier to implement honestly, because source precedence, provenance, and conflict
+handling will already be explicit instead of implicit.
+
 This slice is about how Ota should learn from existing environment, workflow, and repo-automation
 tools without becoming subordinate to them.
 
@@ -102,6 +114,7 @@ V11.2 is the slice for defining that posture formally.
 - a disciplined widening roadmap for high-value external source families
 - explicit conflict handling rules for detect/init/doctor surfaces
 - pressure-test criteria for deciding when a source widening is real leverage instead of noise
+- an explicit boundary between this convergence slice and later execution-surface widening
 
 ## Non-goals
 
@@ -110,6 +123,8 @@ V11.2 is the slice for defining that posture formally.
 - do not broaden detection just to increase source count
 - do not hide source conflicts behind overconfident normalization
 - do not widen into generic config management or secret management scope
+- do not pull execution-surface implementation work such as container-backed hydration or browser
+  bootstrap ownership into this slice
 
 ## Governance model
 
@@ -308,6 +323,11 @@ The product boundary stays:
 - detect/init = source convergence and promotion
 - diff/receipt correlation = semantic contract drift after contract truth already exists
 
+V11.2 should also leave the next implementation boundary explicit:
+
+- V11.2 defines how Ota learns from external sources and governs promotion
+- a later slice should implement the next repeated execution widenings that those sources expose
+
 ## Detection roadmap
 
 Widening should be grouped by leverage and governance clarity, not by random file popularity.
@@ -413,6 +433,17 @@ This order keeps widening disciplined:
 - high-confidence detection third
 - noisier source families later
 
+It also preserves the intended follow-on product sequence:
+
+1. source convergence and detection governance
+2. repeated execution widening driven by that governed evidence
+
+The strongest current candidates for that later execution slice are:
+
+- container-backed setup and dependency hydration beyond current typed host lanes
+- deterministic VCS/bootstrap materialization where repos still depend on scripted checkout truth
+- richer browser/runtime bootstrap ownership where repos still carry multi-step shell setup
+
 ## Pressure-test bar
 
 V11.2 is not done when more filenames are recognized.
@@ -436,3 +467,5 @@ Every source-family widening used for this slice should prove:
 - the first widened source families are chosen for leverage, not popularity
 - `ota.yaml` remains the canonical execution-governance contract while Ota still learns from the
   tools repos already use
+- the boundary between source convergence and later execution widening stays explicit and
+  reviewable

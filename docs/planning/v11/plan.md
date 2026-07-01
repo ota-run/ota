@@ -90,6 +90,11 @@ The next planned V11 slice after that is:
 
 - [V11.2: source convergence and detection governance](../v11.2/plan.md)
 
+That slice is intentionally the repo-truth convergence layer before the next execution-surface
+widenings. It should make later work such as container-backed hydration, deterministic
+bootstrap/materialization, and richer runtime bootstrap ownership proceed from governed evidence
+instead of ad hoc repo pressure alone.
+
 ## Included capabilities
 
 - explicit completion surfaces for agent-authored change validation

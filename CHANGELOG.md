@@ -66,6 +66,10 @@
   high-confidence detected task-command truth from `package.json#scripts.*` and
   `devbox.json#shell.scripts.*`, while existing devcontainer-specific doctor warnings remain the
   narrower review surface for devcontainer drift
+- widened V11.2 task-command source governance again so Ota now detects high-confidence
+  Taskfile and justfile task truth as canonical runner-owned commands (`task <name>` and
+  `just <name>`) and uses that same source-governance drift lane to warn when manual
+  `tasks.*.run` entries diverge from those external task-runner sources
 - widened first-class orchestrator ownership beyond `mise`: ota now ships `devbox` and `devenv`
   orchestrator kinds, with validator and runner support for mediated task execution; `devbox`
   supports `prepare.install`, `devenv` supports task/exec mediation, and unsupported trust/install

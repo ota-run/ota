@@ -106,6 +106,8 @@ V11.2 is planned.
 - make V11.1 execution governance visibility and proof the active `1.6.23` slice
 - make V11.2 source convergence and detection governance the next disciplined widening slice after
   V11.1
+- use V11.2 as the repo-truth convergence foundation before later execution-surface widening such
+  as container-backed hydration and deterministic bootstrap materialization
 
 ## Archived V2 shape
 
