@@ -199,6 +199,9 @@ enum Commands {
         /// Task name to execute.
         #[arg(index = 1, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
         task: String,
+        /// Enforce the declared agent-safe task boundary for this execution.
+        #[arg(long, action = ArgAction::SetTrue)]
+        agent: bool,
         /// Print machine-readable JSON output for dry-run preview.
         #[arg(long, action = ArgAction::SetTrue, requires = "dry_run")]
         json: bool,
@@ -515,6 +518,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Enforce the declared agent-safe task boundary for this workflow execution.
+        #[arg(long, action = ArgAction::SetTrue)]
+        agent: bool,
         /// Preview the selected up plan without mutating repo or execution state.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
@@ -4986,6 +4992,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Run {
             task,
+            agent,
             json,
             dry_run,
             backend,
@@ -5005,27 +5012,50 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member,
             path,
             inputs,
-        } => commands::run_command(
-            task.as_str(),
-            path.as_deref(),
-            file.as_deref(),
-            format_from_json(json),
-            ExecutionOverrides {
+        } => {
+            let format = format_from_json(json);
+            let overrides = ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port,
                 memory,
                 skip_deps,
-            },
-            &effect_override,
-            &member,
-            &inputs,
-            dry_run,
-            debug,
-            receipt,
-            stream,
-            log,
-        ),
+            };
+            if agent {
+                commands::run_command_with_agent(
+                    task.as_str(),
+                    path.as_deref(),
+                    file.as_deref(),
+                    format,
+                    overrides,
+                    &effect_override,
+                    &member,
+                    &inputs,
+                    true,
+                    dry_run,
+                    debug,
+                    receipt,
+                    stream,
+                    log,
+                )
+            } else {
+                commands::run_command(
+                    task.as_str(),
+                    path.as_deref(),
+                    file.as_deref(),
+                    format,
+                    overrides,
+                    &effect_override,
+                    &member,
+                    &inputs,
+                    dry_run,
+                    debug,
+                    receipt,
+                    stream,
+                    log,
+                )
+            }
+        }
         Commands::Doctor {
             json,
             fix,
@@ -5145,6 +5175,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Up {
             json,
+            agent,
             dry_run,
             stream,
             attach,
@@ -5163,28 +5194,52 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member,
             workflow,
             path,
-        } => commands::up(
-            path.as_deref(),
-            file.as_deref(),
-            ExecutionOverrides {
+        } => {
+            let format = format_from_json(json);
+            let overrides = ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port,
                 memory: None,
                 skip_deps: false,
-            },
-            &effect_override,
-            &member,
-            workflow.as_deref(),
-            format_from_json(json),
-            debug,
-            dry_run,
-            stream,
-            receipt,
-            attach,
-            detach,
-            ready_timeout.as_deref(),
-        ),
+            };
+            if agent {
+                commands::up_with_agent(
+                    path.as_deref(),
+                    file.as_deref(),
+                    overrides,
+                    &effect_override,
+                    &member,
+                    workflow.as_deref(),
+                    true,
+                    format,
+                    debug,
+                    dry_run,
+                    stream,
+                    receipt,
+                    attach,
+                    detach,
+                    ready_timeout.as_deref(),
+                )
+            } else {
+                commands::up(
+                    path.as_deref(),
+                    file.as_deref(),
+                    overrides,
+                    &effect_override,
+                    &member,
+                    workflow.as_deref(),
+                    format,
+                    debug,
+                    dry_run,
+                    stream,
+                    receipt,
+                    attach,
+                    detach,
+                    ready_timeout.as_deref(),
+                )
+            }
+        }
         Commands::Clean {
             stale,
             dry_run,
@@ -17630,6 +17685,7 @@ tasks:
             stderr.to_string(),
             &Commands::Run {
                 task: String::from("install-from-source"),
+                agent: false,
                 json: false,
                 dry_run: false,
                 backend: None,
@@ -17669,6 +17725,7 @@ tasks:
             stderr.to_string(),
             &Commands::Run {
                 task: String::from("ci"),
+                agent: false,
                 json: false,
                 dry_run: false,
                 backend: None,
@@ -18665,6 +18722,7 @@ tasks:
         assert!(super::command_supports_spinner(&super::Commands::Up {
             path: None,
             json: false,
+            agent: false,
             dry_run: false,
             stream: false,
             attach: false,
@@ -18690,6 +18748,7 @@ tasks:
         assert!(!super::command_supports_spinner(&super::Commands::Up {
             path: None,
             json: false,
+            agent: false,
             dry_run: false,
             stream: true,
             attach: false,
@@ -18745,6 +18804,7 @@ tasks:
             command: super::Commands::Up {
                 path: None,
                 json: false,
+                agent: false,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -18776,6 +18836,7 @@ tasks:
             super::command_spinner_label(&super::Commands::Up {
                 path: None,
                 json: false,
+                agent: false,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -18844,6 +18905,7 @@ tasks:
     fn run_does_not_use_command_spinner() {
         assert!(!super::command_supports_spinner(&super::Commands::Run {
             task: String::from("test"),
+            agent: false,
             json: false,
             dry_run: false,
             backend: None,
@@ -19226,6 +19288,7 @@ tasks:
                 "up",
                 super::Commands::Up {
                     json: true,
+                    agent: false,
                     dry_run: false,
                     stream: false,
                     attach: false,
@@ -22904,10 +22967,7 @@ tasks:
                 .any(|finding| {
                     finding["summary"].as_str().unwrap_or_default()
                         == "Devcontainer drift: Python image differs from repo runtime"
-                        && finding["why"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .contains("3.12")
+                        && finding["why"].as_str().unwrap_or_default().contains("3.12")
                 }),
             "expected a devcontainer python image drift warning"
         );
@@ -24856,6 +24916,7 @@ policies:
     fn run_dry_run_json_requests_json_output() {
         let command = super::Commands::Run {
             task: String::from("ci"),
+            agent: false,
             json: true,
             dry_run: true,
             backend: None,

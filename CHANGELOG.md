@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added execution-boundary agent-safety enforcement to `ota run` and `ota up`: `--agent` now
+  refuses unsafe requested tasks and declared-safe task/workflow closures before any execution
+  starts, and returns ota-authored blocked receipts/results instead of treating the safe surface as
+  review-only guidance
 - widened `orchestrators` with first-class launcher ownership and direct `mode: subcommand`
   mediation so repos can declare truth like `nix run ...#devenv -- test` or `devenv up` without
   faking direct PATH ownership or misusing `task` / `exec`; validator, selected-path diagnosis,

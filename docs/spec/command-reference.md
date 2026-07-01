@@ -1188,6 +1188,7 @@ ota run <task> --mode remote [PATH]
 ota run <task> --skip-deps [PATH]
 ota run <task> --effect-override network:broad=allow [PATH]
 ota run <task> --memory 4GiB [PATH]
+ota run <task> --agent [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
@@ -1199,6 +1200,7 @@ Current behavior:
 - `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
+- `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:tool_bootstrap`, and `external_state:<token>`
@@ -1226,6 +1228,7 @@ Current behavior:
   inferring dependency-plane inheritance from the task names alone
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
+- agent refusals are ota-authored execution outcomes, not generic task failures: text output renders `AGENT EXECUTION REFUSED`, receipts use blocked status, and no task process or dependency path starts before the refusal returns
 - when the requested task is a service runtime with declared readiness, `--stream` also shows live
   readiness probe progress while ota is still trying to prove startup
 - for service runtimes with declared readiness, ota now treats the declared startup readiness
@@ -1887,6 +1890,7 @@ ota up --mode container --ephemeral [PATH]
 ota up --effect-override network:broad=allow [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
+ota up --agent [PATH]
 ```
 
 Current behavior:
@@ -1895,6 +1899,7 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, plain `ota up` prepares the root contract and grouped member summaries for each declared member
 - when `--member` is set, prepares the merged member contract
 - repeated `--member` values prepare those members in the provided order
+- `--agent` enforces the declared agent-safe task boundary before setup or workflow execution starts; ota refuses the selected workflow path when any selected prepare/setup/run/attach task sits outside the safe set or reaches an unsafe task closure
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`

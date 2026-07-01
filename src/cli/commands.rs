@@ -57,7 +57,7 @@ use crate::detector::{
     Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
 };
 use crate::doctor::{
-    DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
+    DoctorMode, DoctorReport, Finding, FindingIdentity, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
     OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
     command_available, command_version, diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
@@ -15023,6 +15023,40 @@ pub fn run_command(
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
+    run_command_with_agent(
+        task_name,
+        path,
+        file_override,
+        format,
+        overrides,
+        effect_overrides,
+        members,
+        task_inputs,
+        false,
+        dry_run,
+        debug,
+        show_receipt,
+        stream,
+        persist_logs,
+    )
+}
+
+pub(crate) fn run_command_with_agent(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    task_inputs: &[String],
+    agent: bool,
+    dry_run: bool,
+    debug: bool,
+    show_receipt: bool,
+    stream: bool,
+    persist_logs: bool,
+) -> CommandOutput {
     activate_mise_paths_for_current_process();
     if dry_run && stream {
         return finalize_debug(
@@ -15110,6 +15144,9 @@ pub fn run_command(
     if dry_run {
         debug_lines.push(String::from("DEBUG dry_run=true"));
     }
+    if agent {
+        debug_lines.push(String::from("DEBUG agent=true"));
+    }
     if normalized_task_inputs != task_inputs {
         debug_lines.push(format!(
             "DEBUG task_inputs={}",
@@ -15158,6 +15195,7 @@ pub fn run_command(
                     overrides,
                     members,
                     &normalized_task_inputs,
+                    agent,
                     show_receipt,
                     run_command_streaming_enabled(stream),
                     persist_logs,
@@ -15495,6 +15533,14 @@ pub(crate) struct TaskEffectiveSafety {
     pub unsafe_closure_tasks: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentExecutionRefusal {
+    requested_task: String,
+    blocked_task: String,
+    path: Vec<String>,
+    reason: &'static str,
+}
+
 fn collect_reachable_task_names_for_visibility(
     contract: &Contract,
     root_task_name: &str,
@@ -15504,7 +15550,8 @@ fn collect_reachable_task_names_for_visibility(
     let mut visited = BTreeSet::new();
     let mut stack = vec![(root_task_name.to_string(), overrides)];
     while let Some((task_name, current_overrides)) = stack.pop() {
-        let backend = effective_task_execution(contract, task_name.as_str(), current_overrides).backend;
+        let backend =
+            effective_task_execution(contract, task_name.as_str(), current_overrides).backend;
         if !visited.insert((task_name.clone(), format_backend(backend).to_string())) {
             continue;
         }
@@ -15512,7 +15559,11 @@ fn collect_reachable_task_names_for_visibility(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        for dependency in task.aggregate.iter().flat_map(|aggregate| aggregate.tasks.iter()) {
+        for dependency in task
+            .aggregate
+            .iter()
+            .flat_map(|aggregate| aggregate.tasks.iter())
+        {
             if contract.tasks.contains_key(dependency) {
                 stack.push((dependency.clone(), ExecutionOverrides::default()));
             }
@@ -15544,6 +15595,146 @@ fn collect_reachable_task_names_for_visibility(
     ordered
 }
 
+fn first_unsafe_task_path_for_visibility(
+    contract: &Contract,
+    root_task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Vec<String> {
+    if !task_is_declared_agent_safe(contract, root_task_name) {
+        return vec![root_task_name.to_string()];
+    }
+
+    fn visit(
+        contract: &Contract,
+        current: &str,
+        overrides: ExecutionOverrides,
+        path: &mut Vec<String>,
+        visited: &mut BTreeSet<(String, String)>,
+    ) -> Option<Vec<String>> {
+        let backend = effective_task_execution(contract, current, overrides).backend;
+        if !visited.insert((current.to_string(), format_backend(backend).to_string())) {
+            return None;
+        }
+        path.push(current.to_string());
+        let Some(task) = contract.tasks.get(current) else {
+            path.pop();
+            return None;
+        };
+
+        for dependency in task
+            .aggregate
+            .iter()
+            .flat_map(|aggregate| aggregate.tasks.iter())
+        {
+            if !contract.tasks.contains_key(dependency) {
+                continue;
+            }
+            if !task_is_declared_agent_safe(contract, dependency) {
+                let mut refusal_path = path.clone();
+                refusal_path.push(dependency.clone());
+                path.pop();
+                return Some(refusal_path);
+            }
+            if let Some(found) = visit(
+                contract,
+                dependency,
+                ExecutionOverrides::default(),
+                path,
+                visited,
+            ) {
+                path.pop();
+                return Some(found);
+            }
+        }
+
+        for dependency in task.depends_on_for_backend(backend) {
+            let Some(dependency_task) = contract.tasks.get(dependency) else {
+                continue;
+            };
+            let dependency_overrides = ExecutionOverrides {
+                backend: dependency_task
+                    .dependency_backend_override_for_parent(overrides.backend, backend),
+                ..overrides
+            };
+            if !task_is_declared_agent_safe(contract, dependency) {
+                let mut refusal_path = path.clone();
+                refusal_path.push(dependency.to_string());
+                path.pop();
+                return Some(refusal_path);
+            }
+            if let Some(found) = visit(contract, dependency, dependency_overrides, path, visited) {
+                path.pop();
+                return Some(found);
+            }
+        }
+
+        for hook in task
+            .after_success
+            .iter()
+            .chain(task.after_failure.iter())
+            .chain(task.after_always.iter())
+        {
+            if !contract.tasks.contains_key(hook) {
+                continue;
+            }
+            if !task_is_declared_agent_safe(contract, hook) {
+                let mut refusal_path = path.clone();
+                refusal_path.push(hook.clone());
+                path.pop();
+                return Some(refusal_path);
+            }
+            if let Some(found) = visit(contract, hook, ExecutionOverrides::default(), path, visited)
+            {
+                path.pop();
+                return Some(found);
+            }
+        }
+
+        path.pop();
+        None
+    }
+
+    visit(
+        contract,
+        root_task_name,
+        overrides,
+        &mut Vec::new(),
+        &mut BTreeSet::new(),
+    )
+    .unwrap_or_else(|| vec![root_task_name.to_string()])
+}
+
+fn agent_execution_refusal_for_task(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<AgentExecutionRefusal> {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    let safety = task_effective_safety_with_overrides(contract, task_name.as_str(), overrides);
+    if safety.declared_safe && safety.effective_safe {
+        return None;
+    }
+
+    let path = if safety.declared_safe {
+        first_unsafe_task_path_for_visibility(contract, task_name.as_str(), overrides)
+    } else {
+        vec![task_name.to_string()]
+    };
+    let blocked_task = path.last().cloned().unwrap_or_else(|| task_name.clone());
+    let reason = if safety.declared_safe {
+        "unsafe_dependency_closure"
+    } else {
+        "requested_task_not_safe"
+    };
+
+    Some(AgentExecutionRefusal {
+        requested_task: task_name,
+        blocked_task,
+        path,
+        reason,
+    })
+}
+
 pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> TaskEffectiveSafety {
     task_effective_safety_with_overrides(contract, task_name, ExecutionOverrides::default())
 }
@@ -15562,16 +15753,155 @@ pub(crate) fn task_effective_safety_with_overrides(
         };
     }
 
-    let unsafe_closure_tasks = collect_reachable_task_names_for_visibility(contract, task_name, overrides)
-        .into_iter()
-        .filter(|reachable| !task_is_declared_agent_safe(contract, reachable))
-        .collect::<Vec<_>>();
+    let unsafe_closure_tasks =
+        collect_reachable_task_names_for_visibility(contract, task_name, overrides)
+            .into_iter()
+            .filter(|reachable| !task_is_declared_agent_safe(contract, reachable))
+            .collect::<Vec<_>>();
 
     TaskEffectiveSafety {
         declared_safe,
         effective_safe: unsafe_closure_tasks.is_empty(),
         unsafe_closure_tasks,
     }
+}
+
+fn agent_execution_refusal_finding(refusal: &AgentExecutionRefusal, command: &str) -> Finding {
+    let path = refusal.path.join(" -> ");
+    let (summary, why) = match refusal.reason {
+        "requested_task_not_safe" => (
+            format!("Agent execution refused: task `{}`", refusal.requested_task),
+            format!(
+                "task `{}` is outside the declared agent-safe surface for this contract",
+                refusal.requested_task
+            ),
+        ),
+        _ => (
+            format!(
+                "Agent execution refused: unsafe task closure for `{}`",
+                refusal.requested_task
+            ),
+            format!(
+                "task `{}` is declared safe, but its reachable execution closure includes `{}` via `{}`",
+                refusal.requested_task, refusal.blocked_task, path
+            ),
+        ),
+    };
+
+    Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_AGENT_EXECUTION_REFUSED"),
+            category: String::from("agent"),
+            owner: String::from("execution"),
+        }),
+        severity: FindingSeverity::Error,
+        summary,
+        why,
+        next: format!(
+            "run `ota tasks --safe --use`; review `agent.safe_tasks` / `safe_for_agent`; rerun `{command}` only after the selected closure is safe"
+        ),
+    }
+}
+
+fn repo_agent_execution_refusal_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    workflow_name: Option<&str>,
+    phase: &str,
+    task_name: &str,
+    command: &str,
+    refusal: &AgentExecutionRefusal,
+) -> ExecutionReceipt {
+    let finding = agent_execution_refusal_finding(refusal, command);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            contract_path,
+            task_name,
+            overrides,
+            member.map(str::to_string),
+        ),
+        "BLOCKED",
+        phase,
+        workflow_name,
+        member,
+        Some(task_name),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];
+    refresh_execution_receipt_status(&mut receipt);
+    receipt
+}
+
+fn render_agent_execution_refusal_text(
+    contract_path: &Path,
+    member: Option<&str>,
+    receipt: &ExecutionReceipt,
+    refusal: &AgentExecutionRefusal,
+    command: &str,
+) -> String {
+    let target = display_contract_target(&compact_contract_path(contract_path), member);
+    let mut text = format_command_header("AGENT EXECUTION REFUSED", &target);
+    let finding = agent_execution_refusal_finding(refusal, command);
+    text.push_str("\n\n");
+    text.push_str(&paint_key("Why:"));
+    text.push(' ');
+    text.push_str(&finding.why);
+    if refusal.path.len() > 1 {
+        text.push_str("\n");
+        text.push_str(&paint_key("Path:"));
+        text.push(' ');
+        text.push_str(&refusal.path.join(" -> "));
+    }
+    text.push_str(&render_execution_receipt_text(receipt));
+    text.push('\n');
+    text.push_str(&render_execution_receipt_summary_block(
+        receipt,
+        Some(refusal.requested_task.as_str()),
+        "RUN SUMMARY",
+    ));
+    append_receipt_next_block(&mut text, receipt);
+    text
+}
+
+fn run_agent_execution_refusal(
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    contract: &Contract,
+    contract_path: &Path,
+    _show_receipt: bool,
+) -> Option<RunCommandFailure> {
+    let refusal = agent_execution_refusal_for_task(contract, task_name, overrides)?;
+    let task_name = canonical_declared_task_name(contract, task_name);
+    let command = format!(
+        "{} --agent",
+        repo_run_command_with_overrides(task_name.as_str(), member, overrides, &[])
+    );
+    let receipt = repo_agent_execution_refusal_receipt(
+        contract,
+        contract_path,
+        overrides,
+        member,
+        None,
+        "run",
+        task_name.as_str(),
+        &command,
+        &refusal,
+    );
+    Some(RunCommandFailure {
+        message: render_agent_execution_refusal_text(contract_path, member, &receipt, &refusal, &command),
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })
 }
 
 fn task_effect_governance_scope(contract: &Contract, task_name: &str) -> EffectGovernanceScope {
@@ -15955,36 +16285,36 @@ fn render_run_preview_target(
                     let artifact_routing =
                         run_preview_artifact_routing(&target.contract_path, None);
                     CommandOutput {
-                    stdout: to_json(&RunPreviewSuccess {
-                        ok: false,
-                        path: &text_path_display,
-                        contract: &path_display,
-                        member,
-                        task: task_name.as_str(),
-                        dry_run: true,
-                        preview_status: doctor_preview_status_label(summary.verdict),
-                        summary,
-                        contract_identity,
-                        declared_execution,
-                        resolved: unresolved_execution_plan,
-                        overrides: applied_overrides,
-                        requested_task,
-                        requested_context,
-                        selected_context,
-                        env_summary: env_report.summary,
-                        sources: env_report.sources,
-                        env: env_report.env,
-                        toolchains,
-                        native_prerequisites,
-                        provisioning: None,
-                        provisioning_request: None,
-                        governance,
-                        artifact_routing,
-                        plan,
-                    }),
-                    stderr: None,
-                    exit_code: 1,
-                }
+                        stdout: to_json(&RunPreviewSuccess {
+                            ok: false,
+                            path: &text_path_display,
+                            contract: &path_display,
+                            member,
+                            task: task_name.as_str(),
+                            dry_run: true,
+                            preview_status: doctor_preview_status_label(summary.verdict),
+                            summary,
+                            contract_identity,
+                            declared_execution,
+                            resolved: unresolved_execution_plan,
+                            overrides: applied_overrides,
+                            requested_task,
+                            requested_context,
+                            selected_context,
+                            env_summary: env_report.summary,
+                            sources: env_report.sources,
+                            env: env_report.env,
+                            toolchains,
+                            native_prerequisites,
+                            provisioning: None,
+                            provisioning_request: None,
+                            governance,
+                            artifact_routing,
+                            plan,
+                        }),
+                        stderr: None,
+                        exit_code: 1,
+                    }
                 }
             };
         }
@@ -17093,8 +17423,8 @@ fn selected_task_closure_requirement_surface(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
-    let run_plan = crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
-        .ok();
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
     let effective = effective_task_execution(contract, task_name, overrides);
     requirement_surface_for_run_plan_steps(
         contract,
@@ -17112,7 +17442,8 @@ fn selected_task_closure_activation_requirement_surface(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
-    let requirement_surface = selected_task_closure_requirement_surface(contract, task_name, overrides)?;
+    let requirement_surface =
+        selected_task_closure_requirement_surface(contract, task_name, overrides)?;
     let required_tool_names = requirement_surface
         .tools
         .keys()
@@ -17135,8 +17466,8 @@ fn selected_task_closure_toolchain_names(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> BTreeSet<String> {
-    let run_plan = crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
-        .ok();
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
     if let Some(plan) = run_plan.as_ref() {
         let names = toolchain_names_for_run_plan_steps(contract, &plan.steps);
         if !names.is_empty() {
@@ -17187,8 +17518,8 @@ fn selected_task_closure_native_activation_actions(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<NativeRequirementActivationAction> {
-    let run_plan = crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
-        .ok();
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
     if let Some(plan) = run_plan.as_ref() {
         let actions = native_activation_actions_for_run_plan_steps(contract, &plan.steps);
         if !actions.is_empty() {
@@ -17249,10 +17580,11 @@ fn requirement_surface_for_run_plan_steps(
             surface.merge(&contract.resolved_context_requirement_surface(context));
         }
         if matches!(step.backend, Backend::Native) {
-            let scoped_native =
-                task.scoped_native_requirements_for_execution(step.backend, step.context.as_deref());
+            let scoped_native = task
+                .scoped_native_requirements_for_execution(step.backend, step.context.as_deref());
             surface.merge(
-                &contract.native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
+                &contract
+                    .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
             );
         }
     }
@@ -17281,9 +17613,11 @@ fn toolchain_names_for_run_plan_steps(
         let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
-        names.extend(
-            contract.task_toolchain_names_for_execution(task, step.backend, step.context.as_deref()),
-        );
+        names.extend(contract.task_toolchain_names_for_execution(
+            task,
+            step.backend,
+            step.context.as_deref(),
+        ));
     }
     names
 }
@@ -17310,7 +17644,8 @@ fn native_activation_actions_for_run_plan_steps(
             let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
                 continue;
             };
-            let Some(platform) = prerequisite.platform_for_os(current_requirement_platform()) else {
+            let Some(platform) = prerequisite.platform_for_os(current_requirement_platform())
+            else {
                 continue;
             };
             let Some(activation) = platform.activation.as_ref() else {
@@ -18404,7 +18739,10 @@ fn run_doctor_fix(
         summary.planned_count += activation_actions.len();
         for action in &activation_actions {
             let command = activation_action_command(action);
-            let action_key = format!("{DOCTOR_FIX_ACTION_TOOL_ACTIVATION_PREFIX}{}", action.tool_name);
+            let action_key = format!(
+                "{DOCTOR_FIX_ACTION_TOOL_ACTIVATION_PREFIX}{}",
+                action.tool_name
+            );
             let path = format!("tool `{}`", action.tool_name);
             if dry_run {
                 summary.actions.push(DoctorFixActionSummary {
@@ -20087,27 +20425,28 @@ pub fn doctor(
                         Ok(outcome) => outcome,
                         Err(error) => DoctorFixRunOutcome {
                             summary: DoctorFixSummary {
-                            requested: true,
-                            dry_run: fix_dry_run,
-                            fixable_count: 0,
-                            planned_count: 0,
-                            applied_count: 0,
-                            note: None,
-                            actions: Vec::new(),
-                            errors: vec![error],
-                        },
+                                requested: true,
+                                dry_run: fix_dry_run,
+                                fixable_count: 0,
+                                planned_count: 0,
+                                applied_count: 0,
+                                note: None,
+                                actions: Vec::new(),
+                                errors: vec![error],
+                            },
                             applied_changes: false,
                         },
                     };
                     if outcome.applied_changes && !fix_dry_run {
-                        report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
-                            contract,
-                            &target.contract_path,
-                            mode,
-                            doctor_lifecycle,
-                            workflow_name,
-                            diagnosis_overrides,
-                        );
+                        report =
+                            diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                                contract,
+                                &target.contract_path,
+                                mode,
+                                doctor_lifecycle,
+                                workflow_name,
+                                diagnosis_overrides,
+                            );
                         append_contract_drift_findings(
                             contract,
                             &target.contract_path,
@@ -25514,6 +25853,42 @@ pub fn up(
     detach: bool,
     ready_timeout: Option<&str>,
 ) -> CommandOutput {
+    up_with_agent(
+        path,
+        file_override,
+        overrides,
+        effect_overrides,
+        members,
+        workflow_name,
+        false,
+        format,
+        debug,
+        dry_run,
+        stream,
+        show_receipt,
+        attach,
+        detach,
+        ready_timeout,
+    )
+}
+
+pub(crate) fn up_with_agent(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    workflow_name: Option<&str>,
+    agent: bool,
+    format: OutputFormat,
+    debug: bool,
+    dry_run: bool,
+    stream: bool,
+    show_receipt: bool,
+    attach: bool,
+    detach: bool,
+    ready_timeout: Option<&str>,
+) -> CommandOutput {
     activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -25620,6 +25995,9 @@ pub fn up(
     if let Some(timeout) = ready_timeout {
         debug_lines.push(format!("DEBUG ready_timeout_secs={}", timeout.as_secs()));
     }
+    if agent {
+        debug_lines.push(String::from("DEBUG agent=true"));
+    }
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
@@ -25668,11 +26046,12 @@ pub fn up(
                             workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                         })
                     {
-                        let root_result = match execute_repo_up_with_behavior(
+                        let root_result = match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            agent,
                             None,
                             dry_run,
                             execution_mode,
@@ -25736,11 +26115,12 @@ pub fn up(
                                             };
                                         }
                                     };
-                                let member_result = match execute_repo_up_with_behavior(
+                                let member_result = match execute_repo_up_with_behavior_with_agent(
                                     &member_target.contract,
                                     &member_target.contract_path,
                                     overrides,
                                     workflow_name,
+                                    agent,
                                     None,
                                     dry_run,
                                     execution_mode,
@@ -25784,11 +26164,12 @@ pub fn up(
                             }
                         }
                     } else {
-                        match execute_repo_up_with_behavior(
+                        match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            agent,
                             None,
                             dry_run,
                             execution_mode,
@@ -25855,11 +26236,12 @@ pub fn up(
                                     };
                                 }
                             };
-                        let result = match execute_repo_up_with_behavior(
+                        let result = match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            agent,
                             None,
                             dry_run,
                             execution_mode,
@@ -31554,14 +31936,12 @@ fn write_detected_merge(
                 .source_class
                 .clone()
                 .map(|source_class| BTreeMap::from([(change.field.clone(), source_class)]));
-            if let Err(error) =
-                record_detect_owned_fields(
-                    &mut document,
-                    &owned_fields,
-                    Some(&field_admission),
-                    field_source_class.as_ref(),
-                )
-            {
+            if let Err(error) = record_detect_owned_fields(
+                &mut document,
+                &owned_fields,
+                Some(&field_admission),
+                field_source_class.as_ref(),
+            ) {
                 let error = format!(
                     "{}{}",
                     error,
@@ -31801,14 +32181,12 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     let owned_fields = detect_field_paths(&report.contract);
     let field_admission = direct_detect_field_admission(&owned_fields);
     let field_source_class = detect_field_source_class_for_write(&report, &report.contract);
-    if let Err(error) =
-        record_detect_owned_fields(
-            &mut document,
-            &owned_fields,
-            Some(&field_admission),
-            Some(&field_source_class),
-        )
-    {
+    if let Err(error) = record_detect_owned_fields(
+        &mut document,
+        &owned_fields,
+        Some(&field_admission),
+        Some(&field_source_class),
+    ) {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
             OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -52829,10 +53207,7 @@ tasks:
             rendered.contains("Command Preview: ./scripts/api/run-api-tests.sh"),
             "{rendered}"
         );
-        assert!(
-            rendered.contains("Safe For Agent: true"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
         assert!(
             rendered.contains("Safety Posture: agent-safe routine repo-scoped lane"),
             "{rendered}"
@@ -52933,10 +53308,7 @@ tasks:
             rendered.contains("Command Preview: pnpm test:live"),
             "{rendered}"
         );
-        assert!(
-            rendered.contains("Safe For Agent: false"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("Safe For Agent: false"), "{rendered}");
         assert!(
             rendered.contains("Effective Safe For Agent: false"),
             "{rendered}"
@@ -53288,7 +53660,9 @@ tasks:
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
-            preview: String::from("sequence: hydrate package dependencies with npm install in `.` -> ensure env file `.env`"),
+            preview: String::from(
+                "sequence: hydrate package dependencies with npm install in `.` -> ensure env file `.env`",
+            ),
             launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
@@ -53420,7 +53794,9 @@ tasks:
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
-            preview: String::from("hydrate package dependencies with yarn install --immutable in `.`"),
+            preview: String::from(
+                "hydrate package dependencies with yarn install --immutable in `.`",
+            ),
             launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
@@ -53482,7 +53858,9 @@ tasks:
             description: Some("Hydrate Bun dependencies"),
             notes: None,
             category: None,
-            preview: String::from("hydrate package dependencies with bun install --frozen-lockfile in `.`"),
+            preview: String::from(
+                "hydrate package dependencies with bun install --frozen-lockfile in `.`",
+            ),
             launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
@@ -53722,7 +54100,9 @@ tasks:
             description: Some("Hydrate dependencies through compose"),
             notes: None,
             category: None,
-            preview: String::from("hydrate package dependencies with npm install in `app` via docker compose run --rm -T app"),
+            preview: String::from(
+                "hydrate package dependencies with npm install in `app` via docker compose run --rm -T app",
+            ),
             launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
@@ -53813,7 +54193,9 @@ tasks:
             description: Some("Hydrate Ruby dependencies through compose"),
             notes: None,
             category: None,
-            preview: String::from("hydrate package dependencies with bundler install in `.` via docker compose run --rm -T api"),
+            preview: String::from(
+                "hydrate package dependencies with bundler install in `.` via docker compose run --rm -T api",
+            ),
             launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
@@ -53905,7 +54287,9 @@ tasks:
             description: Some("Install Playwright browsers"),
             notes: None,
             category: None,
-            preview: String::from("bootstrap tool `playwright_browsers` with `yarn playwright install chromium firefox` in `.`"),
+            preview: String::from(
+                "bootstrap tool `playwright_browsers` with `yarn playwright install chromium firefox` in `.`",
+            ),
             launch_preview: None,
             env,
             env_files: Vec::new(),
@@ -55901,8 +56285,7 @@ project:
             .find(|entry| entry["field"] == "project.name")
             .expect("project inference");
         assert_eq!(
-            inferred_project["source_class"],
-            "environment_toolchain",
+            inferred_project["source_class"], "environment_toolchain",
             "{json}"
         );
         let inferred_task = json["inferred"]
@@ -56268,6 +56651,220 @@ tasks:
         assert_eq!(
             fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log"),
             "stderr line\n"
+        );
+    }
+
+    #[test]
+    fn run_agent_refuses_task_outside_safe_surface() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  publish:
+    run: echo publish
+agent:
+  safe_tasks: []
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("AGENT EXECUTION REFUSED"), "{stderr}");
+        assert!(
+            stderr.contains("task `publish` is outside the declared agent-safe surface"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("rerun `ota run publish --agent`"), "{stderr}");
+        assert!(stderr.contains("ota tasks --safe --use"), "{stderr}");
+    }
+
+    #[test]
+    fn run_agent_refuses_declared_safe_task_with_unsafe_dependency_closure() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  setup:
+    run: echo setup
+  verify:
+    safe_for_agent: true
+    depends_on:
+      - setup
+    run: echo verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("reachable execution closure includes `setup`"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Path: verify -> setup"), "{stderr}");
+    }
+
+    #[test]
+    fn up_agent_json_refuses_unsafe_workflow_task_before_execution() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+    run:
+      task: serve
+tasks:
+  setup:
+    run: echo setup
+  serve:
+    run: echo serve
+agent:
+  safe_tasks: []
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::up_with_agent(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            None,
+            true,
+            OutputFormat::Json,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("parse up json");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["status"], "BLOCKED");
+        assert_eq!(json["phase"], "preconditions");
+        assert_eq!(json["receipt"]["status"], "blocked");
+        assert_eq!(json["findings"][0]["code"], "OTA_AGENT_EXECUTION_REFUSED");
+    }
+
+    #[test]
+    fn up_agent_refuses_unsafe_finite_run_task_closure() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+    run:
+      task: verify
+tasks:
+  setup:
+    safe_for_agent: true
+    run: echo setup
+  verify:
+    run: echo verify
+agent:
+  safe_tasks:
+    - setup
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::up_with_agent(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            None,
+            true,
+            OutputFormat::Json,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("parse up json");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["status"], "BLOCKED");
+        assert_eq!(json["phase"], "preconditions");
+        assert_eq!(json["task"], "verify");
+        assert_eq!(json["findings"][0]["code"], "OTA_AGENT_EXECUTION_REFUSED");
+        assert!(
+            json["findings"][0]["next"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("ota up --agent"),
+            "{}",
+            json["findings"][0]
         );
     }
 
@@ -56894,10 +57491,7 @@ tasks:
             json["governance"]["runnable_modes"][0]["command"],
             "ota run verify:live"
         );
-        assert_eq!(
-            json["governance"]["runnable_modes"][1]["mode"],
-            "native"
-        );
+        assert_eq!(json["governance"]["runnable_modes"][1]["mode"], "native");
         assert_eq!(
             json["governance"]["runnable_modes"][1]["command"],
             "ota run verify:live --mode native"
@@ -57021,7 +57615,11 @@ tasks:
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
         assert_eq!(json["governance"]["safety_posture"], "agent_safe");
         assert_eq!(json["governance"]["effective_safe_for_agent"], true);
-        assert!(json["governance"]["unsafe_closure_tasks"].as_array().is_none_or(|items| items.is_empty()));
+        assert!(
+            json["governance"]["unsafe_closure_tasks"]
+                .as_array()
+                .is_none_or(|items| items.is_empty())
+        );
         assert_eq!(json["resolved"]["backend"], "container");
     }
 
@@ -82026,6 +82624,7 @@ fn run_contract_targets(
     overrides: ExecutionOverrides,
     members: &[String],
     task_inputs: &[String],
+    agent: bool,
     show_receipt: bool,
     stream_output: bool,
     persist_logs: bool,
@@ -82040,6 +82639,7 @@ fn run_contract_targets(
             None,
             target,
             task_inputs,
+            agent,
             show_receipt,
             stream_output,
             persist_logs,
@@ -82063,6 +82663,7 @@ fn run_contract_targets(
             Some(member.as_str()),
             target,
             task_inputs,
+            agent,
             show_receipt,
             stream_output,
             persist_logs,
@@ -82078,11 +82679,24 @@ fn run_single_contract_target(
     member: Option<&str>,
     target: LoadedContractTarget,
     task_inputs: &[String],
+    agent: bool,
     show_receipt: bool,
     stream_output: bool,
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
+    if agent
+        && let Some(failure) = run_agent_execution_refusal(
+            task_name,
+            overrides,
+            member,
+            &target.contract,
+            &target.contract_path,
+            show_receipt,
+        )
+    {
+        return Err(failure);
+    }
     if let Some(failure) = run_selected_precondition_failure(
         task_name,
         overrides,
@@ -91096,7 +91710,11 @@ fn receipt_artifact_routing(
         "inspect",
         "receipt_json",
         "receipt",
-        Some(repo_receipt_command_for_repo(workflow, false, contract_path)),
+        Some(repo_receipt_command_for_repo(
+            workflow,
+            false,
+            contract_path,
+        )),
         None,
     )];
     if let Some(path) = archive_path {
@@ -95364,7 +95982,8 @@ fn workspace_up_receipt(
             repo.exit_code,
         ));
         if let Some(step) = steps.last_mut() {
-            step.stage_family = canonical_execution_stage_family_key(repo.phase.as_str()).to_string();
+            step.stage_family =
+                canonical_execution_stage_family_key(repo.phase.as_str()).to_string();
         }
     }
 
@@ -96183,11 +96802,12 @@ fn selected_workflow_task_requirement_surface(
     let retains_global_tool_fallback = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-            contract.resolved_task_requirement_surface_for_execution(
-                task,
-                effective.backend,
-                effective.context_name,
-            )
+            contract
+                .resolved_task_requirement_surface_for_execution(
+                    task,
+                    effective.backend,
+                    effective.context_name,
+                )
                 .tools
                 .is_empty()
                 && matches!(effective.backend, Backend::Native)
@@ -96603,21 +97223,17 @@ fn selected_activation_actions_for_mode(
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
-    requirement_surface_activation_actions(
-        &requirement_surface,
-        target_os,
-        activation_backend,
-    )
-    .into_iter()
-    .filter(|action| {
-        !policy_provisioned_tools.contains(action.tool_name.as_str())
-            && (preflight
-                .findings
-                .iter()
-                .any(|finding| finding_targets_activation_action(finding, action))
-                || activation_action_needs_local_bootstrap(action))
-    })
-    .collect()
+    requirement_surface_activation_actions(&requirement_surface, target_os, activation_backend)
+        .into_iter()
+        .filter(|action| {
+            !policy_provisioned_tools.contains(action.tool_name.as_str())
+                && (preflight
+                    .findings
+                    .iter()
+                    .any(|finding| finding_targets_activation_action(finding, action))
+                    || activation_action_needs_local_bootstrap(action))
+        })
+        .collect()
 }
 
 fn activation_action_needs_local_bootstrap(action: &RequirementActivationAction) -> bool {
@@ -99985,6 +100601,32 @@ fn execute_repo_up_with_behavior(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
 ) -> Result<RepoUpResult, String> {
+    execute_repo_up_with_behavior_with_agent(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        false,
+        policy_env,
+        dry_run,
+        mode,
+        run_behavior_preference,
+        ready_timeout,
+    )
+}
+
+fn execute_repo_up_with_behavior_with_agent(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
     let contract = adjusted_contract.as_ref().unwrap_or(contract);
@@ -99998,6 +100640,23 @@ fn execute_repo_up_with_behavior(
             resolved_path,
             workflow_name,
         ));
+    }
+    if agent {
+        for task_name in
+            selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
+        {
+            if let Some(refusal) =
+                agent_execution_refusal_for_task(contract, task_name.as_str(), overrides)
+            {
+                return Ok(up_agent_execution_refusal_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    &refusal,
+                ));
+            }
+        }
     }
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
@@ -100818,11 +101477,12 @@ fn execute_repo_up_with_behavior(
     for prerequisite_selector in
         selected_workflow_instance_prerequisite_selectors(contract, workflow_name)
     {
-        let prerequisite_result = execute_repo_up_with_behavior(
+        let prerequisite_result = execute_repo_up_with_behavior_with_agent(
             contract,
             resolved_path,
             overrides,
             Some(prerequisite_selector.as_str()),
+            agent,
             policy_env,
             false,
             mode,
@@ -105090,6 +105750,94 @@ fn selected_up_activation_task_name<'a>(
                 .get(*task_name)
                 .is_some_and(TaskSpec::has_any_service_runtime)
     })
+}
+
+fn selected_up_agent_task_names(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    run_behavior_preference: UpRunBehaviorPreference,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut push_unique = |task_name: &str| {
+        if !names.iter().any(|existing| existing == task_name) {
+            names.push(task_name.to_string());
+        }
+    };
+    if let Some(task_name) = selected_up_prepare_task_name(contract, workflow_name) {
+        push_unique(task_name);
+    }
+    if let Some(task_name) = selected_up_setup_task_name(contract, workflow_name) {
+        push_unique(task_name);
+    }
+    if let Some(task_name) = selected_up_run_task_name(contract, workflow_name) {
+        push_unique(task_name);
+    }
+    if matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
+        && let Some(task_name) = selected_up_attach_task_name(contract, workflow_name)
+    {
+        push_unique(task_name);
+    }
+    names
+}
+
+fn up_agent_execution_refusal_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    refusal: &AgentExecutionRefusal,
+) -> RepoUpResult {
+    let mut command = String::from("ota up");
+    append_run_execution_override_flags(&mut command, overrides);
+    if let Some(workflow_name) = workflow_name {
+        command.push_str(&format!(" --workflow {workflow_name}"));
+    }
+    command.push_str(" --agent");
+    let finding = agent_execution_refusal_finding(refusal, &command);
+    let receipt = repo_execution_receipt_with_overrides(
+        resolved_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            resolved_path,
+            refusal.requested_task.as_str(),
+            overrides,
+            None,
+        ),
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        Some(refusal.requested_task.as_str()),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    let mut receipt = receipt;
+    receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "preconditions",
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: Some(refusal.requested_task.clone()),
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
 }
 
 fn task_required_service_closure(contract: &Contract, task_name: &str) -> BTreeSet<String> {

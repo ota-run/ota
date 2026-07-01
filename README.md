@@ -500,6 +500,7 @@ Current behavior:
 - `ota validate` parses and semantically validates `ota.yaml`
 - `ota tasks` lists validated tasks and their execution form
 - `ota run <task>` resolves dependencies, executes the requested task deterministically, and honors declared `after_success`, `after_failure`, and `after_always` hooks as part of the task's final result
+- `ota run <task> --agent` and `ota up --agent` enforce the declared agent-safe task boundary before execution starts, refuse unsafe requested tasks or unsafe reachable task closures, and emit ota-authored refusal receipts instead of silently treating agent safety as advisory only
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, leads with the highest-priority blocker first, supports `ota doctor --mode container` for container-targeted readiness, and `ota doctor --fix` can now apply the shipped deterministic fix surface for repo-hygiene plus native command-acquired tool activation before rerunning diagnosis
