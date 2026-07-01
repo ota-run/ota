@@ -3663,7 +3663,9 @@ fn validate_task_execution_orchestrator(
                 )));
             }
             if has_prepare {
-                if let Some(prepare) = prepare && !prepare_supports_exec_orchestrator(prepare) {
+                if let Some(prepare) = prepare
+                    && !prepare_supports_exec_orchestrator(prepare)
+                {
                     errors.push(ValidationError::new(format!(
                         "{scope} `{task_name}` uses `execution.orchestrator.mode: exec`, but only command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` are orchestrator-managed in this slice"
                     )));
@@ -3691,22 +3693,12 @@ fn validate_task_execution_orchestrator(
                     "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but `compose` execution already owns its adapter command shape"
                 )));
             }
-            if has_launch
-                && !matches!(
-                    launch,
-                    Some(crate::schema::TaskLaunchSpec::Command(_))
-                )
-            {
+            if has_launch && !matches!(launch, Some(crate::schema::TaskLaunchSpec::Command(_))) {
                 errors.push(ValidationError::new(format!(
                     "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but only `launch.kind: command` is orchestrator-managed in this slice"
                 )));
             }
-            if !has_command
-                && !matches!(
-                    launch,
-                    Some(crate::schema::TaskLaunchSpec::Command(_))
-                )
-            {
+            if !has_command && !matches!(launch, Some(crate::schema::TaskLaunchSpec::Command(_))) {
                 errors.push(ValidationError::new(format!(
                     "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but it must declare either `command` or `launch.kind: command`"
                 )));

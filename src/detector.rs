@@ -30,6 +30,7 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
+use crate::agent_boundary_docs::parse_agent_boundary_doc;
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
     ServiceReadinessKind, TaskActionSpec, TaskCommandSpec, TaskEffectsSpec, TaskPrepareSpec,
@@ -722,6 +723,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_taskfile(&root, &mut builder)?;
     detect_justfile(&root, &mut builder)?;
     detect_github_actions_workflows(&root, &mut builder)?;
+    detect_agent_boundary_docs(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_ruby_version_file(&root, &mut builder)?;
@@ -797,6 +799,40 @@ fn detect_env_sources(root: &Path, builder: &mut DetectBuilder) {
             );
         }
     }
+}
+
+fn detect_agent_boundary_docs(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    for file_name in ["AGENTS.md", "CLAUDE.md"] {
+        let path = root.join(file_name);
+        if !path.exists() {
+            continue;
+        }
+        let contents = read_file(&path)?;
+        let parsed = parse_agent_boundary_doc(&contents);
+        if parsed.is_empty() || parsed.generated_by_ota {
+            continue;
+        }
+
+        let confidence = Confidence::Medium;
+        let safe_tasks_source = format!("{file_name}#safe_tasks");
+        for task_name in parsed.safe_tasks.unwrap_or_default() {
+            builder.add_agent_safe_task(task_name, safe_tasks_source.clone(), confidence);
+        }
+        let verify_source = format!("{file_name}#verify_after_changes");
+        for task_name in parsed.verify_after_changes.unwrap_or_default() {
+            builder.add_agent_verify_after_change(task_name, verify_source.clone(), confidence);
+        }
+        let writable_source = format!("{file_name}#writable_paths");
+        for path_name in parsed.writable_paths.unwrap_or_default() {
+            builder.add_agent_writable_path(path_name, writable_source.clone(), confidence);
+        }
+        let protected_source = format!("{file_name}#protected_paths");
+        for path_name in parsed.protected_paths.unwrap_or_default() {
+            builder.add_agent_protected_path(path_name, protected_source.clone(), confidence);
+        }
+    }
+
+    Ok(())
 }
 
 fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -940,7 +976,10 @@ fn detect_devcontainer_features(devcontainer: &JsonValue, builder: &mut DetectBu
         let Some(feature) = classify_devcontainer_feature(feature_ref) else {
             continue;
         };
-        let source = format!(".devcontainer/devcontainer.json#features.{}", feature.source_key);
+        let source = format!(
+            ".devcontainer/devcontainer.json#features.{}",
+            feature.source_key
+        );
         match feature.kind {
             DevcontainerFeatureKind::Runtime(runtime_name) => {
                 let version = devcontainer_feature_version(config)
@@ -964,7 +1003,12 @@ fn detect_devcontainer_features(devcontainer: &JsonValue, builder: &mut DetectBu
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty() && value != "latest" && value != "none")
                         .unwrap_or_else(|| String::from("*"));
-                    builder.set_tool(tool_name.to_string(), version, source.clone(), Confidence::High);
+                    builder.set_tool(
+                        tool_name.to_string(),
+                        version,
+                        source.clone(),
+                        Confidence::High,
+                    );
                 }
             }
         }
@@ -1008,11 +1052,10 @@ fn devcontainer_command_entries<'a>(
 }
 
 fn devcontainer_feature_version(config: &JsonValue) -> Option<&str> {
-    config.get("version").and_then(JsonValue::as_str).or_else(|| {
-        config
-            .as_str()
-            .filter(|value| !value.trim().is_empty())
-    })
+    config
+        .get("version")
+        .and_then(JsonValue::as_str)
+        .or_else(|| config.as_str().filter(|value| !value.trim().is_empty()))
 }
 
 #[derive(Clone, Copy)]
@@ -1070,10 +1113,11 @@ fn detect_devbox_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), De
     }
 
     let contents = read_file(&path)?;
-    let devbox: JsonValue = serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
-        path: path.display().to_string(),
-        message: source.to_string(),
-    })?;
+    let devbox: JsonValue =
+        serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
 
     builder.set_tool(
         "devbox".to_string(),
@@ -1123,12 +1167,11 @@ fn detect_taskfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
     };
 
     let contents = read_file(&root.join(source))?;
-    let taskfile: YamlValue = serde_yaml::from_str(&contents).map_err(|source_error| {
-        DetectError::Parse {
+    let taskfile: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source_error| DetectError::Parse {
             path: source.to_string(),
             message: source_error.to_string(),
-        }
-    })?;
+        })?;
 
     builder.set_tool(
         "task".to_string(),
@@ -1138,12 +1181,13 @@ fn detect_taskfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
     );
 
     if let Some(tasks) = taskfile.get("tasks").and_then(YamlValue::as_mapping) {
-        for (name, task) in tasks.iter().filter_map(|(name, task)| {
-            Some((name.as_str()?, task))
-        }) {
+        for (name, task) in tasks
+            .iter()
+            .filter_map(|(name, task)| Some((name.as_str()?, task)))
+        {
             if is_promotable_task_runner_task_name(name) {
-                let command = infer_taskfile_task_command(task)
-                    .unwrap_or_else(|| format!("task {name}"));
+                let command =
+                    infer_taskfile_task_command(task).unwrap_or_else(|| format!("task {name}"));
                 builder.set_task(
                     name.to_string(),
                     command,
@@ -1174,8 +1218,8 @@ fn detect_justfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
 
     for (name, body) in extract_justfile_recipes(&contents) {
         if is_promotable_task_runner_task_name(&name) {
-            let command = infer_justfile_recipe_command(&body)
-                .unwrap_or_else(|| format!("just {name}"));
+            let command =
+                infer_justfile_recipe_command(&body).unwrap_or_else(|| format!("just {name}"));
             builder.set_task(
                 name.clone(),
                 command,
@@ -1251,9 +1295,10 @@ pub(crate) fn collect_github_actions_verification_tasks(
             .display()
             .to_string();
 
-        for (job_name, job_value) in jobs.iter().filter_map(|(name, value)| {
-            Some((name.as_str()?, value))
-        }) {
+        for (job_name, job_value) in jobs
+            .iter()
+            .filter_map(|(name, value)| Some((name.as_str()?, value)))
+        {
             let Some(steps) = job_value.get("steps").and_then(YamlValue::as_sequence) else {
                 continue;
             };
@@ -1265,7 +1310,9 @@ pub(crate) fn collect_github_actions_verification_tasks(
                     tasks.push(CiVerificationTaskSignal {
                         field: format!("tasks.{task_name}.run"),
                         command,
-                        source: format!("{workflow_source}#jobs.{job_name}.steps[{step_index}].run"),
+                        source: format!(
+                            "{workflow_source}#jobs.{job_name}.steps[{step_index}].run"
+                        ),
                     });
                 }
             }
@@ -1898,12 +1945,9 @@ fn detect_mise_toml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Dete
                 source,
                 Confidence::High,
             ),
-            "pnpm" | "npm" | "yarn" | "bun" => builder.set_tool(
-                tool.to_string(),
-                version,
-                source,
-                Confidence::High,
-            ),
+            "pnpm" | "npm" | "yarn" | "bun" => {
+                builder.set_tool(tool.to_string(), version, source, Confidence::High)
+            }
             _ => {}
         }
     }
@@ -5423,6 +5467,65 @@ impl DetectBuilder {
         }
     }
 
+    fn add_agent_safe_task(&mut self, task_name: String, source: String, confidence: Confidence) {
+        let normalized = task_name.trim();
+        if normalized.is_empty() {
+            return;
+        }
+        let field = format!("agent.safe_tasks.{normalized}");
+        if self.should_replace(&field, &source, confidence) {
+            self.record(field, normalized.to_string(), source, confidence);
+        }
+    }
+
+    fn add_agent_verify_after_change(
+        &mut self,
+        task_name: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let normalized = task_name.trim();
+        if normalized.is_empty() {
+            return;
+        }
+        let field = format!("agent.verify_after_changes.{normalized}");
+        if self.should_replace(&field, &source, confidence) {
+            self.record(field, normalized.to_string(), source, confidence);
+        }
+    }
+
+    fn add_agent_writable_path(
+        &mut self,
+        path_name: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let normalized = path_name.trim();
+        if normalized.is_empty() {
+            return;
+        }
+        let field = format!("agent.writable_paths.{normalized}");
+        if self.should_replace(&field, &source, confidence) {
+            self.record(field, normalized.to_string(), source, confidence);
+        }
+    }
+
+    fn add_agent_protected_path(
+        &mut self,
+        path_name: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let normalized = path_name.trim();
+        if normalized.is_empty() {
+            return;
+        }
+        let field = format!("agent.protected_paths.{normalized}");
+        if self.should_replace(&field, &source, confidence) {
+            self.record(field, normalized.to_string(), source, confidence);
+        }
+    }
+
     fn set_service_manager_kind(
         &mut self,
         name: String,
@@ -6035,10 +6138,7 @@ fn inference_signal_for_source(source: &str) -> InferenceSignal {
     }
 }
 
-fn inference_source_class_for_field_and_source(
-    field: &str,
-    source: &str,
-) -> InferenceSourceClass {
+fn inference_source_class_for_field_and_source(field: &str, source: &str) -> InferenceSourceClass {
     let normalized = source.trim();
     let source_file = normalized.split('#').next().unwrap_or(normalized);
 
@@ -6591,6 +6691,80 @@ mod tests {
                 .get("node")
                 .map(|toolchain| toolchain.version.as_str()),
             Some(">=22.0.0, <23.0.0 || >=24.0.0, <25.0.0")
+        );
+    }
+
+    #[test]
+    fn detects_structured_agent_boundary_doc_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# Agent Guide
+
+- `safe_tasks`:
+  - `test`
+  - `lint`
+- `verify_after_changes`:
+  - `test`
+- `writable_paths`: `src`, `docs`
+- `protected_paths`: `.github/workflows`, `Cargo.lock`
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "agent.safe_tasks.test"
+                && inference.value == "test"
+                && inference.source == "AGENTS.md#safe_tasks"
+                && inference.source_class == InferenceSourceClass::AgentBoundary
+                && inference.confidence == Confidence::Medium
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "agent.verify_after_changes.test"
+                && inference.source == "AGENTS.md#verify_after_changes"
+                && inference.source_class == InferenceSourceClass::AgentBoundary
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "agent.writable_paths.src"
+                && inference.source == "AGENTS.md#writable_paths"
+                && inference.source_class == InferenceSourceClass::AgentBoundary
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "agent.protected_paths..github/workflows"
+                && inference.source == "AGENTS.md#protected_paths"
+                && inference.source_class == InferenceSourceClass::AgentBoundary
+        }));
+    }
+
+    #[test]
+    fn ignores_ota_generated_agent_doc_as_detect_source() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# Some Header
+
+Generated from `./ota.yaml` by `ota agents`.
+
+# AGENTS.md
+
+- `safe_tasks`:
+  - `publish`
+- `verify_after_changes`:
+  - `publish`
+- `writable_paths`: `src`
+- `protected_paths`: `ota.yaml`
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.field.starts_with("agent.")),
+            "ota-generated agent docs should be excluded from detect evidence"
         );
     }
 
@@ -9025,37 +9199,29 @@ python = { version = "3.12.4" }
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report
-                .contract
-                .toolchains
-                .get("node")
-                .map(|toolchain| (
-                    toolchain.provider,
-                    toolchain.version.as_str(),
-                    toolchain.package_managers.get("pnpm").map(String::as_str)
-                )),
+            report.contract.toolchains.get("node").map(|toolchain| (
+                toolchain.provider,
+                toolchain.version.as_str(),
+                toolchain.package_managers.get("pnpm").map(String::as_str)
+            )),
             Some((ToolchainProvider::Corepack, "24.11.0", Some("10.5.2")))
         );
         assert_eq!(
             report.contract.runtimes.get("python"),
             Some(&String::from("3.12.4"))
         );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "toolchains.node.version"
-                    && inference.source == "mise.toml#tools.node"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "toolchains.node.package_managers.pnpm"
-                    && inference.source == "mise.toml#tools.pnpm"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "toolchains.node.version"
+                && inference.source == "mise.toml#tools.node"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "toolchains.node.package_managers.pnpm"
+                && inference.source == "mise.toml#tools.pnpm"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
@@ -9071,20 +9237,16 @@ golang = "1.24.1"
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "runtimes.node"
-                    && inference.source == "mise.toml#tools.nodejs"
-                    && inference.confidence == Confidence::High
-            })
-        );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "runtimes.go"
-                    && inference.source == "mise.toml#tools.golang"
-                    && inference.confidence == Confidence::High
-            })
-        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "runtimes.node"
+                && inference.source == "mise.toml#tools.nodejs"
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "runtimes.go"
+                && inference.source == "mise.toml#tools.golang"
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
@@ -9102,14 +9264,10 @@ pnpm = "10.1.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report
-                .contract
-                .toolchains
-                .get("node")
-                .map(|toolchain| (
-                    toolchain.version.as_str(),
-                    toolchain.package_managers.get("pnpm").map(String::as_str)
-                )),
+            report.contract.toolchains.get("node").map(|toolchain| (
+                toolchain.version.as_str(),
+                toolchain.package_managers.get("pnpm").map(String::as_str)
+            )),
             Some(("22.9.0", Some("10.1.0")))
         );
     }
@@ -9177,24 +9335,23 @@ pnpm = "9.9.0"
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert_eq!(report.contract.runtimes.get("node"), Some(&String::from("24")));
+        assert_eq!(
+            report.contract.runtimes.get("node"),
+            Some(&String::from("24"))
+        );
         assert_eq!(report.contract.tools.get("pnpm"), Some(&String::from("*")));
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "runtimes.node"
-                    && inference.source == ".devcontainer/devcontainer.json#image"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "tools.pnpm"
-                    && inference.source == ".devcontainer/devcontainer.json#postCreateCommand"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "runtimes.node"
+                && inference.source == ".devcontainer/devcontainer.json#image"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tools.pnpm"
+                && inference.source == ".devcontainer/devcontainer.json#postCreateCommand"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
@@ -9224,30 +9381,38 @@ pnpm = "9.9.0"
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert_eq!(report.contract.runtimes.get("node"), Some(&String::from("*")));
-        assert_eq!(report.contract.runtimes.get("python"), Some(&String::from("3.12")));
-        assert_eq!(report.contract.runtimes.get("go"), Some(&String::from("1.24")));
+        assert_eq!(
+            report.contract.runtimes.get("node"),
+            Some(&String::from("*"))
+        );
+        assert_eq!(
+            report.contract.runtimes.get("python"),
+            Some(&String::from("3.12"))
+        );
+        assert_eq!(
+            report.contract.runtimes.get("go"),
+            Some(&String::from("1.24"))
+        );
         assert_eq!(report.contract.tools.get("npm"), Some(&String::from("*")));
         assert_eq!(report.contract.tools.get("gh"), Some(&String::from("*")));
-        assert_eq!(report.contract.tools.get("kubectl"), Some(&String::from("1.32.0")));
+        assert_eq!(
+            report.contract.tools.get("kubectl"),
+            Some(&String::from("1.32.0"))
+        );
         assert_eq!(report.contract.tools.get("helm"), Some(&String::from("*")));
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "runtimes.node"
-                    && inference.source == ".devcontainer/devcontainer.json#features.node"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "tools.npm"
-                    && inference.source
-                        == ".devcontainer/devcontainer.json#postCreateCommand.node-tools"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "runtimes.node"
+                && inference.source == ".devcontainer/devcontainer.json#features.node"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tools.npm"
+                && inference.source
+                    == ".devcontainer/devcontainer.json#postCreateCommand.node-tools"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
@@ -9273,14 +9438,10 @@ pnpm = "9.9.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report
-                .contract
-                .toolchains
-                .get("node")
-                .map(|toolchain| (
-                    toolchain.version.as_str(),
-                    toolchain.package_managers.get("pnpm").map(String::as_str)
-                )),
+            report.contract.toolchains.get("node").map(|toolchain| (
+                toolchain.version.as_str(),
+                toolchain.package_managers.get("pnpm").map(String::as_str)
+            )),
             Some(("22", Some("10.4.0")))
         );
     }
@@ -9303,7 +9464,10 @@ pnpm = "9.9.0"
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert_eq!(report.contract.tools.get("devbox"), Some(&String::from("*")));
+        assert_eq!(
+            report.contract.tools.get("devbox"),
+            Some(&String::from("*"))
+        );
         assert_eq!(
             report
                 .contract
@@ -9320,22 +9484,18 @@ pnpm = "9.9.0"
                 .map(|task| task.run.as_str()),
             Some("devbox run dev")
         );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "tools.devbox"
-                    && inference.source == "devbox.json"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
-        );
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "tasks.test.run"
-                    && inference.source == "devbox.json#shell.scripts.test"
-                    && inference.source_class == InferenceSourceClass::TaskCommand
-                    && inference.confidence == Confidence::High
-            })
-        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tools.devbox"
+                && inference.source == "devbox.json"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.source == "devbox.json#shell.scripts.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
@@ -9359,11 +9519,19 @@ tasks:
 
         assert_eq!(report.contract.tools.get("task"), Some(&String::from("*")));
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("cargo test")
         );
         assert_eq!(
-            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("lint")
+                .map(|task| task.run.as_str()),
             Some("cargo clippy")
         );
         assert!(report.inferences.iter().any(|inference| {
@@ -9393,7 +9561,11 @@ tasks:
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("task test")
         );
     }
@@ -9424,15 +9596,27 @@ _private:
 
         assert_eq!(report.contract.tools.get("just"), Some(&String::from("*")));
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("cargo test")
         );
         assert_eq!(
-            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("lint")
+                .map(|task| task.run.as_str()),
             Some("cargo clippy")
         );
         assert_eq!(
-            report.contract.tasks.get("fmt").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("fmt")
+                .map(|task| task.run.as_str()),
             Some("cargo fmt")
         );
         assert!(
@@ -9462,7 +9646,11 @@ test:
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("just test")
         );
     }
@@ -9488,11 +9676,19 @@ jobs:
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("npm test")
         );
         assert_eq!(
-            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("lint")
+                .map(|task| task.run.as_str()),
             Some("corepack pnpm lint")
         );
         assert!(report.inferences.iter().any(|inference| {
@@ -9510,15 +9706,16 @@ jobs:
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert_eq!(report.contract.tools.get("devenv"), Some(&String::from("*")));
-        assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "tools.devenv"
-                    && inference.source == "devenv.nix"
-                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
-                    && inference.confidence == Confidence::High
-            })
+        assert_eq!(
+            report.contract.tools.get("devenv"),
+            Some(&String::from("*"))
         );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tools.devenv"
+                && inference.source == "devenv.nix"
+                && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]

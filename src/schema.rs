@@ -6492,7 +6492,6 @@ impl TaskPipToolBootstrapSourceSpec {
             tool.label()
         )
     }
-
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

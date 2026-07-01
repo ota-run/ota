@@ -28,8 +28,9 @@
 
 - added execution-boundary agent-safety enforcement to `ota run` and `ota up`: `--agent` now
   refuses unsafe requested tasks and declared-safe task/workflow closures before any execution
-  starts, and returns ota-authored blocked receipts/results instead of treating the safe surface as
-  review-only guidance
+  starts, returns ota-authored blocked receipts/results instead of treating the safe surface as
+  review-only guidance, and is now recognized correctly on `ota run <task> --agent` instead of
+  being misread as task input after the task selector
 - widened `orchestrators` with first-class launcher ownership and direct `mode: subcommand`
   mediation so repos can declare truth like `nix run ...#devenv -- test` or `devenv up` without
   faking direct PATH ownership or misusing `task` / `exec`; validator, selected-path diagnosis,
@@ -77,6 +78,12 @@
 - widened `ota detect` again across the next V11.2 source families so `devbox.json` now
   contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
   `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without
+  pretending broader runtime truth than those files really own
+- widened the V11.2 agent-boundary source family from review-only metadata to real detect-backed
+  starter truth: structured repo-authored `AGENTS.md` and `CLAUDE.md` lists for
+  `safe_tasks`, `verify_after_changes`, `writable_paths`, and `protected_paths` now feed detect
+  as medium-confidence agent-boundary evidence, while Ota-generated/self-origin agent docs remain
+  excluded so source provenance does not recurse back into exported contract guidance
   overclaiming broader Nix environment ownership
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence
   external environment source already detected by Ota, such as `mise.toml`, `devbox.json`, or

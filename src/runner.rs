@@ -73,17 +73,17 @@ use crate::provisioning::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSpec, ContainerBackend, Contract, EnvRequirement, EnvSourceKind,
-    ExecutionContext, ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment, ExtensionKind,
-    FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
-    NativePrerequisiteActivationSpec, ReadinessProbeTargetKind, RemoteBackend, RequirementSurface,
-    RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind,
-    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod,
-    TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskRuntimeSpec,
-    TaskServiceEnvBindingFormat, TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider, ToolAcquisitionSpec,
-    ToolRequirement,
-    ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    ExecutionContext, ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment,
+    ExtensionKind, FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind,
+    NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
+    RemoteBackend, RequirementSurface, RuntimeRequirement, TaskModeBranchSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
+    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskRuntimeSpec, TaskServiceEnvBindingFormat, TaskServiceEnvBindingSpec, TaskSpec,
+    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider,
+    ToolAcquisitionSpec, ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec,
+    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
+    task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 #[cfg(test)]
@@ -2822,7 +2822,11 @@ fn projected_execution_command_for_preview(
         ));
     }
     if let Some(compose) = execution.compose() {
-        return Some(projected_compose_command_for_task(task, backend_kind, compose));
+        return Some(projected_compose_command_for_task(
+            task,
+            backend_kind,
+            compose,
+        ));
     }
     match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
@@ -2845,9 +2849,13 @@ fn orchestrator_execution_preview_for_mise(
     execution: crate::schema::TaskExecution<'_>,
 ) -> Option<String> {
     match selection.mode {
-        crate::schema::TaskExecutionOrchestratorMode::Task => execution
-            .shell_body()
-            .map(|_| orchestrator_invocation_display_command(orchestrator, "mise", vec![String::from("run"), task_name.to_string()])),
+        crate::schema::TaskExecutionOrchestratorMode::Task => execution.shell_body().map(|_| {
+            orchestrator_invocation_display_command(
+                orchestrator,
+                "mise",
+                vec![String::from("run"), task_name.to_string()],
+            )
+        }),
         crate::schema::TaskExecutionOrchestratorMode::Exec => {
             if let Some(command) =
                 projected_execution_command_for_preview(task, backend_kind, execution)
@@ -2888,9 +2896,13 @@ fn orchestrator_execution_preview_for_devbox(
     execution: crate::schema::TaskExecution<'_>,
 ) -> Option<String> {
     match selection.mode {
-        crate::schema::TaskExecutionOrchestratorMode::Task => execution
-            .shell_body()
-            .map(|_| orchestrator_invocation_display_command(orchestrator, "devbox", vec![String::from("run"), task_name.to_string()])),
+        crate::schema::TaskExecutionOrchestratorMode::Task => execution.shell_body().map(|_| {
+            orchestrator_invocation_display_command(
+                orchestrator,
+                "devbox",
+                vec![String::from("run"), task_name.to_string()],
+            )
+        }),
         crate::schema::TaskExecutionOrchestratorMode::Exec => {
             if let Some(command) =
                 projected_execution_command_for_preview(task, backend_kind, execution)
@@ -2931,9 +2943,17 @@ fn orchestrator_execution_preview_for_devenv(
     execution: crate::schema::TaskExecution<'_>,
 ) -> Option<String> {
     match selection.mode {
-        crate::schema::TaskExecutionOrchestratorMode::Task => execution
-            .shell_body()
-            .map(|_| orchestrator_invocation_display_command(orchestrator, "devenv", vec![String::from("tasks"), String::from("run"), task_name.to_string()])),
+        crate::schema::TaskExecutionOrchestratorMode::Task => execution.shell_body().map(|_| {
+            orchestrator_invocation_display_command(
+                orchestrator,
+                "devenv",
+                vec![
+                    String::from("tasks"),
+                    String::from("run"),
+                    task_name.to_string(),
+                ],
+            )
+        }),
         crate::schema::TaskExecutionOrchestratorMode::Exec => {
             if let Some(command) =
                 projected_execution_command_for_preview(task, backend_kind, execution)
@@ -12402,12 +12422,12 @@ fn maybe_activate_command_acquisition_tools_on_run_path(
     }
 
     let target_os = target_os_for_toolchain_backend(backend, current_os);
-    let surface =
-        selected_task_activation_requirement_surface_for_run_path(contract, task, backend, target_os);
-    for (tool_name, acquisition) in command_activation_actions_for_requirement_surface(
-        &surface,
-        target_os,
-    ) {
+    let surface = selected_task_activation_requirement_surface_for_run_path(
+        contract, task, backend, target_os,
+    );
+    for (tool_name, acquisition) in
+        command_activation_actions_for_requirement_surface(&surface, target_os)
+    {
         if probe_backend_command_version(backend, contract_working_dir(contract_path), &tool_name)
             .ok()
             .flatten()
@@ -12577,7 +12597,8 @@ fn selected_task_activation_requirement_surface_for_run_path(
             contract.resolve_scoped_tool_requirement(name, requirement),
         );
     }
-    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend_kind, target_os) {
+    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend_kind, target_os)
+    {
         let requirement = contract
             .tools
             .get(exe.as_str())
@@ -12613,9 +12634,7 @@ fn command_activation_actions_for_requirement_surface(
         .filter_map(|(name, requirement)| {
             requirement
                 .acquisition_for_os(target_os)
-                .filter(|acquisition| {
-                    acquisition.provider == ToolAcquisitionProvider::Command
-                })
+                .filter(|acquisition| acquisition.provider == ToolAcquisitionProvider::Command)
                 .cloned()
                 .map(|acquisition| (name.clone(), acquisition))
         })
@@ -12706,7 +12725,12 @@ fn wrap_prepared_execution_for_mise(
             }),
             PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
-                    command: wrap_mise_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
+                    command: wrap_mise_exec_argv_command(
+                        backend,
+                        orchestrator,
+                        exe.as_str(),
+                        &args,
+                    ),
                     cwd,
                 })
             }
@@ -12715,10 +12739,17 @@ fn wrap_prepared_execution_for_mise(
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_mise_subcommand_argv_command(backend, orchestrator, exe.as_str(), &args),
-                cwd,
-            }),
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
+                Ok(PreparedTaskExecution::Shell {
+                    command: wrap_mise_subcommand_argv_command(
+                        backend,
+                        orchestrator,
+                        exe.as_str(),
+                        &args,
+                    ),
+                    cwd,
+                })
+            }
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -12835,7 +12866,12 @@ fn wrap_prepared_execution_for_devbox(
             }),
             PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devbox_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
+                    command: wrap_devbox_exec_argv_command(
+                        backend,
+                        orchestrator,
+                        exe.as_str(),
+                        &args,
+                    ),
                     cwd,
                 })
             }
@@ -12844,10 +12880,17 @@ fn wrap_prepared_execution_for_devbox(
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_devbox_subcommand_argv_command(backend, orchestrator, exe.as_str(), &args),
-                cwd,
-            }),
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
+                Ok(PreparedTaskExecution::Shell {
+                    command: wrap_devbox_subcommand_argv_command(
+                        backend,
+                        orchestrator,
+                        exe.as_str(),
+                        &args,
+                    ),
+                    cwd,
+                })
+            }
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -12950,7 +12993,12 @@ fn wrap_prepared_execution_for_devenv(
             }),
             PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devenv_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
+                    command: wrap_devenv_exec_argv_command(
+                        backend,
+                        orchestrator,
+                        exe.as_str(),
+                        &args,
+                    ),
                     cwd,
                 })
             }
@@ -12959,10 +13007,17 @@ fn wrap_prepared_execution_for_devenv(
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_devenv_subcommand_argv_command(backend, orchestrator, exe.as_str(), &args),
-                cwd,
-            }),
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
+                Ok(PreparedTaskExecution::Shell {
+                    command: wrap_devenv_subcommand_argv_command(
+                        backend,
+                        orchestrator,
+                        exe.as_str(),
+                        &args,
+                    ),
+                    cwd,
+                })
+            }
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -12979,7 +13034,11 @@ fn wrap_devenv_task_command(
         backend,
         orchestrator,
         "devenv",
-        vec![String::from("tasks"), String::from("run"), task_name.to_string()],
+        vec![
+            String::from("tasks"),
+            String::from("run"),
+            task_name.to_string(),
+        ],
     )
 }
 
@@ -45782,7 +45841,10 @@ exit 0
 
         assert_eq!(outcome.exit_code, 0);
         let log = fs::read_to_string(bin_dir.join("nix.log")).unwrap();
-        assert!(log.contains("run github:cachix/devenv/main#devenv -- tasks run git"), "{log}");
+        assert!(
+            log.contains("run github:cachix/devenv/main#devenv -- tasks run git"),
+            "{log}"
+        );
     }
 
     #[cfg(unix)]
@@ -55915,8 +55977,7 @@ tasks:
             prepare: crate::schema::OrchestratorPrepareSpec::default(),
             launcher: None,
         };
-        let wrapped =
-            super::wrap_mise_task_command(&backend, &orchestrator, "//server:ci-unit");
+        let wrapped = super::wrap_mise_task_command(&backend, &orchestrator, "//server:ci-unit");
 
         assert!(wrapped.contains("mise"), "{wrapped}");
         assert!(wrapped.contains("'run'"), "{wrapped}");
@@ -60684,15 +60745,14 @@ tasks:
             },
         );
 
-        let command =
-            super::prepare_task_shell_command(
-                None,
-                "setup:docker:images",
-                None,
-                &prepare,
-                &backend,
-            )
-                .unwrap();
+        let command = super::prepare_task_shell_command(
+            None,
+            "setup:docker:images",
+            None,
+            &prepare,
+            &backend,
+        )
+        .unwrap();
 
         assert_eq!(
             command,
@@ -60751,15 +60811,14 @@ tasks:
             },
         );
 
-        let command =
-            super::prepare_task_shell_command(
-                None,
-                "setup:docker:images",
-                None,
-                &prepare,
-                &backend,
-            )
-                .unwrap();
+        let command = super::prepare_task_shell_command(
+            None,
+            "setup:docker:images",
+            None,
+            &prepare,
+            &backend,
+        )
+        .unwrap();
 
         assert_eq!(
             command,

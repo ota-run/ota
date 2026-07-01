@@ -177,6 +177,10 @@ mod tests {
             json["image"].as_str(),
             Some("mcr.microsoft.com/devcontainers/python:1-3.12-bullseye")
         );
-        assert!(json["features"].get("ghcr.io/devcontainers/features/node:1").is_some());
+        assert!(
+            json["features"]
+                .get("ghcr.io/devcontainers/features/node:1")
+                .is_some()
+        );
     }
 }

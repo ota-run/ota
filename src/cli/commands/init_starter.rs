@@ -1385,23 +1385,44 @@ fn starter_agent_from_detected_contract(
     }
 
     let boundary = starter_agent_boundary_inference(contract, root);
-    starter_agent_config_from_parts(contract, root, safe_tasks, boundary)
+    let verify_after_changes = if let Some(agent) = contract.agent.as_ref()
+        && !agent.verify_after_changes.is_empty()
+    {
+        normalized_agent_list(&agent.verify_after_changes)
+    } else {
+        preferred_agent_verify_tasks(&safe_tasks)
+    };
+    starter_agent_config_from_parts(contract, root, safe_tasks, verify_after_changes, boundary)
 }
 
 fn starter_agent_from_detected_candidate(
     contract: &DetectContract,
     report: &DetectReport,
 ) -> Option<AgentConfig> {
-    let safe_tasks = starter_agent_safe_tasks(contract);
+    let safe_tasks = starter_agent_safe_tasks_from_detect_report(report);
     if safe_tasks.is_empty() {
         return None;
     }
 
-    let boundary = starter_agent_boundary_inference(contract, &report.root);
-    starter_agent_config_from_parts(contract, &report.root, safe_tasks, boundary)
+    let boundary = starter_agent_boundary_inference_for_detect_report(report);
+    let verify_after_changes =
+        starter_agent_verify_after_changes_from_detect_report(report, &safe_tasks);
+    starter_agent_config_from_parts(
+        contract,
+        &report.root,
+        safe_tasks,
+        verify_after_changes,
+        boundary,
+    )
 }
 
 fn starter_agent_safe_tasks(contract: &DetectContract) -> Vec<String> {
+    if let Some(agent) = contract.agent.as_ref()
+        && !agent.safe_tasks.is_empty()
+    {
+        return normalized_agent_list(&agent.safe_tasks);
+    }
+
     let mut safe_tasks = Vec::new();
     for task_name in ["test"] {
         if contract.tasks.contains_key(task_name) {
@@ -1439,7 +1460,7 @@ pub(super) struct StarterAgentBoundaryOutcome {
 pub(super) fn starter_agent_boundary_outcome_from_detect_report(
     report: &DetectReport,
 ) -> StarterAgentBoundaryOutcome {
-    let safe_tasks = starter_agent_safe_tasks(&report.contract);
+    let safe_tasks = starter_agent_safe_tasks_from_detect_report(report);
     let boundary = starter_agent_boundary_inference_for_detect_report(report);
     starter_agent_boundary_outcome_from_parts(safe_tasks, boundary)
 }
@@ -1476,6 +1497,7 @@ fn starter_agent_config_from_parts(
     contract: &DetectContract,
     _root: &Path,
     safe_tasks: Vec<String>,
+    verify_after_changes: Vec<String>,
     boundary: StarterAgentBoundaryInference,
 ) -> Option<AgentConfig> {
     let entrypoint = contract
@@ -1483,7 +1505,6 @@ fn starter_agent_config_from_parts(
         .contains_key("setup")
         .then(|| String::from("setup"));
     let default_task = preferred_agent_task(&safe_tasks);
-    let verify_after_changes = preferred_agent_verify_tasks(&safe_tasks);
 
     let mut notes = String::from(
         "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo.\nUse `ota validate` before changes and `ota doctor` after edits.\n",
@@ -1561,27 +1582,83 @@ fn starter_agent_boundary_inference(
 fn starter_agent_boundary_inference_for_detect_report(
     report: &DetectReport,
 ) -> StarterAgentBoundaryInference {
+    let explicit_writable_paths = detect_report_agent_list(report, "agent.writable_paths.");
+    let explicit_protected_paths = detect_report_agent_list(report, "agent.protected_paths.");
     let semantic_roots = starter_agent_semantic_roots_from_detect_report(report);
     let mut writable_provenance = BTreeSet::new();
     let mut protected_provenance = BTreeSet::new();
-    let writable_paths = starter_agent_writable_paths_with_semantic_roots(
-        &report.contract,
-        &report.root,
-        semantic_roots.as_slice(),
-        "detect",
-        &mut writable_provenance,
-    );
-    let protected_paths = starter_agent_protected_paths_for_detect_report(
-        report,
-        "detect",
-        &mut protected_provenance,
-    );
+    let writable_paths = if explicit_writable_paths.is_empty() {
+        starter_agent_writable_paths_with_semantic_roots(
+            &report.contract,
+            &report.root,
+            semantic_roots.as_slice(),
+            "detect",
+            &mut writable_provenance,
+        )
+    } else {
+        writable_provenance.insert(String::from("detect:agent_boundary_doc"));
+        explicit_writable_paths
+    };
+    let protected_paths = if explicit_protected_paths.is_empty() {
+        starter_agent_protected_paths_for_detect_report(report, "detect", &mut protected_provenance)
+    } else {
+        protected_provenance.insert(String::from("detect:agent_boundary_doc"));
+        explicit_protected_paths
+    };
     StarterAgentBoundaryInference {
         writable_paths,
         protected_paths,
         writable_provenance: writable_provenance.into_iter().collect(),
         protected_provenance: protected_provenance.into_iter().collect(),
     }
+}
+
+fn starter_agent_safe_tasks_from_detect_report(report: &DetectReport) -> Vec<String> {
+    let explicit = detect_report_agent_list(report, "agent.safe_tasks.");
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    starter_agent_safe_tasks(&report.contract)
+}
+
+fn starter_agent_verify_after_changes_from_detect_report(
+    report: &DetectReport,
+    safe_tasks: &[String],
+) -> Vec<String> {
+    let explicit = detect_report_agent_list(report, "agent.verify_after_changes.");
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    if let Some(agent) = report.contract.agent.as_ref()
+        && !agent.verify_after_changes.is_empty()
+    {
+        return normalized_agent_list(&agent.verify_after_changes);
+    }
+    preferred_agent_verify_tasks(safe_tasks)
+}
+
+fn detect_report_agent_list(report: &DetectReport, prefix: &str) -> Vec<String> {
+    let mut values = report
+        .inferences
+        .iter()
+        .filter(|inference| inference.field.starts_with(prefix))
+        .map(|inference| inference.value.clone())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn normalized_agent_list(values: &[String]) -> Vec<String> {
+    let mut values = values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
 }
 
 fn starter_agent_writable_paths_with_semantic_roots(
@@ -3489,6 +3566,61 @@ mod tests {
                 .as_deref(),
             Some("npm run check")
         );
+    }
+
+    #[test]
+    fn bootstrap_contract_prefers_explicit_agent_doc_boundary_truth() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "demo-node",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "eslint ."
+  }
+}"#,
+        )
+        .expect("write package.json");
+        std::fs::write(
+            fixture.path().join("AGENTS.md"),
+            r#"# Agent Guide
+
+- `safe_tasks`:
+  - `lint`
+- `verify_after_changes`:
+  - `lint`
+- `writable_paths`: `src`, `docs`
+- `protected_paths`: `.github/workflows`, `package.json`
+"#,
+        )
+        .expect("write AGENTS.md");
+
+        let report = crate::detector::detect_repo(fixture.path()).expect("detect report");
+        let contract = bootstrap_init_contract(&report);
+        let agent = contract.agent.as_ref().expect("agent");
+
+        assert_eq!(agent.safe_tasks, vec![String::from("lint")]);
+        assert_eq!(agent.verify_after_changes, vec![String::from("lint")]);
+        assert_eq!(
+            agent.writable_paths,
+            vec![String::from("docs"), String::from("src")]
+        );
+        assert_eq!(
+            agent.protected_paths,
+            vec![
+                String::from(".github/workflows"),
+                String::from("package.json")
+            ]
+        );
+        assert_eq!(
+            agent
+                .inferred_boundary
+                .as_ref()
+                .map(|boundary| boundary.provenance.writable_paths.clone()),
+            Some(vec![String::from("detect:agent_boundary_doc")])
+        );
+        assert_eq!(agent.default_task.as_deref(), Some("lint"));
     }
 
     #[test]

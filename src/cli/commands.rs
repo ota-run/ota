@@ -15897,7 +15897,13 @@ fn run_agent_execution_refusal(
         &refusal,
     );
     Some(RunCommandFailure {
-        message: render_agent_execution_refusal_text(contract_path, member, &receipt, &refusal, &command),
+        message: render_agent_execution_refusal_text(
+            contract_path,
+            member,
+            &receipt,
+            &refusal,
+            &command,
+        ),
         summary: None,
         exit_code: 1,
         receipt: None,
@@ -56696,7 +56702,10 @@ agent:
             stderr.contains("task `publish` is outside the declared agent-safe surface"),
             "{stderr}"
         );
-        assert!(stderr.contains("rerun `ota run publish --agent`"), "{stderr}");
+        assert!(
+            stderr.contains("rerun `ota run publish --agent`"),
+            "{stderr}"
+        );
         assert!(stderr.contains("ota tasks --safe --use"), "{stderr}");
     }
 

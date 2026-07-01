@@ -41,6 +41,7 @@ use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::agent_boundary_docs::parse_agent_boundary_doc;
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
     container_engine_candidates_from_backend, matching_declared_execution_context_name,
@@ -993,8 +994,11 @@ fn selected_remote_task_requirement_selection(
             &mut fallback
         };
         let context_name = task.context_for_backend(contract.execution.as_ref(), Backend::Remote);
-        let scoped_surface = contract
-            .resolved_task_requirement_surface_for_execution(task, Backend::Remote, context_name);
+        let scoped_surface = contract.resolved_task_requirement_surface_for_execution(
+            task,
+            Backend::Remote,
+            context_name,
+        );
         if !scoped_surface.runtimes.is_empty() {
             target.scoped_runtimes = true;
         }
@@ -12767,9 +12771,8 @@ fn detect_devcontainer_runtime_drift(
             if version_matches(&required, &hinted) {
                 continue;
             }
-            let summary = format!(
-                "Devcontainer drift: `{runtime_name}` feature differs from repo runtime"
-            );
+            let summary =
+                format!("Devcontainer drift: `{runtime_name}` feature differs from repo runtime");
             let why = format!(
                 "`{}` declares devcontainer feature `{runtime_name}` at version `{hinted}`, but the repo contract requires `{runtime_name}` version `{required}`",
                 compact_display_path(&devcontainer_path)
@@ -12796,9 +12799,8 @@ fn detect_devcontainer_runtime_drift(
                 continue;
             }
             let runtime_label = devcontainer_runtime_display_name(runtime_name);
-            let summary = format!(
-                "Devcontainer drift: {runtime_label} image differs from repo runtime"
-            );
+            let summary =
+                format!("Devcontainer drift: {runtime_label} image differs from repo runtime");
             let why = format!(
                 "`{}` declares image `{image}`, which hints {runtime_label} `{hinted}`, but the repo contract requires {runtime_label} version `{required}`",
                 compact_display_path(&devcontainer_path)
@@ -12849,8 +12851,13 @@ fn required_devcontainer_runtime(
         })
 }
 
-fn devcontainer_feature_runtime_version(devcontainer: &JsonValue, runtime_name: &str) -> Option<String> {
-    let features = devcontainer.get("features").and_then(JsonValue::as_object)?;
+fn devcontainer_feature_runtime_version(
+    devcontainer: &JsonValue,
+    runtime_name: &str,
+) -> Option<String> {
+    let features = devcontainer
+        .get("features")
+        .and_then(JsonValue::as_object)?;
     for (feature_ref, config) in features {
         if devcontainer_feature_runtime_name(feature_ref)? != runtime_name {
             continue;
@@ -12950,25 +12957,6 @@ fn devcontainer_image_tag_version_hint(tag: &str) -> Option<String> {
         .or_else(|| sequences.last().cloned())
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct ParsedAgentBoundaryDoc {
-    generated_by_ota: bool,
-    safe_tasks: Option<Vec<String>>,
-    verify_after_changes: Option<Vec<String>>,
-    writable_paths: Option<Vec<String>>,
-    protected_paths: Option<Vec<String>>,
-}
-
-impl ParsedAgentBoundaryDoc {
-    fn is_empty(&self) -> bool {
-        !self.generated_by_ota
-            && self.safe_tasks.is_none()
-            && self.verify_after_changes.is_none()
-            && self.writable_paths.is_none()
-            && self.protected_paths.is_none()
-    }
-}
-
 fn detect_agent_boundary_doc_drift(contract: &Contract, contract_path: &Path) -> Vec<Finding> {
     let Some(agent) = contract.agent.as_ref() else {
         return Vec::new();
@@ -13025,96 +13013,6 @@ fn detect_agent_boundary_doc_drift(contract: &Contract, contract_path: &Path) ->
     findings
 }
 
-fn parse_agent_boundary_doc(contents: &str) -> ParsedAgentBoundaryDoc {
-    let generated_by_ota = contents.contains("Generated from `") && contents.contains("` by `ota agents`.");
-    let parse_contents = if generated_by_ota {
-        contents
-            .rfind("# AGENTS.md")
-            .and_then(|index| contents.get(index..))
-            .unwrap_or(contents)
-    } else {
-        contents
-    };
-    let mut parsed = ParsedAgentBoundaryDoc {
-        generated_by_ota,
-        ..ParsedAgentBoundaryDoc::default()
-    };
-    let lines = parse_contents.lines().collect::<Vec<_>>();
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index].trim_end();
-        if let Some(label) = parse_agent_doc_list_label(line) {
-            let mut values = Vec::new();
-            index += 1;
-            while index < lines.len() {
-                let item_line = lines[index].trim_end();
-                if let Some(value) = parse_agent_doc_task_item(item_line) {
-                    values.push(value);
-                    index += 1;
-                } else {
-                    break;
-                }
-            }
-            assign_agent_doc_list_field(&mut parsed, label, values);
-            continue;
-        }
-        if let Some((label, values)) = parse_agent_doc_inline_list(line) {
-            assign_agent_doc_list_field(&mut parsed, label, values);
-        }
-        index += 1;
-    }
-    parsed
-}
-
-fn parse_agent_doc_list_label(line: &str) -> Option<&'static str> {
-    match line.trim() {
-        "- `safe_tasks`:" => Some("safe_tasks"),
-        "- `verify_after_changes`:" => Some("verify_after_changes"),
-        _ => None,
-    }
-}
-
-fn parse_agent_doc_task_item(line: &str) -> Option<String> {
-    let trimmed = line.trim_end();
-    let remainder = trimmed.strip_prefix("  - `")?;
-    let (value, _) = remainder.split_once('`')?;
-    Some(value.to_string())
-}
-
-fn parse_agent_doc_inline_list(line: &str) -> Option<(&'static str, Vec<String>)> {
-    let trimmed = line.trim();
-    let (label, remainder) = if let Some(remainder) = trimmed.strip_prefix("- `writable_paths`: ") {
-        ("writable_paths", remainder)
-    } else if let Some(remainder) = trimmed.strip_prefix("- `protected_paths`: ") {
-        ("protected_paths", remainder)
-    } else {
-        return None;
-    };
-
-    let values = remainder
-        .split(',')
-        .filter_map(|segment| {
-            let value = segment.trim().strip_prefix('`')?.strip_suffix('`')?;
-            (!value.is_empty()).then(|| value.to_string())
-        })
-        .collect::<Vec<_>>();
-    Some((label, values))
-}
-
-fn assign_agent_doc_list_field(
-    parsed: &mut ParsedAgentBoundaryDoc,
-    label: &str,
-    values: Vec<String>,
-) {
-    match label {
-        "safe_tasks" => parsed.safe_tasks = Some(values),
-        "verify_after_changes" => parsed.verify_after_changes = Some(values),
-        "writable_paths" => parsed.writable_paths = Some(values),
-        "protected_paths" => parsed.protected_paths = Some(values),
-        _ => {}
-    }
-}
-
 fn maybe_push_agent_boundary_list_drift(
     findings: &mut Vec<Finding>,
     path: &Path,
@@ -13158,7 +13056,10 @@ fn maybe_push_agent_boundary_list_drift(
 }
 
 fn agent_boundary_sync_command(path: &Path) -> String {
-    let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or("AGENTS.md");
+    let file_name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("AGENTS.md");
     if file_name == "AGENTS.md" {
         String::from("ota agents --write")
     } else {
@@ -13279,9 +13180,7 @@ fn detect_devcontainer_forward_port_drift(
         "contract",
         "repo_contract",
         FindingSeverity::Warn,
-        format!(
-            "Devcontainer drift: forwarded ports omit declared host port `{missing_port}`"
-        ),
+        format!("Devcontainer drift: forwarded ports omit declared host port `{missing_port}`"),
         format!(
             "`{}` forwards ports [{}], but the repo contract declares host-facing port `{missing_port}` for {owners}",
             compact_display_path(&devcontainer_path),
@@ -17207,8 +17106,11 @@ tasks:
         .unwrap();
 
         let task = contract.tasks.get("verify").expect("verify task");
-        let requirement_surface = contract
-            .resolved_task_requirement_surface_for_execution(task, crate::schema::Backend::Native, None);
+        let requirement_surface = contract.resolved_task_requirement_surface_for_execution(
+            task,
+            crate::schema::Backend::Native,
+            None,
+        );
         let actions = super::merged_provisioning_actions_for_requirement_surface(
             &contract,
             Vec::new(),

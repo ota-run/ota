@@ -192,7 +192,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -3498,10 +3498,11 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--json" | "--dry-run" | "--native" | "--container" | "--remote" | "--ephemeral"
-        | "--persistent" | "--skip-deps" | "--receipt" | "--stream" | "--log" | "--debug"
-        | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
+        "--agent" | "--json" | "--dry-run" | "--native" | "--container" | "--remote"
+        | "--ephemeral" | "--persistent" | "--skip-deps" | "--receipt" | "--stream" | "--log"
+        | "--debug" | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
             canonical: match name {
+                "--agent" => "agent",
                 "--json" => "json",
                 "--dry-run" => "dry-run",
                 "--native" | "--container" | "--remote" => "mode",
@@ -24890,6 +24891,22 @@ policies:
     }
 
     #[test]
+    fn run_agent_is_classified_as_repo_run_switch() {
+        let occurrence = super::parse_run_flag_occurrence(
+            &[OsString::from("--agent")],
+            0,
+            super::RunCommandKind::Repo,
+        )
+        .expect("agent should be classified");
+
+        assert_eq!(occurrence.canonical, "agent");
+        assert!(!occurrence.takes_value);
+        assert_eq!(occurrence.span, 1);
+        assert!(occurrence.valid_for_flag);
+        assert_eq!(super::run_command_value_span("--agent"), Some(1));
+    }
+
+    #[test]
     fn run_effect_override_is_classified_as_repo_run_value_flag() {
         let occurrence = super::parse_run_flag_occurrence(
             &[
@@ -30866,6 +30883,35 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("version.txt")).unwrap(),
             "0.1.3"
+        );
+    }
+
+    #[test]
+    fn run_agent_flag_after_task_is_not_rewritten_into_task_input() {
+        let _env_guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  publish:
+    run: echo publish
+agent:
+  safe_tasks: []
+"#,
+        );
+
+        let _guard = cwd_mutex_lock();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "publish", "--agent"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.contains("AGENT EXECUTION REFUSED"), "{stderr}");
+        assert!(
+            stderr.contains("task `publish` is outside the declared agent-safe surface"),
+            "{stderr}"
         );
     }
 

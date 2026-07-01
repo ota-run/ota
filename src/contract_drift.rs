@@ -83,8 +83,7 @@ pub(crate) fn append_contract_drift_findings(
     for change in detect_changes.iter().filter(|change| {
         should_surface_external_source_governance_drift(change)
             && change.source_class.as_deref() != Some("ci_verification")
-    })
-    {
+    }) {
         let existing = change.existing.as_deref().unwrap_or_default();
         let source = change.source.as_deref().unwrap_or_default();
         let (finding_id, summary, why, next) = if change.source_class.as_deref()
@@ -376,7 +375,8 @@ fn is_task_command_truth_field(field: &str) -> bool {
 }
 
 fn is_verification_task_truth_field(field: &str) -> bool {
-    field.strip_prefix("tasks.")
+    field
+        .strip_prefix("tasks.")
         .and_then(|value| value.strip_suffix(".run"))
         .is_some_and(is_verifier_task_name)
 }
@@ -388,7 +388,15 @@ fn is_verifier_task_name(name: &str) -> bool {
         .any(|token| {
             matches!(
                 token,
-                "test" | "tests" | "lint" | "typecheck" | "check" | "verify" | "fmt" | "format" | "ci"
+                "test"
+                    | "tests"
+                    | "lint"
+                    | "typecheck"
+                    | "check"
+                    | "verify"
+                    | "fmt"
+                    | "format"
+                    | "ci"
             )
         })
 }

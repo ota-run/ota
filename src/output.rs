@@ -3482,7 +3482,8 @@ impl<'a> TaskSummary<'a> {
         contract: &'a Contract,
         overrides: ExecutionOverrides,
     ) -> Self {
-        let task_safety = crate::cli::task_effective_safety_with_overrides(contract, name, overrides);
+        let task_safety =
+            crate::cli::task_effective_safety_with_overrides(contract, name, overrides);
         let effective = effective_task_execution(contract, name, overrides);
         let selected_backend = effective.backend;
         let resolved_execution = task
@@ -3667,8 +3668,11 @@ fn effective_task_launch_preview(
 ) -> Option<String> {
     let execution = task.resolved_execution_for_backend(backend, current_os)?;
     execution.launch()?;
-    orchestrator_execution_preview(contract, task_name, task, backend, current_os)
-        .or_else(|| execution.launch().map(crate::schema::TaskLaunchSpec::preview))
+    orchestrator_execution_preview(contract, task_name, task, backend, current_os).or_else(|| {
+        execution
+            .launch()
+            .map(crate::schema::TaskLaunchSpec::preview)
+    })
 }
 
 pub fn summarize_task_aggregate(
@@ -5467,7 +5471,9 @@ tasks:
         );
         assert_eq!(
             dev_summary.launch_preview,
-            Some(String::from("nix run github:cachix/devenv/main#devenv -- up"))
+            Some(String::from(
+                "nix run github:cachix/devenv/main#devenv -- up"
+            ))
         );
     }
 
