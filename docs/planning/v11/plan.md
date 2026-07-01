@@ -100,9 +100,9 @@ The next planned runner-enforcement slice after that is:
 
 - [V11.3: agent-scoped execution enforcement](../v11.3/plan.md)
 
-That slice closes the remaining gap between safe-task declaration and actual runtime control, so
-agent-safe truth becomes enforceable by the runner instead of staying only a governance and review
-surface.
+That slice closes the remaining gap between safe-task and workflow-closure declaration and actual
+runtime control, so agent-safe execution truth becomes enforceable by the runner instead of
+staying only a governance and review surface.
 
 ## Included capabilities
 

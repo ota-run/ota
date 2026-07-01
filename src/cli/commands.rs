@@ -13502,13 +13502,9 @@ struct TasksListFilters {
 fn task_is_effectively_safe(
     contract: &Contract,
     task_name: &str,
-    task: &crate::schema::TaskSpec,
+    _task: &crate::schema::TaskSpec,
 ) -> bool {
-    task.safe_for_agent
-        || contract
-            .agent
-            .as_ref()
-            .is_some_and(|agent| agent.safe_tasks.iter().any(|name| name == task_name))
+    task_effective_safety(contract, task_name).effective_safe
 }
 
 fn task_supports_backend(
@@ -15481,7 +15477,7 @@ fn run_preview_preconditions_report(
     report
 }
 
-fn task_is_agent_safe(contract: &Contract, task_name: &str) -> bool {
+fn task_is_declared_agent_safe(contract: &Contract, task_name: &str) -> bool {
     contract
         .tasks
         .get(task_name)
@@ -15492,8 +15488,94 @@ fn task_is_agent_safe(contract: &Contract, task_name: &str) -> bool {
             .is_some_and(|agent| agent.safe_tasks.iter().any(|safe| safe == task_name))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskEffectiveSafety {
+    pub declared_safe: bool,
+    pub effective_safe: bool,
+    pub unsafe_closure_tasks: Vec<String>,
+}
+
+fn collect_reachable_task_names_for_visibility(
+    contract: &Contract,
+    root_task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Vec<String> {
+    let mut ordered = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![(root_task_name.to_string(), overrides)];
+    while let Some((task_name, current_overrides)) = stack.pop() {
+        let backend = effective_task_execution(contract, task_name.as_str(), current_overrides).backend;
+        if !visited.insert((task_name.clone(), format_backend(backend).to_string())) {
+            continue;
+        }
+        ordered.push(task_name.clone());
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        for dependency in task.aggregate.iter().flat_map(|aggregate| aggregate.tasks.iter()) {
+            if contract.tasks.contains_key(dependency) {
+                stack.push((dependency.clone(), ExecutionOverrides::default()));
+            }
+        }
+        for dependency in task.depends_on_for_backend(backend) {
+            let Some(dependency_task) = contract.tasks.get(dependency) else {
+                continue;
+            };
+            stack.push((
+                dependency.clone(),
+                ExecutionOverrides {
+                    backend: dependency_task
+                        .dependency_backend_override_for_parent(current_overrides.backend, backend),
+                    ..current_overrides
+                },
+            ));
+        }
+        for hook in task
+            .after_success
+            .iter()
+            .chain(task.after_failure.iter())
+            .chain(task.after_always.iter())
+        {
+            if contract.tasks.contains_key(hook) {
+                stack.push((hook.clone(), ExecutionOverrides::default()));
+            }
+        }
+    }
+    ordered
+}
+
+pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> TaskEffectiveSafety {
+    task_effective_safety_with_overrides(contract, task_name, ExecutionOverrides::default())
+}
+
+pub(crate) fn task_effective_safety_with_overrides(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> TaskEffectiveSafety {
+    let declared_safe = task_is_declared_agent_safe(contract, task_name);
+    if !declared_safe {
+        return TaskEffectiveSafety {
+            declared_safe,
+            effective_safe: false,
+            unsafe_closure_tasks: Vec::new(),
+        };
+    }
+
+    let unsafe_closure_tasks = collect_reachable_task_names_for_visibility(contract, task_name, overrides)
+        .into_iter()
+        .filter(|reachable| !task_is_declared_agent_safe(contract, reachable))
+        .collect::<Vec<_>>();
+
+    TaskEffectiveSafety {
+        declared_safe,
+        effective_safe: unsafe_closure_tasks.is_empty(),
+        unsafe_closure_tasks,
+    }
+}
+
 fn task_effect_governance_scope(contract: &Contract, task_name: &str) -> EffectGovernanceScope {
-    if task_is_agent_safe(contract, task_name) {
+    if task_is_declared_agent_safe(contract, task_name) {
         EffectGovernanceScope::SafeTask
     } else {
         EffectGovernanceScope::Task
@@ -39977,7 +40059,21 @@ fn render_tasks_text(
             paint_key("Safe For Agent:"),
             if task.safe_for_agent { "true" } else { "false" }
         ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Effective Safe For Agent:"),
+            if task.effective_safe_for_agent {
+                "true"
+            } else {
+                "false"
+            }
+        ));
         push_rendered_field(&mut output, "Effects:", render_non_placeholder(&effects));
+        push_rendered_field(
+            &mut output,
+            "Closure Blockers:",
+            render_joined_or_none(&task.unsafe_closure_tasks),
+        );
         push_rendered_field(
             &mut output,
             "Mode Branches:",
@@ -40114,7 +40210,25 @@ fn render_task_safety_posture_text(task: &TaskSummary<'_>) -> String {
         ));
     }
 
-    if task.safe_for_agent {
+    if task.safe_for_agent && !task.effective_safe_for_agent {
+        let blockers = if task.unsafe_closure_tasks.is_empty() {
+            String::from("review-required dependency closure")
+        } else {
+            format!(
+                "review-required closure via `{}`",
+                task.unsafe_closure_tasks.join("`, `")
+            )
+        };
+        if signals.is_empty() {
+            format!("declared agent-safe lane with {blockers}")
+        } else {
+            format!(
+                "declared agent-safe lane with {}; {}",
+                signals.join("; "),
+                blockers
+            )
+        }
+    } else if task.effective_safe_for_agent {
         if signals.is_empty() {
             String::from("agent-safe routine repo-scoped lane")
         } else {
@@ -40347,12 +40461,17 @@ fn run_preview_governance_summary(
     task: &TaskSummary<'_>,
 ) -> crate::output::RunPreviewGovernanceSummary {
     crate::output::RunPreviewGovernanceSummary {
-        safety_posture: if task.safe_for_agent {
+        safety_posture: if task.safe_for_agent && !task.effective_safe_for_agent {
+            String::from("declared_safe_closure_unsafe")
+        } else if task.effective_safe_for_agent {
             String::from("agent_safe")
         } else {
             String::from("review_required")
         },
-        review_required: !task.safe_for_agent,
+        review_required: !task.effective_safe_for_agent,
+        declared_safe_for_agent: task.safe_for_agent,
+        effective_safe_for_agent: task.effective_safe_for_agent,
+        unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
         default_mode: render_task_default_mode(task).to_string(),
         runnable_modes: run_preview_runnable_modes(task),
         network: task.effects.network,
@@ -40895,7 +41014,21 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_key("Safe For Agent:"),
             if task.safe_for_agent { "true" } else { "false" }
         ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Effective Safe For Agent:"),
+            if task.effective_safe_for_agent {
+                "true"
+            } else {
+                "false"
+            }
+        ));
         push_rendered_field(&mut output, "Safety Posture:", Some(safety_posture));
+        push_rendered_field(
+            &mut output,
+            "Closure Blockers:",
+            render_joined_or_none(&task.unsafe_closure_tasks),
+        );
         push_rendered_field(&mut output, "Effects:", render_non_placeholder(&effects));
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
@@ -41101,7 +41234,10 @@ fn render_tasks_overview_text(
     _agent: Option<&AgentSummary<'_>>,
     tasks: &[TaskSummary<'_>],
 ) -> String {
-    let safe_count = tasks.iter().filter(|task| task.safe_for_agent).count();
+    let safe_count = tasks
+        .iter()
+        .filter(|task| task.effective_safe_for_agent)
+        .count();
     let mut lines = vec![paint_section_title("Overview")];
     lines.push(format!(
         " {}  {} {}",
@@ -52599,6 +52735,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: true,
+            effective_safe_for_agent: true,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -52677,6 +52815,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: true,
+            effective_safe_for_agent: true,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -52764,6 +52904,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: vec![crate::output::TaskModeView {
@@ -52796,6 +52938,10 @@ tasks:
             "{rendered}"
         );
         assert!(
+            rendered.contains("Effective Safe For Agent: false"),
+            "{rendered}"
+        );
+        assert!(
             rendered.contains(
                 "Safety Posture: review-required lane with live or staging integration test; external state `staging_api`"
             ),
@@ -52807,6 +52953,68 @@ tasks:
         );
         assert!(
             rendered.contains("Runnable Modes:\n    default (container): `ota run verify:live`\n    native: `ota run verify:live --mode native`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_use_text_surfaces_declared_safe_but_closure_unsafe() {
+        let task = TaskSummary {
+            name: "verify",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Run the verification entrypoint"),
+            notes: None,
+            category: Some("test"),
+            preview: String::from("cargo test"),
+            launch_preview: None,
+            env: BTreeMap::new(),
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: BTreeMap::new(),
+            kind: "command",
+            run: None,
+            script: None,
+            command: Some(crate::output::TaskCommandSummary {
+                exe: "cargo",
+                args: vec!["test"],
+                cwd: None,
+            }),
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: None,
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: vec![String::from("setup")],
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: true,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: vec![String::from("setup")],
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
+
+        assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
+        assert!(
+            rendered.contains("Effective Safe For Agent: false"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Closure Blockers: setup"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "Safety Posture: declared agent-safe lane with review-required closure via `setup`"
+            ),
             "{rendered}"
         );
     }
@@ -52849,6 +53057,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: true,
+            effective_safe_for_agent: true,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -52921,6 +53131,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: true,
+            effective_safe_for_agent: true,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53046,6 +53258,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: true,
+            effective_safe_for_agent: true,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53176,6 +53390,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53251,6 +53467,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53311,6 +53529,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53395,6 +53615,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53470,6 +53692,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53559,6 +53783,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53648,6 +53874,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53724,6 +53952,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53801,6 +54031,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53878,6 +54110,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -53948,6 +54182,8 @@ tasks:
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
@@ -54298,6 +54534,8 @@ workflows:
                 after_failure: Vec::new(),
                 after_always: Vec::new(),
                 safe_for_agent: true,
+                effective_safe_for_agent: true,
+                unsafe_closure_tasks: Vec::new(),
                 internal: false,
                 variants: Vec::new(),
                 modes: Vec::new(),
@@ -54388,6 +54626,8 @@ workflows:
                 after_failure: Vec::new(),
                 after_always: Vec::new(),
                 safe_for_agent: true,
+                effective_safe_for_agent: true,
+                unsafe_closure_tasks: Vec::new(),
                 internal: false,
                 variants: Vec::new(),
                 modes: Vec::new(),
@@ -56662,6 +56902,127 @@ tasks:
             json["governance"]["runnable_modes"][1]["command"],
             "ota run verify:live --mode native"
         );
+    }
+
+    #[test]
+    fn run_dry_run_json_surfaces_declared_safe_but_closure_unsafe() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    run: cargo test
+    safe_for_agent: true
+    depends_on:
+      - setup
+  setup:
+    run: cargo fetch
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(
+            json["governance"]["safety_posture"],
+            "declared_safe_closure_unsafe"
+        );
+        assert_eq!(json["governance"]["declared_safe_for_agent"], true);
+        assert_eq!(json["governance"]["effective_safe_for_agent"], false);
+        assert_eq!(json["governance"]["review_required"], true);
+        assert_eq!(json["governance"]["unsafe_closure_tasks"][0], "setup");
+        assert_eq!(json["requested_task"]["safe_for_agent"], true);
+        assert_eq!(json["requested_task"]["effective_safe_for_agent"], false);
+        assert_eq!(json["requested_task"]["unsafe_closure_tasks"][0], "setup");
+    }
+
+    #[test]
+    fn run_dry_run_json_uses_selected_mode_for_closure_safety() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  verify:
+    run: cargo test
+    safe_for_agent: true
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          run: cargo test
+        native:
+          context: host
+          run: cargo test
+          depends_on:
+            - setup
+  setup:
+    run: cargo fetch
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["governance"]["safety_posture"], "agent_safe");
+        assert_eq!(json["governance"]["effective_safe_for_agent"], true);
+        assert!(json["governance"]["unsafe_closure_tasks"].as_array().is_none_or(|items| items.is_empty()));
+        assert_eq!(json["resolved"]["backend"], "container");
     }
 
     #[test]

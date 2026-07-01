@@ -1219,8 +1219,8 @@ Current behavior:
 - repo-level `--json` currently requires `--dry-run`, so the machine-readable run surface is
   `ota run <task> --dry-run --json`
 - preview JSON includes additive `governance`, a compact selected-lane summary with
-  `safety_posture`, `review_required`, effective `default_mode`, runnable mode commands, selected
-  effect surface, and the next durable receipt command
+  `safety_posture`, `review_required`, closure-aware effective safety, effective `default_mode`,
+  runnable mode commands, selected effect surface, and the next durable receipt command
 - preview JSON includes additive `plan.dependency_steps[]`, so automation can inspect each planned
   task step's selected backend, context, parent task, and backend-selection source instead of
   inferring dependency-plane inheritance from the task names alone

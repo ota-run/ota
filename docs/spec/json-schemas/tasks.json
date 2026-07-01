@@ -390,7 +390,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "kind", "depends_on", "safe_for_agent"],
+            "required": ["name", "kind", "depends_on", "safe_for_agent", "effective_safe_for_agent"],
             "properties": {
               "name": { "type": "string" },
               "description": { "type": "string" },
@@ -446,6 +446,11 @@
                 "items": { "type": "string" }
               },
               "safe_for_agent": { "type": "boolean" },
+              "effective_safe_for_agent": { "type": "boolean" },
+              "unsafe_closure_tasks": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
               "internal": { "type": "boolean" },
               "variants": {
                 "type": "array",
@@ -545,7 +550,7 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["name", "kind", "depends_on", "safe_for_agent"],
+                  "required": ["name", "kind", "depends_on", "safe_for_agent", "effective_safe_for_agent"],
                   "properties": {
                     "name": { "type": "string" },
                     "description": { "type": "string" },
@@ -601,6 +606,11 @@
                       "items": { "type": "string" }
                     },
                     "safe_for_agent": { "type": "boolean" },
+                    "effective_safe_for_agent": { "type": "boolean" },
+                    "unsafe_closure_tasks": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
                     "internal": { "type": "boolean" },
                     "variants": {
                       "type": "array",

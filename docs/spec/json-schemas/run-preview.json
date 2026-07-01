@@ -131,13 +131,22 @@
       "required": [
         "safety_posture",
         "review_required",
+        "effective_safe_for_agent",
         "default_mode",
         "network",
         "receipt_follow_up_command"
       ],
       "properties": {
-        "safety_posture": { "enum": ["agent_safe", "review_required"] },
+        "safety_posture": {
+          "enum": ["agent_safe", "declared_safe_closure_unsafe", "review_required"]
+        },
         "review_required": { "type": "boolean" },
+        "declared_safe_for_agent": { "type": "boolean" },
+        "effective_safe_for_agent": { "type": "boolean" },
+        "unsafe_closure_tasks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "default_mode": { "type": "string" },
         "runnable_modes": {
           "type": "array",

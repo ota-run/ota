@@ -111,7 +111,7 @@ V11.3 is planned.
 - use V11.2 as the repo-truth convergence foundation before later execution-surface widening such
   as container-backed hydration and deterministic bootstrap materialization
 - make V11.3 agent-scoped execution enforcement the next runner slice after V11.2 so safe-task
-  truth becomes a real runtime boundary instead of review-only governance
+  and workflow-closure truth become real runtime boundaries instead of review-only governance
 
 ## Archived V2 shape
 

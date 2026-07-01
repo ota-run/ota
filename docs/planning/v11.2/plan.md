@@ -109,7 +109,8 @@ V11.2 is the slice for defining that posture formally.
 ## Included capabilities
 
 - one canonical product principle for source convergence
-- a governance model for external source classes, precedence, provenance, confidence, and drift
+- a governance model for external source classes, field-family precedence, provenance, confidence,
+  and drift
 - exact command-surface expectations for detect, init, doctor, and compare-first review
 - a disciplined widening roadmap for high-value external source families
 - explicit conflict handling rules for detect/init/doctor surfaces
@@ -171,22 +172,52 @@ Example mappings:
 
 ### 2. Authority and precedence
 
-Ota should rank sources by product role, not by accidental popularity.
+Ota should rank sources by product role and target field family, not by accidental popularity.
 
-Recommended precedence:
+There should not be one flat precedence ladder for every field.
+The mature model is:
 
-1. declared Ota contract truth in `ota.yaml`
-2. explicit Ota workspace truth in `ota.workspace.yaml`
-3. direct ecosystem execution/config sources
-4. CI workflow sources
-5. human instruction sources such as `AGENTS.md` / `CLAUDE.md`
-6. weak indirect heuristics
+- canonical Ota contract truth stays first where it already exists
+- workspace truth stays first for workspace/bootstrap-owned fields
+- external source ranking is then scoped by field family
+
+Recommended field-family precedence direction:
+
+1. environment/toolchain fields
+   - `ota.yaml`
+   - `ota.workspace.yaml` where workspace-owned
+   - direct environment/toolchain sources such as `.devcontainer`, `devbox.json`, `mise.toml`,
+     `devenv.nix`
+   - CI only as secondary corroboration
+   - human instruction sources last
+2. task/command fields
+   - `ota.yaml`
+   - direct task runner / executable config sources such as `Taskfile.yml`, `justfile`,
+     `package.json`
+   - CI as evidence of enforced lanes, not automatically canonical local task truth
+   - human instruction sources last
+3. CI/verification fields
+   - `ota.yaml`
+   - CI workflow sources as the strongest external evidence
+   - task-runner sources as supporting evidence
+   - human instruction sources last
+4. runtime/service fields
+   - `ota.yaml`
+   - direct runtime/service-owning sources such as `.devcontainer`, `devenv.nix`, compose-like
+     config where applicable
+   - CI as proof/supporting evidence
+   - human instruction sources last
+5. agent-boundary fields
+   - `ota.yaml`
+   - external agent-boundary docs only as guidance evidence
+   - weak heuristics last
 
 Meaning:
 
 - declared Ota contract beats inferred ecosystem truth
-- ecosystem config beats guesswork
-- CI is evidence of what the repo verifies, not automatically the canonical local contract
+- stronger external evidence depends on what field family is being inferred
+- CI is often the strongest external evidence for enforced verification lanes, but not
+  automatically the canonical local contract for every other field
 - agent docs are guidance evidence, not execution truth by themselves
 
 Two important boundaries follow from this:
@@ -195,6 +226,8 @@ Two important boundaries follow from this:
   silently replace it
 - `ota.workspace.yaml` stays authoritative for multi-repo topology and acquisition truth; repo-local
   source widening must not backdoor workspace bootstrap ownership
+- source precedence must be published per field family so detect/init/doctor do not silently
+  mis-rank truth across toolchain, task, CI, runtime, and agent-boundary lanes
 
 ### 3. Provenance and confidence
 
@@ -395,11 +428,23 @@ Primary candidates:
 - `AGENTS.md`
 - `CLAUDE.md`
 
+These files need one explicit exclusion rule:
+
+- detect must not re-import agent docs that Ota itself generated or synchronized from contract
+  truth as if they were independent external evidence
+
 Questions to extract:
 
 - what writable/protected path boundaries are declared
 - what verification or stop/review guidance is explicit
 - where prose instruction drifts from contract truth
+
+Required governance behavior:
+
+- self-origin Ota-generated or Ota-synchronized agent docs should be tagged and excluded from
+  independent source promotion
+- when agent docs are external/manual, they remain low-authority guidance evidence rather than
+  canonical execution truth
 
 ## Source-family admission bar
 

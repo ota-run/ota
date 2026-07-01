@@ -139,9 +139,13 @@ What is still too weak is the visible explanation of safety:
 
 - why a task is safe
 - why a task is not safe
-- whether the blocker is external effects, setup mutation, proof incompleteness, or boundary drift
+- whether the blocker is external effects, setup mutation, proof incompleteness, boundary drift,
+  or unsafe dependency/workflow closure
 
 V11.1 should make the safety posture legible in `tasks`, dry-run, and doctor-adjacent flows.
+That safety posture must already be closure-aware even before V11.3 runner enforcement exists.
+V11.1 should not publish a misleading top-level `safe` label when the reachable execution closure
+is unsafe.
 
 ### 3. Verification and proof stages are still too easy to infer instead of see
 
@@ -151,7 +155,7 @@ Ota already runs meaningful stages:
 - setup
 - verification
 - runtime proof
-- receipt/archive
+- receipt/archive emission as evidence
 
 What is still too weak is publishing those stages as the execution-governance story instead of
 leaving operators to infer them from logs and summaries.
@@ -206,10 +210,17 @@ Design bar:
 
 Widen the human and JSON surfaces for:
 
-- safe task posture
+- effective safe task posture
 - unsafe reason categories
 - review-required stop signals
 - selected execution boundary implications
+
+That means:
+
+- visible safety should reflect the reachable task/workflow closure, not only the requested
+  top-level task label
+- V11.1 may publish `declared safe` versus `effective closure unsafe` distinctions before V11.3
+  later turns that truth into runner-enforced refusal
 
 Likely command surfaces:
 
@@ -228,12 +239,14 @@ Expected stage families:
 - setup
 - verify
 - proof
-- receipt
+
+Receipt is not an execution phase.
+It is the evidence artifact emitted after or about the execution/proof path.
 
 This should appear in:
 
 - human summaries where useful
-- execution receipts
+- execution receipts as evidence about those stages
 - machine-readable progress and/or summary JSON
 
 ### 4. Unified machine-readable governance story
@@ -263,6 +276,7 @@ V11.1 should make Ota better at answering these directly:
 - What did Ota actually execute?
 - What verification stage am I looking at?
 - Is this lane safe for routine agent use?
+- Is the top-level task declared safe but blocked by an unsafe dependency closure?
 - What proof artifact should I inspect next?
 - Did this run stop at setup, verification, proof, or readiness?
 - What machine-readable artifact should CI keep to prove what happened?
@@ -300,6 +314,7 @@ Every pressure repo used for this slice should prove:
 
 - normal execution surfaces point operators clearly to the right receipt/proof artifact
 - task and workflow safety posture is visible and understandable without reading the contract first
+- visible safety posture is closure-aware and does not overclaim top-level safety
 - staged verification and proof phases are visible in execution-governance output
 - CI and agents can consume the governance story without stitching together unrelated heuristics
 - public docs and examples make execution governance concrete within the first few operator steps

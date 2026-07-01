@@ -773,6 +773,11 @@ pub struct ArtifactRoute {
 pub struct RunPreviewGovernanceSummary {
     pub safety_posture: String,
     pub review_required: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declared_safe_for_agent: bool,
+    pub effective_safe_for_agent: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unsafe_closure_tasks: Vec<String>,
     pub default_mode: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub runnable_modes: Vec<RunPreviewRunnableMode>,
@@ -3344,6 +3349,9 @@ pub struct TaskSummary<'a> {
     pub after_failure: Vec<String>,
     pub after_always: Vec<String>,
     pub safe_for_agent: bool,
+    pub effective_safe_for_agent: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unsafe_closure_tasks: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub internal: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3474,6 +3482,7 @@ impl<'a> TaskSummary<'a> {
         contract: &'a Contract,
         overrides: ExecutionOverrides,
     ) -> Self {
+        let task_safety = crate::cli::task_effective_safety_with_overrides(contract, name, overrides);
         let effective = effective_task_execution(contract, name, overrides);
         let selected_backend = effective.backend;
         let resolved_execution = task
@@ -3530,7 +3539,9 @@ impl<'a> TaskSummary<'a> {
             after_success: task.after_success.clone(),
             after_failure: task.after_failure.clone(),
             after_always: task.after_always.clone(),
-            safe_for_agent: task.safe_for_agent,
+            safe_for_agent: task_safety.declared_safe,
+            effective_safe_for_agent: task_safety.effective_safe,
+            unsafe_closure_tasks: task_safety.unsafe_closure_tasks,
             internal: task.internal,
             variants: task
                 .variants

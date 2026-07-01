@@ -69,6 +69,7 @@ That means:
 What this does not mean:
 
 - turning all human `ota run` usage into deny-by-default immediately
+- turning all human `ota up` usage into deny-by-default immediately
 - asking external agent wrappers to remember the safe list on Ota’s behalf
 - treating `ota tasks --safe` visibility as equivalent to runtime enforcement
 
@@ -83,6 +84,8 @@ Ota is already stronger than prose-only guidance because it is contract-bound:
 But one important trust gap still remains:
 
 - an agent-scoped caller can still request a declared task that is outside the safe set
+- an agent-scoped caller can still execute workflow/task closure through `ota up` without the same
+  safe boundary
 
 That means the current model is:
 
@@ -98,12 +101,13 @@ path.
 ## Included capabilities
 
 - an explicit agent-enforced execution mode for `ota run`
+- an explicit agent-enforced execution mode for `ota up`
 - deny-before-execution behavior when the requested task is outside the effective safe set
 - closure enforcement so safe top-level tasks cannot reach unsafe dependency paths
+- closure enforcement so workflow-selected setup/run/verify paths cannot reach unsafe task closure
 - structured machine-readable refusal output
+- explicit receipt/outcome semantics for refused execution
 - policy alignment so agent safety can become runtime truth, not only review-time governance
-- receipts and execution summaries that clearly distinguish refused execution from attempted
-  execution
 
 ## Non-goals
 
@@ -141,7 +145,36 @@ The maturity bar is:
 
 - effective safe execution means the reachable execution graph is safe
 
-### 3. Policy is stronger as runtime truth than review-only truth
+### 3. Workflow execution is still a hole if only direct task runs are enforced
+
+If `ota run --agent` is enforced but `ota up` can still execute workflow-selected task closure
+without the same boundary, the product story stays split-brain.
+
+The maturity bar is:
+
+- agent-scoped execution means both direct task execution and workflow-driven execution respect the
+  same safe closure model
+
+### 4. Refusal evidence must be explicit, not implied
+
+This slice is trust-sensitive.
+
+It is not enough to say that summaries and receipts should distinguish refusal from attempted
+execution.
+
+V11.3 must define that refusal is:
+
+- a first-class execution outcome
+- emitted by the harness/runner
+- machine-readable as a dedicated refusal kind
+
+The maturity bar is:
+
+- no silent drop
+- no ambiguous generic failure
+- no agent-authored narration standing in for refusal evidence
+
+### 5. Policy is stronger as runtime truth than review-only truth
 
 `require_safe_tasks` is already meaningful governance, but it is still weaker than it should be if
 it only affects authoring/review and not execution behavior.
@@ -165,7 +198,22 @@ The important part is:
 - the mode must be machine-selectable
 - the mode must be enforceable in the runner before task execution begins
 
-### 2. Effective safe-set resolution
+### 2. Explicit agent-enforced workflow mode
+
+Add the same first-class enforcement posture to workflow execution.
+
+Shape direction:
+
+- `ota up --agent`
+
+The important part is not the exact flag spelling.
+The important part is:
+
+- workflow-driven execution must not remain a hole
+- setup/run/verify task closure selected by `ota up` must use the same safe enforcement model
+- the mode must be machine-selectable and enforceable before execution starts
+
+### 3. Effective safe-set resolution
 
 Define one canonical effective safe set from:
 
@@ -174,7 +222,10 @@ Define one canonical effective safe set from:
 
 The runner should evaluate the requested task against that effective safe set before execution.
 
-### 3. Dependency-closure enforcement
+No new contract shape is required first.
+V11.3 should reuse the existing task-safety truth before inventing a new surface.
+
+### 4. Dependency-closure enforcement
 
 If the requested task is safe but any reachable dependency path is not safe, deny execution in
 agent-enforced mode.
@@ -184,30 +235,50 @@ This should apply to:
 - direct `depends_on`
 - aggregate child-task membership
 - execution-plan selected task closures where applicable
+- workflow-selected setup/run/verify task closures
 
-### 4. Structured refusal output
+### 5. Structured refusal outcome and receipt semantics
 
-When Ota refuses a task in agent-enforced mode, it should emit:
+When Ota refuses execution in agent-enforced mode, refusal should not be an absence of evidence.
 
-- requested task
-- effective safe set
-- blocked task or blocked dependency path
-- clear next step
+The mature shape is:
 
-Machine output should let a harness distinguish:
+- a normal harness-authored execution artifact with refusal outcome
+- no task/workflow side effects started
+- machine-readable refusal kind and reason
 
-- task not declared
-- task declared but not safe
-- task safe but dependency closure unsafe
+Direction:
 
-### 5. Policy/runtime alignment
+- refusal emits a normal execution/receipt surface with `status: refused`
+- refusal kind is explicit, for example `agent_execution_refused`
+- refusal reason is explicit, for example:
+  - `requested_task_not_safe`
+  - `unsafe_dependency_closure`
+  - `unsafe_workflow_closure`
+
+Required fields should include:
+
+- requested task or requested workflow
+- blocked task
+- dependency/workflow path
+- next step
+
+This keeps trust clean:
+
+- the harness records that execution was requested
+- the harness records that policy/boundary stopped it
+- the harness does not pretend execution happened
+- the agent does not author its own evidence
+
+### 6. Policy/runtime alignment
 
 V11.3 should also make policy truth more operationally honest.
 
 Direction:
 
 - `require_safe_tasks` should align with runner behavior in agent-enforced execution
-- policy should be able to tighten or require that mode in governed contexts later
+- policy should be able to require agent-enforced mode in governed contexts later
+- policy should be able to validate unsafe workflow closure, not only direct task requests
 
 This slice does not need to solve every future policy mode.
 It should establish the runner-owned enforcement surface first.
@@ -228,6 +299,20 @@ Outside that lane:
 
 - current human operator behavior remains unchanged in this slice
 
+### `ota up`
+
+V11.3 should widen `ota up` with the same explicit agent-scoped enforcement lane.
+
+In that lane:
+
+- workflow-selected task closure is resolved before execution starts
+- unsafe workflow closure is refused
+- refusal happens before setup/run side effects begin
+
+Outside that lane:
+
+- current human operator behavior remains unchanged in this slice
+
 ### `ota tasks`
 
 `ota tasks --safe --use` remains the discoverability surface.
@@ -236,7 +321,8 @@ V11.3 should not pretend that discoverability equals enforcement.
 It should make the relationship explicit:
 
 - `ota tasks --safe` shows the intended safe surface
-- agent-enforced `ota run` enforces it
+- agent-enforced `ota run` enforces it for direct task execution
+- agent-enforced `ota up` enforces it for workflow-driven execution
 
 ### `ota doctor`
 
@@ -256,23 +342,27 @@ It is done when real repos prove:
 - safe tasks run normally in agent-enforced mode
 - unsafe declared tasks are refused clearly
 - safe tasks with unsafe dependency closure are refused clearly
-- receipts and summaries distinguish refusal from execution failure
+- unsafe workflow closures are refused clearly
+- receipts and summaries distinguish refusal from execution failure explicitly
 - human `ota run` behavior is unchanged outside agent-enforced mode
+- human `ota up` behavior is unchanged outside agent-enforced mode
 
 Pressure repos should include:
 
 - a repo with explicit `agent.safe_tasks`
 - a repo using `safe_for_agent: true`
 - a repo where a nominally safe task reaches an unsafe dependency path
+- a repo where `ota up` selects workflow task closure that reaches an unsafe path
 
 ## Acceptance bar
 
 V11.3 is complete when all of the following are true:
 
 - safe-task truth is enforceable at runtime for agent-scoped execution
+- both `ota run` and `ota up` use the same agent-scoped enforcement model
 - enforcement happens before execution side effects begin
 - dependency closure safety is enforced, not only top-level task safety
-- refusal output is structured and machine-usable
+- refusal output/receipt semantics are explicit, structured, and machine-usable
 - policy and runner semantics no longer drift on what safe-task truth means
 - real pressure repos prove the surface honestly
 

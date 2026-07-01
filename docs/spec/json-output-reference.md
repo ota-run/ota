@@ -1710,7 +1710,8 @@ Success:
       },
       "depends_on": [],
       "requires_services": ["postgres"],
-      "safe_for_agent": false
+      "safe_for_agent": false,
+      "effective_safe_for_agent": false
     },
     {
       "name": "test",
@@ -1721,7 +1722,8 @@ Success:
       },
       "depends_on": ["setup"],
       "requires_services": [],
-      "safe_for_agent": true
+      "safe_for_agent": true,
+      "effective_safe_for_agent": true
     }
   ]
 }
@@ -1764,7 +1766,8 @@ Root monorepo summary output can also include grouped member results:
           },
           "depends_on": [],
           "requires_services": ["postgres"],
-          "safe_for_agent": false
+          "safe_for_agent": false,
+          "effective_safe_for_agent": false
         }
       ]
     }
@@ -2192,7 +2195,8 @@ selected safety posture from `requested_task`, effect declarations, and mode bra
     "after_success": [],
     "after_failure": [],
     "after_always": [],
-    "safe_for_agent": false
+    "safe_for_agent": false,
+    "effective_safe_for_agent": false
   },
   "requested_context": "host",
   "selected_context": "host",
@@ -2234,6 +2238,7 @@ selected safety posture from `requested_task`, effect declarations, and mode bra
   "governance": {
     "safety_posture": "review_required",
     "review_required": true,
+    "effective_safe_for_agent": false,
     "default_mode": "native",
     "runnable_modes": [
       {
@@ -2268,8 +2273,13 @@ Use this when a human or agent needs the selected run plan before execution:
 - `selected_context` is the resolved execution context ota will apply for this preview
 - `env_summary`, `sources`, and `env` show the selected env state and blockers
 - `governance` is the compact CI/agent-friendly summary for the selected lane:
-  `safety_posture`, `review_required`, effective `default_mode`, runnable mode commands, selected
-  effect surface, and the next durable receipt command
+  `safety_posture`, `review_required`, closure-aware effective safety, effective `default_mode`,
+  runnable mode commands, selected effect surface, and the next durable receipt command
+- `requested_task.safe_for_agent` is the declared contract safe membership, while
+  `requested_task.effective_safe_for_agent` reflects whether the reachable dependency/workflow
+  closure remains agent-safe
+- `governance.safety_posture` may be `declared_safe_closure_unsafe` when the top-level task is
+  declared safe but reaches review-required closure
 - `artifact_routing[]` is the additive artifact guide for this selected lane; it points to the
   next receipt/proof artifact or capture command using typed `role`, `kind`, and `stage_family`
 - `toolchains[]` keeps toolchain-owned capabilities on the toolchain instead of duplicating them as

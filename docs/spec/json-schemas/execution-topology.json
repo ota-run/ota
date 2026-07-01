@@ -6,7 +6,7 @@
     "task": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "kind", "depends_on", "requires_services", "after_success", "after_failure", "after_always", "safe_for_agent"],
+      "required": ["name", "kind", "depends_on", "requires_services", "after_success", "after_failure", "after_always", "safe_for_agent", "effective_safe_for_agent"],
       "properties": {
         "name": { "type": "string" },
         "context": { "type": "string" },
@@ -29,6 +29,11 @@
         "after_failure": { "type": "array", "items": { "type": "string" } },
         "after_always": { "type": "array", "items": { "type": "string" } },
         "safe_for_agent": { "type": "boolean" },
+        "effective_safe_for_agent": { "type": "boolean" },
+        "unsafe_closure_tasks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "internal": { "type": "boolean" },
         "variants": {
           "type": "array",
