@@ -13038,31 +13038,42 @@ fn detect_devcontainer_package_manager_drift(
 
     let contents = fs::read_to_string(&devcontainer_path).ok()?;
     let devcontainer: JsonValue = serde_json::from_str(&contents).ok()?;
-    let post_create = devcontainer
-        .get("postCreateCommand")
-        .and_then(JsonValue::as_str)?;
-    let actual_manager = command_package_manager_token(post_create)?;
-    if actual_manager == expected_manager {
-        return None;
+    for command_field in ["postCreateCommand", "updateContentCommand"] {
+        let Some(command_value) = devcontainer.get(command_field) else {
+            continue;
+        };
+        for (source, command) in devcontainer_command_entries(command_field, command_value) {
+            let Some(actual_manager) = command_package_manager_token(command) else {
+                continue;
+            };
+            if actual_manager == expected_manager {
+                continue;
+            }
+
+            return Some(Finding::identified(
+                "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT",
+                "contract",
+                "repo_contract",
+                FindingSeverity::Warn,
+                format!(
+                    "Devcontainer drift: bootstrap command uses `{actual_manager}` instead of repo package manager `{expected_manager}`"
+                ),
+                format!(
+                    "`{}` declares `{}` as `{}`, but the repo contract's Node package manager truth is `{expected_manager}`",
+                    compact_display_path(&devcontainer_path),
+                    source.rsplit('#').next().unwrap_or(command_field),
+                    command
+                ),
+                format!(
+                    "update `{}` so `{}` uses `{expected_manager}`, or narrow the repo contract if a different package manager is intentionally canonical",
+                    compact_display_path(&devcontainer_path),
+                    source.rsplit('#').next().unwrap_or(command_field)
+                ),
+            ));
+        }
     }
 
-    Some(Finding::identified(
-        "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT",
-        "contract",
-        "repo_contract",
-        FindingSeverity::Warn,
-        format!(
-            "Devcontainer drift: bootstrap command uses `{actual_manager}` instead of repo package manager `{expected_manager}`"
-        ),
-        format!(
-            "`{}` declares `postCreateCommand: {post_create}`, but the repo contract's Node package manager truth is `{expected_manager}`",
-            compact_display_path(&devcontainer_path)
-        ),
-        format!(
-            "update `{}` so `postCreateCommand` uses `{expected_manager}`, or narrow the repo contract if a different package manager is intentionally canonical",
-            compact_display_path(&devcontainer_path)
-        ),
-    ))
+    None
 }
 
 fn repo_node_package_manager_truth(contract: &Contract) -> Option<&str> {
@@ -13133,6 +13144,42 @@ fn command_package_manager_token(command: &str) -> Option<&'static str> {
     matches.sort_unstable();
     matches.dedup();
     (matches.len() == 1).then(|| matches[0])
+}
+
+fn devcontainer_command_entries<'a>(
+    command_field: &'a str,
+    value: &'a JsonValue,
+) -> Vec<(String, &'a str)> {
+    match value {
+        JsonValue::String(command) => vec![(
+            format!(".devcontainer/devcontainer.json#{command_field}"),
+            command.as_str(),
+        )],
+        JsonValue::Object(entries) => entries
+            .iter()
+            .filter_map(|(name, command)| {
+                command.as_str().map(|value| {
+                    (
+                        format!(".devcontainer/devcontainer.json#{command_field}.{name}"),
+                        value,
+                    )
+                })
+            })
+            .collect(),
+        JsonValue::Array(entries) => entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| {
+                command.as_str().map(|value| {
+                    (
+                        format!(".devcontainer/devcontainer.json#{command_field}[{index}]"),
+                        value,
+                    )
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn extract_version_token(output: &str) -> Option<String> {

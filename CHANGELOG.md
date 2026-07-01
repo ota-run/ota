@@ -60,6 +60,9 @@
   high-confidence runtime/tool presence from known devcontainer features such as `node`, `python`,
   `go`, `github-cli`, and `kubectl-helm-minikube`, instead of only reading simple string command
   fields
+- widened the matching doctor-side devcontainer package-manager drift lane so review pressure now
+  understands object/array `postCreateCommand` and `updateContentCommand` forms too, instead of
+  silently missing real drift once detect had already widened past string-only bootstrap commands
 - widened `ota detect` again across the next V11.2 source families so `devbox.json` now
   contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
   `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without
