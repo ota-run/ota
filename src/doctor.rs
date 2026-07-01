@@ -12738,26 +12738,6 @@ fn detect_devcontainer_runtime_drift(
     requirement_surface: &RequirementSurface,
 ) -> Option<Finding> {
     let current_os = current_host_platform();
-    let required = requirement_surface
-        .runtimes
-        .get("node")
-        .filter(|requirement| requirement.required_for_os(current_os))
-        .map(|requirement| requirement.version_for_os(current_os).to_string())
-        .or_else(|| {
-            contract
-                .runtimes
-                .get("node")
-                .filter(|requirement| requirement.required_for_os(current_os))
-                .map(|requirement| requirement.version_for_os(current_os).to_string())
-        })
-        .or_else(|| {
-            contract
-                .toolchains
-                .get("node")
-                .filter(|toolchain| toolchain.required_for_os(current_os))
-                .map(|toolchain| toolchain.version_for_os(current_os).to_string())
-        })?;
-
     let root = contract_working_dir(contract_path);
     let devcontainer_path = root.join(".devcontainer").join("devcontainer.json");
     if !devcontainer_path.exists() {
@@ -12766,27 +12746,127 @@ fn detect_devcontainer_runtime_drift(
 
     let contents = fs::read_to_string(&devcontainer_path).ok()?;
     let devcontainer: JsonValue = serde_json::from_str(&contents).ok()?;
-    let image = devcontainer.get("image").and_then(JsonValue::as_str)?;
-    let hinted_node = devcontainer_node_image_version(image)?;
-    if version_matches(&required, &hinted_node) {
-        return None;
+
+    if let Some(required_node) =
+        required_devcontainer_runtime(contract, requirement_surface, "node", current_os)
+    {
+        if let Some(image) = devcontainer.get("image").and_then(JsonValue::as_str)
+            && let Some(hinted_node) = devcontainer_node_image_version(image)
+        {
+            if !version_matches(&required_node, &hinted_node) {
+                return Some(Finding::identified(
+                    "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+                    "contract",
+                    "repo_contract",
+                    FindingSeverity::Warn,
+                    "Devcontainer drift: Node image differs from repo runtime",
+                    format!(
+                        "`{}` declares image `{image}`, which hints Node `{hinted_node}`, but the repo contract requires Node version `{required_node}`",
+                        compact_display_path(&devcontainer_path)
+                    ),
+                    format!(
+                        "update `{}` to a Node image satisfying `{required_node}`, or narrow the repo contract if the devcontainer is intentionally legacy",
+                        compact_display_path(&devcontainer_path)
+                    ),
+                ));
+            }
+        }
     }
 
-    Some(Finding::identified(
-        "OTA_DEVCONTAINER_RUNTIME_DRIFT",
-        "contract",
-        "repo_contract",
-        FindingSeverity::Warn,
-        "Devcontainer drift: Node image differs from repo runtime",
-        format!(
-            "`{}` declares image `{image}`, which hints Node `{hinted_node}`, but the repo contract requires Node version `{required}`",
+    for runtime_name in ["node", "python", "go"] {
+        let Some(required) =
+            required_devcontainer_runtime(contract, requirement_surface, runtime_name, current_os)
+        else {
+            continue;
+        };
+        let Some(hinted) = devcontainer_feature_runtime_version(&devcontainer, runtime_name) else {
+            continue;
+        };
+        if version_matches(&required, &hinted) {
+            continue;
+        }
+        let summary = format!(
+            "Devcontainer drift: `{runtime_name}` feature differs from repo runtime"
+        );
+        let why = format!(
+            "`{}` declares devcontainer feature `{runtime_name}` at version `{hinted}`, but the repo contract requires `{runtime_name}` version `{required}`",
             compact_display_path(&devcontainer_path)
-        ),
-        format!(
-            "update `{}` to a Node image satisfying `{required}`, or narrow the repo contract if the devcontainer is intentionally legacy",
+        );
+        let next = format!(
+            "update `{}` so devcontainer feature `{runtime_name}` satisfies `{required}`, or narrow the repo contract if the devcontainer is intentionally legacy",
             compact_display_path(&devcontainer_path)
-        ),
-    ))
+        );
+        return Some(Finding::identified(
+            "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            summary,
+            why,
+            next,
+        ));
+    }
+
+    None
+}
+
+fn required_devcontainer_runtime(
+    contract: &Contract,
+    requirement_surface: &RequirementSurface,
+    runtime_name: &str,
+    current_os: &'static str,
+) -> Option<String> {
+    requirement_surface
+        .runtimes
+        .get(runtime_name)
+        .filter(|requirement| requirement.required_for_os(current_os))
+        .map(|requirement| requirement.version_for_os(current_os).to_string())
+        .or_else(|| {
+            contract
+                .runtimes
+                .get(runtime_name)
+                .filter(|requirement| requirement.required_for_os(current_os))
+                .map(|requirement| requirement.version_for_os(current_os).to_string())
+        })
+        .or_else(|| {
+            contract
+                .toolchains
+                .get(runtime_name)
+                .filter(|toolchain| toolchain.required_for_os(current_os))
+                .map(|toolchain| toolchain.version_for_os(current_os).to_string())
+        })
+}
+
+fn devcontainer_feature_runtime_version(devcontainer: &JsonValue, runtime_name: &str) -> Option<String> {
+    let features = devcontainer.get("features").and_then(JsonValue::as_object)?;
+    for (feature_ref, config) in features {
+        if devcontainer_feature_runtime_name(feature_ref)? != runtime_name {
+            continue;
+        }
+        let version = config
+            .get("version")
+            .and_then(JsonValue::as_str)
+            .or_else(|| config.as_str())
+            .map(|value| value.trim().trim_start_matches('v').to_string())
+            .filter(|value| !value.is_empty() && value != "latest" && value != "none")
+            .unwrap_or_else(|| String::from("*"));
+        return Some(version);
+    }
+    None
+}
+
+fn devcontainer_feature_runtime_name(feature_ref: &str) -> Option<&'static str> {
+    let normalized = feature_ref.to_ascii_lowercase();
+    if normalized.contains("/features/node:") {
+        return Some("node");
+    }
+    if normalized.contains("/features/python:") {
+        return Some("python");
+    }
+    if normalized.contains("/features/go:") {
+        return Some("go");
+    }
+    None
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

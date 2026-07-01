@@ -63,6 +63,9 @@
 - widened the matching doctor-side devcontainer package-manager drift lane so review pressure now
   understands object/array `postCreateCommand` and `updateContentCommand` forms too, instead of
   silently missing real drift once detect had already widened past string-only bootstrap commands
+- widened the matching doctor-side devcontainer runtime drift lane so Ota now reports
+  feature-backed runtime drift for known devcontainer runtime features (`node`, `python`, `go`)
+  instead of only seeing Node image-based devcontainer drift
 - widened `ota detect` again across the next V11.2 source families so `devbox.json` now
   contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
   `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without
