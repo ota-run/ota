@@ -359,17 +359,19 @@ fn collect_ci_verification_aggregate_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationAggregateChange> {
+    let mut seen_detected_tasks = BTreeSet::new();
     let detected_tasks = signals
         .iter()
         .filter_map(|signal| verification_task_name_from_field(&signal.field))
         .filter(|task_name| is_verifier_task_name(task_name))
-        .collect::<BTreeSet<_>>();
+        .filter(|task_name| seen_detected_tasks.insert(*task_name))
+        .collect::<Vec<_>>();
 
     if detected_tasks.is_empty() {
         return Vec::new();
     }
 
-    let detected_rendered = render_string_set(&detected_tasks);
+    let detected_rendered = render_string_list(&detected_tasks);
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
         let Some(aggregate) = task.aggregate.as_ref() else {
@@ -389,7 +391,7 @@ fn collect_ci_verification_aggregate_changes(
             .tasks
             .iter()
             .map(String::as_str)
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
         if existing_tasks == detected_tasks {
             continue;
         }
@@ -498,8 +500,8 @@ fn verification_task_name_from_field(field: &str) -> Option<&str> {
         .and_then(|value| value.strip_suffix(".run"))
 }
 
-fn render_string_set(values: &BTreeSet<&str>) -> String {
-    values.iter().copied().collect::<Vec<_>>().join(", ")
+fn render_string_list(values: &[&str]) -> String {
+    values.join(", ")
 }
 
 fn detect_change_ownership(existing: Option<&str>) -> String {

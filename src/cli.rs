@@ -24052,6 +24052,69 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_aggregate_verification_order_drift_from_ci_workflow_verification_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint
+      - run: npm run test
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:
+    run: npm run lint
+  test:
+    run: npm run test
+  verify:
+    aggregate:
+      tasks:
+        - test
+        - lint
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "CI verification drift: `tasks.verify.aggregate.tasks` differs from enforced workflow verification set"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("`tasks.verify.aggregate.tasks` = `test, lint`")
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("currently detects verifier tasks `lint, test`")
+                }),
+            "expected a CI workflow aggregate verification order drift warning"
+        );
+    }
+
+    #[test]
     fn doctor_reports_agents_md_safe_task_drift_from_contract() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
