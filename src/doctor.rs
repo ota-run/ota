@@ -2682,6 +2682,7 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_DEVCONTAINER_RUNTIME_DRIFT"
         | "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT"
         | "OTA_DEVCONTAINER_FORWARD_PORT_DRIFT"
+        | "OTA_CI_VERIFICATION_REMOVED"
         | "OTA_CONTRACT_DRIFT"
         | "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING"
         | "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED"
@@ -24489,6 +24490,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_DEVCONTAINER_FORWARD_PORT_DRIFT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CI_VERIFICATION_REMOVED",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",

@@ -23641,7 +23641,7 @@ tasks:
     }
 
     #[test]
-    fn doctor_reports_manual_task_drift_from_high_confidence_taskfile_source() {
+    fn doctor_does_not_report_task_drift_for_thin_taskfile_wrapper() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("Taskfile.yml"),
@@ -23673,30 +23673,69 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert!(
-            json["findings"]
+            !json["findings"]
                 .as_array()
                 .expect("findings array")
                 .iter()
                 .any(|finding| {
                     finding["summary"].as_str().unwrap_or_default()
                         == "External source drift: `tasks.test.run` differs from high-confidence repo source"
-                        && finding["why"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .contains("Taskfile.yml#tasks.test")
                 }),
-            "expected a Taskfile task governance drift warning"
+            "did not expect a Taskfile task governance drift warning for a thin wrapper"
         );
     }
 
     #[test]
-    fn doctor_reports_manual_task_drift_from_high_confidence_justfile_source() {
+    fn doctor_does_not_report_task_drift_for_thin_justfile_wrapper() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("justfile"),
             r#"
 test:
   cargo test
+"#,
+        )
+        .expect("write justfile");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            !json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "External source drift: `tasks.test.run` differs from high-confidence repo source"
+                }),
+            "did not expect a justfile task governance drift warning for a thin wrapper"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_manual_task_drift_from_richer_justfile_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("justfile"),
+            r#"
+test:
+  cargo test
+  cargo fmt --check
 "#,
         )
         .expect("write justfile");
@@ -23731,7 +23770,7 @@ tasks:
                             .unwrap_or_default()
                             .contains("justfile#test")
                 }),
-            "expected a justfile task governance drift warning"
+            "expected a justfile task governance drift warning for a richer wrapper"
         );
     }
 
@@ -23783,6 +23822,112 @@ tasks:
                             .contains(".github/workflows/ci.yml#jobs.verify.steps[0].run")
                 }),
             "expected a CI workflow task governance drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_command_task_drift_from_ci_workflow_verification_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    command:
+      exe: npm
+      args:
+        - run
+        - integration
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "CI verification drift: `tasks.test.run` differs from enforced workflow lane"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("`ota.yaml` still declares `tasks.test.run` = `npm run integration`")
+                }),
+            "expected a CI workflow task governance drift warning for command tasks"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_removed_manual_task_from_ci_workflow_verification_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:unit
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:coverage:
+    run: npm run test:coverage
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "CI verification drift: `tasks.test:coverage.run` is no longer detected from enforced workflow verification"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("current detected verifier tasks: tasks.test:unit.run")
+                }),
+            "expected a CI workflow verification removal drift warning"
         );
     }
 

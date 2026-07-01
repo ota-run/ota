@@ -89,6 +89,13 @@
   verifier task truth from explicit GitHub Actions `run:` lanes and warns when manual
   `tasks.*.run` verification entries diverge from enforced workflow verification, while keeping
   CI below direct repo execution sources in precedence
+- widened that same CI/workflow governance lane again so doctor now also warns when a manual
+  verifier task is no longer detected from enforced GitHub Actions verification truth, closing
+  the silent rename/removal case where workflow verification changed lanes without touching the
+  contract task name
+- tightened Taskfile/justfile detection so thin single-command wrappers now recover the underlying
+  direct task command instead of surfacing weaker `task <name>` / `just <name>` drift against an
+  already-canonical contract lane
 - widened V11.2 agent-boundary governance so `ota doctor` now detects structured `AGENTS.md` /
   `CLAUDE.md` drift for agent-boundary fields such as `safe_tasks`, `verify_after_changes`,
   `writable_paths`, and `protected_paths`, without pretending free-form prose is structured truth

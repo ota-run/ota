@@ -118,6 +118,13 @@ impl fmt::Display for InferenceFieldType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiVerificationTaskSignal {
+    pub field: String,
+    pub command: String,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InferenceSignal {
@@ -1131,11 +1138,15 @@ fn detect_taskfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
     );
 
     if let Some(tasks) = taskfile.get("tasks").and_then(YamlValue::as_mapping) {
-        for name in tasks.keys().filter_map(YamlValue::as_str) {
+        for (name, task) in tasks.iter().filter_map(|(name, task)| {
+            Some((name.as_str()?, task))
+        }) {
             if is_promotable_task_runner_task_name(name) {
+                let command = infer_taskfile_task_command(task)
+                    .unwrap_or_else(|| format!("task {name}"));
                 builder.set_task(
                     name.to_string(),
-                    format!("task {name}"),
+                    command,
                     format!("{source}#tasks.{name}"),
                     Confidence::High,
                 );
@@ -1161,11 +1172,13 @@ fn detect_justfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
         Confidence::High,
     );
 
-    for name in extract_justfile_recipe_names(&contents) {
+    for (name, body) in extract_justfile_recipes(&contents) {
         if is_promotable_task_runner_task_name(&name) {
+            let command = infer_justfile_recipe_command(&body)
+                .unwrap_or_else(|| format!("just {name}"));
             builder.set_task(
                 name.clone(),
-                format!("just {name}"),
+                command,
                 format!("justfile#{name}"),
                 Confidence::High,
             );
@@ -1179,9 +1192,29 @@ fn detect_github_actions_workflows(
     root: &Path,
     builder: &mut DetectBuilder,
 ) -> Result<(), DetectError> {
+    for signal in collect_github_actions_verification_tasks(root)? {
+        let task_name = signal
+            .field
+            .strip_prefix("tasks.")
+            .and_then(|value| value.strip_suffix(".run"))
+            .expect("ci verification field uses task run path");
+        builder.set_task(
+            task_name.to_string(),
+            signal.command,
+            signal.source,
+            Confidence::Medium,
+        );
+    }
+
+    Ok(())
+}
+
+pub(crate) fn collect_github_actions_verification_tasks(
+    root: &Path,
+) -> Result<Vec<CiVerificationTaskSignal>, DetectError> {
     let workflows_dir = root.join(".github").join("workflows");
     if !workflows_dir.exists() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let mut workflow_files = fs::read_dir(&workflows_dir)
@@ -1200,6 +1233,7 @@ fn detect_github_actions_workflows(
         .collect::<Vec<_>>();
     workflow_files.sort();
 
+    let mut tasks = Vec::new();
     for workflow_path in workflow_files {
         let contents = read_file(&workflow_path)?;
         let workflow: YamlValue =
@@ -1228,18 +1262,17 @@ fn detect_github_actions_workflows(
                     continue;
                 };
                 for (task_name, command) in infer_ci_verification_tasks(run) {
-                    builder.set_task(
-                        task_name,
+                    tasks.push(CiVerificationTaskSignal {
+                        field: format!("tasks.{task_name}.run"),
                         command,
-                        format!("{workflow_source}#jobs.{job_name}.steps[{step_index}].run"),
-                        Confidence::Medium,
-                    );
+                        source: format!("{workflow_source}#jobs.{job_name}.steps[{step_index}].run"),
+                    });
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(tasks)
 }
 
 fn is_promotable_task_runner_task_name(name: &str) -> bool {
@@ -1250,9 +1283,36 @@ fn is_promotable_task_runner_task_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':'))
 }
 
-fn extract_justfile_recipe_names(contents: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    for raw_line in contents.lines() {
+fn infer_taskfile_task_command(task: &YamlValue) -> Option<String> {
+    let mapping = task.as_mapping()?;
+    if mapping.contains_key(YamlValue::String(String::from("deps"))) {
+        return None;
+    }
+
+    let cmds = mapping
+        .get(YamlValue::String(String::from("cmds")))?
+        .as_sequence()?;
+    if cmds.len() != 1 {
+        return None;
+    }
+
+    normalize_detected_wrapper_command(match &cmds[0] {
+        YamlValue::String(command) => Some(command.clone()),
+        YamlValue::Mapping(mapping) => mapping
+            .get(YamlValue::String(String::from("cmd")))
+            .and_then(YamlValue::as_str)
+            .map(String::from),
+        _ => None,
+    }?)
+}
+
+fn extract_justfile_recipes(contents: &str) -> Vec<(String, Vec<String>)> {
+    let lines = contents.lines().collect::<Vec<_>>();
+    let mut recipes = Vec::new();
+    let mut index = 0usize;
+
+    while index < lines.len() {
+        let raw_line = lines[index];
         let line = raw_line.trim_end();
         if line.is_empty()
             || line.starts_with('#')
@@ -1263,26 +1323,76 @@ fn extract_justfile_recipe_names(contents: &str) -> Vec<String> {
             || line.starts_with("export ")
             || raw_line.starts_with(char::is_whitespace)
         {
+            index += 1;
             continue;
         }
 
         let Some((head, _)) = line.split_once(':') else {
+            index += 1;
             continue;
         };
         let candidate = head.trim();
         if candidate.is_empty() || candidate.contains(' ') || candidate.contains('=') {
+            index += 1;
             continue;
         }
 
         let name = candidate.trim_start_matches('@');
-        if name.starts_with('_') {
+        if name.starts_with('_') || !is_promotable_task_runner_task_name(name) {
+            index += 1;
             continue;
         }
-        if is_promotable_task_runner_task_name(name) {
-            names.push(name.to_string());
+
+        let mut body = Vec::new();
+        index += 1;
+        while index < lines.len() {
+            let next_raw = lines[index];
+            if next_raw.trim().is_empty() {
+                index += 1;
+                continue;
+            }
+            if !next_raw.starts_with(char::is_whitespace) {
+                break;
+            }
+
+            let trimmed = next_raw.trim();
+            if !trimmed.starts_with('#') {
+                body.push(String::from(trimmed));
+            }
+            index += 1;
         }
+
+        recipes.push((name.to_string(), body));
     }
-    names
+
+    recipes
+}
+
+fn infer_justfile_recipe_command(body: &[String]) -> Option<String> {
+    if body.len() != 1 {
+        return None;
+    }
+
+    let command = body[0].trim_start_matches('@').trim();
+    if command.is_empty() || command.starts_with("#!") {
+        return None;
+    }
+
+    normalize_detected_wrapper_command(String::from(command))
+}
+
+fn normalize_detected_wrapper_command(command: String) -> Option<String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("{{")
+        || trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains(';')
+    {
+        return None;
+    }
+
+    Some(trimmed.to_string())
 }
 
 fn infer_ci_verification_tasks(run: &str) -> Vec<(String, String)> {
@@ -1305,7 +1415,7 @@ fn infer_ci_verification_tasks(run: &str) -> Vec<(String, String)> {
     tasks
 }
 
-fn infer_ci_verification_task_line(line: &str) -> Option<(String, String)> {
+pub(crate) fn infer_ci_verification_task_line(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
     let normalized = trimmed
         .strip_prefix("corepack ")
@@ -9250,11 +9360,11 @@ tasks:
         assert_eq!(report.contract.tools.get("task"), Some(&String::from("*")));
         assert_eq!(
             report.contract.tasks.get("test").map(|task| task.run.as_str()),
-            Some("task test")
+            Some("cargo test")
         );
         assert_eq!(
             report.contract.tasks.get("lint").map(|task| task.run.as_str()),
-            Some("task lint")
+            Some("cargo clippy")
         );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "tasks.test.run"
@@ -9262,6 +9372,30 @@ tasks:
                 && inference.source_class == InferenceSourceClass::TaskCommand
                 && inference.confidence == Confidence::High
         }));
+    }
+
+    #[test]
+    fn detects_taskfile_task_runner_fallback_for_richer_tasks() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Taskfile.yml",
+            r#"
+version: "3"
+tasks:
+  test:
+    deps:
+      - setup
+    cmds:
+      - cargo test
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("task test")
+        );
     }
 
     #[test]
@@ -9291,15 +9425,15 @@ _private:
         assert_eq!(report.contract.tools.get("just"), Some(&String::from("*")));
         assert_eq!(
             report.contract.tasks.get("test").map(|task| task.run.as_str()),
-            Some("just test")
+            Some("cargo test")
         );
         assert_eq!(
             report.contract.tasks.get("lint").map(|task| task.run.as_str()),
-            Some("just lint")
+            Some("cargo clippy")
         );
         assert_eq!(
             report.contract.tasks.get("fmt").map(|task| task.run.as_str()),
-            Some("just fmt")
+            Some("cargo fmt")
         );
         assert!(
             !report.contract.tasks.contains_key("_private"),
@@ -9311,6 +9445,26 @@ _private:
                 && inference.source_class == InferenceSourceClass::TaskCommand
                 && inference.confidence == Confidence::High
         }));
+    }
+
+    #[test]
+    fn detects_justfile_runner_fallback_for_richer_recipes() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "justfile",
+            r#"
+test:
+  cargo test
+  cargo fmt --check
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("just test")
+        );
     }
 
     #[test]

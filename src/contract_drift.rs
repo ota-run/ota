@@ -25,7 +25,10 @@ use std::path::Path;
 
 use serde_yaml::{Mapping, Value as YamlValue};
 
-use crate::detector::{Confidence, DetectService, Inference, detect_repo};
+use crate::detector::{
+    CiVerificationTaskSignal, Confidence, DetectService, Inference,
+    collect_github_actions_verification_tasks, detect_repo, infer_ci_verification_task_line,
+};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
 use crate::schema::{Backend, Contract, ServiceSpec, ToolchainFulfillmentMode, ToolchainProvider};
@@ -77,9 +80,10 @@ pub(crate) fn append_contract_drift_findings(
         ));
     }
 
-    for change in detect_changes
-        .iter()
-        .filter(|change| should_surface_external_source_governance_drift(change))
+    for change in detect_changes.iter().filter(|change| {
+        should_surface_external_source_governance_drift(change)
+            && change.source_class.as_deref() != Some("ci_verification")
+    })
     {
         let existing = change.existing.as_deref().unwrap_or_default();
         let source = change.source.as_deref().unwrap_or_default();
@@ -133,6 +137,49 @@ pub(crate) fn append_contract_drift_findings(
         ));
     }
 
+    if let Ok(ci_signals) = collect_github_actions_verification_tasks(root) {
+        for change in collect_ci_verification_governance_changes(contract, &ci_signals) {
+            let (code, summary, why) = match change.kind {
+                CiVerificationGovernanceChangeKind::Update => (
+                    "OTA_CI_VERIFICATION_DRIFT",
+                    format!(
+                        "CI verification drift: `{}` differs from enforced workflow lane",
+                        change.field
+                    ),
+                    format!(
+                        "`ota.yaml` still declares `{}` = `{}`, but workflow verification in `{}` runs `{}`",
+                        change.field, change.existing, change.source, change.detected
+                    ),
+                ),
+                CiVerificationGovernanceChangeKind::Removed => (
+                    "OTA_CI_VERIFICATION_REMOVED",
+                    format!(
+                        "CI verification drift: `{}` is no longer detected from enforced workflow verification",
+                        change.field
+                    ),
+                    format!(
+                        "`ota.yaml` still declares `{}` = `{}`, but workflow verification under `.github/workflows/` no longer detects that verifier lane; current detected verifier tasks: {}",
+                        change.field, change.existing, change.detected
+                    ),
+                ),
+            };
+            findings.push(Finding::identified(
+                code,
+                "contract",
+                "repo_contract",
+                FindingSeverity::Warn,
+                summary,
+                why,
+                format!(
+                    "review whether workflow verification or `{}` is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    change.field,
+                    compact_display_path(root),
+                    compact_display_path(root)
+                ),
+            ));
+        }
+    }
+
     for removal in collect_detect_drift_removals(contract, &detect_report.contract) {
         findings.push(Finding::identified(
             "OTA_CONTRACT_DRIFT",
@@ -182,6 +229,93 @@ fn should_surface_external_source_governance_drift(change: &DetectComparisonChan
                 change.confidence,
             )
         })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CiVerificationGovernanceChangeKind {
+    Update,
+    Removed,
+}
+
+struct CiVerificationGovernanceChange {
+    field: String,
+    existing: String,
+    detected: String,
+    source: String,
+    kind: CiVerificationGovernanceChangeKind,
+}
+
+fn collect_ci_verification_governance_changes(
+    existing: &Contract,
+    signals: &[CiVerificationTaskSignal],
+) -> Vec<CiVerificationGovernanceChange> {
+    let ci_tasks = signals
+        .iter()
+        .filter(|signal| {
+            is_task_command_truth_field(&signal.field)
+                && is_verification_task_truth_field(&signal.field)
+        })
+        .map(|signal| {
+            (
+                signal.field.clone(),
+                (signal.command.clone(), signal.source.clone()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    if ci_tasks.is_empty() {
+        return Vec::new();
+    }
+
+    let detected_rendered = ci_tasks
+        .iter()
+        .map(|(field, _)| field.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut changes = Vec::new();
+    for (task_name, task) in &existing.tasks {
+        let field = format!("tasks.{task_name}.run");
+        let Some(existing_command) = existing_task_detectable_command_truth(task) else {
+            continue;
+        };
+        let owner_kind = detect_existing_field_owner_kind(existing, &field);
+        if owner_kind != DETECT_OWNER_KIND_MANUAL || !is_verification_task_truth_field(&field) {
+            continue;
+        }
+
+        if let Some((detected_command, source)) = ci_tasks.get(&field) {
+            if detected_command != &existing_command {
+                changes.push(CiVerificationGovernanceChange {
+                    field,
+                    existing: existing_command,
+                    detected: detected_command.clone(),
+                    source: source.clone(),
+                    kind: CiVerificationGovernanceChangeKind::Update,
+                });
+            }
+            continue;
+        }
+
+        if infer_ci_verification_task_line(existing_command.as_str())
+            .is_some_and(|(inferred, _)| inferred == *task_name)
+        {
+            changes.push(CiVerificationGovernanceChange {
+                field,
+                existing: existing_command,
+                detected: detected_rendered.clone(),
+                source: String::from(".github/workflows/"),
+                kind: CiVerificationGovernanceChangeKind::Removed,
+            });
+        }
+    }
+
+    changes
+}
+
+fn existing_task_detectable_command_truth(task: &crate::schema::TaskSpec) -> Option<String> {
+    let execution = task.resolved_execution(current_os())?;
+    matches!(execution.kind, "run" | "script" | "command").then(|| execution.preview())
 }
 
 fn matches_governed_external_source(
@@ -553,20 +687,16 @@ pub(crate) fn collect_detect_changes(
     }
 
     for (name, task) in &detected.tasks {
-        let existing_value =
-            existing
-                .tasks
-                .get(name)
-                .and_then(|task| match task.default_execution_kind() {
-                    Some("run") => task.default_execution_body(),
-                    _ => None,
-                });
+        let existing_value = existing
+            .tasks
+            .get(name)
+            .and_then(existing_task_detectable_command_truth);
         push_detect_change(
             &mut changes,
             existing,
             &inference_index,
             &format!("tasks.{name}.run"),
-            existing_value,
+            existing_value.as_deref(),
             Some(task.run.as_str()),
         );
         if task.internal {
@@ -832,16 +962,14 @@ pub(crate) fn collect_detect_removals(
 
     for (name, task) in &existing.tasks {
         let detected_task = detected.tasks.get(name);
-        if let Some(existing_run) = match task.default_execution_kind() {
-            Some("run") => task.default_execution_body(),
-            _ => None,
-        } && detected_task.is_none()
+        if let Some(existing_run) = existing_task_detectable_command_truth(task)
+            && detected_task.is_none()
         {
             push_detect_removal(
                 &mut removals,
                 existing,
                 format!("tasks.{name}.run"),
-                existing_run.to_string(),
+                existing_run,
             );
         }
         if task.safe_for_agent && !detected_task.is_some_and(|task| task.safe_for_agent) {
