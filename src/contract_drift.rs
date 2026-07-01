@@ -25,7 +25,7 @@ use std::path::Path;
 
 use serde_yaml::{Mapping, Value as YamlValue};
 
-use crate::detector::{DetectService, Inference, detect_repo};
+use crate::detector::{Confidence, DetectService, Inference, detect_repo};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
 use crate::schema::{Backend, Contract, ServiceSpec, ToolchainFulfillmentMode, ToolchainProvider};
@@ -49,15 +49,13 @@ pub(crate) fn append_contract_drift_findings(
         return;
     };
 
-    for change in
-        collect_detect_changes(contract, &detect_report.contract, &detect_report.inferences)
-            .into_iter()
-            .filter(|change| {
-                change.status == "update"
-                    && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MERGED)
-            })
-    {
-        let existing = change.existing.unwrap_or_default();
+    let detect_changes =
+        collect_detect_changes(contract, &detect_report.contract, &detect_report.inferences);
+
+    for change in detect_changes.iter().filter(|change| {
+        change.status == "update" && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MERGED)
+    }) {
+        let existing = change.existing.as_deref().unwrap_or_default();
         findings.push(Finding::identified(
             "OTA_CONTRACT_DRIFT",
             "contract",
@@ -73,6 +71,34 @@ pub(crate) fn append_contract_drift_findings(
             ),
             format!(
                 "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
+                compact_display_path(root),
+                compact_display_path(root)
+            ),
+        ));
+    }
+
+    for change in detect_changes
+        .iter()
+        .filter(|change| should_surface_external_source_governance_drift(change))
+    {
+        let existing = change.existing.as_deref().unwrap_or_default();
+        let source = change.source.as_deref().unwrap_or_default();
+        findings.push(Finding::identified(
+            "OTA_EXTERNAL_SOURCE_DRIFT",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            format!(
+                "External source drift: `{}` differs from high-confidence repo source",
+                change.field
+            ),
+            format!(
+                "`ota.yaml` still declares `{}` = `{}`, but `{}` now detects `{}`",
+                change.field, existing, source, change.detected
+            ),
+            format!(
+                "review whether `{}` or the repo contract is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                source,
                 compact_display_path(root),
                 compact_display_path(root)
             ),
@@ -115,6 +141,32 @@ fn compact_display_path(path: &Path) -> String {
             }
         })
         .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn should_surface_external_source_governance_drift(change: &DetectComparisonChange) -> bool {
+    change.status == "update"
+        && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MANUAL)
+        && change.confidence == Some(Confidence::High)
+        && change.source_class.as_deref() == Some("environment_toolchain")
+        && change
+            .source
+            .as_deref()
+            .is_some_and(is_governed_external_environment_source)
+        && is_runtime_or_toolchain_truth_field(&change.field)
+}
+
+fn is_governed_external_environment_source(source: &str) -> bool {
+    let source_file = source.split('#').next().unwrap_or(source);
+    matches!(source_file, "mise.toml" | "devbox.json" | "devenv.nix")
+}
+
+fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {
+    field.starts_with("runtimes.")
+        || field.starts_with("toolchains.")
+        || matches!(
+            field,
+            "tools.pnpm" | "tools.npm" | "tools.yarn" | "tools.bun"
+        )
 }
 
 fn detect_change_ownership(existing: Option<&str>) -> String {

@@ -22746,6 +22746,17 @@ tasks:
                 }),
             "expected a devcontainer node drift warning"
         );
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        != "External source drift: `runtimes.node` differs from high-confidence repo source"
+                }),
+            "devcontainer runtime drift should stay on the more specific warning surface"
+        );
     }
 
     #[test]
@@ -22980,6 +22991,84 @@ tasks:
                         .contains("bootstrap command uses")
                 }),
             "ambiguous bootstrap commands should not produce package manager drift warnings"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_manual_runtime_drift_from_high_confidence_mise_source() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "node",
+            if cfg!(windows) {
+                "@echo off\r\necho v22.12.0\r\n"
+            } else {
+                "#!/bin/sh\necho v22.12.0\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::write(
+            dir.path().join("mise.toml"),
+            r#"
+[tools]
+node = "24.14.0"
+"#,
+        )
+        .expect("write mise");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: mise-drift
+runtimes:
+  node: "^22.12.0"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "External source drift: `runtimes.node` differs from high-confidence repo source"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("mise.toml#tools.node")
+                }),
+            "expected a mise runtime governance drift warning"
         );
     }
 
