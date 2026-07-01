@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -177,6 +177,36 @@ pub(crate) fn append_contract_drift_findings(
                 ),
             ));
         }
+
+        for change in collect_ci_verification_aggregate_changes(contract, &ci_signals) {
+            let (code, summary, why) = match change.kind {
+                CiVerificationAggregateChangeKind::Update => (
+                    "OTA_CI_VERIFICATION_DRIFT",
+                    format!(
+                        "CI verification drift: `{}` differs from enforced workflow verification set",
+                        change.field
+                    ),
+                    format!(
+                        "`ota.yaml` still declares `{}` = `{}`, but workflow verification under `{}` currently detects verifier tasks `{}`",
+                        change.field, change.existing, change.source, change.detected
+                    ),
+                ),
+            };
+            findings.push(Finding::identified(
+                code,
+                "contract",
+                "repo_contract",
+                FindingSeverity::Warn,
+                summary,
+                why,
+                format!(
+                    "review whether workflow verification or `{}` is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    change.field,
+                    compact_display_path(root),
+                    compact_display_path(root)
+                ),
+            ));
+        }
     }
 
     for removal in collect_detect_drift_removals(contract, &detect_report.contract) {
@@ -242,6 +272,19 @@ struct CiVerificationGovernanceChange {
     detected: String,
     source: String,
     kind: CiVerificationGovernanceChangeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CiVerificationAggregateChangeKind {
+    Update,
+}
+
+struct CiVerificationAggregateChange {
+    field: String,
+    existing: String,
+    detected: String,
+    source: String,
+    kind: CiVerificationAggregateChangeKind,
 }
 
 fn collect_ci_verification_governance_changes(
@@ -312,6 +355,57 @@ fn collect_ci_verification_governance_changes(
     changes
 }
 
+fn collect_ci_verification_aggregate_changes(
+    existing: &Contract,
+    signals: &[CiVerificationTaskSignal],
+) -> Vec<CiVerificationAggregateChange> {
+    let detected_tasks = signals
+        .iter()
+        .filter_map(|signal| verification_task_name_from_field(&signal.field))
+        .filter(|task_name| is_verifier_task_name(task_name))
+        .collect::<BTreeSet<_>>();
+
+    if detected_tasks.is_empty() {
+        return Vec::new();
+    }
+
+    let detected_rendered = render_string_set(&detected_tasks);
+    let mut changes = Vec::new();
+    for (task_name, task) in &existing.tasks {
+        let Some(aggregate) = task.aggregate.as_ref() else {
+            continue;
+        };
+        if !is_verifier_task_name(task_name) {
+            continue;
+        }
+
+        let field = format!("tasks.{task_name}.aggregate.tasks");
+        let owner_kind = detect_existing_field_owner_kind(existing, &field);
+        if owner_kind != DETECT_OWNER_KIND_MANUAL {
+            continue;
+        }
+
+        let existing_tasks = aggregate
+            .tasks
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if existing_tasks == detected_tasks {
+            continue;
+        }
+
+        changes.push(CiVerificationAggregateChange {
+            field,
+            existing: aggregate.tasks.join(", "),
+            detected: detected_rendered.clone(),
+            source: String::from(".github/workflows/"),
+            kind: CiVerificationAggregateChangeKind::Update,
+        });
+    }
+
+    changes
+}
+
 fn existing_task_detectable_command_truth(task: &crate::schema::TaskSpec) -> Option<String> {
     let execution = task.resolved_execution(current_os())?;
     matches!(execution.kind, "run" | "script" | "command").then(|| execution.preview())
@@ -375,10 +469,7 @@ fn is_task_command_truth_field(field: &str) -> bool {
 }
 
 fn is_verification_task_truth_field(field: &str) -> bool {
-    field
-        .strip_prefix("tasks.")
-        .and_then(|value| value.strip_suffix(".run"))
-        .is_some_and(is_verifier_task_name)
+    verification_task_name_from_field(field).is_some_and(is_verifier_task_name)
 }
 
 fn is_verifier_task_name(name: &str) -> bool {
@@ -399,6 +490,16 @@ fn is_verifier_task_name(name: &str) -> bool {
                     | "ci"
             )
         })
+}
+
+fn verification_task_name_from_field(field: &str) -> Option<&str> {
+    field
+        .strip_prefix("tasks.")
+        .and_then(|value| value.strip_suffix(".run"))
+}
+
+fn render_string_set(values: &BTreeSet<&str>) -> String {
+    values.iter().copied().collect::<Vec<_>>().join(", ")
 }
 
 fn detect_change_ownership(existing: Option<&str>) -> String {
