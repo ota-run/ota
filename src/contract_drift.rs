@@ -147,17 +147,38 @@ fn should_surface_external_source_governance_drift(change: &DetectComparisonChan
     change.status == "update"
         && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MANUAL)
         && change.confidence == Some(Confidence::High)
-        && change.source_class.as_deref() == Some("environment_toolchain")
         && change
             .source
             .as_deref()
-            .is_some_and(is_governed_external_environment_source)
-        && is_runtime_or_toolchain_truth_field(&change.field)
+            .is_some_and(|source| {
+                matches_governed_external_source(change.source_class.as_deref(), source, &change.field)
+            })
+}
+
+fn matches_governed_external_source(
+    source_class: Option<&str>,
+    source: &str,
+    field: &str,
+) -> bool {
+    match source_class {
+        Some("environment_toolchain") => {
+            is_governed_external_environment_source(source)
+                && is_runtime_or_toolchain_truth_field(field)
+        }
+        Some("task_command") => {
+            is_governed_task_command_source(source) && is_task_command_truth_field(field)
+        }
+        _ => false,
+    }
 }
 
 fn is_governed_external_environment_source(source: &str) -> bool {
     let source_file = source.split('#').next().unwrap_or(source);
     matches!(source_file, "mise.toml" | "devbox.json" | "devenv.nix")
+}
+
+fn is_governed_task_command_source(source: &str) -> bool {
+    source.starts_with("package.json#scripts.") || source.starts_with("devbox.json#shell.scripts.")
 }
 
 fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {
@@ -167,6 +188,10 @@ fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {
             field,
             "tools.pnpm" | "tools.npm" | "tools.yarn" | "tools.bun"
         )
+}
+
+fn is_task_command_truth_field(field: &str) -> bool {
+    field.starts_with("tasks.") && field.ends_with(".run")
 }
 
 fn detect_change_ownership(existing: Option<&str>) -> String {

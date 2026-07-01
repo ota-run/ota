@@ -62,8 +62,10 @@
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence
   external environment source already detected by Ota, such as `mise.toml`, `devbox.json`, or
   `devenv.nix`, disagrees with the declared runtime/toolchain truth, instead of limiting that
-  review pressure to detector-owned merged fields; existing devcontainer-specific doctor warnings
-  remain the narrower review surface for devcontainer drift
+  review pressure to detector-owned merged fields; the same governance lane now also covers
+  high-confidence detected task-command truth from `package.json#scripts.*` and
+  `devbox.json#shell.scripts.*`, while existing devcontainer-specific doctor warnings remain the
+  narrower review surface for devcontainer drift
 - widened first-class orchestrator ownership beyond `mise`: ota now ships `devbox` and `devenv`
   orchestrator kinds, with validator and runner support for mediated task execution; `devbox`
   supports `prepare.install`, `devenv` supports task/exec mediation, and unsupported trust/install
