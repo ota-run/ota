@@ -40,6 +40,7 @@ Source direction:
 - [V10 plan](../v10/plan.md)
 - [V11.1 plan](../v11.1/plan.md)
 - [V11.2 plan](../v11.2/plan.md)
+- [V11.3 plan](../v11.3/plan.md)
 
 V11 theme:
 
@@ -94,6 +95,14 @@ That slice is intentionally the repo-truth convergence layer before the next exe
 widenings. It should make later work such as container-backed hydration, deterministic
 bootstrap/materialization, and richer runtime bootstrap ownership proceed from governed evidence
 instead of ad hoc repo pressure alone.
+
+The next planned runner-enforcement slice after that is:
+
+- [V11.3: agent-scoped execution enforcement](../v11.3/plan.md)
+
+That slice closes the remaining gap between safe-task declaration and actual runtime control, so
+agent-safe truth becomes enforceable by the runner instead of staying only a governance and review
+surface.
 
 ## Included capabilities
 

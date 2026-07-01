@@ -74,6 +74,9 @@
   verifier task truth from explicit GitHub Actions `run:` lanes and warns when manual
   `tasks.*.run` verification entries diverge from enforced workflow verification, while keeping
   CI below direct repo execution sources in precedence
+- widened V11.2 agent-boundary governance so `ota doctor` now detects structured `AGENTS.md` /
+  `CLAUDE.md` drift for agent-boundary fields such as `safe_tasks`, `verify_after_changes`,
+  `writable_paths`, and `protected_paths`, without pretending free-form prose is structured truth
 - widened first-class orchestrator ownership beyond `mise`: ota now ships `devbox` and `devenv`
   orchestrator kinds, with validator and runner support for mediated task execution; `devbox`
   supports `prepare.install`, `devenv` supports task/exec mediation, and unsupported trust/install

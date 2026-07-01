@@ -1423,6 +1423,10 @@ ota doctor --member api --member web --json [PATH]
 - agent-safe tasks that declare broad `effects.network` or `effects.external_state` produce
   warnings in doctor output instead of leaving those execution risks implicit behind a safe-task
   label
+- when a structured `AGENTS.md` or `CLAUDE.md` managed block drifts from the declared
+  `agent.safe_tasks`, `agent.verify_after_changes`, `agent.writable_paths`, or
+  `agent.protected_paths`, doctor reports agent-boundary drift instead of assuming agent guidance
+  docs are still aligned
 - first-class `prepare.kind: dependency_hydration` lanes keep their network truth visible, but ota
   does not emit the generic agent-safe dependency-hydration warning when that bounded lane is
   already modeled on the typed hydration surface
@@ -1645,6 +1649,9 @@ Current behavior:
 
 - keeps the contract-first boundary workflow inside `ota.yaml`: `ota agents --review` inspects the current writable/protected path boundary and provenance, `ota agents --confirm --dry-run` previews the exact `reviewed: true` mutation, and `ota agents --confirm` writes that confirmation into the contract before any `AGENTS.md` sync
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
+- doctor treats the structured managed block as governed boundary evidence, so stale `safe_tasks`,
+  `verify_after_changes`, `writable_paths`, and `protected_paths` content surfaces as
+  agent-boundary drift instead of silently staying outdated
 - when the default workflow is declared, the generated default-workflow summary now carries the
   explicit `prepare`, `setup`, and `run` command forms instead of collapsing host file prep into
   setup implicitly

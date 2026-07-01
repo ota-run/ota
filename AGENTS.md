@@ -841,6 +841,8 @@ Generated from `./ota.yaml` by `ota agents`.
 
 ## Agent Contract
 
+Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.
+
 - `entrypoint`: `setup` (`ota run setup`)
 - `default_task`: `ci` (`ota run ci`)
 - `safe_tasks`:
@@ -857,15 +859,17 @@ Generated from `./ota.yaml` by `ota agents`.
   - `check` (`ota run check`)
   - `test` (`ota run test`)
   - `ci` (`ota run ci`)
-- `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`
+- `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`, `CHANGELOG.md`, `Cargo.toml`
 - `protected_paths`: `Cargo.lock`, `ota.yaml`, `LICENSE`
 
 ## Bootstrap
 
 Only install ota if it is missing and installation is approved.
 
-- `sh`: `curl -fsSL https://dist.ota.run/install.sh | sh`
-- `powershell`: `irm https://dist.ota.run/install.ps1 | iex`
+- `source.kind`: `git_rev`
+- `source.rev`: `272dd258772170c6fae5d1034a171bc9ad976303`
+- `sh`: `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=272dd258772170c6fae5d1034a171bc9ad976303 sh -s -- --from-git`
+- `powershell`: `$env:OTA_GIT_REV='272dd258772170c6fae5d1034a171bc9ad976303'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
 
 ## Notes
 
@@ -873,6 +877,8 @@ Treat Ota as the default workflow, the way npm is the default in Node repos.
 Use `ota validate` to verify the contract.
 Use `ota doctor` to inspect readiness and agent guidance.
 Use `ota tasks` to discover runnable repo actions.
+When a repo already exposes a matching safe task, prefer `ota run <task>` over raw package-manager or language-tool commands.
+Fall back to direct commands only when no truthful Ota task exists or when isolating an Ota defect.
 Use `ota run setup` to prepare the repo.
 Use `ota run contract:validate` to self-host the contract validator against this checkout.
 Use `ota run ci` to run the canonical verification path.

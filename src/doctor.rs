@@ -4272,6 +4272,7 @@ fn diagnose_contract_with_scope(
     if let Some(finding) = detect_missing_ota_state_gitignore(contract_path) {
         findings.push(finding);
     }
+    findings.extend(detect_agent_boundary_doc_drift(contract, contract_path));
     if mode == DoctorMode::Native
         && let Some(finding) =
             detect_devcontainer_runtime_drift(contract, contract_path, &requirement_surface)
@@ -12786,6 +12787,242 @@ fn detect_devcontainer_runtime_drift(
             compact_display_path(&devcontainer_path)
         ),
     ))
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct ParsedAgentBoundaryDoc {
+    generated_by_ota: bool,
+    safe_tasks: Option<Vec<String>>,
+    verify_after_changes: Option<Vec<String>>,
+    writable_paths: Option<Vec<String>>,
+    protected_paths: Option<Vec<String>>,
+}
+
+impl ParsedAgentBoundaryDoc {
+    fn is_empty(&self) -> bool {
+        !self.generated_by_ota
+            && self.safe_tasks.is_none()
+            && self.verify_after_changes.is_none()
+            && self.writable_paths.is_none()
+            && self.protected_paths.is_none()
+    }
+}
+
+fn detect_agent_boundary_doc_drift(contract: &Contract, contract_path: &Path) -> Vec<Finding> {
+    let Some(agent) = contract.agent.as_ref() else {
+        return Vec::new();
+    };
+    let root = contract_working_dir(contract_path);
+    let mut findings = Vec::new();
+    for file_name in ["AGENTS.md", "CLAUDE.md"] {
+        let path = root.join(file_name);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let parsed = parse_agent_boundary_doc(&contents);
+        if parsed.is_empty() {
+            continue;
+        }
+
+        maybe_push_agent_boundary_list_drift(
+            &mut findings,
+            &path,
+            "safe_tasks",
+            &agent.safe_tasks,
+            parsed.safe_tasks,
+            parsed.generated_by_ota,
+        );
+        maybe_push_agent_boundary_list_drift(
+            &mut findings,
+            &path,
+            "verify_after_changes",
+            &agent.verify_after_changes,
+            parsed.verify_after_changes,
+            parsed.generated_by_ota,
+        );
+        maybe_push_agent_boundary_list_drift(
+            &mut findings,
+            &path,
+            "writable_paths",
+            &agent.writable_paths,
+            parsed.writable_paths,
+            parsed.generated_by_ota,
+        );
+        maybe_push_agent_boundary_list_drift(
+            &mut findings,
+            &path,
+            "protected_paths",
+            &agent.protected_paths,
+            parsed.protected_paths,
+            parsed.generated_by_ota,
+        );
+    }
+
+    findings
+}
+
+fn parse_agent_boundary_doc(contents: &str) -> ParsedAgentBoundaryDoc {
+    let generated_by_ota = contents.contains("Generated from `") && contents.contains("` by `ota agents`.");
+    let parse_contents = if generated_by_ota {
+        contents
+            .rfind("# AGENTS.md")
+            .and_then(|index| contents.get(index..))
+            .unwrap_or(contents)
+    } else {
+        contents
+    };
+    let mut parsed = ParsedAgentBoundaryDoc {
+        generated_by_ota,
+        ..ParsedAgentBoundaryDoc::default()
+    };
+    let lines = parse_contents.lines().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index].trim_end();
+        if let Some(label) = parse_agent_doc_list_label(line) {
+            let mut values = Vec::new();
+            index += 1;
+            while index < lines.len() {
+                let item_line = lines[index].trim_end();
+                if let Some(value) = parse_agent_doc_task_item(item_line) {
+                    values.push(value);
+                    index += 1;
+                } else {
+                    break;
+                }
+            }
+            assign_agent_doc_list_field(&mut parsed, label, values);
+            continue;
+        }
+        if let Some((label, values)) = parse_agent_doc_inline_list(line) {
+            assign_agent_doc_list_field(&mut parsed, label, values);
+        }
+        index += 1;
+    }
+    parsed
+}
+
+fn parse_agent_doc_list_label(line: &str) -> Option<&'static str> {
+    match line.trim() {
+        "- `safe_tasks`:" => Some("safe_tasks"),
+        "- `verify_after_changes`:" => Some("verify_after_changes"),
+        _ => None,
+    }
+}
+
+fn parse_agent_doc_task_item(line: &str) -> Option<String> {
+    let trimmed = line.trim_end();
+    let remainder = trimmed.strip_prefix("  - `")?;
+    let (value, _) = remainder.split_once('`')?;
+    Some(value.to_string())
+}
+
+fn parse_agent_doc_inline_list(line: &str) -> Option<(&'static str, Vec<String>)> {
+    let trimmed = line.trim();
+    let (label, remainder) = if let Some(remainder) = trimmed.strip_prefix("- `writable_paths`: ") {
+        ("writable_paths", remainder)
+    } else if let Some(remainder) = trimmed.strip_prefix("- `protected_paths`: ") {
+        ("protected_paths", remainder)
+    } else {
+        return None;
+    };
+
+    let values = remainder
+        .split(',')
+        .filter_map(|segment| {
+            let value = segment.trim().strip_prefix('`')?.strip_suffix('`')?;
+            (!value.is_empty()).then(|| value.to_string())
+        })
+        .collect::<Vec<_>>();
+    Some((label, values))
+}
+
+fn assign_agent_doc_list_field(
+    parsed: &mut ParsedAgentBoundaryDoc,
+    label: &str,
+    values: Vec<String>,
+) {
+    match label {
+        "safe_tasks" => parsed.safe_tasks = Some(values),
+        "verify_after_changes" => parsed.verify_after_changes = Some(values),
+        "writable_paths" => parsed.writable_paths = Some(values),
+        "protected_paths" => parsed.protected_paths = Some(values),
+        _ => {}
+    }
+}
+
+fn maybe_push_agent_boundary_list_drift(
+    findings: &mut Vec<Finding>,
+    path: &Path,
+    field_name: &str,
+    expected: &[String],
+    actual: Option<Vec<String>>,
+    generated_by_ota: bool,
+) {
+    if !generated_by_ota && actual.is_none() {
+        return;
+    }
+    let actual = actual.unwrap_or_default();
+    if normalize_agent_boundary_list(expected) == normalize_agent_boundary_list(&actual) {
+        return;
+    }
+
+    findings.push(Finding::identified(
+        "OTA_AGENT_BOUNDARY_DRIFT",
+        "contract",
+        "repo_contract",
+        FindingSeverity::Warn,
+        format!(
+            "Agent boundary drift: `{}` {} differ from contract",
+            compact_display_path(path),
+            field_name
+        ),
+        format!(
+            "`{}` declares {} {}, but `ota.yaml` declares {} {}",
+            compact_display_path(path),
+            field_name,
+            render_agent_boundary_values(&actual),
+            field_name,
+            render_agent_boundary_values(expected)
+        ),
+        format!(
+            "run `{}` to resync `{}` from the current contract, or narrow the repo contract if the agent doc is intentionally canonical",
+            agent_boundary_sync_command(path),
+            compact_display_path(path)
+        ),
+    ));
+}
+
+fn agent_boundary_sync_command(path: &Path) -> String {
+    let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or("AGENTS.md");
+    if file_name == "AGENTS.md" {
+        String::from("ota agents --write")
+    } else {
+        format!("ota agents --write --output {file_name}")
+    }
+}
+
+fn normalize_agent_boundary_list(values: &[String]) -> BTreeSet<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .collect()
+}
+
+fn render_agent_boundary_values(values: &[String]) -> String {
+    if values.is_empty() {
+        return String::from("(none)");
+    }
+    values
+        .iter()
+        .map(|value| format!("`{value}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn detect_devcontainer_package_manager_drift(

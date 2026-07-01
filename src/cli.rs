@@ -23273,6 +23273,157 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_agents_md_safe_task_drift_from_contract() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            r#"# AGENTS.md
+
+Generated from `./ota.yaml` by `ota agents`.
+
+## Agent Contract
+
+- `safe_tasks`:
+  - `build` (`ota run build`)
+"#,
+        )
+        .expect("write AGENTS.md");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+agent:
+  safe_tasks:
+    - test
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "Agent boundary drift: `AGENTS.md` safe_tasks differ from contract"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("`AGENTS.md` declares safe_tasks `build`")
+                }),
+            "expected an AGENTS.md safe task drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_unstructured_agents_markdown() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            "Use test before merge.\nPrefer editing src.\n",
+        )
+        .expect("write AGENTS.md");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+agent:
+  safe_tasks:
+    - test
+  writable_paths:
+    - src
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            !json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .starts_with("Agent boundary drift:")
+                }),
+            "unstructured AGENTS.md prose should not produce agent-boundary drift"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_claude_md_drift_with_output_specific_next_step() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("CLAUDE.md"),
+            r#"Generated from `./ota.yaml` by `ota agents`.
+
+## Agent Contract
+
+- `writable_paths`: `src`
+"#,
+        )
+        .expect("write CLAUDE.md");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - app
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "Agent boundary drift: `CLAUDE.md` writable_paths differ from contract"
+                        && finding["next"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("ota agents --write --output CLAUDE.md")
+                }),
+            "expected a CLAUDE.md drift warning with an output-specific sync command"
+        );
+    }
+
+    #[test]
     fn services_text_lists_service_details() {
         let fixture = ContractFixture::new(
             r#"

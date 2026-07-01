@@ -43,6 +43,7 @@ V10 is complete and archived.
 V11 is planned.
 V11.1 is active.
 V11.2 is planned.
+V11.3 is planned.
 
 ## V1 archive
 
@@ -86,6 +87,7 @@ V11.2 is planned.
 
 - [V11 plan](docs/planning/v11/plan.md)
 - [V11.2 plan](docs/planning/v11.2/plan.md)
+- [V11.3 plan](docs/planning/v11.3/plan.md)
 
 ## Implemented foundation
 
@@ -108,6 +110,8 @@ V11.2 is planned.
   V11.1
 - use V11.2 as the repo-truth convergence foundation before later execution-surface widening such
   as container-backed hydration and deterministic bootstrap materialization
+- make V11.3 agent-scoped execution enforcement the next runner slice after V11.2 so safe-task
+  truth becomes a real runtime boundary instead of review-only governance
 
 ## Archived V2 shape
 
