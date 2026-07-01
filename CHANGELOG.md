@@ -68,6 +68,8 @@
   and `go`, instead of keeping image-hint review pressure effectively Node-only
 - taught Ota to read real `devcontainer.json` JSONC syntax for the devcontainer source family, so
   comments and trailing commas no longer silently disable detect or doctor-side devcontainer truth
+- widened doctor-side devcontainer review again so `forwardPorts` now drifts against declared
+  host-facing contract ports from `surfaces.*.port` and `services.*.endpoints.host.port`
 - widened `ota detect` again across the next V11.2 source families so `devbox.json` now
   contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
   `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without

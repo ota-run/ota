@@ -22988,6 +22988,113 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_devcontainer_forward_port_drift() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "forwardPorts": [3010]
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: backstage
+surfaces:
+  site:
+    kind: http
+    port: 3000
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "Devcontainer drift: forwarded ports omit declared host port `3000`"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("surface `site`")
+                }),
+            "expected a devcontainer forwardPorts drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_matching_devcontainer_forward_port_truth() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "forwardPorts": [3000, 5432]
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: casa
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+surfaces:
+  site:
+    kind: http
+    port: 3000
+services:
+  database:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        != "Devcontainer drift: forwarded ports omit declared host port `3000`"
+                        && finding["summary"].as_str().unwrap_or_default()
+                            != "Devcontainer drift: forwarded ports omit declared host port `5432`"
+                }),
+            "matching devcontainer forwardPorts should not produce drift warnings"
+        );
+    }
+
+    #[test]
     fn doctor_reports_devcontainer_feature_runtime_drift() {
         let _guard = env_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");

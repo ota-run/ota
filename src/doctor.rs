@@ -2681,6 +2681,7 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_AGENT_BOUNDARY_UNREVIEWED"
         | "OTA_DEVCONTAINER_RUNTIME_DRIFT"
         | "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT"
+        | "OTA_DEVCONTAINER_FORWARD_PORT_DRIFT"
         | "OTA_CONTRACT_DRIFT"
         | "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING"
         | "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED"
@@ -4281,6 +4282,11 @@ fn diagnose_contract_with_scope(
     }
     if mode == DoctorMode::Native
         && let Some(finding) = detect_devcontainer_package_manager_drift(contract, contract_path)
+    {
+        findings.push(finding);
+    }
+    if mode == DoctorMode::Native
+        && let Some(finding) = detect_devcontainer_forward_port_drift(contract, contract_path)
     {
         findings.push(finding);
     }
@@ -13228,6 +13234,96 @@ fn detect_devcontainer_package_manager_drift(
     }
 
     None
+}
+
+fn detect_devcontainer_forward_port_drift(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Option<Finding> {
+    let expected_ports = contract_devcontainer_forward_port_truth(contract);
+    if expected_ports.is_empty() {
+        return None;
+    }
+
+    let root = contract_working_dir(contract_path);
+    let devcontainer_path = root.join(".devcontainer").join("devcontainer.json");
+    if !devcontainer_path.exists() {
+        return None;
+    }
+
+    let contents = fs::read_to_string(&devcontainer_path).ok()?;
+    let devcontainer: JsonValue = crate::jsonc::parse_jsonc_value(&contents).ok()?;
+    let forwarded = devcontainer_forward_ports(&devcontainer);
+    if forwarded.is_empty() {
+        return None;
+    }
+
+    let missing_port = expected_ports
+        .keys()
+        .find(|port| !forwarded.contains(port))
+        .copied()?;
+    let owners = expected_ports
+        .get(&missing_port)
+        .cloned()
+        .unwrap_or_default()
+        .join(", ");
+    let forwarded_rendered = forwarded
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Some(Finding::identified(
+        "OTA_DEVCONTAINER_FORWARD_PORT_DRIFT",
+        "contract",
+        "repo_contract",
+        FindingSeverity::Warn,
+        format!(
+            "Devcontainer drift: forwarded ports omit declared host port `{missing_port}`"
+        ),
+        format!(
+            "`{}` forwards ports [{}], but the repo contract declares host-facing port `{missing_port}` for {owners}",
+            compact_display_path(&devcontainer_path),
+            forwarded_rendered
+        ),
+        format!(
+            "update `{}` so `forwardPorts` includes `{missing_port}`, or narrow the repo contract if {owners} should no longer be host-facing",
+            compact_display_path(&devcontainer_path)
+        ),
+    ))
+}
+
+fn contract_devcontainer_forward_port_truth(contract: &Contract) -> BTreeMap<u16, Vec<String>> {
+    let mut ports = BTreeMap::<u16, Vec<String>>::new();
+    for (surface_name, surface) in &contract.surfaces {
+        ports
+            .entry(surface.port)
+            .or_default()
+            .push(format!("surface `{surface_name}`"));
+    }
+    for (service_name, service) in &contract.services {
+        if let Some(endpoint) = service.endpoints.get("host") {
+            ports
+                .entry(endpoint.port)
+                .or_default()
+                .push(format!("service `{service_name}` host endpoint"));
+        }
+    }
+    ports
+}
+
+fn devcontainer_forward_ports(devcontainer: &JsonValue) -> BTreeSet<u16> {
+    devcontainer
+        .get("forwardPorts")
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| match entry {
+            JsonValue::Number(value) => value.as_u64().and_then(|port| u16::try_from(port).ok()),
+            JsonValue::String(value) => value.trim().parse::<u16>().ok(),
+            _ => None,
+        })
+        .collect()
 }
 
 fn repo_node_package_manager_truth(contract: &Contract) -> Option<&str> {
@@ -24387,6 +24483,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_DEVCONTAINER_FORWARD_PORT_DRIFT",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",
