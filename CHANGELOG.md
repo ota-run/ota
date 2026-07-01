@@ -64,8 +64,10 @@
   understands object/array `postCreateCommand` and `updateContentCommand` forms too, instead of
   silently missing real drift once detect had already widened past string-only bootstrap commands
 - widened the matching doctor-side devcontainer runtime drift lane so Ota now reports
-  feature-backed runtime drift for known devcontainer runtime features (`node`, `python`, `go`)
-  instead of only seeing Node image-based devcontainer drift
+  both feature-backed runtime drift and known image-backed runtime drift for `node`, `python`,
+  and `go`, instead of keeping image-hint review pressure effectively Node-only
+- taught Ota to read real `devcontainer.json` JSONC syntax for the devcontainer source family, so
+  comments and trailing commas no longer silently disable detect or doctor-side devcontainer truth
 - widened `ota detect` again across the next V11.2 source families so `devbox.json` now
   contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
   `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without

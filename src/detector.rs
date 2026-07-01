@@ -888,7 +888,7 @@ fn detect_devcontainer_json(root: &Path, builder: &mut DetectBuilder) -> Result<
 
     let contents = read_file(&path)?;
     let devcontainer: JsonValue =
-        serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+        crate::jsonc::parse_jsonc_value(&contents).map_err(|source| DetectError::Parse {
             path: path.display().to_string(),
             message: source.to_string(),
         })?;

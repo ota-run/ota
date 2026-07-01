@@ -22835,6 +22835,159 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_devcontainer_python_image_runtime_drift() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "python3",
+            if cfg!(windows) {
+                "@echo off\r\necho Python 3.11.9\r\n"
+            } else {
+                "#!/bin/sh\necho Python 3.11.9\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  // real devcontainer files commonly use JSONC comments
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: openhands
+runtimes:
+  python: "3.11"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "Devcontainer drift: Python image differs from repo runtime"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("3.12")
+                }),
+            "expected a devcontainer python image drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_matching_devcontainer_python_image_runtime() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "python3",
+            if cfg!(windows) {
+                "@echo off\r\necho Python 3.11.9\r\n"
+            } else {
+                "#!/bin/sh\necho Python 3.11.9\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bullseye"
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: openhands
+runtimes:
+  python: "3.11"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        != "Devcontainer drift: Python image differs from repo runtime"
+                }),
+            "matching devcontainer python images should not produce drift warnings"
+        );
+    }
+
+    #[test]
     fn doctor_reports_devcontainer_feature_runtime_drift() {
         let _guard = env_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");

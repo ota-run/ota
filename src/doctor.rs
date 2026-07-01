@@ -12745,33 +12745,9 @@ fn detect_devcontainer_runtime_drift(
     }
 
     let contents = fs::read_to_string(&devcontainer_path).ok()?;
-    let devcontainer: JsonValue = serde_json::from_str(&contents).ok()?;
+    let devcontainer: JsonValue = crate::jsonc::parse_jsonc_value(&contents).ok()?;
 
-    if let Some(required_node) =
-        required_devcontainer_runtime(contract, requirement_surface, "node", current_os)
-    {
-        if let Some(image) = devcontainer.get("image").and_then(JsonValue::as_str)
-            && let Some(hinted_node) = devcontainer_node_image_version(image)
-        {
-            if !version_matches(&required_node, &hinted_node) {
-                return Some(Finding::identified(
-                    "OTA_DEVCONTAINER_RUNTIME_DRIFT",
-                    "contract",
-                    "repo_contract",
-                    FindingSeverity::Warn,
-                    "Devcontainer drift: Node image differs from repo runtime",
-                    format!(
-                        "`{}` declares image `{image}`, which hints Node `{hinted_node}`, but the repo contract requires Node version `{required_node}`",
-                        compact_display_path(&devcontainer_path)
-                    ),
-                    format!(
-                        "update `{}` to a Node image satisfying `{required_node}`, or narrow the repo contract if the devcontainer is intentionally legacy",
-                        compact_display_path(&devcontainer_path)
-                    ),
-                ));
-            }
-        }
-    }
+    let image = devcontainer.get("image").and_then(JsonValue::as_str);
 
     for runtime_name in ["node", "python", "go"] {
         let Some(required) =
@@ -12779,32 +12755,61 @@ fn detect_devcontainer_runtime_drift(
         else {
             continue;
         };
-        let Some(hinted) = devcontainer_feature_runtime_version(&devcontainer, runtime_name) else {
-            continue;
-        };
-        if version_matches(&required, &hinted) {
-            continue;
+
+        if let Some(hinted) = devcontainer_feature_runtime_version(&devcontainer, runtime_name) {
+            if version_matches(&required, &hinted) {
+                continue;
+            }
+            let summary = format!(
+                "Devcontainer drift: `{runtime_name}` feature differs from repo runtime"
+            );
+            let why = format!(
+                "`{}` declares devcontainer feature `{runtime_name}` at version `{hinted}`, but the repo contract requires `{runtime_name}` version `{required}`",
+                compact_display_path(&devcontainer_path)
+            );
+            let next = format!(
+                "update `{}` so devcontainer feature `{runtime_name}` satisfies `{required}`, or narrow the repo contract if the devcontainer is intentionally legacy",
+                compact_display_path(&devcontainer_path)
+            );
+            return Some(Finding::identified(
+                "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+                "contract",
+                "repo_contract",
+                FindingSeverity::Warn,
+                summary,
+                why,
+                next,
+            ));
         }
-        let summary = format!(
-            "Devcontainer drift: `{runtime_name}` feature differs from repo runtime"
-        );
-        let why = format!(
-            "`{}` declares devcontainer feature `{runtime_name}` at version `{hinted}`, but the repo contract requires `{runtime_name}` version `{required}`",
-            compact_display_path(&devcontainer_path)
-        );
-        let next = format!(
-            "update `{}` so devcontainer feature `{runtime_name}` satisfies `{required}`, or narrow the repo contract if the devcontainer is intentionally legacy",
-            compact_display_path(&devcontainer_path)
-        );
-        return Some(Finding::identified(
-            "OTA_DEVCONTAINER_RUNTIME_DRIFT",
-            "contract",
-            "repo_contract",
-            FindingSeverity::Warn,
-            summary,
-            why,
-            next,
-        ));
+
+        if let Some(image) = image
+            && let Some(hinted) = devcontainer_image_runtime_version(image, runtime_name)
+        {
+            if version_matches(&required, &hinted) {
+                continue;
+            }
+            let runtime_label = devcontainer_runtime_display_name(runtime_name);
+            let summary = format!(
+                "Devcontainer drift: {runtime_label} image differs from repo runtime"
+            );
+            let why = format!(
+                "`{}` declares image `{image}`, which hints {runtime_label} `{hinted}`, but the repo contract requires {runtime_label} version `{required}`",
+                compact_display_path(&devcontainer_path)
+            );
+            let next = format!(
+                "update `{}` to an image satisfying `{required}` for `{runtime_name}`, or narrow the repo contract if the devcontainer is intentionally legacy",
+                compact_display_path(&devcontainer_path)
+            );
+            return Some(Finding::identified(
+                "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+                "contract",
+                "repo_contract",
+                FindingSeverity::Warn,
+                summary,
+                why,
+                next,
+            ));
+        }
     }
 
     None
@@ -12867,6 +12872,75 @@ fn devcontainer_feature_runtime_name(feature_ref: &str) -> Option<&'static str> 
         return Some("go");
     }
     None
+}
+
+fn devcontainer_runtime_display_name(runtime_name: &str) -> &'static str {
+    match runtime_name {
+        "node" => "Node",
+        "python" => "Python",
+        "go" => "Go",
+        _ => "Runtime",
+    }
+}
+
+fn devcontainer_image_runtime_version(image: &str, runtime_name: &str) -> Option<String> {
+    let image_without_digest = image.split('@').next()?.trim();
+    let (repository, tag) = image_without_digest.rsplit_once(':')?;
+    let repository = repository.to_ascii_lowercase();
+    let image_name = repository
+        .rsplit('/')
+        .next()
+        .unwrap_or(repository.as_str())
+        .to_ascii_lowercase();
+    let runtime_matches = match runtime_name {
+        "node" => image_name.contains("node"),
+        "python" => image_name.contains("python"),
+        "go" => image_name == "go" || image_name.contains("golang"),
+        _ => false,
+    };
+    if !runtime_matches {
+        return None;
+    }
+
+    devcontainer_image_tag_version_hint(tag)
+}
+
+fn devcontainer_image_tag_version_hint(tag: &str) -> Option<String> {
+    let mut sequences = Vec::new();
+    let mut current = String::new();
+    let mut seen_digit = false;
+    for ch in tag.chars() {
+        if ch.is_ascii_digit() {
+            seen_digit = true;
+            current.push(ch);
+            continue;
+        }
+        if ch == '.' && seen_digit {
+            current.push(ch);
+            continue;
+        }
+        if seen_digit {
+            let trimmed = current.trim_end_matches('.').to_string();
+            if !trimmed.is_empty() {
+                sequences.push(trimmed);
+            }
+            current.clear();
+            seen_digit = false;
+        }
+    }
+    if seen_digit {
+        let trimmed = current.trim_end_matches('.').to_string();
+        if !trimmed.is_empty() {
+            sequences.push(trimmed);
+        }
+    }
+
+    sequences
+        .iter()
+        .rev()
+        .find(|sequence| sequence.contains('.'))
+        .cloned()
+        .or_else(|| sequences.last().cloned())
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -13117,7 +13191,7 @@ fn detect_devcontainer_package_manager_drift(
     }
 
     let contents = fs::read_to_string(&devcontainer_path).ok()?;
-    let devcontainer: JsonValue = serde_json::from_str(&contents).ok()?;
+    let devcontainer: JsonValue = crate::jsonc::parse_jsonc_value(&contents).ok()?;
     for command_field in ["postCreateCommand", "updateContentCommand"] {
         let Some(command_value) = devcontainer.get(command_field) else {
             continue;
@@ -13188,26 +13262,6 @@ fn repo_node_package_manager_truth(contract: &Contract) -> Option<&str> {
     matches.sort_unstable();
     matches.dedup();
     (matches.len() == 1).then(|| matches[0])
-}
-
-fn devcontainer_node_image_version(image: &str) -> Option<String> {
-    let image_without_digest = image.split('@').next()?.trim();
-    let (repository, tag) = image_without_digest.rsplit_once(':')?;
-    let image_name = repository.rsplit('/').next().unwrap_or(repository);
-    if !image_name.contains("node") {
-        return None;
-    }
-
-    let version = tag
-        .chars()
-        .skip_while(|ch| !ch.is_ascii_digit())
-        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
-        .collect::<String>();
-    if version.is_empty() {
-        None
-    } else {
-        Some(version)
-    }
 }
 
 fn command_package_manager_token(command: &str) -> Option<&'static str> {
