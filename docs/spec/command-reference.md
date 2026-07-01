@@ -2630,9 +2630,11 @@ Current precedence is conservative:
 - repo-owned `mise.toml#tools.*` runtime and Node package-manager truth wins over conflicting
   `.tool-versions` values, but still yields to more specific repo-local markers such as `.nvmrc`,
   `.python-version`, or `package.json#packageManager`
-- `.devcontainer/devcontainer.json` can contribute high-confidence Node image and bootstrap
-  package-manager truth, but those hints remain lower precedence than repo-local runtime markers,
-  `package.json#packageManager`, and `mise.toml`
+- `.devcontainer/devcontainer.json` can contribute high-confidence runtime/toolchain truth from
+  known devcontainer features (`node`, `python`, `go`, `github-cli`, `kubectl-helm-minikube`)
+  plus Node package-manager truth from string, object, or array `postCreateCommand` /
+  `updateContentCommand` entries, but those hints remain lower precedence than repo-local runtime
+  markers, `package.json#packageManager`, and `mise.toml`
 - `devbox.json` can contribute high-confidence `tools.devbox` ownership and `shell.scripts.*`
   task inference
 - `devenv.nix` currently contributes only high-confidence `tools.devenv` presence; ota does not
@@ -2649,8 +2651,9 @@ Current precedence is conservative:
 - `mise.toml` can contribute high-confidence runtime and Node package-manager inference from
   repo-owned `[tools]` entries
 - `.devcontainer/devcontainer.json` can contribute high-confidence Node runtime inference from the
-  declared image and Node package-manager inference from `postCreateCommand` /
-  `updateContentCommand`
+  declared image, conservative runtime/tool presence from known devcontainer features, and Node
+  package-manager inference from string, object, or array `postCreateCommand` /
+  `updateContentCommand` entries
 - `devbox.json` can contribute high-confidence `devbox` tool inference plus `devbox run <script>`
   tasks from declared `shell.scripts`
 - `devenv.nix` can contribute high-confidence `devenv` tool presence conservatively

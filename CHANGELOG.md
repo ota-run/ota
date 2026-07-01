@@ -55,6 +55,11 @@
   `.devcontainer/devcontainer.json` now contributes high-confidence Node image and bootstrap
   package-manager inference while still yielding to stronger repo-local runtime and package-manager
   truth
+- widened that same `.devcontainer/devcontainer.json` detector lane again so Ota now also
+  recognizes object/array `postCreateCommand` and `updateContentCommand` forms plus conservative
+  high-confidence runtime/tool presence from known devcontainer features such as `node`, `python`,
+  `go`, `github-cli`, and `kubectl-helm-minikube`, instead of only reading simple string command
+  fields
 - widened `ota detect` again across the next V11.2 source families so `devbox.json` now
   contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
   `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without

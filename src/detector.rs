@@ -904,20 +904,156 @@ fn detect_devcontainer_json(root: &Path, builder: &mut DetectBuilder) -> Result<
         );
     }
 
+    detect_devcontainer_features(&devcontainer, builder);
+
     for command_field in ["postCreateCommand", "updateContentCommand"] {
-        if let Some(command) = devcontainer.get(command_field).and_then(JsonValue::as_str)
-            && let Some(package_manager) = command_package_manager_token(command)
-        {
-            builder.set_tool(
-                package_manager.to_string(),
-                "*".to_string(),
-                format!(".devcontainer/devcontainer.json#{command_field}"),
-                Confidence::High,
-            );
+        if let Some(command_value) = devcontainer.get(command_field) {
+            for (source, command) in devcontainer_command_entries(command_field, command_value) {
+                if let Some(package_manager) = command_package_manager_token(command) {
+                    builder.set_tool(
+                        package_manager.to_string(),
+                        "*".to_string(),
+                        source,
+                        Confidence::High,
+                    );
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+fn detect_devcontainer_features(devcontainer: &JsonValue, builder: &mut DetectBuilder) {
+    let Some(features) = devcontainer.get("features").and_then(JsonValue::as_object) else {
+        return;
+    };
+
+    for (feature_ref, config) in features {
+        let Some(feature) = classify_devcontainer_feature(feature_ref) else {
+            continue;
+        };
+        let source = format!(".devcontainer/devcontainer.json#features.{}", feature.source_key);
+        match feature.kind {
+            DevcontainerFeatureKind::Runtime(runtime_name) => {
+                let version = devcontainer_feature_version(config)
+                    .map(normalize_detected_runtime_version)
+                    .filter(|value| value != "latest" && value != "none")
+                    .unwrap_or_else(|| String::from("*"));
+                builder.set_runtime(runtime_name.to_string(), version, source, Confidence::High);
+            }
+            DevcontainerFeatureKind::Tool(tool_name) => {
+                let version = devcontainer_feature_version(config)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty() && value != "latest" && value != "none")
+                    .unwrap_or_else(|| String::from("*"));
+                builder.set_tool(tool_name.to_string(), version, source, Confidence::High);
+            }
+            DevcontainerFeatureKind::Tools(tool_names) => {
+                for tool_name in tool_names {
+                    let version = config
+                        .get(tool_name)
+                        .and_then(JsonValue::as_str)
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty() && value != "latest" && value != "none")
+                        .unwrap_or_else(|| String::from("*"));
+                    builder.set_tool(tool_name.to_string(), version, source.clone(), Confidence::High);
+                }
+            }
+        }
+    }
+}
+
+fn devcontainer_command_entries<'a>(
+    command_field: &'a str,
+    value: &'a JsonValue,
+) -> Vec<(String, &'a str)> {
+    match value {
+        JsonValue::String(command) => vec![(
+            format!(".devcontainer/devcontainer.json#{command_field}"),
+            command.as_str(),
+        )],
+        JsonValue::Object(entries) => entries
+            .iter()
+            .filter_map(|(name, command)| {
+                command.as_str().map(|value| {
+                    (
+                        format!(".devcontainer/devcontainer.json#{command_field}.{name}"),
+                        value,
+                    )
+                })
+            })
+            .collect(),
+        JsonValue::Array(entries) => entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| {
+                command.as_str().map(|value| {
+                    (
+                        format!(".devcontainer/devcontainer.json#{command_field}[{index}]"),
+                        value,
+                    )
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn devcontainer_feature_version(config: &JsonValue) -> Option<&str> {
+    config.get("version").and_then(JsonValue::as_str).or_else(|| {
+        config
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
+#[derive(Clone, Copy)]
+enum DevcontainerFeatureKind<'a> {
+    Runtime(&'a str),
+    Tool(&'a str),
+    Tools(&'a [&'a str]),
+}
+
+#[derive(Clone, Copy)]
+struct DevcontainerFeature<'a> {
+    source_key: &'a str,
+    kind: DevcontainerFeatureKind<'a>,
+}
+
+fn classify_devcontainer_feature(feature_ref: &str) -> Option<DevcontainerFeature<'static>> {
+    let normalized = feature_ref.to_ascii_lowercase();
+    if normalized.contains("/features/node:") {
+        return Some(DevcontainerFeature {
+            source_key: "node",
+            kind: DevcontainerFeatureKind::Runtime("node"),
+        });
+    }
+    if normalized.contains("/features/python:") {
+        return Some(DevcontainerFeature {
+            source_key: "python",
+            kind: DevcontainerFeatureKind::Runtime("python"),
+        });
+    }
+    if normalized.contains("/features/go:") {
+        return Some(DevcontainerFeature {
+            source_key: "go",
+            kind: DevcontainerFeatureKind::Runtime("go"),
+        });
+    }
+    if normalized.contains("/features/github-cli:") {
+        return Some(DevcontainerFeature {
+            source_key: "gh",
+            kind: DevcontainerFeatureKind::Tool("gh"),
+        });
+    }
+    if normalized.contains("/features/kubectl-helm-minikube:") {
+        return Some(DevcontainerFeature {
+            source_key: "kubectl-helm-minikube",
+            kind: DevcontainerFeatureKind::Tools(&["kubectl", "helm"]),
+        });
+    }
+    None
 }
 
 fn detect_devbox_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -8945,6 +9081,59 @@ pnpm = "9.9.0"
             report.inferences.iter().any(|inference| {
                 inference.field == "tools.pnpm"
                     && inference.source == ".devcontainer/devcontainer.json#postCreateCommand"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+    }
+
+    #[test]
+    fn detects_devcontainer_object_commands_and_features() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".devcontainer/devcontainer.json",
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "latest" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" },
+    "ghcr.io/devcontainers/features/go:1": { "version": "1.24" },
+    "ghcr.io/devcontainers/features/github-cli:1": { "version": "latest" },
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "helm": "latest",
+      "kubectl": "1.32.0",
+      "minikube": "none"
+    }
+  },
+  "postCreateCommand": {
+    "node-tools": "npm install -g prettier",
+    "python-tools": "pip install ruff"
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.runtimes.get("node"), Some(&String::from("*")));
+        assert_eq!(report.contract.runtimes.get("python"), Some(&String::from("3.12")));
+        assert_eq!(report.contract.runtimes.get("go"), Some(&String::from("1.24")));
+        assert_eq!(report.contract.tools.get("npm"), Some(&String::from("*")));
+        assert_eq!(report.contract.tools.get("gh"), Some(&String::from("*")));
+        assert_eq!(report.contract.tools.get("kubectl"), Some(&String::from("1.32.0")));
+        assert_eq!(report.contract.tools.get("helm"), Some(&String::from("*")));
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "runtimes.node"
+                    && inference.source == ".devcontainer/devcontainer.json#features.node"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tools.npm"
+                    && inference.source
+                        == ".devcontainer/devcontainer.json#postCreateCommand.node-tools"
                     && inference.source_class == InferenceSourceClass::EnvironmentToolchain
                     && inference.confidence == Confidence::High
             })
