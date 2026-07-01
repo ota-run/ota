@@ -83,25 +83,53 @@ pub(crate) fn append_contract_drift_findings(
     {
         let existing = change.existing.as_deref().unwrap_or_default();
         let source = change.source.as_deref().unwrap_or_default();
+        let (finding_id, summary, why, next) = if change.source_class.as_deref()
+            == Some("ci_verification")
+        {
+            (
+                "OTA_CI_VERIFICATION_DRIFT",
+                format!(
+                    "CI verification drift: `{}` differs from enforced workflow lane",
+                    change.field
+                ),
+                format!(
+                    "`ota.yaml` still declares `{}` = `{}`, but workflow verification in `{}` runs `{}`",
+                    change.field, existing, source, change.detected
+                ),
+                format!(
+                    "review whether `{}` reflects the canonical verification lane or whether the workflow is carrying repo-specific drift, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    source,
+                    compact_display_path(root),
+                    compact_display_path(root)
+                ),
+            )
+        } else {
+            (
+                "OTA_EXTERNAL_SOURCE_DRIFT",
+                format!(
+                    "External source drift: `{}` differs from high-confidence repo source",
+                    change.field
+                ),
+                format!(
+                    "`ota.yaml` still declares `{}` = `{}`, but `{}` now detects `{}`",
+                    change.field, existing, source, change.detected
+                ),
+                format!(
+                    "review whether `{}` or the repo contract is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
+                    source,
+                    compact_display_path(root),
+                    compact_display_path(root)
+                ),
+            )
+        };
         findings.push(Finding::identified(
-            "OTA_EXTERNAL_SOURCE_DRIFT",
+            finding_id,
             "contract",
             "repo_contract",
             FindingSeverity::Warn,
-            format!(
-                "External source drift: `{}` differs from high-confidence repo source",
-                change.field
-            ),
-            format!(
-                "`ota.yaml` still declares `{}` = `{}`, but `{}` now detects `{}`",
-                change.field, existing, source, change.detected
-            ),
-            format!(
-                "review whether `{}` or the repo contract is canonical, then run `ota detect --dry-run {}` or `ota detect --merge --dry-run {}` before changing either side",
-                source,
-                compact_display_path(root),
-                compact_display_path(root)
-            ),
+            summary,
+            why,
+            next,
         ));
     }
 
@@ -146,27 +174,38 @@ fn compact_display_path(path: &Path) -> String {
 fn should_surface_external_source_governance_drift(change: &DetectComparisonChange) -> bool {
     change.status == "update"
         && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MANUAL)
-        && change.confidence == Some(Confidence::High)
-        && change
-            .source
-            .as_deref()
-            .is_some_and(|source| {
-                matches_governed_external_source(change.source_class.as_deref(), source, &change.field)
-            })
+        && change.source.as_deref().is_some_and(|source| {
+            matches_governed_external_source(
+                change.source_class.as_deref(),
+                source,
+                &change.field,
+                change.confidence,
+            )
+        })
 }
 
 fn matches_governed_external_source(
     source_class: Option<&str>,
     source: &str,
     field: &str,
+    confidence: Option<Confidence>,
 ) -> bool {
     match source_class {
         Some("environment_toolchain") => {
-            is_governed_external_environment_source(source)
+            confidence == Some(Confidence::High)
+                && is_governed_external_environment_source(source)
                 && is_runtime_or_toolchain_truth_field(field)
         }
         Some("task_command") => {
-            is_governed_task_command_source(source) && is_task_command_truth_field(field)
+            confidence == Some(Confidence::High)
+                && is_governed_task_command_source(source)
+                && is_task_command_truth_field(field)
+        }
+        Some("ci_verification") => {
+            confidence == Some(Confidence::Medium)
+                && is_governed_ci_verification_source(source)
+                && is_task_command_truth_field(field)
+                && is_verification_task_truth_field(field)
         }
         _ => false,
     }
@@ -185,6 +224,10 @@ fn is_governed_task_command_source(source: &str) -> bool {
         || source.starts_with("justfile#")
 }
 
+fn is_governed_ci_verification_source(source: &str) -> bool {
+    source.starts_with(".github/workflows/") && source.contains("#jobs.")
+}
+
 fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {
     field.starts_with("runtimes.")
         || field.starts_with("toolchains.")
@@ -196,6 +239,24 @@ fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {
 
 fn is_task_command_truth_field(field: &str) -> bool {
     field.starts_with("tasks.") && field.ends_with(".run")
+}
+
+fn is_verification_task_truth_field(field: &str) -> bool {
+    field.strip_prefix("tasks.")
+        .and_then(|value| value.strip_suffix(".run"))
+        .is_some_and(is_verifier_task_name)
+}
+
+fn is_verifier_task_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| {
+            matches!(
+                token,
+                "test" | "tests" | "lint" | "typecheck" | "check" | "verify" | "fmt" | "format" | "ci"
+            )
+        })
 }
 
 fn detect_change_ownership(existing: Option<&str>) -> String {

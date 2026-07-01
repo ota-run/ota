@@ -23222,6 +23222,57 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_manual_task_drift_from_ci_workflow_verification_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: npm run integration
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "CI verification drift: `tasks.test.run` differs from enforced workflow lane"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains(".github/workflows/ci.yml#jobs.verify.steps[0].run")
+                }),
+            "expected a CI workflow task governance drift warning"
+        );
+    }
+
+    #[test]
     fn services_text_lists_service_details() {
         let fixture = ContractFixture::new(
             r#"

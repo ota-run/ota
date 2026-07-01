@@ -70,6 +70,10 @@
   Taskfile and justfile task truth as canonical runner-owned commands (`task <name>` and
   `just <name>`) and uses that same source-governance drift lane to warn when manual
   `tasks.*.run` entries diverge from those external task-runner sources
+- widened V11.2 CI/workflow verification governance so Ota now recovers medium-confidence
+  verifier task truth from explicit GitHub Actions `run:` lanes and warns when manual
+  `tasks.*.run` verification entries diverge from enforced workflow verification, while keeping
+  CI below direct repo execution sources in precedence
 - widened first-class orchestrator ownership beyond `mise`: ota now ships `devbox` and `devenv`
   orchestrator kinds, with validator and runner support for mediated task execution; `devbox`
   supports `prepare.install`, `devenv` supports task/exec mediation, and unsupported trust/install

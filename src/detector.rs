@@ -714,6 +714,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_devenv_nix(&root, &mut builder);
     detect_taskfile(&root, &mut builder)?;
     detect_justfile(&root, &mut builder)?;
+    detect_github_actions_workflows(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_ruby_version_file(&root, &mut builder)?;
@@ -1038,6 +1039,73 @@ fn detect_justfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detec
     Ok(())
 }
 
+fn detect_github_actions_workflows(
+    root: &Path,
+    builder: &mut DetectBuilder,
+) -> Result<(), DetectError> {
+    let workflows_dir = root.join(".github").join("workflows");
+    if !workflows_dir.exists() {
+        return Ok(());
+    }
+
+    let mut workflow_files = fs::read_dir(&workflows_dir)
+        .map_err(|source| DetectError::Read {
+            path: workflows_dir.display().to_string(),
+            source,
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yml" | "yaml")
+            )
+        })
+        .collect::<Vec<_>>();
+    workflow_files.sort();
+
+    for workflow_path in workflow_files {
+        let contents = read_file(&workflow_path)?;
+        let workflow: YamlValue =
+            serde_yaml::from_str(&contents).map_err(|source_error| DetectError::Parse {
+                path: workflow_path.display().to_string(),
+                message: source_error.to_string(),
+            })?;
+        let Some(jobs) = workflow.get("jobs").and_then(YamlValue::as_mapping) else {
+            continue;
+        };
+
+        let workflow_source = workflow_path
+            .strip_prefix(root)
+            .unwrap_or(&workflow_path)
+            .display()
+            .to_string();
+
+        for (job_name, job_value) in jobs.iter().filter_map(|(name, value)| {
+            Some((name.as_str()?, value))
+        }) {
+            let Some(steps) = job_value.get("steps").and_then(YamlValue::as_sequence) else {
+                continue;
+            };
+            for (step_index, step) in steps.iter().enumerate() {
+                let Some(run) = step.get("run").and_then(YamlValue::as_str) else {
+                    continue;
+                };
+                for (task_name, command) in infer_ci_verification_tasks(run) {
+                    builder.set_task(
+                        task_name,
+                        command,
+                        format!("{workflow_source}#jobs.{job_name}.steps[{step_index}].run"),
+                        Confidence::Medium,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn is_promotable_task_runner_task_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
@@ -1079,6 +1147,117 @@ fn extract_justfile_recipe_names(contents: &str) -> Vec<String> {
         }
     }
     names
+}
+
+fn infer_ci_verification_tasks(run: &str) -> Vec<(String, String)> {
+    let mut tasks = Vec::new();
+    for raw_line in run.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.contains("&&")
+            || line.contains("||")
+            || line.contains(';')
+        {
+            continue;
+        }
+
+        if let Some(inferred) = infer_ci_verification_task_line(line) {
+            tasks.push(inferred);
+        }
+    }
+    tasks
+}
+
+fn infer_ci_verification_task_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    let normalized = trimmed
+        .strip_prefix("corepack ")
+        .map(str::trim_start)
+        .unwrap_or(trimmed);
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    let first = *tokens.first()?;
+    match first {
+        "npm" => infer_npm_ci_verification_task(&tokens, trimmed),
+        "pnpm" | "yarn" => infer_node_ci_verification_task(first, &tokens, trimmed),
+        "bun" => infer_bun_ci_verification_task(&tokens, trimmed),
+        "task" | "just" => {
+            let task_name = tokens.get(1)?;
+            if is_verifier_task_name(task_name) {
+                Some(((*task_name).to_string(), trimmed.to_string()))
+            } else {
+                None
+            }
+        }
+        "cargo" => infer_cargo_ci_verification_task(&tokens, trimmed),
+        "go" => {
+            if tokens.get(1) == Some(&"test") {
+                Some((String::from("test"), trimmed.to_string()))
+            } else {
+                None
+            }
+        }
+        "pytest" => Some((String::from("test"), trimmed.to_string())),
+        _ => None,
+    }
+}
+
+fn infer_npm_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
+    match tokens.get(1).copied() {
+        Some("test") => Some((String::from("test"), original.to_string())),
+        Some("run") => {
+            let script = *tokens.get(2)?;
+            if is_verifier_task_name(script) {
+                Some((script.to_string(), original.to_string()))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn infer_node_ci_verification_task(
+    manager: &str,
+    tokens: &[&str],
+    original: &str,
+) -> Option<(String, String)> {
+    let command = *tokens.get(1)?;
+    if command == "test" || is_verifier_task_name(command) {
+        return Some((command.to_string(), original.to_string()));
+    }
+    if manager == "yarn" && command == "run" {
+        let script = *tokens.get(2)?;
+        if is_verifier_task_name(script) {
+            return Some((script.to_string(), original.to_string()));
+        }
+    }
+    None
+}
+
+fn infer_bun_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
+    match tokens.get(1).copied() {
+        Some("test") => Some((String::from("test"), original.to_string())),
+        Some("run") => {
+            let script = *tokens.get(2)?;
+            if is_verifier_task_name(script) {
+                Some((script.to_string(), original.to_string()))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn infer_cargo_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
+    match tokens.get(1).copied() {
+        Some("test") => Some((String::from("test"), original.to_string())),
+        Some("clippy") => Some((String::from("lint"), original.to_string())),
+        Some("fmt") => Some((String::from("fmt"), original.to_string())),
+        Some("check") => Some((String::from("check"), original.to_string())),
+        _ => None,
+    }
 }
 
 fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
@@ -8942,6 +9121,42 @@ _private:
                 && inference.source == "justfile#test"
                 && inference.source_class == InferenceSourceClass::TaskCommand
                 && inference.confidence == Confidence::High
+        }));
+    }
+
+    #[test]
+    fn detects_github_actions_verification_tasks() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+      - run: corepack pnpm lint
+      - run: task test
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("npm test")
+        );
+        assert_eq!(
+            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            Some("corepack pnpm lint")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.lint.run"
+                && inference.source == ".github/workflows/ci.yml#jobs.verify.steps[2].run"
+                && inference.source_class == InferenceSourceClass::CiVerification
+                && inference.confidence == Confidence::Medium
         }));
     }
 
