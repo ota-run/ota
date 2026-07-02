@@ -46,6 +46,7 @@ This slice makes Ota consumable by execution harnesses that need a bounded calla
 The product goal is not:
 
 - build Ota’s own sandbox product
+- fully define compiled filesystem and egress enforcement policy
 
 The product goal is:
 
@@ -63,6 +64,7 @@ That means:
 - V11.4 defines the canonical governance model
 - V11.6 publishes a harness-oriented profile derived from that canonical model
 - harnesses and sandboxes consume that truth
+- deeper runtime policy compilation stays a follow-on slice, not a vague side effect of export
 
 ## Problem statement
 
@@ -84,7 +86,8 @@ V11.6 is the slice for defining that integration contract.
 - machine-readable callable task/workflow surface for agent mode
 - explicit refusal conditions and closure-safety results for harness consumption
 - mode/context/backend requirements in portable form
-- writable/protected boundary hints in portable form
+- writable/protected boundary export in portable form, authoritative where the contract already
+  owns it and advisory only where Ota cannot yet claim hard runtime control
 - effect-class / external-state / network posture in portable form
 
 ## Non-goals
@@ -168,6 +171,18 @@ Include:
 - external-state posture
 - network / egress-relevant posture where already modeled
 
+This slice should stop at export.
+
+It should not yet claim:
+
+- default-deny network enforcement
+- compiled outbound allowlists
+- writable mount compilation
+
+Those stronger runtime-policy targets belong to the follow-on sandbox-compilation slice:
+
+- [V11.8](../v11.8/plan.md)
+
 ### 4. Refusal and review export
 
 The harness should be able to know:
@@ -202,3 +217,4 @@ What can later build on top of it in enterprise is:
 The next OSS slice before those enterprise approval and exception systems should be:
 
 - [V11.7](../v11.7/plan.md): audited execution boundary crossings
+- [V11.8](../v11.8/plan.md): sandbox policy compilation from the execution contract

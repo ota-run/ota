@@ -48,6 +48,7 @@ V11.4 is planned.
 V11.5 is planned.
 V11.6 is planned.
 V11.7 is planned.
+V11.8 is planned.
 
 ## V1 archive
 
@@ -96,6 +97,7 @@ V11.7 is planned.
 - [V11.5 plan](docs/planning/v11.5/plan.md)
 - [V11.6 plan](docs/planning/v11.6/plan.md)
 - [V11.7 plan](docs/planning/v11.7/plan.md)
+- [V11.8 plan](docs/planning/v11.8/plan.md)
 
 ## Implemented foundation
 
@@ -128,6 +130,9 @@ V11.7 is planned.
   can enforce Ota’s callable boundary without re-deriving repo semantics
 - make V11.7 the audited execution boundary-crossing slice after V11.6 so allowed-but-heavier
   execution becomes explicit OSS evidence before enterprise approvals and waivers build on top
+- make V11.8 the sandbox policy compilation slice after V11.7 so contract-owned writable
+  boundaries and egress posture can compile into real runtime enforcement targets instead of
+  stopping at harness export
 
 ## Archived V2 shape
 
