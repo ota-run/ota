@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added first-class `action.kind: ensure_git_template`, so deterministic scaffold/factory bootstrap
+  can now own `git clone` plus inherited `.git` removal plus fresh `git init` as one governed
+  materialization lane instead of pushing template bootstrap back into shell glue
 - widened `action.kind: ensure_git_checkout` / `ensure_git_checkouts` again so deterministic
   checkout materialization can now also own declared Git remote wiring through `remotes[]`;
   Ota now idempotently adds missing remotes or updates remote URLs inside existing checkouts

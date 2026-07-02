@@ -9785,6 +9785,15 @@ fn execute_prepare_sequence_step(
                 env_overrides,
             )
         }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureGitTemplate(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
             execute_native_file_action_task(
                 contract,
@@ -10537,6 +10546,9 @@ fn prepare_sequence_step_shell_preview(
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
             Ok(format!("ensure git checkout `{}`", spec.path.trim()))
         }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(spec) => {
+            Ok(format!("ensure git template `{}`", spec.path.trim()))
+        }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
             Ok(format!("ensure container network `{}`", spec.name.trim()))
         }
@@ -10719,6 +10731,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             execute_ensure_git_checkout_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskActionSpec::EnsureGitTemplate(spec) => {
+            execute_ensure_git_template_action(task_name, spec, working_dir)
+        }
         crate::schema::TaskActionSpec::EnsureGitCheckouts(spec) => {
             execute_ensure_git_checkouts_action(task_name, spec, working_dir)
         }
@@ -10838,6 +10853,9 @@ fn execute_ensure_bundle_step(
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
             execute_ensure_git_checkout_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureGitTemplate(spec) => {
+            execute_ensure_git_template_action(task_name, spec, working_dir)
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckouts(spec) => {
             execute_ensure_git_checkouts_action(task_name, spec, working_dir)
@@ -11158,42 +11176,54 @@ fn execute_ensure_git_checkout_action(
         });
     }
 
-    if let Some(parent) = checkout_path.parent()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
-            task: task_name.to_string(),
-            message: format!(
-                "could not create parent directory for `{}`: {source}",
-                path_text
-            ),
-        })?;
-    }
-
-    let source_url = spec.source.git.trim();
-    let clone_output = run_git_file_action_command(
+    let mut stdout = materialize_git_clone(
         task_name,
-        ["clone", "--", source_url, path_text],
-        None,
+        path_text,
+        &spec.source,
         working_dir,
-        format!("clone git checkout `{path_text}` from `{source_url}`"),
+        &checkout_path,
     )?;
-
-    let mut stdout = clone_output;
-    if let Some(git_ref) = spec.source.git_ref.as_deref().map(str::trim) {
-        let checkout_output = run_git_file_action_command(
-            task_name,
-            ["checkout", git_ref],
-            Some(&checkout_path),
-            working_dir,
-            format!("checkout `{git_ref}` for git checkout `{path_text}`"),
-        )?;
-        stdout.push_str(checkout_output.as_str());
-    }
     stdout.push_str(
         execute_ensure_git_checkout_remotes(task_name, &checkout_path, &spec.remotes)?.as_str(),
     );
 
+    Ok(file_action_output(stdout))
+}
+
+fn execute_ensure_git_template_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureGitTemplateActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let path_text = spec.path.trim();
+    let template_path = working_dir.join(path_text);
+    if template_path.exists() {
+        if template_path.is_dir() {
+            return Ok(file_action_output(format!(
+                "git template `{}` already exists; no scaffold needed\n",
+                path_text
+            )));
+        }
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not ensure git template `{}` because a non-directory entry already exists at that path",
+                path_text
+            ),
+        });
+    }
+
+    let mut stdout = materialize_git_clone(
+        task_name,
+        path_text,
+        &spec.source,
+        working_dir,
+        &template_path,
+    )?;
+    stdout
+        .push_str(remove_materialized_git_metadata(task_name, path_text, &template_path)?.as_str());
+    stdout
+        .push_str(initialize_materialized_git_repo(task_name, path_text, &template_path)?.as_str());
     Ok(file_action_output(stdout))
 }
 
@@ -11217,6 +11247,96 @@ fn execute_ensure_git_checkouts_action(
         stdout.push_str(step_output.stdout.as_str());
     }
     Ok(file_action_output(stdout))
+}
+
+fn materialize_git_clone(
+    task_name: &str,
+    path_text: &str,
+    source: &crate::schema::TaskEnsureGitCheckoutSourceSpec,
+    working_dir: &Path,
+    checkout_path: &Path,
+) -> Result<String, RunError> {
+    if let Some(parent) = checkout_path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not create parent directory for `{}`: {source}",
+                path_text
+            ),
+        })?;
+    }
+
+    let source_url = source.git.trim();
+    let clone_output = run_git_file_action_command(
+        task_name,
+        ["clone", "--", source_url, path_text],
+        None,
+        working_dir,
+        format!("clone git checkout `{path_text}` from `{source_url}`"),
+    )?;
+
+    let mut stdout = clone_output;
+    if let Some(git_ref) = source.git_ref.as_deref().map(str::trim) {
+        let checkout_output = run_git_file_action_command(
+            task_name,
+            ["checkout", git_ref],
+            Some(checkout_path),
+            working_dir,
+            format!("checkout `{git_ref}` for git checkout `{path_text}`"),
+        )?;
+        stdout.push_str(checkout_output.as_str());
+    }
+    Ok(stdout)
+}
+
+fn remove_materialized_git_metadata(
+    task_name: &str,
+    path_text: &str,
+    checkout_path: &Path,
+) -> Result<String, RunError> {
+    let git_path = checkout_path.join(".git");
+    if !git_path.exists() {
+        return Ok(String::from(
+            "git metadata already absent; no de-git needed\n",
+        ));
+    }
+    if git_path.is_dir() {
+        std::fs::remove_dir_all(&git_path).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not remove inherited git metadata for `{}`: {source}",
+                path_text
+            ),
+        })?;
+    } else {
+        std::fs::remove_file(&git_path).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not remove inherited git metadata for `{}`: {source}",
+                path_text
+            ),
+        })?;
+    }
+    Ok(format!(
+        "removed inherited git metadata for `{}`\n",
+        path_text
+    ))
+}
+
+fn initialize_materialized_git_repo(
+    task_name: &str,
+    path_text: &str,
+    checkout_path: &Path,
+) -> Result<String, RunError> {
+    run_git_file_action_command(
+        task_name,
+        ["init"],
+        Some(checkout_path),
+        checkout_path,
+        format!("initialize fresh git repo for template `{path_text}`"),
+    )
 }
 
 fn execute_ensure_git_checkout_remotes(
@@ -58096,6 +58216,122 @@ tasks:
         );
         assert!(
             second.stdout.contains("git remote `upstream` already points at `git@github.com:wagtail/wagtail.git`; no update needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_git_template_action_materializes_fresh_repo_idempotently() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  scaffold:
+    action:
+      kind: ensure_git_template
+      path: my-extension
+      source:
+        git: https://github.com/codyhxyz/create-chrome-extension.git
+        ref: main
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("git-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let log_path = fixture.dir.path().join("git.log");
+        let git_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nsetlocal enabledelayedexpansion\r\n>> \"%OTA_GIT_LOG%\" echo %CD%^|%*\r\nif \"%1\"==\"clone\" (\r\n  mkdir \"%4\" >nul 2>nul\r\n  > \"%4\\.git\" type nul\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"checkout\" (\r\n  > \"{state}\\checkout-%2\" type nul\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"init\" (\r\n  > \".git\" type nul\r\n  > \"{state}\\init\" type nul\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n",
+                state = state_dir.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_GIT_LOG\"\nif [ \"$1\" = \"clone\" ]; then\n  mkdir -p \"$4\"\n  : > \"$4/.git\"\n  exit 0\nfi\nif [ \"$1\" = \"checkout\" ]; then\n  : > \"{state}/checkout-$2\"\n  exit 0\nfi\nif [ \"$1\" = \"init\" ]; then\n  : > .git\n  : > \"{state}/init\"\n  exit 0\nfi\nexit 1\n",
+                state = state_dir.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "git", &git_body);
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_GIT_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_GIT_LOG", &log_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "scaffold")
+            .expect("ensure_git_template action should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "scaffold")
+            .expect("ensure_git_template action should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_GIT_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_GIT_LOG");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        let repo_path = fixture.dir.path().join("my-extension");
+        assert!(repo_path.join(".git").exists());
+        assert!(state_dir.join("checkout-main").exists());
+        assert!(state_dir.join("init").exists());
+        assert!(
+            first
+                .stdout
+                .contains("removed inherited git metadata for `my-extension`"),
+            "{}",
+            first.stdout
+        );
+        assert!(
+            first
+                .stdout
+                .contains("initialize fresh git repo for template `my-extension`"),
+            "{}",
+            first.stdout
+        );
+
+        let git_log = fs::read_to_string(&log_path).unwrap();
+        assert!(
+            git_log.contains(
+                "clone -- https://github.com/codyhxyz/create-chrome-extension.git my-extension"
+            ),
+            "{}",
+            git_log
+        );
+        assert!(
+            git_log.contains("my-extension|checkout main"),
+            "{}",
+            git_log
+        );
+        assert!(git_log.contains("my-extension|init"), "{}", git_log);
+
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("git template `my-extension` already exists; no scaffold needed"),
             "{}",
             second.stdout
         );

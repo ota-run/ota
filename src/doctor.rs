@@ -463,6 +463,7 @@ fn prepare_sequence_step_owns_dependency_hydration(
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)
         | crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => false,
     }

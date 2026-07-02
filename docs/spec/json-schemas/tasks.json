@@ -188,6 +188,16 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "from", "to"],
+          "properties": {
+            "kind": { "const": "ensure_git_template" },
+            "from": { "type": "string" },
+            "to": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind"],
           "properties": {
             "kind": { "const": "ensure_git_checkouts" }
@@ -419,7 +429,7 @@
                 "type": "object",
                 "additionalProperties": { "$ref": "#/$defs/taskInput" }
               },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "command": { "$ref": "#/$defs/taskCommand" },
@@ -490,7 +500,7 @@
                     },
                     "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                     "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "tool_bootstrap", "ensure_git_checkout", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "tool_bootstrap", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
@@ -579,7 +589,7 @@
                       "type": "object",
                       "additionalProperties": { "$ref": "#/$defs/taskInput" }
                     },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
@@ -650,7 +660,7 @@
                           },
                           "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                           "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "tool_bootstrap", "ensure_git_checkout", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume"] },
+                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "tool_bootstrap", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume"] },
                           "run": { "type": "string" },
                           "script": { "type": "string" },
                           "command": { "$ref": "#/$defs/taskCommand" },

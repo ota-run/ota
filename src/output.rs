@@ -4214,6 +4214,11 @@ fn summarize_task_action<'a>(
             from: Some(spec.source.git.as_str()),
             to: Some(spec.path.as_str()),
         }),
+        crate::schema::TaskActionSpec::EnsureGitTemplate(spec) => Some(TaskActionSummary {
+            kind: "ensure_git_template",
+            from: Some(spec.source.git.as_str()),
+            to: Some(spec.path.as_str()),
+        }),
         crate::schema::TaskActionSpec::EnsureGitCheckouts(_) => Some(TaskActionSummary {
             kind: "ensure_git_checkouts",
             from: None,
@@ -4324,6 +4329,13 @@ pub fn summarize_task_action_owned(
                 to: Some(spec.path.clone()),
             })
         }
+        crate::schema::TaskActionSpec::EnsureGitTemplate(spec) => {
+            Some(WorkspaceTaskActionSummary {
+                kind: "ensure_git_template",
+                from: Some(spec.source.git.clone()),
+                to: Some(spec.path.clone()),
+            })
+        }
         crate::schema::TaskActionSpec::EnsureGitCheckouts(_) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_git_checkouts",
             from: None,
@@ -4425,6 +4437,9 @@ fn summarize_task_prepare_sequence_step(
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_) => {
             Some(empty_task_prepare_summary("ensure_git_checkout"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(_) => {
+            Some(empty_task_prepare_summary("ensure_git_template"))
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_) => {
             Some(empty_task_prepare_summary("ensure_container_network"))
@@ -5165,6 +5180,9 @@ fn summarize_task_prepare_sequence_step_owned(
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_) => {
             Some(empty_workspace_task_prepare_summary("ensure_git_checkout"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(_) => {
+            Some(empty_workspace_task_prepare_summary("ensure_git_template"))
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_) => Some(
             empty_workspace_task_prepare_summary("ensure_container_network"),

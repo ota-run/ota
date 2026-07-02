@@ -6119,6 +6119,7 @@ pub enum TaskActionSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
+    EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
@@ -6133,6 +6134,7 @@ impl TaskActionSpec {
             Self::EnsureFile(_) => "ensure_file",
             Self::EnsureDirectory(_) => "ensure_directory",
             Self::EnsureGitCheckout(_) => "ensure_git_checkout",
+            Self::EnsureGitTemplate(_) => "ensure_git_template",
             Self::EnsureGitCheckouts(_) => "ensure_git_checkouts",
             Self::EnsureContainerNetwork(_) => "ensure_container_network",
             Self::ResetComposeServiceVolume(_) => "reset_compose_service_volume",
@@ -6193,6 +6195,19 @@ impl TaskActionSpec {
                     preview.push_str(action.remotes.len().to_string().as_str());
                     preview.push_str(" remote(s)");
                 }
+                preview
+            }
+            Self::EnsureGitTemplate(action) => {
+                let mut preview = format!(
+                    "ensure git template `{}` from `{}`",
+                    action.path, action.source.git
+                );
+                if let Some(git_ref) = action.source.git_ref.as_deref() {
+                    preview.push_str(" at `");
+                    preview.push_str(git_ref.trim());
+                    preview.push('`');
+                }
+                preview.push_str(" with fresh git init");
                 preview
             }
             Self::EnsureGitCheckouts(action) => match action.checkouts.as_slice() {
@@ -6463,6 +6478,7 @@ pub enum TaskPrepareSequenceStepSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
+    EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
 }
@@ -6483,6 +6499,9 @@ impl TaskPrepareSequenceStepSpec {
             Self::EnsureDirectory(action) => format!("ensure directory `{}`", action.path),
             Self::EnsureGitCheckout(action) => {
                 format!("ensure git checkout `{}`", action.path)
+            }
+            Self::EnsureGitTemplate(action) => {
+                format!("ensure git template `{}`", action.path)
             }
             Self::EnsureContainerNetwork(action) => {
                 format!("ensure container network `{}`", action.name)
@@ -7156,6 +7175,13 @@ pub struct TaskEnsureGitCheckoutActionSpec {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct TaskEnsureGitTemplateActionSpec {
+    pub path: String,
+    pub source: TaskEnsureGitCheckoutSourceSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskEnsureGitCheckoutSourceSpec {
     pub git: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
@@ -7229,6 +7255,7 @@ pub enum TaskEnsureBundleStepSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
+    EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),

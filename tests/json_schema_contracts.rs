@@ -143,6 +143,12 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         task_action_variants
             .iter()
             .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "ensure_git_template" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]
                 == json!({ "const": "ensure_git_checkouts" }))
     );
     assert!(
@@ -187,6 +193,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         task_kind_enum
             .iter()
             .any(|entry| entry == "ensure_git_checkout")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_git_template")
     );
     assert!(
         task_kind_enum
@@ -1412,6 +1423,12 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
         task_action_variants
             .iter()
             .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "ensure_git_template" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]
                 == json!({ "const": "ensure_git_checkouts" }))
     );
     assert!(
@@ -1455,6 +1472,11 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
         task_kind_enum
             .iter()
             .any(|entry| entry == "ensure_git_checkout")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_git_template")
     );
     assert!(
         task_kind_enum

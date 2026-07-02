@@ -4605,6 +4605,9 @@ fn validate_task_action(
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             validate_task_ensure_git_checkout_action(task_name, "action", spec, errors);
         }
+        crate::schema::TaskActionSpec::EnsureGitTemplate(spec) => {
+            validate_task_ensure_git_template_action(task_name, "action", spec, errors);
+        }
         crate::schema::TaskActionSpec::EnsureGitCheckouts(spec) => {
             validate_task_ensure_git_checkouts_action(task_name, "action", spec, errors);
         }
@@ -6239,6 +6242,15 @@ fn validate_task_prepare_sequence_step(
                 errors,
             );
         }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureGitTemplate(spec.clone()),
+                errors,
+            );
+        }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
             validate_structured_bootstrap_step(
                 task_name,
@@ -6433,6 +6445,9 @@ fn validate_structured_bootstrap_step(
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
             validate_task_ensure_git_checkout_action(task_name, prefix, spec, errors);
         }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureGitTemplate(spec) => {
+            validate_task_ensure_git_template_action(task_name, prefix, spec, errors);
+        }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckouts(spec) => {
             validate_task_ensure_git_checkouts_action(task_name, prefix, spec, errors);
         }
@@ -6480,39 +6495,14 @@ fn validate_task_ensure_git_checkout_action(
     spec: &crate::schema::TaskEnsureGitCheckoutActionSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    let path_field = format!("{prefix}.path");
-    let trimmed_path = spec.path.trim();
-    if trimmed_path.is_empty() {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` must declare a non-empty `{path_field}` path"
-        )));
-    } else if !is_safe_checkout_materialization_path(trimmed_path) {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` `{path_field}` must be a relative path without an absolute prefix or drive prefix"
-        )));
-    }
-    if spec.source.git.trim().is_empty() {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` action `ensure_git_checkout` must declare a non-empty `{prefix}.source.git`"
-        )));
-    }
-    if spec.source.git.contains('\n') || spec.source.git.contains('\r') {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` action `ensure_git_checkout` `{prefix}.source.git` must not contain newline characters"
-        )));
-    }
-    if let Some(git_ref) = spec.source.git_ref.as_deref() {
-        if git_ref.trim().is_empty() {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` action `ensure_git_checkout` must not declare an empty `{prefix}.source.ref`"
-            )));
-        }
-        if git_ref.contains('\n') || git_ref.contains('\r') {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` action `ensure_git_checkout` `{prefix}.source.ref` must not contain newline characters"
-            )));
-        }
-    }
+    validate_task_git_materialization_source_fields(
+        task_name,
+        prefix,
+        spec.path.as_str(),
+        &spec.source,
+        errors,
+        "ensure_git_checkout",
+    );
     for (index, remote) in spec.remotes.iter().enumerate() {
         validate_task_ensure_git_remote(
             task_name,
@@ -6521,6 +6511,22 @@ fn validate_task_ensure_git_checkout_action(
             errors,
         );
     }
+}
+
+fn validate_task_ensure_git_template_action(
+    task_name: &str,
+    prefix: &str,
+    spec: &crate::schema::TaskEnsureGitTemplateActionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_task_git_materialization_source_fields(
+        task_name,
+        prefix,
+        spec.path.as_str(),
+        &spec.source,
+        errors,
+        "ensure_git_template",
+    );
 }
 
 fn validate_task_ensure_git_checkouts_action(
@@ -6542,6 +6548,49 @@ fn validate_task_ensure_git_checkouts_action(
             checkout,
             errors,
         );
+    }
+}
+
+fn validate_task_git_materialization_source_fields(
+    task_name: &str,
+    prefix: &str,
+    path: &str,
+    source: &crate::schema::TaskEnsureGitCheckoutSourceSpec,
+    errors: &mut Vec<ValidationError>,
+    action_kind: &str,
+) {
+    let path_field = format!("{prefix}.path");
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must declare a non-empty `{path_field}` path"
+        )));
+    } else if !is_safe_checkout_materialization_path(trimmed_path) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` `{path_field}` must be a relative path without an absolute prefix or drive prefix"
+        )));
+    }
+    if source.git.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `{action_kind}` must declare a non-empty `{prefix}.source.git`"
+        )));
+    }
+    if source.git.contains('\n') || source.git.contains('\r') {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `{action_kind}` `{prefix}.source.git` must not contain newline characters"
+        )));
+    }
+    if let Some(git_ref) = source.git_ref.as_deref() {
+        if git_ref.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` action `{action_kind}` must not declare an empty `{prefix}.source.ref`"
+            )));
+        }
+        if git_ref.contains('\n') || git_ref.contains('\r') {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` action `{action_kind}` `{prefix}.source.ref` must not contain newline characters"
+            )));
+        }
     }
 }
 
@@ -9549,7 +9598,7 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.token
             ),
             ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => format!(
-                "task `{}` materializes git checkout `{}` without explicit `source.ref`",
+                "task `{}` materializes git-backed path `{}` without explicit `source.ref`",
                 advisory.task_name, advisory.checkout_path
             ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
@@ -9729,7 +9778,7 @@ impl ContractAdvisory {
                 shipped_external_state_token_examples()
             ),
             ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => format!(
-                "`{}` clones `{}` from the remote default branch because `source.ref` is omitted; that is truthful for moving-head bootstrap pressure, but not deterministic proof truth",
+                "`{}` materializes `{}` from the remote default branch because `source.ref` is omitted; that is truthful for moving-head bootstrap pressure, but not deterministic proof truth",
                 advisory.location, advisory.checkout_path
             ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
@@ -12728,6 +12777,17 @@ fn collect_ensure_git_checkout_moving_head_advisories_from_action(
                 ));
             }
         }
+        TaskActionSpec::EnsureGitTemplate(spec) => {
+            if spec.source.git_ref.is_none() {
+                advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                    EnsureGitCheckoutMovingHeadAdvisory {
+                        task_name: task_name.to_string(),
+                        checkout_path: spec.path.trim().to_string(),
+                        location: format!("{location_prefix}.{task_name}.action"),
+                    },
+                ));
+            }
+        }
         TaskActionSpec::EnsureGitCheckouts(spec) => {
             for (index, checkout) in spec.checkouts.iter().enumerate() {
                 if checkout.source.git_ref.is_none() {
@@ -12752,6 +12812,19 @@ fn collect_ensure_git_checkout_moving_head_advisories_from_action(
                                 EnsureGitCheckoutMovingHeadAdvisory {
                                     task_name: task_name.to_string(),
                                     checkout_path: checkout.path.trim().to_string(),
+                                    location: format!(
+                                        "{location_prefix}.{task_name}.action.steps[{index}]"
+                                    ),
+                                },
+                            ));
+                        }
+                    }
+                    TaskEnsureBundleStepSpec::EnsureGitTemplate(template) => {
+                        if template.source.git_ref.is_none() {
+                            advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                                EnsureGitCheckoutMovingHeadAdvisory {
+                                    task_name: task_name.to_string(),
+                                    checkout_path: template.path.trim().to_string(),
                                     location: format!(
                                         "{location_prefix}.{task_name}.action.steps[{index}]"
                                     ),
@@ -20395,6 +20468,29 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("sibling ensure_git_checkout action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_git_template_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  scaffold:
+    action:
+      kind: ensure_git_template
+      path: my-extension
+      source:
+        git: https://github.com/codyhxyz/create-chrome-extension.git
+        ref: main
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_git_template action should validate");
     }
 
     #[test]
@@ -36957,6 +37053,35 @@ tasks:
                 if value.task_name == "bootstrap"
                     && value.checkout_path == "vendor/wagtail"
                     && value.location == "tasks.bootstrap.action.steps[1]"
+        )));
+    }
+
+    #[test]
+    fn collects_ensure_git_template_moving_head_advisory_for_direct_action() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:
+    action:
+      kind: ensure_git_template
+      path: my-extension
+      source:
+        git: https://github.com/codyhxyz/create-chrome-extension.git
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EnsureGitCheckoutMovingHead(value)
+                if value.task_name == "bootstrap"
+                    && value.checkout_path == "my-extension"
+                    && value.location == "tasks.bootstrap.action"
         )));
     }
 

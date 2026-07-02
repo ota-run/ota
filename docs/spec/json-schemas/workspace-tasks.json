@@ -100,6 +100,16 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "from", "to"],
+          "properties": {
+            "kind": { "const": "ensure_git_template" },
+            "from": { "type": "string" },
+            "to": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "checkouts"],
           "properties": {
             "kind": { "const": "ensure_git_checkouts" },
@@ -324,7 +334,7 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },

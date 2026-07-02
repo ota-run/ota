@@ -2034,7 +2034,7 @@ Task-effect rules:
   - `prepare.steps.kind`: ordered step kind; `sequence` accepts the structural prepare kinds
     (`dependency_hydration`, `tool_bootstrap`, `sequence`) plus deterministic native bootstrap
     mutations (`copy_if_missing`, `ensure_env_file`, `ensure_file`, `ensure_directory`,
-    `ensure_git_checkout`, `ensure_container_network`, `reset_compose_service_volume`)
+    `ensure_git_checkout`, `ensure_git_template`, `ensure_container_network`, `reset_compose_service_volume`)
 - `prepare.kind: tool_bootstrap`
   - `prepare.tool`: required bootstrap target; ota currently ships `uv` and `playwright_browsers`
   - `prepare.browsers`: optional explicit Playwright browser subset; ota currently ships `chromium`, `firefox`, `webkit`, `chrome`, and `msedge`
@@ -2366,7 +2366,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, `ensure_git_checkout`, `ensure_git_checkouts`, `ensure_container_network`,
+  `ensure_file`, `ensure_directory`, `ensure_git_checkout`, `ensure_git_template`, `ensure_git_checkouts`, `ensure_container_network`,
   `reset_compose_service_volume`, or `ensure_bundle`
 - `action` is the first-class host file-preparation surface for deterministic repo mutations; in
   the current shipped slice it is native-only because it mutates the host working tree directly
@@ -2405,6 +2405,10 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     the materialized checkout
   - `action.remotes[].name`: required Git remote name such as `origin` or `upstream`
   - `action.remotes[].git`: required Git remote URL Ota should add or set for that name
+- `action.kind: ensure_git_template`
+  - `action.path`: required repo-relative scaffold path to create when missing
+  - `action.source.git`: required Git remote URL or clone source
+  - `action.source.ref`: optional Git ref Ota should check out before Ota strips inherited Git metadata
 - `action.kind: ensure_git_checkouts`
   - `action.checkouts`: required ordered list of git checkouts Ota should materialize
   - each `action.checkouts[]` entry uses the same fields and validation rules as
@@ -2429,6 +2433,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_file`
     - `kind: ensure_directory`
     - `kind: ensure_git_checkout`
+    - `kind: ensure_git_template`
     - `kind: ensure_git_checkouts`
     - `kind: ensure_container_network`
     - `kind: reset_compose_service_volume`
@@ -2474,6 +2479,15 @@ declared remote wiring”, not when setup should implicitly pull, fetch, or rewr
 history that is already present. When `action.source.ref` is omitted, Ota intentionally tracks the
 remote default branch head and `ota validate` / `ota doctor` warn that the checkout is moving-head
 pressure truth rather than deterministic proof truth.
+
+Use `action.kind: ensure_git_template` when setup truthfully owns deterministic factory
+materialization from a Git-backed scaffold that should become a fresh local repository instead of
+remaining a clone of the upstream template. Ota clones `action.source.git` into `action.path`
+only when that path is missing, optionally checks out `action.source.ref`, removes inherited Git
+metadata from the cloned scaffold, initializes a fresh Git repository in place, and then leaves
+existing directories untouched on repeat runs. This is the governed replacement for shell flows
+like `git clone ...`, `rm -rf .git`, and `git init` when a repo or starter skill documents
+template-style bootstrap.
 
 Use `action.kind: ensure_git_checkouts` when setup truthfully owns several deterministic sibling or
 vendored Git checkouts and repeating `ensure_git_checkout` entries would flatten one cohesive

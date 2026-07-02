@@ -17006,14 +17006,8 @@ fn preview_stage_family_for_task_kind(kind: &str) -> &'static str {
         | "tool_bootstrap"
         | "sequence"
         | "compose_build" => "prepare",
-        "launch"
-        | "compose"
-        | "container"
-        | "compose_up"
-        | "compose_down"
-        | "compose_stop"
-        | "compose_restart"
-        | "compose_rm" => "setup",
+        "launch" | "compose" | "container" | "compose_up" | "compose_down" | "compose_stop"
+        | "compose_restart" | "compose_rm" => "setup",
         "compose_logs" => "proof",
         _ => "verify",
     }
@@ -39480,6 +39474,14 @@ fn collect_prepare_sequence_step_field_paths(
             fields.push(format!("{prefix}.path"));
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.path"));
+            fields.push(format!("{prefix}.source.git"));
+            if spec.source.git_ref.is_some() {
+                fields.push(format!("{prefix}.source.ref"));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(spec) => {
             fields.push(format!("{prefix}.kind"));
             fields.push(format!("{prefix}.path"));
             fields.push(format!("{prefix}.source.git"));
@@ -92501,7 +92503,10 @@ fn render_preview_stage_actions(
         .map(|stage| (*stage).to_string())
         .collect::<Vec<_>>();
     for action in actions {
-        if !stage_order.iter().any(|stage| stage == &action.stage_family) {
+        if !stage_order
+            .iter()
+            .any(|stage| stage == &action.stage_family)
+        {
             stage_order.push(action.stage_family.clone());
         }
     }
@@ -92520,7 +92525,10 @@ fn render_preview_stage_actions(
         }
         first_stage = false;
         rendered.push_str(&detail_list_row(
-            &paint_key(&format!("{}:", stage_family_display_name(stage_family.as_str()))),
+            &paint_key(&format!(
+                "{}:",
+                stage_family_display_name(stage_family.as_str())
+            )),
             "",
         ));
         for action in stage_actions {
@@ -98384,7 +98392,9 @@ fn append_up_preview_service_actions_for_workflow(
             &mut plan.actions,
             &mut plan.staged_actions,
             "prepare",
-            format!("activate prerequisite workflow instance `{selector}` before the selected instance"),
+            format!(
+                "activate prerequisite workflow instance `{selector}` before the selected instance"
+            ),
         );
     }
     let pre_setup_services = up_pre_setup_service_closure(contract, workflow_name);
