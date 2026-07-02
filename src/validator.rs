@@ -5647,6 +5647,56 @@ fn validate_task_prepare(
                         )));
                     }
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::Composer(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: composer` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: composer` must omit `prepare.targets`; ota executes the declared Composer hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `composer` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements.tools.contains_key("composer")
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: composer` must declare `requirements.tools.composer`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                    if !dependency_hydration_declares_durable_state(effects) {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: composer` must declare durable state in `effects.writes` or `effects.adapter_state`"
+                        )));
+                    }
+                }
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
                     if spec.medium
                         != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
@@ -11499,9 +11549,14 @@ fn obvious_replaceable_dependency_hydration_command(command: &TaskCommandSpec) -
 
 fn obvious_replaceable_dependency_hydration_argv(argv: &[String]) -> bool {
     obvious_node_package_manager_hydration_argv(argv)
+        || obvious_composer_hydration_argv(argv)
         || obvious_yarn_inline_builds_hydration_argv(argv)
         || obvious_npm_force_hydration_argv(argv)
         || obvious_helm_dependency_build_hydration_argv(argv)
+}
+
+fn obvious_composer_hydration_argv(argv: &[String]) -> bool {
+    argv.len() == 2 && argv[0] == "composer" && argv[1] == "install"
 }
 
 fn obvious_node_package_manager_hydration_argv(argv: &[String]) -> bool {
@@ -26297,6 +26352,37 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_composer_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: composer
+        cwd: .
+    requirements:
+      tools:
+        composer: "*"
+    effects:
+      writes:
+        - vendor
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("composer hydration should validate");
+    }
+
+    #[test]
     fn accepts_prepare_only_maven_wrapper_hydration_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -26876,6 +26962,43 @@ tasks:
         validate_contract(&contract).expect(
             "compose-wrapped bundler hydration should allow the container-default bundle path",
         );
+    }
+
+    #[test]
+    fn accepts_compose_wrapped_composer_prepare_with_adapter_owned_durable_state() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deps:php:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: composer
+        cwd: .
+        compose:
+          kind: run
+          service: app
+          workdir: /workspace
+          rm: true
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      adapter_state:
+        - compose_volume:vendor_data
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("compose-wrapped composer hydration should accept adapter-owned durable state");
     }
 
     #[test]

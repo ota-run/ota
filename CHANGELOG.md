@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- widened `prepare.kind: dependency_hydration` with first-class Composer ownership through
+  `source.kind: composer`, so repos can now declare structural `composer install` setup lanes
+  natively or through Compose `exec/run` wrappers instead of leaving Composer dependency hydration
+  command-owned; validator, runner, dry-run/output summaries, and contract reference docs now all
+  understand the Composer family consistently
 - taught `ota doctor` to flag CI bootstrap split-brain when workflows restate Ota install truth
   outside `agent.bootstrap.ota.source` or conflict with it, so repos are pushed toward
   `ota-run/setup@v1 source: contract` / `ota-run/action@v1 source: contract` instead of carrying

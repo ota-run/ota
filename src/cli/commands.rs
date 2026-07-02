@@ -39287,6 +39287,9 @@ fn collect_prepare_field_paths(
                     fields.push(format!("{prefix}.source.cwd"));
                     fields.push(format!("{prefix}.source.path"));
                 }
+                TaskDependencyHydrationSourceSpec::Composer(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
                 TaskDependencyHydrationSourceSpec::Uv(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                 }

@@ -3148,6 +3148,13 @@ fn dependency_hydration_command_specs(
             });
             commands
         }
+        crate::schema::TaskDependencyHydrationSourceSpec::Composer(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("composer"),
+                args: vec![String::from("install")],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
             vec![crate::schema::TaskCommandSpec {
                 exe: String::from("uv"),
@@ -10381,6 +10388,10 @@ fn prepare_task_shell_command(
                     };
                     Ok(command)
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::Composer(source) => Ok(format!(
+                    "cd {} && composer install",
+                    shell_quote_command_word(source.cwd.trim(), quote_style)
+                )),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => Ok(format!(
                     "cd {} && uv sync",
                     shell_quote_command_word(source.cwd.trim(), quote_style)

@@ -6256,6 +6256,19 @@ impl TaskPrepareSpec {
                     }
                     preview
                 }
+                TaskDependencyHydrationSourceSpec::Composer(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
                 TaskDependencyHydrationSourceSpec::Uv(source) => {
                     let mut preview = format!(
                         "hydrate {} with {} in `{}`",
@@ -6643,6 +6656,7 @@ pub enum TaskDependencyHydrationSourceSpec {
     DockerCompose(TaskDockerComposeHydrationSourceSpec),
     NodePackageManager(TaskNodePackageManagerHydrationSourceSpec),
     Bundler(TaskBundlerHydrationSourceSpec),
+    Composer(TaskComposerHydrationSourceSpec),
     Uv(TaskUvHydrationSourceSpec),
     Poetry(TaskPoetryHydrationSourceSpec),
     GoModules(TaskGoModulesHydrationSourceSpec),
@@ -6659,6 +6673,7 @@ impl TaskDependencyHydrationSourceSpec {
             Self::DockerCompose(_) => None,
             Self::NodePackageManager(source) => source.compose.as_ref(),
             Self::Bundler(source) => source.compose.as_ref(),
+            Self::Composer(source) => source.compose.as_ref(),
             Self::Uv(source) => source.compose.as_ref(),
             Self::Poetry(source) => source.compose.as_ref(),
             Self::GoModules(source) => source.compose.as_ref(),
@@ -6793,6 +6808,20 @@ pub struct TaskBundlerHydrationSourceSpec {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskComposerHydrationSourceSpec {
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
+}
+
+impl TaskComposerHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        String::from("composer install")
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -8998,6 +9027,15 @@ tasks:
             compose: None,
         };
         assert_eq!(uv.command_preview(), "uv sync");
+    }
+
+    #[test]
+    fn composer_prepare_preview_uses_structural_install_command() {
+        let composer = super::TaskComposerHydrationSourceSpec {
+            cwd: String::from("."),
+            compose: None,
+        };
+        assert_eq!(composer.command_preview(), "composer install");
     }
 
     #[test]
