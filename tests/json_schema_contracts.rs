@@ -136,6 +136,18 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(
         task_action_variants
             .iter()
+            .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "ensure_git_checkout" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "ensure_git_checkouts" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
             .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_bundle" }))
     );
     assert!(
@@ -171,6 +183,16 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .any(|entry| entry == "ensure_env_file")
     );
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_git_checkout")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_git_checkouts")
+    );
     assert!(
         task_kind_enum
             .iter()
@@ -1383,6 +1405,18 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(
         task_action_variants
             .iter()
+            .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "ensure_git_checkout" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "ensure_git_checkouts" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
             .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_bundle" }))
     );
     assert!(
@@ -1417,6 +1451,16 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
             .any(|entry| entry == "ensure_env_file")
     );
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_git_checkout")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_git_checkouts")
+    );
     assert!(
         task_kind_enum
             .iter()
