@@ -20,7 +20,8 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -31,7 +32,10 @@ use crate::detector::{
 };
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
-use crate::schema::{Backend, Contract, ServiceSpec, ToolchainFulfillmentMode, ToolchainProvider};
+use crate::schema::{
+    AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
+    ToolchainProvider,
+};
 
 const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
 const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
@@ -209,6 +213,68 @@ pub(crate) fn append_contract_drift_findings(
         }
     }
 
+    if let Some(contract_source) = contract
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.bootstrap.as_ref())
+        .and_then(|bootstrap| bootstrap.ota.as_ref())
+        .and_then(|ota| ota.effective_source())
+        && let Ok(signals) = collect_github_actions_ota_bootstrap_signals(root)
+    {
+        for signal in signals {
+            match signal.mode {
+                CiOtaBootstrapSignalMode::ContractConsumer => {}
+                CiOtaBootstrapSignalMode::WorkflowOwned {
+                    install_source,
+                    surface,
+                } => {
+                    let contract_display = describe_ota_bootstrap_source(&contract_source);
+                    if let Some(workflow_source) = install_source.as_ref() {
+                        if *workflow_source != contract_source {
+                            findings.push(Finding::identified(
+                                "OTA_CI_BOOTSTRAP_TRUTH_DRIFT",
+                                "contract",
+                                "repo_contract",
+                                FindingSeverity::Warn,
+                                String::from(
+                                    "CI bootstrap drift: workflow install truth conflicts with `agent.bootstrap.ota.source`",
+                                ),
+                                format!(
+                                    "`ota.yaml` declares `agent.bootstrap.ota.source` = `{contract_display}`, but workflow install in `{}` uses `{}` through `{surface}`",
+                                    signal.source,
+                                    describe_ota_bootstrap_source(workflow_source),
+                                ),
+                                format!(
+                                    "prefer `ota-run/setup@v1 source: contract` or `ota-run/action@v1 source: contract` so CI consumes repo-owned bootstrap truth from `{}` instead of restating it in workflow YAML",
+                                    compact_display_path(root),
+                                ),
+                            ));
+                            continue;
+                        }
+                    }
+
+                    findings.push(Finding::identified(
+                        "OTA_CI_BOOTSTRAP_TRUTH_DUPLICATED",
+                        "contract",
+                        "repo_contract",
+                        FindingSeverity::Warn,
+                        String::from(
+                            "CI bootstrap drift: workflow restates ota install truth outside `agent.bootstrap.ota.source`",
+                        ),
+                        format!(
+                            "`ota.yaml` already declares `agent.bootstrap.ota.source` = `{contract_display}`, but workflow install in `{}` still owns ota bootstrap through `{surface}`",
+                            signal.source,
+                        ),
+                        format!(
+                            "prefer `ota-run/setup@v1 source: contract` or `ota-run/action@v1 source: contract` so CI consumes repo-owned bootstrap truth from `{}` instead of duplicating version, git revision, branch, or source-install refs in workflow YAML",
+                            compact_display_path(root),
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
     for removal in collect_detect_drift_removals(contract, &detect_report.contract) {
         findings.push(Finding::identified(
             "OTA_CONTRACT_DRIFT",
@@ -228,6 +294,307 @@ pub(crate) fn append_contract_drift_findings(
                 compact_display_path(root)
             ),
         ));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CiOtaBootstrapSignalMode {
+    ContractConsumer,
+    WorkflowOwned {
+        install_source: Option<AgentBootstrapOtaSource>,
+        surface: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CiOtaBootstrapSignal {
+    source: String,
+    mode: CiOtaBootstrapSignalMode,
+}
+
+fn collect_github_actions_ota_bootstrap_signals(
+    root: &Path,
+) -> Result<Vec<CiOtaBootstrapSignal>, crate::detector::DetectError> {
+    let workflows_dir = root.join(".github").join("workflows");
+    if !workflows_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut workflow_files = fs::read_dir(&workflows_dir)
+        .map_err(|source| crate::detector::DetectError::Read {
+            path: workflows_dir.display().to_string(),
+            source,
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yml" | "yaml")
+            )
+        })
+        .collect::<Vec<_>>();
+    workflow_files.sort();
+
+    let mut signals = Vec::new();
+    let mut active_workflows = BTreeSet::new();
+    for workflow_path in workflow_files {
+        collect_github_actions_ota_bootstrap_signals_from_workflow(
+            root,
+            &workflow_path,
+            None,
+            &mut active_workflows,
+            &mut signals,
+        )?;
+    }
+
+    Ok(signals)
+}
+
+fn collect_github_actions_ota_bootstrap_signals_from_workflow(
+    root: &Path,
+    workflow_path: &Path,
+    caller_job_source: Option<&str>,
+    active_workflows: &mut BTreeSet<String>,
+    signals: &mut Vec<CiOtaBootstrapSignal>,
+) -> Result<(), crate::detector::DetectError> {
+    let workflow_key = workflow_path
+        .strip_prefix(root)
+        .unwrap_or(workflow_path)
+        .display()
+        .to_string();
+    if !active_workflows.insert(workflow_key.clone()) {
+        return Ok(());
+    }
+
+    let contents =
+        fs::read_to_string(workflow_path).map_err(|source| crate::detector::DetectError::Read {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+    let workflow: YamlValue = serde_yaml::from_str(&contents).map_err(|source_error| {
+        crate::detector::DetectError::Parse {
+            path: workflow_path.display().to_string(),
+            message: source_error.to_string(),
+        }
+    })?;
+
+    let Some(jobs) = workflow.get("jobs").and_then(YamlValue::as_mapping) else {
+        active_workflows.remove(&workflow_key);
+        return Ok(());
+    };
+
+    for (job_name, job_value) in jobs
+        .iter()
+        .filter_map(|(name, value)| Some((name.as_str()?, value)))
+    {
+        let direct_job_source = format!("{workflow_key}#jobs.{job_name}");
+        let job_source = caller_job_source.unwrap_or(&direct_job_source).to_string();
+
+        if let Some(reusable_path) = job_value
+            .get("uses")
+            .and_then(YamlValue::as_str)
+            .and_then(local_reusable_github_workflow_path)
+        {
+            collect_github_actions_ota_bootstrap_signals_from_workflow(
+                root,
+                &root.join(reusable_path),
+                Some(&job_source),
+                active_workflows,
+                signals,
+            )?;
+            continue;
+        }
+
+        let Some(steps) = job_value.get("steps").and_then(YamlValue::as_sequence) else {
+            continue;
+        };
+
+        for (step_index, step) in steps.iter().enumerate() {
+            let step_source_prefix = if caller_job_source.is_some() {
+                format!("{job_source}::{workflow_key}#jobs.{job_name}.steps[{step_index}]")
+            } else {
+                format!("{job_source}.steps[{step_index}]")
+            };
+
+            if let Some(signal) =
+                github_actions_ota_bootstrap_signal_for_step(step, &step_source_prefix)
+            {
+                signals.push(signal);
+            }
+        }
+    }
+
+    active_workflows.remove(&workflow_key);
+    Ok(())
+}
+
+fn github_actions_ota_bootstrap_signal_for_step(
+    step: &YamlValue,
+    source_prefix: &str,
+) -> Option<CiOtaBootstrapSignal> {
+    if let Some(uses) = step.get("uses").and_then(YamlValue::as_str) {
+        let uses_lower = uses.to_ascii_lowercase();
+        let with = step.get("with").and_then(YamlValue::as_mapping);
+
+        if uses_lower.starts_with("ota-run/setup@") || uses_lower.starts_with("ota-run/action@") {
+            let mode = with
+                .and_then(|mapping| yaml_mapping_string(mapping, "source"))
+                .unwrap_or("explicit");
+            if mode.eq_ignore_ascii_case("contract") {
+                return Some(CiOtaBootstrapSignal {
+                    source: format!("{source_prefix}.uses"),
+                    mode: CiOtaBootstrapSignalMode::ContractConsumer,
+                });
+            }
+
+            let install_source = with
+                .and_then(|mapping| yaml_mapping_string(mapping, "ota-version"))
+                .map(|version| AgentBootstrapOtaSource::Version {
+                    version: version.to_string(),
+                });
+            return Some(CiOtaBootstrapSignal {
+                source: format!("{source_prefix}.uses"),
+                mode: CiOtaBootstrapSignalMode::WorkflowOwned {
+                    install_source,
+                    surface: format!("{uses} ({mode})"),
+                },
+            });
+        }
+
+        if uses_lower.starts_with("ota-run/ota/.github/actions/install-ota-from-source@") {
+            let install_source = with
+                .and_then(|mapping| yaml_mapping_string(mapping, "ref"))
+                .and_then(parse_workflow_owned_ota_ref);
+            return Some(CiOtaBootstrapSignal {
+                source: format!("{source_prefix}.uses"),
+                mode: CiOtaBootstrapSignalMode::WorkflowOwned {
+                    install_source,
+                    surface: String::from("ota-run/ota/.github/actions/install-ota-from-source"),
+                },
+            });
+        }
+    }
+
+    if let Some(run) = step.get("run").and_then(YamlValue::as_str)
+        && workflow_run_mentions_ota_installer(run)
+    {
+        let install_source = parse_ota_installer_source_from_workflow_run(run);
+        return Some(CiOtaBootstrapSignal {
+            source: format!("{source_prefix}.run"),
+            mode: CiOtaBootstrapSignalMode::WorkflowOwned {
+                install_source,
+                surface: String::from("official ota installer command"),
+            },
+        });
+    }
+
+    None
+}
+
+fn workflow_run_mentions_ota_installer(command: &str) -> bool {
+    let normalized = command.to_ascii_lowercase();
+    normalized.contains("dist.ota.run/install.sh")
+        || normalized.contains("dist.ota.run/install.ps1")
+}
+
+fn parse_ota_installer_source_from_workflow_run(command: &str) -> Option<AgentBootstrapOtaSource> {
+    let normalized = command.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    extract_bootstrap_marker_value(normalized, &["OTA_GIT_BRANCH=", "$env:OTA_GIT_BRANCH="])
+        .map(|branch| AgentBootstrapOtaSource::Branch { branch })
+        .or_else(|| {
+            extract_bootstrap_marker_value(normalized, &["OTA_GIT_REV=", "$env:OTA_GIT_REV="])
+                .map(|rev| AgentBootstrapOtaSource::GitRev { rev })
+        })
+        .or_else(|| {
+            extract_bootstrap_marker_value(normalized, &["OTA_VERSION=", "$env:OTA_VERSION="])
+                .map(|version| AgentBootstrapOtaSource::Version { version })
+        })
+}
+
+fn extract_bootstrap_marker_value(command: &str, markers: &[&str]) -> Option<String> {
+    markers.iter().find_map(|marker| {
+        let index = command.find(marker)?;
+        let remainder = &command[index + marker.len()..];
+        let trimmed = remainder.trim_start();
+        let quoted = trimmed
+            .strip_prefix('\'')
+            .and_then(|value| value.split('\'').next())
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('"')
+                    .and_then(|value| value.split('"').next())
+            });
+        if let Some(value) = quoted {
+            let normalized = value.trim();
+            return (!normalized.is_empty()).then(|| normalized.to_string());
+        }
+
+        let value = trimmed
+            .split(|character: char| {
+                character.is_whitespace()
+                    || character == ';'
+                    || character == '|'
+                    || character == '&'
+                    || character == ')'
+            })
+            .next()
+            .unwrap_or_default()
+            .trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+fn parse_workflow_owned_ota_ref(value: &str) -> Option<AgentBootstrapOtaSource> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains("${{") {
+        return None;
+    }
+    if trimmed.len() == 40
+        && trimmed
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(AgentBootstrapOtaSource::GitRev {
+            rev: trimmed.to_string(),
+        });
+    }
+    if trimmed.starts_with('v')
+        && trimmed
+            .chars()
+            .skip(1)
+            .all(|character| character.is_ascii_digit() || character == '.')
+    {
+        return Some(AgentBootstrapOtaSource::Version {
+            version: trimmed.to_string(),
+        });
+    }
+    Some(AgentBootstrapOtaSource::Branch {
+        branch: trimmed.to_string(),
+    })
+}
+
+fn yaml_mapping_string<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a str> {
+    mapping
+        .iter()
+        .find_map(|(mapping_key, value)| (mapping_key.as_str() == Some(key)).then_some(value))
+        .and_then(YamlValue::as_str)
+}
+
+fn local_reusable_github_workflow_path(uses: &str) -> Option<&str> {
+    uses.strip_prefix("./")
+        .filter(|path| path.starts_with(".github/workflows/"))
+}
+
+fn describe_ota_bootstrap_source(source: &AgentBootstrapOtaSource) -> String {
+    match source {
+        AgentBootstrapOtaSource::Version { version } => format!("version {version}"),
+        AgentBootstrapOtaSource::GitRev { rev } => format!("git_rev {rev}"),
+        AgentBootstrapOtaSource::Branch { branch } => format!("branch {branch}"),
     }
 }
 

@@ -194,6 +194,12 @@ or `ota proof` commands, use the contract-owned installer action instead of dupl
 That setup mode reads `agent.bootstrap.ota.source` from the checked-out `ota.yaml` and runs the
 matching official installer flow through the single public `ota-run/setup` surface.
 
+`ota doctor` now flags workflow-owned ota install truth when the repo already declares
+`agent.bootstrap.ota.source`. If a job keeps explicit `ota-version`, raw installer commands,
+branch/revision env markers, or source-install helpers in workflow YAML, treat that as
+install-governance drift and move the job back onto `source: contract` unless the lane is an
+intentional unreleased pressure path.
+
 ## Inputs
 
 - `command` supports `receipt` or `doctor`; default: `receipt`

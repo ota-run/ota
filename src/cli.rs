@@ -24345,6 +24345,198 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_ci_bootstrap_truth_duplication_for_workflow_owned_source_install() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ota-run/ota/.github/actions/install-ota-from-source@v1.6.22
+        with:
+          repository: ota-run/ota
+          ref: v1.6.22
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  verify:
+    run: npm test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: version
+        version: v1.6.22
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "CI bootstrap drift: workflow restates ota install truth outside `agent.bootstrap.ota.source`"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("install-ota-from-source")
+                }),
+            "expected a CI bootstrap duplication warning"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_ci_bootstrap_truth_conflict_for_explicit_setup_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ota-run/setup@v1
+        with:
+          source: explicit
+          ota-version: v1.6.21
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  verify:
+    run: npm test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: version
+        version: v1.6.22
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json.get("error").is_none() || json["error"].is_null(),
+            "expected successful doctor JSON output: {}",
+            serde_json::to_string_pretty(&json).unwrap()
+        );
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "CI bootstrap drift: workflow install truth conflicts with `agent.bootstrap.ota.source`"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("version v1.6.21")
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("version v1.6.22")
+                }),
+            "expected a CI bootstrap conflict warning"
+        );
+    }
+
+    #[test]
+    fn doctor_skips_ci_bootstrap_truth_warning_when_setup_consumes_contract_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ota-run/setup@v1
+        with:
+          source: contract
+          contract-path: ota.yaml
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  verify:
+    run: npm test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: version
+        version: v1.6.22
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let bootstrap_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI bootstrap drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            bootstrap_findings.is_empty(),
+            "expected no CI bootstrap drift once setup consumes contract truth: {}",
+            serde_json::to_string_pretty(&bootstrap_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_recovers_ci_verifier_aggregate_from_local_action_tasks_input() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");

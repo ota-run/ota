@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- taught `ota doctor` to flag CI bootstrap split-brain when workflows restate Ota install truth
+  outside `agent.bootstrap.ota.source` or conflict with it, so repos are pushed toward
+  `ota-run/setup@v1 source: contract` / `ota-run/action@v1 source: contract` instead of carrying
+  separate workflow-owned version, git-revision, branch, or source-install refs
 - added execution-boundary agent-safety enforcement to `ota run` and `ota up`: `--agent` now
   refuses unsafe requested tasks and declared-safe task/workflow closures before any execution
   starts, returns ota-authored blocked receipts/results instead of treating the safe surface as
