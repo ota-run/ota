@@ -280,7 +280,7 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },

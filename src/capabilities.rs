@@ -91,6 +91,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.22",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.ensure_git_checkouts",
+        introduced_in: "1.6.23",
+    },
+    ContractCapabilitySpec {
         id: "tasks.action.ensure_container_network",
         introduced_in: "1.6.21",
     },
@@ -343,6 +347,7 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
         "tasks.action.ensure_directory" => tasks_action_ensure_directory_present(document),
         "tasks.action.ensure_git_checkout" => tasks_action_ensure_git_checkout_present(document),
+        "tasks.action.ensure_git_checkouts" => tasks_action_ensure_git_checkouts_present(document),
         "tasks.action.ensure_container_network" => {
             tasks_action_ensure_container_network_present(document)
         }
@@ -426,6 +431,12 @@ fn capability_present_in_contract(
             matches!(
                 task.action.as_ref(),
                 Some(crate::schema::TaskActionSpec::EnsureGitCheckout(_))
+            )
+        }),
+        "tasks.action.ensure_git_checkouts" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::EnsureGitCheckouts(_))
             )
         }),
         "tasks.action.ensure_container_network" => contract.tasks.values().any(|task| {
@@ -695,6 +706,22 @@ fn tasks_action_ensure_git_checkout_present(document: &Value) -> bool {
                     .and_then(Value::as_str)
             })
             == Some("ensure_git_checkout")
+    })
+}
+
+fn tasks_action_ensure_git_checkouts_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(|task| {
+        mapping_child(task, "action")
+            .and_then(Value::as_mapping)
+            .and_then(|action| {
+                action
+                    .get(Value::String(String::from("kind")))
+                    .and_then(Value::as_str)
+            })
+            == Some("ensure_git_checkouts")
     })
 }
 
@@ -1120,6 +1147,34 @@ tasks:
             .map(|capability| capability.id)
             .collect::<Vec<_>>();
         assert_eq!(detected, vec!["tasks.action.ensure_git_checkout"]);
+    }
+
+    #[test]
+    fn detects_ensure_git_checkouts_capability_from_contract() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkouts
+      checkouts:
+        - path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+            ref: main
+"#,
+        )
+        .unwrap();
+
+        let current = Version::parse("1.6.22").unwrap();
+        let detected = unsupported_declared_contract_capabilities_in_contract(&contract, &current)
+            .into_iter()
+            .map(|capability| capability.id)
+            .collect::<Vec<_>>();
+        assert_eq!(detected, vec!["tasks.action.ensure_git_checkouts"]);
     }
 
     #[test]

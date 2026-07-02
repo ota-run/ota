@@ -10716,6 +10716,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             execute_ensure_git_checkout_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskActionSpec::EnsureGitCheckouts(spec) => {
+            execute_ensure_git_checkouts_action(task_name, spec, working_dir)
+        }
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
         }
@@ -10832,6 +10835,9 @@ fn execute_ensure_bundle_step(
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
             execute_ensure_git_checkout_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckouts(spec) => {
+            execute_ensure_git_checkouts_action(task_name, spec, working_dir)
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
@@ -11177,6 +11183,28 @@ fn execute_ensure_git_checkout_action(
         stdout.push_str(checkout_output.as_str());
     }
 
+    Ok(file_action_output(stdout))
+}
+
+fn execute_ensure_git_checkouts_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureGitCheckoutsActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    if spec.checkouts.is_empty() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: String::from(
+                "action `ensure_git_checkouts` must declare at least one entry in `checkouts`",
+            ),
+        });
+    }
+
+    let mut stdout = String::new();
+    for checkout in &spec.checkouts {
+        let step_output = execute_ensure_git_checkout_action(task_name, checkout, working_dir)?;
+        stdout.push_str(step_output.stdout.as_str());
+    }
     Ok(file_action_output(stdout))
 }
 
@@ -57787,6 +57815,106 @@ tasks:
             second
                 .stdout
                 .contains("git checkout `vendor/wagtail` already exists; no clone needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_git_checkouts_action_clones_all_missing_checkouts_idempotently() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkouts
+      checkouts:
+        - path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+            ref: main
+        - path: vendor/bakerydemo
+          source:
+            git: https://github.com/wagtail/bakerydemo.git
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("git-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let log_path = fixture.dir.path().join("git.log");
+        let git_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nsetlocal enabledelayedexpansion\r\n>> \"%OTA_GIT_LOG%\" echo %CD%^|%*\r\nif \"%1\"==\"clone\" (\r\n  mkdir \"%4\" >nul 2>nul\r\n  > \"%4\\.git\" type nul\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"checkout\" (\r\n  > \"{state}\\checkout-%2\" type nul\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n",
+                state = state_dir.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_GIT_LOG\"\nif [ \"$1\" = \"clone\" ]; then\n  mkdir -p \"$4\"\n  : > \"$4/.git\"\n  exit 0\nfi\nif [ \"$1\" = \"checkout\" ]; then\n  : > \"{state}/checkout-$2\"\n  exit 0\nfi\nexit 1\n",
+                state = state_dir.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "git", &git_body);
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_GIT_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_GIT_LOG", &log_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("ensure_git_checkouts action should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("ensure_git_checkouts action should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_GIT_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_GIT_LOG");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(fixture.dir.path().join("vendor/wagtail/.git").exists());
+        assert!(fixture.dir.path().join("vendor/bakerydemo/.git").exists());
+        assert!(state_dir.join("checkout-main").exists());
+        let git_log = fs::read_to_string(&log_path).unwrap();
+        assert!(git_log.contains("clone -- https://github.com/wagtail/wagtail.git vendor/wagtail"));
+        assert!(git_log.contains("vendor/wagtail|checkout main"));
+        assert!(git_log.contains("clone -- https://github.com/wagtail/bakerydemo.git vendor/bakerydemo"));
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("git checkout `vendor/wagtail` already exists; no clone needed"),
+            "{}",
+            second.stdout
+        );
+        assert!(
+            second
+                .stdout
+                .contains("git checkout `vendor/bakerydemo` already exists; no clone needed"),
             "{}",
             second.stdout
         );

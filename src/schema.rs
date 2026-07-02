@@ -6116,6 +6116,7 @@ pub enum TaskActionSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
+    EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
     EnsureBundle(TaskEnsureBundleActionSpec),
@@ -6129,6 +6130,7 @@ impl TaskActionSpec {
             Self::EnsureFile(_) => "ensure_file",
             Self::EnsureDirectory(_) => "ensure_directory",
             Self::EnsureGitCheckout(_) => "ensure_git_checkout",
+            Self::EnsureGitCheckouts(_) => "ensure_git_checkouts",
             Self::EnsureContainerNetwork(_) => "ensure_container_network",
             Self::ResetComposeServiceVolume(_) => "reset_compose_service_volume",
             Self::EnsureBundle(_) => "ensure_bundle",
@@ -6185,6 +6187,22 @@ impl TaskActionSpec {
                 }
                 preview
             }
+            Self::EnsureGitCheckouts(action) => match action.checkouts.as_slice() {
+                [] => String::from("ensure git checkouts"),
+                [checkout] => {
+                    let mut preview = format!(
+                        "ensure git checkout `{}` from `{}`",
+                        checkout.path, checkout.source.git
+                    );
+                    if let Some(git_ref) = checkout.source.git_ref.as_deref() {
+                        preview.push_str(" at `");
+                        preview.push_str(git_ref.trim());
+                        preview.push('`');
+                    }
+                    preview
+                }
+                checkouts => format!("ensure {} git checkouts", checkouts.len()),
+            },
             Self::EnsureContainerNetwork(action) => format!(
                 "ensure {} container network `{}` exists",
                 action.provider.label(),
@@ -7131,6 +7149,13 @@ pub struct TaskEnsureGitCheckoutSourceSpec {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct TaskEnsureGitCheckoutsActionSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkouts: Vec<TaskEnsureGitCheckoutActionSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskEnsureContainerNetworkActionSpec {
     #[serde(default, skip_serializing_if = "is_default_container_runtime_provider")]
     pub provider: TaskContainerRuntimeProvider,
@@ -7182,6 +7207,7 @@ pub enum TaskEnsureBundleStepSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
+    EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
 }

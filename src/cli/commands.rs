@@ -16998,6 +16998,7 @@ fn preview_stage_family_for_task_kind(kind: &str) -> &'static str {
         | "ensure_file"
         | "ensure_directory"
         | "ensure_git_checkout"
+        | "ensure_git_checkouts"
         | "ensure_container_network"
         | "reset_compose_service_volume"
         | "ensure_bundle"
@@ -40836,6 +40837,7 @@ fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSumm
             action.from.unwrap_or("?"),
             action.to.unwrap_or("?")
         ),
+        "ensure_git_checkouts" => String::from("ensure_git_checkouts"),
         "ensure_container_network" => {
             format!("ensure_container_network {}", action.to.unwrap_or("?"))
         }
@@ -41004,6 +41006,7 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
             }
             _ => String::from("ensure git checkout"),
         },
+        "ensure_git_checkouts" => String::from("ensure git checkouts"),
         "ensure_container_network" => match (action.from, action.to) {
             (Some(provider), Some(name)) => {
                 format!("ensure {provider} container network `{name}`")

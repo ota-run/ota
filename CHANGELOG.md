@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added first-class `action.kind: ensure_git_checkouts`, so one setup lane can now own several
+  deterministic Git-backed sibling or vendored checkouts without flattening that materialization
+  truth into repeated low-level `ensure_git_checkout` entries; `ensure_bundle` can now compose the
+  same multi-checkout step with file/env prep, moving-head advisories stay per checkout, and the
+  published contract/docs/examples now describe the widened VCS materialization surface directly
+
 - added first-class `compose.build: true` for `tasks.<name>.compose.kind: run`, so documented
   one-off Compose contributor shells like `docker compose run --rm --build ...` no longer need
   shell fallback or wrapper-script truth

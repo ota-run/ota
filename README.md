@@ -882,6 +882,7 @@ Choose by goal:
 - existing app with services: [Basic Services](examples/basic-services/ota.yaml), [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
 - shared topology: [Shared Local Topology](examples/shared-local-topology/ota.yaml), [Shared Remote Topology](examples/shared-remote-topology/README.md)
 - multi-repo bootstrap: [Basic Workspace](examples/workspace-basic/ota.workspace.yaml), [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml)
+- deterministic checkout materialization: [Single Checkout](examples/ensure-git-checkout/ota.yaml), [Multi Checkout](examples/ensure-git-checkouts/ota.yaml)
 - realistic reference shape: [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml), [Full contract example](examples/full-contract/ota.yaml), [ota-run/examples](https://github.com/ota-run/examples)
 
 If you want the shortest “which example proves what?” guide, use

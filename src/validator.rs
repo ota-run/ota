@@ -4605,6 +4605,9 @@ fn validate_task_action(
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             validate_task_ensure_git_checkout_action(task_name, "action", spec, errors);
         }
+        crate::schema::TaskActionSpec::EnsureGitCheckouts(spec) => {
+            validate_task_ensure_git_checkouts_action(task_name, "action", spec, errors);
+        }
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             if spec.name.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -6430,6 +6433,9 @@ fn validate_structured_bootstrap_step(
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
             validate_task_ensure_git_checkout_action(task_name, prefix, spec, errors);
         }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckouts(spec) => {
+            validate_task_ensure_git_checkouts_action(task_name, prefix, spec, errors);
+        }
         crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
             if spec.name.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -6501,6 +6507,28 @@ fn validate_task_ensure_git_checkout_action(
                 "task `{task_name}` action `ensure_git_checkout` `{prefix}.source.ref` must not contain newline characters"
             )));
         }
+    }
+}
+
+fn validate_task_ensure_git_checkouts_action(
+    task_name: &str,
+    prefix: &str,
+    spec: &crate::schema::TaskEnsureGitCheckoutsActionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if spec.checkouts.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkouts` must declare at least one entry in `{prefix}.checkouts`"
+        )));
+        return;
+    }
+    for (index, checkout) in spec.checkouts.iter().enumerate() {
+        validate_task_ensure_git_checkout_action(
+            task_name,
+            format!("{prefix}.checkouts[{index}]").as_str(),
+            checkout,
+            errors,
+        );
     }
 }
 
@@ -12615,21 +12643,53 @@ fn collect_ensure_git_checkout_moving_head_advisories_from_action(
                 ));
             }
         }
-        TaskActionSpec::EnsureBundle(spec) => {
-            for (index, step) in spec.steps.iter().enumerate() {
-                let TaskEnsureBundleStepSpec::EnsureGitCheckout(checkout) = step else {
-                    continue;
-                };
+        TaskActionSpec::EnsureGitCheckouts(spec) => {
+            for (index, checkout) in spec.checkouts.iter().enumerate() {
                 if checkout.source.git_ref.is_none() {
                     advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
                         EnsureGitCheckoutMovingHeadAdvisory {
                             task_name: task_name.to_string(),
                             checkout_path: checkout.path.trim().to_string(),
                             location: format!(
-                                "{location_prefix}.{task_name}.action.steps[{index}]"
+                                "{location_prefix}.{task_name}.action.checkouts[{index}]"
                             ),
                         },
                     ));
+                }
+            }
+        }
+        TaskActionSpec::EnsureBundle(spec) => {
+            for (index, step) in spec.steps.iter().enumerate() {
+                match step {
+                    TaskEnsureBundleStepSpec::EnsureGitCheckout(checkout) => {
+                        if checkout.source.git_ref.is_none() {
+                            advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                                EnsureGitCheckoutMovingHeadAdvisory {
+                                    task_name: task_name.to_string(),
+                                    checkout_path: checkout.path.trim().to_string(),
+                                    location: format!(
+                                        "{location_prefix}.{task_name}.action.steps[{index}]"
+                                    ),
+                                },
+                            ));
+                        }
+                    }
+                    TaskEnsureBundleStepSpec::EnsureGitCheckouts(spec) => {
+                        for (checkout_index, checkout) in spec.checkouts.iter().enumerate() {
+                            if checkout.source.git_ref.is_none() {
+                                advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                                    EnsureGitCheckoutMovingHeadAdvisory {
+                                        task_name: task_name.to_string(),
+                                        checkout_path: checkout.path.trim().to_string(),
+                                        location: format!(
+                                            "{location_prefix}.{task_name}.action.steps[{index}].checkouts[{checkout_index}]"
+                                        ),
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -20143,6 +20203,34 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_git_checkout action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_git_checkouts_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkouts
+      checkouts:
+        - path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+            ref: main
+        - path: vendor/bakerydemo
+          source:
+            git: https://github.com/wagtail/bakerydemo.git
+            ref: main
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_git_checkouts action should validate");
     }
 
     #[test]
@@ -36548,6 +36636,40 @@ tasks:
                 if value.task_name == "bootstrap"
                     && value.checkout_path == "vendor/wagtail"
                     && value.location == "tasks.bootstrap.action.steps[1]"
+        )));
+    }
+
+    #[test]
+    fn collects_ensure_git_checkouts_moving_head_advisory_for_direct_action() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:
+    action:
+      kind: ensure_git_checkouts
+      checkouts:
+        - path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+        - path: vendor/bakerydemo
+          source:
+            git: https://github.com/wagtail/bakerydemo.git
+            ref: main
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EnsureGitCheckoutMovingHead(value)
+                if value.task_name == "bootstrap"
+                    && value.checkout_path == "vendor/wagtail"
+                    && value.location == "tasks.bootstrap.action.checkouts[0]"
         )));
     }
 

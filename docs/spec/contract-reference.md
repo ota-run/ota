@@ -2355,7 +2355,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, `ensure_git_checkout`, `ensure_container_network`,
+  `ensure_file`, `ensure_directory`, `ensure_git_checkout`, `ensure_git_checkouts`, `ensure_container_network`,
   `reset_compose_service_volume`, or `ensure_bundle`
 - `action` is the first-class host file-preparation surface for deterministic repo mutations; in
   the current shipped slice it is native-only because it mutates the host working tree directly
@@ -2390,6 +2390,10 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
   - `action.path`: required repo-relative checkout path to create when missing
   - `action.source.git`: required Git remote URL or clone source
   - `action.source.ref`: optional Git ref Ota should check out after clone
+- `action.kind: ensure_git_checkouts`
+  - `action.checkouts`: required ordered list of git checkouts Ota should materialize
+  - each `action.checkouts[]` entry uses the same fields and validation rules as
+    `action.kind: ensure_git_checkout`
 - `action.kind: ensure_container_network`
   - `action.provider`: optional container runtime provider; currently `docker` (default `docker`)
   - `action.name`: required container network name to inspect/create
@@ -2410,6 +2414,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_file`
     - `kind: ensure_directory`
     - `kind: ensure_git_checkout`
+    - `kind: ensure_git_checkouts`
     - `kind: ensure_container_network`
     - `kind: reset_compose_service_volume`
   - each step uses the same fields and validation rules as the corresponding top-level action kind
@@ -2450,6 +2455,12 @@ bootstrap needs “make sure this checkout exists”, not when setup should impl
 rewrite a repo that is already present. When `action.source.ref` is omitted, Ota intentionally
 tracks the remote default branch head and `ota validate` / `ota doctor` warn that the checkout is
 moving-head pressure truth rather than deterministic proof truth.
+
+Use `action.kind: ensure_git_checkouts` when setup truthfully owns several deterministic sibling or
+vendored Git checkouts and repeating `ensure_git_checkout` entries would flatten one cohesive
+materialization lane into low-level boilerplate. Ota applies the declared checkouts in order, uses
+the same idempotent semantics as `ensure_git_checkout` for each entry, and keeps moving-head
+advisories per checkout when `source.ref` is omitted.
 
 Use `action.kind: ensure_container_network` when setup needs one deterministic external container
 network without shell glue. It inspects the named provider-owned network, creates it only when
