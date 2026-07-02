@@ -16937,7 +16937,7 @@ fn build_run_preview_plan(
     push_preview_plan_action(
         &mut plan.actions,
         &mut plan.staged_actions,
-        "verify",
+        dependency_task_stage_family(contract, task_name, overrides),
         run_preview_task_execution_action(
             contract,
             task_name,
@@ -16979,16 +16979,41 @@ fn dependency_task_stage_family(
     let Some(task) = contract.tasks.get(task_name) else {
         return "verify";
     };
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
     let kind = task
-        .resolved_execution_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-            current_os(),
-        )
-        .map(|resolved| resolved.kind)
+        .mode_execution_branch(backend)
+        .and_then(crate::schema::TaskModeBranchSpec::execution_kind)
+        .or_else(|| task.default_execution_kind())
+        .or_else(|| task.any_execution_kind())
         .unwrap_or("run");
+    preview_stage_family_for_task_kind(kind)
+}
+
+fn preview_stage_family_for_task_kind(kind: &str) -> &'static str {
     match kind {
-        "prepare" | "action" => "prepare",
-        "launch" => "setup",
+        "prepare"
+        | "action"
+        | "copy_if_missing"
+        | "ensure_env_file"
+        | "ensure_file"
+        | "ensure_directory"
+        | "ensure_git_checkout"
+        | "ensure_container_network"
+        | "reset_compose_service_volume"
+        | "ensure_bundle"
+        | "dependency_hydration"
+        | "tool_bootstrap"
+        | "sequence"
+        | "compose_build" => "prepare",
+        "launch"
+        | "compose"
+        | "container"
+        | "compose_up"
+        | "compose_down"
+        | "compose_stop"
+        | "compose_restart"
+        | "compose_rm" => "setup",
+        "compose_logs" => "proof",
         _ => "verify",
     }
 }
@@ -58410,6 +58435,82 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_json_classifies_prepare_build_and_setup_stages() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    host:
+      backend: native
+tasks:
+  bootstrap:
+    context: host
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: demo
+  images:build:
+    context: host
+    compose:
+      kind: build
+    depends_on:
+      - bootstrap
+  web:up:
+    context: host
+    launch:
+      kind: compose
+      action: up
+      services:
+        - web
+    depends_on:
+      - images:build
+"#,
+        )
+        .expect("parse contract");
+
+        let requested_task = TaskSummary::from_spec_with_overrides(
+            "web:up",
+            contract.tasks.get("web:up").expect("web:up task"),
+            super::current_os(),
+            &contract,
+            ExecutionOverrides::default(),
+        );
+        let execution_plan = super::resolve_execution_plan_for_task(
+            &contract,
+            Path::new("ota.yaml"),
+            "web:up",
+            ExecutionOverrides::default(),
+        )
+        .expect("execution plan");
+        let preview_plan = super::build_run_preview_plan(
+            &contract,
+            "web:up",
+            ExecutionOverrides::default(),
+            &requested_task,
+            &execution_plan,
+            false,
+        );
+
+        let staged = preview_plan
+            .staged_actions
+            .iter()
+            .map(|action| (action.stage_family.as_str(), action.action.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(staged.len(), 3);
+        assert_eq!(staged[0].0, "prepare");
+        assert!(staged[0].1.contains("`bootstrap`"));
+        assert_eq!(staged[1].0, "prepare");
+        assert!(staged[1].1.contains("`images:build`"));
+        assert_eq!(staged[2].0, "setup");
+        assert!(staged[2].1.contains("docker compose up web"));
+    }
+
+    #[test]
     fn effect_policy_closure_uses_selected_mode_specific_dependencies() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -98366,7 +98467,7 @@ fn append_up_preview_service_actions_for_workflow(
             push_preview_plan_action(
                 &mut plan.actions,
                 &mut plan.staged_actions,
-                "verify",
+                dependency_task_stage_family(contract, run_task, overrides),
                 run_preview_task_execution_action(
                     contract,
                     run_task,
