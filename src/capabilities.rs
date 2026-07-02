@@ -95,6 +95,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.22",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.ensure_git_checkout.remotes",
+        introduced_in: "1.6.23",
+    },
+    ContractCapabilitySpec {
         id: "tasks.action.ensure_git_checkouts",
         introduced_in: "1.6.23",
     },
@@ -352,6 +356,9 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
         "tasks.action.ensure_directory" => tasks_action_ensure_directory_present(document),
         "tasks.action.ensure_git_checkout" => tasks_action_ensure_git_checkout_present(document),
+        "tasks.action.ensure_git_checkout.remotes" => {
+            tasks_action_ensure_git_checkout_remotes_present(document)
+        }
         "tasks.action.ensure_git_checkouts" => tasks_action_ensure_git_checkouts_present(document),
         "tasks.action.ensure_container_network" => {
             tasks_action_ensure_container_network_present(document)
@@ -442,6 +449,21 @@ fn capability_present_in_contract(
                 Some(crate::schema::TaskActionSpec::EnsureGitCheckout(_))
             )
         }),
+        "tasks.action.ensure_git_checkout.remotes" => {
+            contract
+                .tasks
+                .values()
+                .any(|task| match task.action.as_ref() {
+                    Some(crate::schema::TaskActionSpec::EnsureGitCheckout(spec)) => {
+                        !spec.remotes.is_empty()
+                    }
+                    Some(crate::schema::TaskActionSpec::EnsureGitCheckouts(spec)) => spec
+                        .checkouts
+                        .iter()
+                        .any(|checkout| !checkout.remotes.is_empty()),
+                    _ => false,
+                })
+        }
         "tasks.action.ensure_git_checkouts" => contract.tasks.values().any(|task| {
             matches!(
                 task.action.as_ref(),
@@ -742,6 +764,37 @@ fn tasks_action_ensure_git_checkouts_present(document: &Value) -> bool {
                     .and_then(Value::as_str)
             })
             == Some("ensure_git_checkouts")
+    })
+}
+
+fn tasks_action_ensure_git_checkout_remotes_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(|task| {
+        let Some(action) = mapping_child(task, "action").and_then(Value::as_mapping) else {
+            return false;
+        };
+        match action
+            .get(Value::String(String::from("kind")))
+            .and_then(Value::as_str)
+        {
+            Some("ensure_git_checkout") => action
+                .get(Value::String(String::from("remotes")))
+                .and_then(Value::as_sequence)
+                .is_some_and(|remotes| !remotes.is_empty()),
+            Some("ensure_git_checkouts") => action
+                .get(Value::String(String::from("checkouts")))
+                .and_then(Value::as_sequence)
+                .is_some_and(|checkouts| {
+                    checkouts.iter().any(|checkout| {
+                        mapping_child(checkout, "remotes")
+                            .and_then(Value::as_sequence)
+                            .is_some_and(|remotes| !remotes.is_empty())
+                    })
+                }),
+            _ => false,
+        }
     })
 }
 
@@ -1220,6 +1273,36 @@ tasks:
             .map(|capability| capability.id)
             .collect::<Vec<_>>();
         assert_eq!(detected, vec!["tasks.action.ensure_git_checkouts"]);
+    }
+
+    #[test]
+    fn detects_ensure_git_checkout_remotes_capability_from_contract() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+        ref: main
+      remotes:
+        - name: upstream
+          git: git@github.com:wagtail/wagtail.git
+"#,
+        )
+        .unwrap();
+
+        let current = Version::parse("1.6.22").unwrap();
+        let detected = unsupported_declared_contract_capabilities_in_contract(&contract, &current)
+            .into_iter()
+            .map(|capability| capability.id)
+            .collect::<Vec<_>>();
+        assert_eq!(detected, vec!["tasks.action.ensure_git_checkout.remotes"]);
     }
 
     #[test]

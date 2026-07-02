@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened `action.kind: ensure_git_checkout` / `ensure_git_checkouts` again so deterministic
+  checkout materialization can now also own declared Git remote wiring through `remotes[]`;
+  Ota now idempotently adds missing remotes or updates remote URLs inside existing checkouts
+  instead of forcing fork/upstream remote truth back into shell bootstrap steps
 - added first-class `action.kind: ensure_git_checkouts`, so one setup lane can now own several
   deterministic Git-backed sibling or vendored checkouts without flattening that materialization
   truth into repeated low-level `ensure_git_checkout` entries; `ensure_bundle` can now compose the

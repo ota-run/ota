@@ -218,6 +218,10 @@ Current shape:
       "introduced_in": "1.6.22"
     },
     {
+      "id": "tasks.action.ensure_git_checkout.remotes",
+      "introduced_in": "1.6.23"
+    },
+    {
       "id": "tasks.action.ensure_git_checkouts",
       "introduced_in": "1.6.23"
     },

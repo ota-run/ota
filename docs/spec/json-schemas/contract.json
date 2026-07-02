@@ -1028,6 +1028,18 @@
                 "git": { "type": "string" },
                 "ref": { "type": "string" }
               }
+            },
+            "remotes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "git"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "git": { "type": "string" }
+                }
+              }
             }
           }
         },
@@ -1052,6 +1064,18 @@
                     "properties": {
                       "git": { "type": "string" },
                       "ref": { "type": "string" }
+                    }
+                  },
+                  "remotes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["name", "git"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "git": { "type": "string" }
+                      }
                     }
                   }
                 }

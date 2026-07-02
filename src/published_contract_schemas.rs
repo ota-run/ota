@@ -1060,6 +1060,18 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
                 "git": { "type": "string" },
                 "ref": { "type": "string" }
               }
+            },
+            "remotes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "git"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "git": { "type": "string" }
+                }
+              }
             }
           }
         },
@@ -1084,6 +1096,18 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
                     "properties": {
                       "git": { "type": "string" },
                       "ref": { "type": "string" }
+                    }
+                  },
+                  "remotes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["name", "git"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "git": { "type": "string" }
+                      }
                     }
                   }
                 }

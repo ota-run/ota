@@ -6188,6 +6188,11 @@ impl TaskActionSpec {
                     preview.push_str(git_ref.trim());
                     preview.push('`');
                 }
+                if !action.remotes.is_empty() {
+                    preview.push_str(" and reconcile ");
+                    preview.push_str(action.remotes.len().to_string().as_str());
+                    preview.push_str(" remote(s)");
+                }
                 preview
             }
             Self::EnsureGitCheckouts(action) => match action.checkouts.as_slice() {
@@ -6201,6 +6206,11 @@ impl TaskActionSpec {
                         preview.push_str(" at `");
                         preview.push_str(git_ref.trim());
                         preview.push('`');
+                    }
+                    if !checkout.remotes.is_empty() {
+                        preview.push_str(" and reconcile ");
+                        preview.push_str(checkout.remotes.len().to_string().as_str());
+                        preview.push_str(" remote(s)");
                     }
                     preview
                 }
@@ -7140,6 +7150,8 @@ pub struct TaskEnsureDirectoryActionSpec {
 pub struct TaskEnsureGitCheckoutActionSpec {
     pub path: String,
     pub source: TaskEnsureGitCheckoutSourceSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remotes: Vec<TaskEnsureGitRemoteSpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -7148,6 +7160,13 @@ pub struct TaskEnsureGitCheckoutSourceSpec {
     pub git: String,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureGitRemoteSpec {
+    pub name: String,
+    pub git: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

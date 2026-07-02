@@ -11139,10 +11139,15 @@ fn execute_ensure_git_checkout_action(
     let checkout_path = working_dir.join(path_text);
     if checkout_path.exists() {
         if checkout_path.is_dir() {
-            return Ok(file_action_output(format!(
+            let mut stdout = String::from(format!(
                 "git checkout `{}` already exists; no clone needed\n",
                 path_text
-            )));
+            ));
+            stdout.push_str(
+                execute_ensure_git_checkout_remotes(task_name, &checkout_path, &spec.remotes)?
+                    .as_str(),
+            );
+            return Ok(file_action_output(stdout));
         }
         return Err(RunError::FileActionFailed {
             task: task_name.to_string(),
@@ -11185,6 +11190,9 @@ fn execute_ensure_git_checkout_action(
         )?;
         stdout.push_str(checkout_output.as_str());
     }
+    stdout.push_str(
+        execute_ensure_git_checkout_remotes(task_name, &checkout_path, &spec.remotes)?.as_str(),
+    );
 
     Ok(file_action_output(stdout))
 }
@@ -11209,6 +11217,77 @@ fn execute_ensure_git_checkouts_action(
         stdout.push_str(step_output.stdout.as_str());
     }
     Ok(file_action_output(stdout))
+}
+
+fn execute_ensure_git_checkout_remotes(
+    task_name: &str,
+    checkout_path: &Path,
+    remotes: &[crate::schema::TaskEnsureGitRemoteSpec],
+) -> Result<String, RunError> {
+    let mut stdout = String::new();
+    for remote in remotes {
+        stdout.push_str(
+            ensure_git_remote(
+                task_name,
+                checkout_path,
+                remote.name.trim(),
+                remote.git.trim(),
+            )?
+            .as_str(),
+        );
+    }
+    Ok(stdout)
+}
+
+fn ensure_git_remote(
+    task_name: &str,
+    checkout_path: &Path,
+    remote_name: &str,
+    remote_url: &str,
+) -> Result<String, RunError> {
+    match current_git_remote_url(task_name, checkout_path, remote_name)? {
+        Some(current) if current.trim() == remote_url => Ok(format!(
+            "git remote `{remote_name}` already points at `{remote_url}`; no update needed\n"
+        )),
+        Some(_) => run_git_file_action_command(
+            task_name,
+            ["remote", "set-url", remote_name, remote_url],
+            Some(checkout_path),
+            checkout_path,
+            format!("set git remote `{remote_name}` to `{remote_url}`"),
+        ),
+        None => run_git_file_action_command(
+            task_name,
+            ["remote", "add", remote_name, remote_url],
+            Some(checkout_path),
+            checkout_path,
+            format!("add git remote `{remote_name}` to `{remote_url}`"),
+        ),
+    }
+}
+
+fn current_git_remote_url(
+    task_name: &str,
+    checkout_path: &Path,
+    remote_name: &str,
+) -> Result<Option<String>, RunError> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", remote_name])
+        .current_dir(checkout_path)
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not inspect git remote `{remote_name}` in `{}`: {source}",
+                checkout_path.display()
+            ),
+        })?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ));
+    }
+    Ok(None)
 }
 
 fn run_git_file_action_command<const N: usize>(
@@ -57904,10 +57983,122 @@ tasks:
         assert!(sibling_checkout.join(".git").exists());
         assert!(state_dir.join("checkout-main").exists());
         let git_log = fs::read_to_string(&log_path).unwrap();
-        assert!(
-            git_log.contains("clone -- https://github.com/cenit-io/ui.git ../ota-ui-sibling")
-        );
+        assert!(git_log.contains("clone -- https://github.com/cenit-io/ui.git ../ota-ui-sibling"));
         assert!(git_log.contains(&format!("{}|checkout main", sibling_checkout.display())));
+    }
+
+    #[test]
+    fn ensure_git_checkout_action_reconciles_declared_remotes_idempotently() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+      remotes:
+        - name: origin
+          git: git@github.com:bobaikato/wagtail.git
+        - name: upstream
+          git: git@github.com:wagtail/wagtail.git
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("git.log");
+        let git_body = if cfg!(windows) {
+            "@echo off\r\nsetlocal enabledelayedexpansion\r\n>> \"%OTA_GIT_LOG%\" echo %CD%^|%*\r\nif \"%1\"==\"clone\" (\r\n  mkdir \"%4\\.git-remotes\" >nul 2>nul\r\n  > \"%4\\.git\" type nul\r\n  > \"%4\\.git-remotes\\origin\" echo %3\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"remote\" (\r\n  if \"%2\"==\"get-url\" (\r\n    if exist \".git-remotes\\%3\" (\r\n      set /p value=<\".git-remotes\\%3\"\r\n      echo !value!\r\n      exit /b 0\r\n    )\r\n    exit /b 1\r\n  )\r\n  if \"%2\"==\"add\" (\r\n    if not exist \".git-remotes\" mkdir \".git-remotes\" >nul 2>nul\r\n    > \".git-remotes\\%3\" echo %4\r\n    exit /b 0\r\n  )\r\n  if \"%2\"==\"set-url\" (\r\n    if not exist \".git-remotes\" mkdir \".git-remotes\" >nul 2>nul\r\n    > \".git-remotes\\%3\" echo %4\r\n    exit /b 0\r\n  )\r\n)\r\nexit /b 1\r\n".to_string()
+        } else {
+            "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_GIT_LOG\"\nif [ \"$1\" = \"clone\" ]; then\n  mkdir -p \"$4/.git-remotes\"\n  : > \"$4/.git\"\n  printf '%s\\n' \"$3\" > \"$4/.git-remotes/origin\"\n  exit 0\nfi\nif [ \"$1\" = \"remote\" ] && [ \"$2\" = \"get-url\" ]; then\n  if [ -f \".git-remotes/$3\" ]; then\n    cat \".git-remotes/$3\"\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"remote\" ] && [ \"$2\" = \"add\" ]; then\n  mkdir -p .git-remotes\n  printf '%s\\n' \"$4\" > \".git-remotes/$3\"\n  exit 0\nfi\nif [ \"$1\" = \"remote\" ] && [ \"$2\" = \"set-url\" ]; then\n  mkdir -p .git-remotes\n  printf '%s\\n' \"$4\" > \".git-remotes/$3\"\n  exit 0\nfi\nexit 1\n".to_string()
+        };
+        write_fake_bin(&bin_dir, "git", &git_body);
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_GIT_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_GIT_LOG", &log_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("ensure_git_checkout action with remotes should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("ensure_git_checkout action with remotes should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_GIT_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_GIT_LOG");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        let remotes_dir = fixture.dir.path().join("vendor/wagtail/.git-remotes");
+        assert_eq!(
+            fs::read_to_string(remotes_dir.join("origin"))
+                .unwrap()
+                .trim(),
+            "git@github.com:bobaikato/wagtail.git"
+        );
+        assert_eq!(
+            fs::read_to_string(remotes_dir.join("upstream"))
+                .unwrap()
+                .trim(),
+            "git@github.com:wagtail/wagtail.git"
+        );
+        assert!(
+            first
+                .stdout
+                .contains("remote set-url origin git@github.com:bobaikato/wagtail.git")
+                || first
+                    .stdout
+                    .contains("set git remote `origin` to `git@github.com:bobaikato/wagtail.git`"),
+            "{}",
+            first.stdout
+        );
+        assert!(
+            first
+                .stdout
+                .contains("remote add upstream git@github.com:wagtail/wagtail.git")
+                || first
+                    .stdout
+                    .contains("add git remote `upstream` to `git@github.com:wagtail/wagtail.git`"),
+            "{}",
+            first.stdout
+        );
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second.stdout.contains("git remote `origin` already points at `git@github.com:bobaikato/wagtail.git`; no update needed"),
+            "{}",
+            second.stdout
+        );
+        assert!(
+            second.stdout.contains("git remote `upstream` already points at `git@github.com:wagtail/wagtail.git`; no update needed"),
+            "{}",
+            second.stdout
+        );
     }
 
     #[test]
@@ -57992,7 +58183,10 @@ tasks:
         let git_log = fs::read_to_string(&log_path).unwrap();
         assert!(git_log.contains("clone -- https://github.com/wagtail/wagtail.git vendor/wagtail"));
         assert!(git_log.contains("vendor/wagtail|checkout main"));
-        assert!(git_log.contains("clone -- https://github.com/wagtail/bakerydemo.git vendor/bakerydemo"));
+        assert!(
+            git_log
+                .contains("clone -- https://github.com/wagtail/bakerydemo.git vendor/bakerydemo")
+        );
         assert_eq!(second.exit_code, 0);
         assert!(
             second

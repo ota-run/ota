@@ -47,6 +47,9 @@ tasks:
           source:
             git: https://github.com/wagtail/wagtail.git
             ref: main
+          remotes:
+            - name: upstream
+              git: git@github.com:wagtail/wagtail.git
 workflows:
   default: local-bootstrap
   local-bootstrap:

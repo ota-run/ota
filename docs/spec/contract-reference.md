@@ -2401,6 +2401,10 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
   - `action.path`: required repo-relative checkout path to create when missing
   - `action.source.git`: required Git remote URL or clone source
   - `action.source.ref`: optional Git ref Ota should check out after clone
+  - `action.remotes`: optional ordered list of declared Git remotes Ota should reconcile inside
+    the materialized checkout
+  - `action.remotes[].name`: required Git remote name such as `origin` or `upstream`
+  - `action.remotes[].git`: required Git remote URL Ota should add or set for that name
 - `action.kind: ensure_git_checkouts`
   - `action.checkouts`: required ordered list of git checkouts Ota should materialize
   - each `action.checkouts[]` entry uses the same fields and validation rules as
@@ -2460,14 +2464,16 @@ and fails if the path already exists as a non-directory.
 Use `action.kind: ensure_git_checkout` when setup truthfully owns deterministic materialization of
 one sibling checkout, vendored dependency repo, or other Git-backed working tree without shell
 bootstrap glue. Ota clones `action.source.git` into `action.path` only when that path is missing,
-optionally checks out `action.source.ref`, and then leaves existing directories untouched on repeat
-runs. `action.path` may stay repo-internal (`vendor/wagtail`) or point at a declared sibling /
-workspace-relative target (`../ui`) as long as it remains a relative path without an absolute
-prefix. This is intentionally a materialization surface, not an update/reset surface: use it when
-bootstrap needs “make sure this checkout exists”, not when setup should implicitly pull, fetch, or
-rewrite a repo that is already present. When `action.source.ref` is omitted, Ota intentionally
-tracks the remote default branch head and `ota validate` / `ota doctor` warn that the checkout is
-moving-head pressure truth rather than deterministic proof truth.
+optionally checks out `action.source.ref`, optionally reconciles declared `action.remotes[]` by
+adding missing remotes or updating existing remote URLs, and then leaves existing directories
+otherwise untouched on repeat runs. `action.path` may stay repo-internal (`vendor/wagtail`) or
+point at a declared sibling / workspace-relative target (`../ui`) as long as it remains a
+relative path without an absolute prefix. This is intentionally a materialization surface, not an
+update/reset surface: use it when bootstrap needs “make sure this checkout exists and has the
+declared remote wiring”, not when setup should implicitly pull, fetch, or rewrite repository
+history that is already present. When `action.source.ref` is omitted, Ota intentionally tracks the
+remote default branch head and `ota validate` / `ota doctor` warn that the checkout is moving-head
+pressure truth rather than deterministic proof truth.
 
 Use `action.kind: ensure_git_checkouts` when setup truthfully owns several deterministic sibling or
 vendored Git checkouts and repeating `ensure_git_checkout` entries would flatten one cohesive

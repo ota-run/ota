@@ -6513,6 +6513,14 @@ fn validate_task_ensure_git_checkout_action(
             )));
         }
     }
+    for (index, remote) in spec.remotes.iter().enumerate() {
+        validate_task_ensure_git_remote(
+            task_name,
+            format!("{prefix}.remotes[{index}]").as_str(),
+            remote,
+            errors,
+        );
+    }
 }
 
 fn validate_task_ensure_git_checkouts_action(
@@ -6534,6 +6542,39 @@ fn validate_task_ensure_git_checkouts_action(
             checkout,
             errors,
         );
+    }
+}
+
+fn validate_task_ensure_git_remote(
+    task_name: &str,
+    prefix: &str,
+    spec: &crate::schema::TaskEnsureGitRemoteSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let trimmed_name = spec.name.trim();
+    if trimmed_name.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` must declare a non-empty `{prefix}.name`"
+        )));
+    } else if trimmed_name.chars().any(char::is_whitespace) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` `{prefix}.name` must not contain whitespace"
+        )));
+    }
+    if spec.name.contains('\n') || spec.name.contains('\r') {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` `{prefix}.name` must not contain newline characters"
+        )));
+    }
+    if spec.git.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` must declare a non-empty `{prefix}.git`"
+        )));
+    }
+    if spec.git.contains('\n') || spec.git.contains('\r') {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` `{prefix}.git` must not contain newline characters"
+        )));
     }
 }
 
@@ -6623,7 +6664,10 @@ fn normalize_workspace_relative_file_path(value: &str) -> Option<String> {
     if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
         return None;
     }
-    if trimmed.chars().any(|ch| ch == '\0' || ch == '\n' || ch == '\r') {
+    if trimmed
+        .chars()
+        .any(|ch| ch == '\0' || ch == '\n' || ch == '\r')
+    {
         return None;
     }
     let path = Path::new(trimmed);
@@ -20302,6 +20346,35 @@ tasks:
     }
 
     #[test]
+    fn validates_ensure_git_checkout_action_with_remotes_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+        ref: main
+      remotes:
+        - name: origin
+          git: git@github.com:bobaikato/wagtail.git
+        - name: upstream
+          git: git@github.com:wagtail/wagtail.git
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("ensure_git_checkout action with remotes should validate");
+    }
+
+    #[test]
     fn validates_ensure_git_checkout_sibling_path_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -20376,8 +20449,7 @@ tasks:
         )
         .unwrap();
 
-        validate_contract(&contract)
-            .expect("sibling ensure_git_checkouts action should validate");
+        validate_contract(&contract).expect("sibling ensure_git_checkouts action should validate");
     }
 
     #[test]

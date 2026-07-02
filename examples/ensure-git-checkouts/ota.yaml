@@ -46,6 +46,9 @@ tasks:
               source:
                 git: https://github.com/wagtail/wagtail.git
                 ref: main
+              remotes:
+                - name: upstream
+                  git: git@github.com:wagtail/wagtail.git
             - path: vendor/bakerydemo
               source:
                 git: https://github.com/wagtail/bakerydemo.git
