@@ -736,7 +736,15 @@ pub struct RunPreviewPlan {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub staged_actions: Vec<PreviewStageAction>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct PreviewStageAction {
+    pub stage_family: String,
+    pub action: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -2468,7 +2476,11 @@ pub struct UpPreviewPlan {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub staged_actions: Vec<PreviewStageAction>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub staged_skipped: Vec<PreviewStageAction>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_chain: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

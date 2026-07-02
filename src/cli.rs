@@ -21027,10 +21027,12 @@ tasks:
         assert!(lines[ci_idx - 1].trim().is_empty());
         assert_eq!(lines[build_idx + 1], "  Default Mode: native");
         assert!(lines[build_idx + 2].starts_with("  Use: `ota run build`"));
-        assert!(lines[build_idx + 3].starts_with("  Description: Build the site for production"));
+        assert!(stdout.contains("Description: Build the site for production"));
         assert_eq!(lines[ci_idx + 1], "  Default Mode: native");
         assert!(lines[ci_idx + 2].starts_with("  Use: `ota run ci`"));
-        assert!(lines[ci_idx + 3].starts_with("  Description: Canonical local verification"));
+        assert!(stdout.contains("Description: Canonical local verification"));
+        assert!(stdout.contains("Safety Posture: review-required lane"));
+        assert!(stdout.contains("Dry Run JSON: `ota run build --dry-run --json`"));
     }
 
     #[test]
@@ -21147,8 +21149,12 @@ tasks:
         assert!(stdout.contains("Use: `ota run start`"));
         assert!(stdout.contains("✦ typecheck"));
         assert!(stdout.contains("Use: `ota run typecheck`"));
-        assert!(stdout.contains("verification.\n\n✦ start"));
-        assert!(!stdout.contains("Command Preview:"));
+        assert!(stdout.contains(
+            "Notes: Use this for local development and manual verification."
+        ));
+        assert!(stdout.contains("Dry Run JSON: `ota run dev --dry-run --json`"));
+        assert!(stdout.contains("Dry Run JSON: `ota run start --dry-run --json`"));
+        assert!(stdout.contains("Command Preview:"));
         assert!(!stdout.contains("Mode Branches: -"));
     }
 

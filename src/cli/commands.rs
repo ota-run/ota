@@ -16889,14 +16889,20 @@ fn build_run_preview_plan(
             .iter()
             .take(plan.dependency_chain.len().saturating_sub(1))
         {
-            plan.actions.push(format!(
-                "would run planned step `{dependency}` before `{task_name}`"
-            ));
+            push_preview_plan_action(
+                &mut plan.actions,
+                &mut plan.staged_actions,
+                dependency_task_stage_family(contract, dependency, overrides),
+                format!("would run planned step `{dependency}` before `{task_name}`"),
+            );
         }
     } else if !effective_depends_on.is_empty() {
-        plan.actions.push(format!(
-            "skip declared depends_on before requested task `{task_name}`"
-        ));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "prepare",
+            format!("skip declared depends_on before requested task `{task_name}`"),
+        );
     }
     let activation_surface =
         selected_task_closure_activation_requirement_surface(contract, task_name, overrides)
@@ -16906,8 +16912,12 @@ fn build_run_preview_plan(
         target_os,
         effective_task_execution(contract, task_name, overrides).backend,
     ) {
-        plan.actions
-            .push(render_up_preview_activation_action(&action));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "setup",
+            render_up_preview_activation_action(&action),
+        );
     }
     if matches!(
         effective_task_execution(contract, task_name, overrides).backend,
@@ -16916,24 +16926,71 @@ fn build_run_preview_plan(
         for action in
             selected_task_closure_native_activation_actions(contract, task_name, overrides)
         {
-            plan.actions
-                .push(render_up_preview_native_activation_action(&action));
+            push_preview_plan_action(
+                &mut plan.actions,
+                &mut plan.staged_actions,
+                "setup",
+                render_up_preview_native_activation_action(&action),
+            );
         }
     }
-    plan.actions.push(run_preview_task_execution_action(
-        contract,
-        task_name,
-        overrides,
-        requested_task,
-        execution_plan,
-    ));
+    push_preview_plan_action(
+        &mut plan.actions,
+        &mut plan.staged_actions,
+        "verify",
+        run_preview_task_execution_action(
+            contract,
+            task_name,
+            overrides,
+            requested_task,
+            execution_plan,
+        ),
+    );
     if persist_logs {
-        plan.actions.push(String::from(
-            "would persist durable task logs under `.ota/state/logs/`",
-        ));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "proof",
+            String::from("would persist durable task logs under `.ota/state/logs/`"),
+        );
     }
 
     plan
+}
+
+fn push_preview_plan_action(
+    actions: &mut Vec<String>,
+    staged_actions: &mut Vec<crate::output::PreviewStageAction>,
+    stage_family: &str,
+    action: String,
+) {
+    actions.push(action.clone());
+    staged_actions.push(crate::output::PreviewStageAction {
+        stage_family: stage_family.to_string(),
+        action,
+    });
+}
+
+fn dependency_task_stage_family(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> &'static str {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return "verify";
+    };
+    let kind = task
+        .resolved_execution_for_backend(
+            effective_task_execution(contract, task_name, overrides).backend,
+            current_os(),
+        )
+        .map(|resolved| resolved.kind)
+        .unwrap_or("run");
+    match kind {
+        "prepare" | "action" => "prepare",
+        "launch" => "setup",
+        _ => "verify",
+    }
 }
 
 fn planned_dependency_steps_from_run_plan(
@@ -17241,22 +17298,9 @@ fn render_run_preview_text(
         }
     }
 
-    stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
-    if plan.actions.is_empty() {
-        stdout.push('\n');
-        stdout.push_str(&detail_list_item("none"));
-    } else {
-        for action in &plan.actions {
-            append_wrapped_bullet_text(
-                &mut stdout,
-                detail_arrow(),
-                action,
-                " ",
-                84,
-                render_backticked_preview_value,
-            );
-        }
-    }
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Governance Stages")));
+    stdout.push('\n');
+    stdout.push_str(&render_preview_stage_actions(&plan.staged_actions, "none"));
     for note in &plan.notes {
         stdout.push('\n');
         stdout.push_str(&detail_list_item(note));
@@ -62994,7 +63038,9 @@ tasks:
                 },
                 plan: UpPreviewPlan {
                     actions: Vec::new(),
+                    staged_actions: Vec::new(),
                     skipped: Vec::new(),
+                    staged_skipped: Vec::new(),
                     dependency_chain: Vec::new(),
                     dependency_steps: Vec::new(),
                 },
@@ -92241,35 +92287,14 @@ fn render_up_preview_text(
         &count_parts.join(", "),
     ));
 
-    stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
-    if plan.actions.is_empty() {
-        stdout.push('\n');
-        stdout.push_str(&detail_list_item("none"));
-    } else {
-        for action in &plan.actions {
-            append_wrapped_bullet_text(
-                &mut stdout,
-                detail_arrow(),
-                action,
-                " ",
-                84,
-                render_backticked_preview_value,
-            );
-        }
-    }
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Governance Stages")));
+    stdout.push('\n');
+    stdout.push_str(&render_preview_stage_actions(&plan.staged_actions, "none"));
 
     if !plan.skipped.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Skipped")));
-        for skipped in &plan.skipped {
-            append_wrapped_bullet_text(
-                &mut stdout,
-                detail_arrow(),
-                skipped,
-                " ",
-                84,
-                render_backticked_preview_value,
-            );
-        }
+        stdout.push('\n');
+        stdout.push_str(&render_preview_stage_actions(&plan.staged_skipped, "none"));
     }
 
     if let Some(primary_finding) = summary.primary_blocker.as_ref() {
@@ -92328,6 +92353,70 @@ fn render_compact_contract_identity(contract_identity: &ContractIdentity) -> Str
 
 fn render_backticked_preview_value(value: &str) -> String {
     render_backticked_text(value, None)
+}
+
+fn stage_family_display_name(stage_family: &str) -> &'static str {
+    match stage_family.trim() {
+        "prepare" => "Prepare",
+        "setup" => "Setup",
+        "verify" => "Verify",
+        "proof" => "Proof",
+        "receipt" => "Receipt",
+        _ => "Verify",
+    }
+}
+
+fn render_preview_stage_actions(
+    actions: &[crate::output::PreviewStageAction],
+    empty_label: &str,
+) -> String {
+    if actions.is_empty() {
+        return detail_list_item(empty_label);
+    }
+
+    let mut rendered = String::new();
+    let known_stage_order = ["prepare", "setup", "verify", "proof", "receipt"];
+    let mut stage_order = known_stage_order
+        .iter()
+        .map(|stage| (*stage).to_string())
+        .collect::<Vec<_>>();
+    for action in actions {
+        if !stage_order.iter().any(|stage| stage == &action.stage_family) {
+            stage_order.push(action.stage_family.clone());
+        }
+    }
+    let mut first_stage = true;
+
+    for stage_family in stage_order {
+        let stage_actions = actions
+            .iter()
+            .filter(|action| action.stage_family == stage_family)
+            .collect::<Vec<_>>();
+        if stage_actions.is_empty() {
+            continue;
+        }
+        if !first_stage {
+            rendered.push('\n');
+        }
+        first_stage = false;
+        rendered.push_str(&detail_list_row(
+            &paint_key(&format!("{}:", stage_family_display_name(stage_family.as_str()))),
+            "",
+        ));
+        for action in stage_actions {
+            rendered.push('\n');
+            append_wrapped_bullet_text(
+                &mut rendered,
+                "    ".to_string() + &detail_arrow(),
+                action.action.as_str(),
+                " ",
+                84,
+                render_backticked_preview_value,
+            );
+        }
+    }
+
+    rendered
 }
 
 fn phase_output_text(stdout: &str, stderr: &str) -> Option<String> {
@@ -98171,9 +98260,12 @@ fn append_up_preview_service_actions_for_workflow(
     plan: &mut UpPreviewPlan,
 ) {
     for selector in selected_workflow_instance_prerequisite_selectors(contract, workflow_name) {
-        plan.actions.push(format!(
-            "activate prerequisite workflow instance `{selector}` before the selected instance"
-        ));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "prepare",
+            format!("activate prerequisite workflow instance `{selector}` before the selected instance"),
+        );
     }
     let pre_setup_services = up_pre_setup_service_closure(contract, workflow_name);
     let post_setup_services =
@@ -98182,28 +98274,44 @@ fn append_up_preview_service_actions_for_workflow(
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
 
     if let Some(prepare_task) = selected_up_prepare_task_name(contract, workflow_name) {
-        plan.actions
-            .push(format!("run host prepare task `{prepare_task}`"));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "prepare",
+            format!("run host prepare task `{prepare_task}`"),
+        );
     } else if let Some(prepare_action) = selected_up_prepare_action(contract, workflow_name) {
-        plan.actions.push(format!(
-            "run workflow-owned host prepare action `{}`",
-            prepare_action.preview()
-        ));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "prepare",
+            format!(
+                "run workflow-owned host prepare action `{}`",
+                prepare_action.preview()
+            ),
+        );
     }
     append_up_preview_service_phase_actions(
         contract,
         &pre_setup_services,
         &mut plan.actions,
+        &mut plan.staged_actions,
         setup_task.map(|task| format!("before `{task}`")).as_deref(),
     );
     if let Some(setup_task) = setup_task {
-        plan.actions.push(format!("run task `{setup_task}`"));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "setup",
+            format!("run task `{setup_task}`"),
+        );
     }
 
     append_up_preview_service_phase_actions(
         contract,
         &post_setup_services,
         &mut plan.actions,
+        &mut plan.staged_actions,
         setup_task.map(|task| format!("after `{task}`")).as_deref(),
     );
 
@@ -98240,38 +98348,59 @@ fn append_up_preview_service_actions_for_workflow(
                     .iter()
                     .take(plan.dependency_chain.len().saturating_sub(1))
                 {
-                    plan.actions.push(format!(
-                        "would run planned step `{dependency}` before `{run_task}`"
-                    ));
+                    push_preview_plan_action(
+                        &mut plan.actions,
+                        &mut plan.staged_actions,
+                        dependency_task_stage_family(contract, dependency, overrides),
+                        format!("would run planned step `{dependency}` before `{run_task}`"),
+                    );
                 }
             } else if !effective_depends_on.is_empty() {
-                plan.actions.push(format!(
-                    "skip declared depends_on before requested task `{run_task}`"
-                ));
+                push_preview_plan_action(
+                    &mut plan.actions,
+                    &mut plan.staged_actions,
+                    "prepare",
+                    format!("skip declared depends_on before requested task `{run_task}`"),
+                );
             }
-            plan.actions.push(run_preview_task_execution_action(
-                contract,
-                run_task,
-                overrides,
-                &requested_task,
-                &execution_plan,
-            ));
+            push_preview_plan_action(
+                &mut plan.actions,
+                &mut plan.staged_actions,
+                "verify",
+                run_preview_task_execution_action(
+                    contract,
+                    run_task,
+                    overrides,
+                    &requested_task,
+                    &execution_plan,
+                ),
+            );
             if matches!(effective_execution.lifecycle, Some(Lifecycle::Persistent)) {
-                plan.actions.push(String::from(
-                    "would persist durable task logs under `.ota/state/logs/`",
-                ));
+                push_preview_plan_action(
+                    &mut plan.actions,
+                    &mut plan.staged_actions,
+                    "proof",
+                    String::from("would persist durable task logs under `.ota/state/logs/`"),
+                );
             }
         } else {
-            plan.actions
-                .push(format!("activate workflow task `{run_task}`"));
+            push_preview_plan_action(
+                &mut plan.actions,
+                &mut plan.staged_actions,
+                "verify",
+                format!("activate workflow task `{run_task}`"),
+            );
         }
     }
     if matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
         && let Some(attach_task) = selected_up_attach_task_name(contract, workflow_name)
     {
-        plan.actions.push(format!(
-            "attach to the declared interactive workflow session via task `{attach_task}`"
-        ));
+        push_preview_plan_action(
+            &mut plan.actions,
+            &mut plan.staged_actions,
+            "verify",
+            format!("attach to the declared interactive workflow session via task `{attach_task}`"),
+        );
     }
 }
 
@@ -98279,6 +98408,7 @@ fn append_up_preview_service_phase_actions(
     contract: &Contract,
     selected_services: &BTreeSet<String>,
     actions: &mut Vec<String>,
+    staged_actions: &mut Vec<crate::output::PreviewStageAction>,
     phase_suffix: Option<&str>,
 ) {
     for service_name in service_start_order_for(contract, selected_services) {
@@ -98293,15 +98423,28 @@ fn append_up_preview_service_phase_actions(
                 producer.repo, producer.task
             );
             match phase_suffix {
-                Some(phase_suffix) => actions.push(format!("{action} {phase_suffix}")),
-                None => actions.push(action),
+                Some(phase_suffix) => push_preview_plan_action(
+                    actions,
+                    staged_actions,
+                    "setup",
+                    format!("{action} {phase_suffix}"),
+                ),
+                None => push_preview_plan_action(actions, staged_actions, "setup", action),
             }
         } else if service.start_command(service_name.as_str()).is_some() {
             match phase_suffix {
-                Some(phase_suffix) => {
-                    actions.push(format!("start service `{service_name}` {phase_suffix}"))
-                }
-                None => actions.push(format!("start service `{service_name}`")),
+                Some(phase_suffix) => push_preview_plan_action(
+                    actions,
+                    staged_actions,
+                    "setup",
+                    format!("start service `{service_name}` {phase_suffix}"),
+                ),
+                None => push_preview_plan_action(
+                    actions,
+                    staged_actions,
+                    "setup",
+                    format!("start service `{service_name}`"),
+                ),
             }
         }
     }
@@ -98317,10 +98460,18 @@ fn append_up_preview_service_phase_actions(
             || !service.endpoints.is_empty()
         {
             match phase_suffix {
-                Some(phase_suffix) => actions.push(format!(
-                    "verify service `{service_name}` readiness {phase_suffix}"
-                )),
-                None => actions.push(format!("verify service `{service_name}` readiness")),
+                Some(phase_suffix) => push_preview_plan_action(
+                    actions,
+                    staged_actions,
+                    "proof",
+                    format!("verify service `{service_name}` readiness {phase_suffix}"),
+                ),
+                None => push_preview_plan_action(
+                    actions,
+                    staged_actions,
+                    "proof",
+                    format!("verify service `{service_name}` readiness"),
+                ),
             }
         }
     }
@@ -98359,7 +98510,9 @@ fn build_up_preview(
         )
     };
     let mut actions = Vec::new();
+    let mut staged_actions = Vec::new();
     let mut skipped = Vec::new();
+    let mut staged_skipped = Vec::new();
     let selected_actions =
         selected_up_provisioning_actions(contract, overrides, workflow_name, preflight);
     let native_preparation_actions =
@@ -98376,27 +98529,54 @@ fn build_up_preview(
     if let Some(provisioning) = preflight.provisioning.as_ref() {
         for action in &provisioning.request.actions {
             if selected_actions.contains(action) {
-                actions.push(render_up_preview_provision_action(action));
+                push_preview_plan_action(
+                    &mut actions,
+                    &mut staged_actions,
+                    "prepare",
+                    render_up_preview_provision_action(action),
+                );
             } else {
-                skipped.push(render_up_preview_skip_action(action));
+                push_preview_plan_action(
+                    &mut skipped,
+                    &mut staged_skipped,
+                    "prepare",
+                    render_up_preview_skip_action(action),
+                );
             }
         }
     }
 
     for action in &native_preparation_actions {
-        actions.push(render_up_preview_native_preparation_action(action));
+        push_preview_plan_action(
+            &mut actions,
+            &mut staged_actions,
+            "prepare",
+            render_up_preview_native_preparation_action(action),
+        );
     }
     if let Some(action) =
         selected_workflow_env_profile_render_preview_action(contract, workflow_name)
     {
-        actions.push(action);
+        push_preview_plan_action(&mut actions, &mut staged_actions, "prepare", action);
     }
-    actions.extend(toolchain_actions);
+    for action in toolchain_actions {
+        push_preview_plan_action(&mut actions, &mut staged_actions, "prepare", action);
+    }
     for action in &activation_actions {
-        actions.push(render_up_preview_activation_action(action));
+        push_preview_plan_action(
+            &mut actions,
+            &mut staged_actions,
+            "setup",
+            render_up_preview_activation_action(action),
+        );
     }
     for action in selected_up_native_activation_actions(contract, overrides, workflow_name) {
-        actions.push(render_up_preview_native_activation_action(&action));
+        push_preview_plan_action(
+            &mut actions,
+            &mut staged_actions,
+            "setup",
+            render_up_preview_native_activation_action(&action),
+        );
     }
     for action in requirement_surface_activation_actions(
         &up_activation_requirement_surface(contract, overrides, workflow_name),
@@ -98408,18 +98588,27 @@ fn build_up_preview(
         },
     ) {
         if policy_provisioned_tools.contains(action.tool_name.as_str()) {
-            skipped.push(render_up_preview_skipped_activation_action(&action));
+            push_preview_plan_action(
+                &mut skipped,
+                &mut staged_skipped,
+                "setup",
+                render_up_preview_skipped_activation_action(&action),
+            );
         }
     }
 
     let mut plan = UpPreviewPlan {
         actions: Vec::new(),
+        staged_actions: Vec::new(),
         skipped: Vec::new(),
+        staged_skipped: Vec::new(),
         dependency_chain: Vec::new(),
         dependency_steps: Vec::new(),
     };
     plan.actions = actions;
+    plan.staged_actions = staged_actions;
     plan.skipped = skipped;
+    plan.staged_skipped = staged_skipped;
 
     append_up_preview_service_actions_for_workflow(
         contract,
@@ -98430,7 +98619,12 @@ fn build_up_preview(
         &mut plan,
     );
 
-    plan.actions.push(String::from("re-check repo readiness"));
+    push_preview_plan_action(
+        &mut plan.actions,
+        &mut plan.staged_actions,
+        "proof",
+        String::from("re-check repo readiness"),
+    );
 
     let mut summary = doctor_preview_summary_for_resolution(
         preflight,
