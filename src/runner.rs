@@ -3044,6 +3044,9 @@ fn projected_compose_invocation_command_for_task(
     if compose.rm {
         projected_args.push(String::from("--rm"));
     }
+    if compose.service_ports {
+        projected_args.push(String::from("--service-ports"));
+    }
     if let Some(workdir) = compose
         .workdir
         .as_deref()
@@ -61579,6 +61582,53 @@ tasks:
                 String::from("stop"),
                 String::from("web"),
                 String::from("worker"),
+            ]
+        );
+    }
+
+    #[test]
+    fn compose_run_projects_service_ports_without_shell_glue() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: run
+      rm: true
+      service_ports: true
+      service: dev
+      exe: bash
+    requirements:
+      tools:
+        docker: "*"
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let command = super::projected_compose_invocation_command_for_task(
+            task,
+            Backend::Native,
+            &task.compose.as_ref().unwrap().invocation,
+            task.compose.as_ref().unwrap().exe.as_str(),
+            task.compose.as_ref().unwrap().args.as_slice(),
+        );
+
+        assert_eq!(command.exe, "docker");
+        assert_eq!(
+            command.args,
+            vec![
+                String::from("compose"),
+                String::from("run"),
+                String::from("-T"),
+                String::from("--rm"),
+                String::from("--service-ports"),
+                String::from("dev"),
+                String::from("bash"),
             ]
         );
     }

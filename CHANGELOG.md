@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added first-class `compose.service_ports: true` for `tasks.<name>.compose.kind: run`, so
+  documented one-off Compose dev lanes like `docker compose run --rm --service-ports ...` no
+  longer need shell fallback or repo-local wrapper truth
+
 - widened `prepare.kind: dependency_hydration` with first-class Composer ownership through
   `source.kind: composer`, so repos can now declare structural `composer install` setup lanes
   natively or through Compose `exec/run` wrappers instead of leaving Composer dependency hydration

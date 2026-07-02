@@ -3743,6 +3743,11 @@ fn validate_task_compose_invocation(
             "task `{task_name}` {scope} must not declare an empty `{field_path}.workdir`"
         )));
     }
+    if compose.service_ports && compose.kind != crate::schema::TaskComposeExecutionKind::Run {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} must only declare `{field_path}.service_ports: true` with `kind: run`"
+        )));
+    }
     match compose.kind {
         crate::schema::TaskComposeExecutionKind::Exec
         | crate::schema::TaskComposeExecutionKind::Run
@@ -25637,6 +25642,36 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `dev` task must only declare `compose.detach: true` with `kind: exec`"
+        );
+    }
+
+    #[test]
+    fn rejects_compose_service_ports_outside_run() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: up
+      service_ports: true
+      services:
+        - api
+    requirements:
+      tools:
+        docker: "*"
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` task must only declare `compose.service_ports: true` with `kind: run`"
         );
     }
 

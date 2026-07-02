@@ -44,6 +44,10 @@ V11 is planned.
 V11.1 is active.
 V11.2 is planned.
 V11.3 is planned.
+V11.4 is planned.
+V11.5 is planned.
+V11.6 is planned.
+V11.7 is planned.
 
 ## V1 archive
 
@@ -88,6 +92,10 @@ V11.3 is planned.
 - [V11 plan](docs/planning/v11/plan.md)
 - [V11.2 plan](docs/planning/v11.2/plan.md)
 - [V11.3 plan](docs/planning/v11.3/plan.md)
+- [V11.4 plan](docs/planning/v11.4/plan.md)
+- [V11.5 plan](docs/planning/v11.5/plan.md)
+- [V11.6 plan](docs/planning/v11.6/plan.md)
+- [V11.7 plan](docs/planning/v11.7/plan.md)
 
 ## Implemented foundation
 
@@ -112,6 +120,14 @@ V11.3 is planned.
   as container-backed hydration and deterministic bootstrap materialization
 - make V11.3 agent-scoped execution enforcement the next runner slice after V11.2 so safe-task
   and workflow-closure truth become real runtime boundaries instead of review-only governance
+- make V11.4 the machine-readable governance output slice after V11.3 so CI, bots, and future
+  control points can consume one canonical governance verdict instead of scraping runner output
+- make V11.5 the CI and merge-gate projection slice after V11.4 so contract-owned completion truth
+  becomes enforceable at mandatory merge chokepoints
+- make V11.6 the harness and sandbox capability integration slice after V11.5 so external runners
+  can enforce Ota’s callable boundary without re-deriving repo semantics
+- make V11.7 the audited execution boundary-crossing slice after V11.6 so allowed-but-heavier
+  execution becomes explicit OSS evidence before enterprise approvals and waivers build on top
 
 ## Archived V2 shape
 

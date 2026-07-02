@@ -40691,6 +40691,9 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
     if compose.rm {
         preview.push_str(" --rm");
     }
+    if compose.service_ports {
+        preview.push_str(" --service-ports");
+    }
     if let Some(workdir) = compose.workdir.filter(|workdir| !workdir.trim().is_empty()) {
         preview.push_str(" -w ");
         preview.push_str(workdir);
@@ -54153,6 +54156,7 @@ tasks:
                     services: Vec::new(),
                     workdir: Some("/workspace/app"),
                     rm: false,
+                    service_ports: false,
                     detach: false,
                     force_recreate: false,
                     force: false,
@@ -54246,6 +54250,7 @@ tasks:
                     services: Vec::new(),
                     workdir: Some("/usr/src/app"),
                     rm: true,
+                    service_ports: false,
                     detach: false,
                     force_recreate: false,
                     force: false,
@@ -54554,6 +54559,7 @@ tasks:
                 args: vec!["exec", "rails", "db:migrate"],
                 workdir: Some("/workspace"),
                 rm: false,
+                service_ports: false,
                 detach: false,
                 force_recreate: false,
                 force: false,
@@ -58149,6 +58155,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: false,
+                service_ports: false,
                 detach: false,
                 force_recreate: false,
                 force: false,
@@ -58173,6 +58180,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: false,
+                service_ports: false,
                 detach: false,
                 force_recreate: false,
                 force: false,
@@ -58183,6 +58191,31 @@ tasks:
             });
 
         assert_eq!(rendered, "docker compose logs -f web");
+    }
+
+    #[test]
+    fn render_task_compose_text_projects_service_ports() {
+        let rendered =
+            super::render_task_compose_text(&crate::output::TaskComposeExecutionSummary {
+                kind: "run",
+                engine: "docker",
+                service: Some("dev"),
+                services: Vec::new(),
+                exe: Some("bash"),
+                args: Vec::new(),
+                workdir: None,
+                rm: true,
+                service_ports: true,
+                detach: false,
+                force_recreate: false,
+                force: false,
+                follow: false,
+                remove_volumes: false,
+                timeout_seconds: None,
+                tty: true,
+            });
+
+        assert_eq!(rendered, "docker compose run --rm --service-ports dev bash");
     }
 
     #[test]
@@ -58197,6 +58230,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: false,
+                service_ports: false,
                 detach: false,
                 force_recreate: false,
                 force: false,

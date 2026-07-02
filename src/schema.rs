@@ -5873,6 +5873,8 @@ pub struct TaskComposeInvocationSpec {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rm: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub service_ports: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub force_recreate: bool,
@@ -5955,6 +5957,9 @@ impl TaskComposeInvocationSpec {
         }
         if self.rm {
             preview.push_str(" --rm");
+        }
+        if self.service_ports {
+            preview.push_str(" --service-ports");
         }
         if let Some(workdir) = self
             .workdir
@@ -9154,6 +9159,7 @@ tasks:
                             services: Vec::new(),
                             workdir: Some(String::from("/workspace")),
                             rm: true,
+                            service_ports: false,
                             detach: false,
                             force_recreate: false,
                             force: false,
@@ -9171,6 +9177,35 @@ tasks:
         assert_eq!(
             prepare.preview(),
             "hydrate package dependencies with npm ci in `app` via docker compose run -T --rm -w /workspace app"
+        );
+    }
+
+    #[test]
+    fn compose_run_preview_mentions_service_ports() {
+        let compose = super::TaskComposeExecutionSpec {
+            invocation: super::TaskComposeInvocationSpec {
+                kind: super::TaskComposeExecutionKind::Run,
+                engine: super::ComposeCliEngine::Docker,
+                service: String::from("dev"),
+                services: Vec::new(),
+                workdir: None,
+                rm: true,
+                service_ports: true,
+                detach: false,
+                force_recreate: false,
+                force: false,
+                follow: false,
+                remove_volumes: false,
+                timeout_seconds: None,
+                tty: false,
+            },
+            exe: String::from("bash"),
+            args: Vec::new(),
+        };
+
+        assert_eq!(
+            compose.preview(),
+            "docker compose run -T --rm --service-ports dev bash"
         );
     }
 

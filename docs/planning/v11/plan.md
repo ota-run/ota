@@ -41,6 +41,10 @@ Source direction:
 - [V11.1 plan](../v11.1/plan.md)
 - [V11.2 plan](../v11.2/plan.md)
 - [V11.3 plan](../v11.3/plan.md)
+- [V11.4 plan](../v11.4/plan.md)
+- [V11.5 plan](../v11.5/plan.md)
+- [V11.6 plan](../v11.6/plan.md)
+- [V11.7 plan](../v11.7/plan.md)
 
 V11 theme:
 
@@ -103,6 +107,21 @@ The next planned runner-enforcement slice after that is:
 That slice closes the remaining gap between safe-task and workflow-closure declaration and actual
 runtime control, so agent-safe execution truth becomes enforceable by the runner instead of
 staying only a governance and review surface.
+
+The next OSS governance slices after that are:
+
+- [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
+- [V11.5: CI and merge-gate projection](../v11.5/plan.md)
+- [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
+- [V11.7: audited execution boundary crossings](../v11.7/plan.md)
+
+Those slices make Ota higher in the stack without abandoning the open execution spec:
+
+- V11.4 publishes portable governance truth
+- V11.5 makes CI and merge gates enforce contract-owned completion truth
+- V11.6 lets external harnesses enforce Ota’s callable boundary without guessing
+- V11.7 makes allowed-but-heavier execution explicit, classifiable, and auditable in OSS before
+  enterprise approval layers build on top
 
 ## Included capabilities
 
