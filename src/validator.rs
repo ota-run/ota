@@ -12746,17 +12746,96 @@ fn collect_ensure_git_checkout_moving_head_advisories(
 ) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
     for (task_name, task) in &contract.tasks {
-        let Some(action) = task.action.as_ref() else {
-            continue;
-        };
-        collect_ensure_git_checkout_moving_head_advisories_from_action(
-            task_name,
-            "tasks".to_string(),
-            action,
-            &mut advisories,
-        );
+        if let Some(action) = task.action.as_ref() {
+            collect_ensure_git_checkout_moving_head_advisories_from_action(
+                task_name,
+                "tasks".to_string(),
+                action,
+                &mut advisories,
+            );
+        }
+        if let Some(prepare) = task.prepare.as_ref() {
+            collect_ensure_git_checkout_moving_head_advisories_from_prepare(
+                task_name,
+                format!("tasks.{task_name}.prepare"),
+                prepare,
+                &mut advisories,
+            );
+        }
     }
     advisories
+}
+
+fn collect_ensure_git_checkout_moving_head_advisories_from_prepare(
+    task_name: &str,
+    location: String,
+    prepare: &crate::schema::TaskPrepareSpec,
+    advisories: &mut Vec<ContractAdvisory>,
+) {
+    match prepare {
+        crate::schema::TaskPrepareSpec::Sequence(sequence) => {
+            for (index, step) in sequence.steps.iter().enumerate() {
+                collect_ensure_git_checkout_moving_head_advisories_from_prepare_step(
+                    task_name,
+                    format!("{location}.steps[{index}]"),
+                    step,
+                    advisories,
+                );
+            }
+        }
+        crate::schema::TaskPrepareSpec::DependencyHydration(_)
+        | crate::schema::TaskPrepareSpec::ToolBootstrap(_) => {}
+    }
+}
+
+fn collect_ensure_git_checkout_moving_head_advisories_from_prepare_step(
+    task_name: &str,
+    location: String,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    advisories: &mut Vec<ContractAdvisory>,
+) {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+            for (index, nested) in sequence.steps.iter().enumerate() {
+                collect_ensure_git_checkout_moving_head_advisories_from_prepare_step(
+                    task_name,
+                    format!("{location}.steps[{index}]"),
+                    nested,
+                    advisories,
+                );
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
+            if spec.source.git_ref.is_none() {
+                advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                    EnsureGitCheckoutMovingHeadAdvisory {
+                        task_name: task_name.to_string(),
+                        checkout_path: spec.path.trim().to_string(),
+                        location,
+                    },
+                ));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(spec) => {
+            if spec.source.git_ref.is_none() {
+                advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                    EnsureGitCheckoutMovingHeadAdvisory {
+                        task_name: task_name.to_string(),
+                        checkout_path: spec.path.trim().to_string(),
+                        location,
+                    },
+                ));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => {}
+    }
 }
 
 fn collect_ensure_git_checkout_moving_head_advisories_from_action(
@@ -37082,6 +37161,38 @@ tasks:
                 if value.task_name == "bootstrap"
                     && value.checkout_path == "my-extension"
                     && value.location == "tasks.bootstrap.action"
+        )));
+    }
+
+    #[test]
+    fn collects_ensure_git_template_moving_head_advisory_for_prepare_sequence_step() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_git_template
+          path: my-extension
+          source:
+            git: https://github.com/codyhxyz/create-chrome-extension.git
+    run: echo ready
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EnsureGitCheckoutMovingHead(value)
+                if value.task_name == "bootstrap"
+                    && value.checkout_path == "my-extension"
+                    && value.location == "tasks.bootstrap.prepare.steps[0]"
         )));
     }
 
