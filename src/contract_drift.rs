@@ -687,6 +687,10 @@ fn collect_ci_verification_governance_changes(
         .iter()
         .map(|signal| signal.field.as_str())
         .collect::<Vec<_>>();
+    let detected_verifier_tasks = detected_fields
+        .iter()
+        .filter_map(|field| verification_task_name_from_field(field))
+        .collect::<Vec<_>>();
 
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
@@ -722,6 +726,9 @@ fn collect_ci_verification_governance_changes(
         if infer_ci_verification_task_line(existing_command.as_str())
             .is_some_and(|(inferred, _)| inferred == *task_name)
         {
+            if should_treat_ci_verifier_family_root_as_covered(task_name, &detected_verifier_tasks) {
+                continue;
+            }
             changes.push(CiVerificationGovernanceChange {
                 field,
                 existing: existing_command,
@@ -954,11 +961,29 @@ fn ci_verifier_task_family<'a>(name: &'a str) -> &'a str {
     }
 }
 
+fn should_treat_ci_verifier_family_root_as_covered(
+    task_name: &str,
+    detected_verifier_tasks: &[&str],
+) -> bool {
+    let family = ci_verifier_task_family(task_name);
+    task_name == family
+        && detected_verifier_tasks.iter().any(|detected| {
+            let detected = detected.trim();
+            detected != task_name && ci_verifier_task_family(detected) == family
+        })
+}
+
 fn recover_ci_verification_task_signals(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationTaskSignal> {
-    let mut command_index = BTreeMap::<String, Vec<String>>::new();
+    #[derive(Clone)]
+    struct VerificationCommandCandidate {
+        field: String,
+        has_task_env: bool,
+    }
+
+    let mut command_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
     for (task_name, task) in &existing.tasks {
         let field = format!("tasks.{task_name}.run");
         if !is_verification_task_truth_field(&field) {
@@ -970,7 +995,13 @@ fn recover_ci_verification_task_signals(
         let Some(command_key) = canonicalize_ci_verification_command(&command) else {
             continue;
         };
-        command_index.entry(command_key).or_default().push(field);
+        command_index
+            .entry(command_key)
+            .or_default()
+            .push(VerificationCommandCandidate {
+                field,
+                has_task_env: !task.env.is_empty(),
+            });
     }
 
     signals
@@ -979,9 +1010,17 @@ fn recover_ci_verification_task_signals(
             if command_index
                 .values()
                 .flatten()
-                .any(|field| field == &signal.field)
+                .any(|candidate| candidate.field == signal.field)
             {
-                return signal.clone();
+                if let Some(command_key) = canonicalize_ci_verification_command(&signal.command)
+                    && command_index
+                        .get(&command_key)
+                        .is_some_and(|fields| {
+                            fields.iter().any(|candidate| candidate.field == signal.field)
+                        })
+                {
+                    return signal.clone();
+                }
             }
 
             let Some(command_key) = canonicalize_ci_verification_command(&signal.command) else {
@@ -990,15 +1029,50 @@ fn recover_ci_verification_task_signals(
             let Some(fields) = command_index.get(&command_key) else {
                 return signal.clone();
             };
-            if fields.len() != 1 {
+            let matched_field = if fields.len() == 1 {
+                Some(fields[0].field.clone())
+            } else if ci_command_declares_inline_env(&signal.command) {
+                let with_env = fields
+                    .iter()
+                    .filter(|candidate| candidate.has_task_env)
+                    .collect::<Vec<_>>();
+                (with_env.len() == 1).then(|| with_env[0].field.clone())
+            } else {
+                let without_env = fields
+                    .iter()
+                    .filter(|candidate| !candidate.has_task_env)
+                    .collect::<Vec<_>>();
+                (without_env.len() == 1).then(|| without_env[0].field.clone())
+            };
+            let Some(matched_field) = matched_field else {
                 return signal.clone();
-            }
+            };
 
             let mut recovered = signal.clone();
-            recovered.field = fields[0].clone();
+            recovered.field = matched_field;
             recovered
         })
         .collect()
+}
+
+fn ci_command_declares_inline_env(command: &str) -> bool {
+    let trimmed = command.trim();
+    let Some((prefix, _)) = trimmed.split_once(' ') else {
+        return false;
+    };
+    prefix.contains('=')
+        && prefix
+            .split_once('=')
+            .is_some_and(|(name, _)| !name.is_empty() && is_shell_identifier(name))
+}
+
+fn is_shell_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn equivalent_ci_verification_commands(existing: &str, detected: &str) -> bool {
