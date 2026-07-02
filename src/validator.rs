@@ -6480,12 +6480,17 @@ fn validate_task_ensure_git_checkout_action(
     spec: &crate::schema::TaskEnsureGitCheckoutActionSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    validate_repo_relative_file_action_path(
-        task_name,
-        format!("{prefix}.path").as_str(),
-        spec.path.as_str(),
-        errors,
-    );
+    let path_field = format!("{prefix}.path");
+    let trimmed_path = spec.path.trim();
+    if trimmed_path.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must declare a non-empty `{path_field}` path"
+        )));
+    } else if !is_safe_checkout_materialization_path(trimmed_path) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` `{path_field}` must be a relative path without an absolute prefix or drive prefix"
+        )));
+    }
     if spec.source.git.trim().is_empty() {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` action `ensure_git_checkout` must declare a non-empty `{prefix}.source.git`"
@@ -6587,6 +6592,22 @@ fn is_safe_repo_relative_file_path(value: &str) -> bool {
         .replace('\\', "/")
         .split('/')
         .any(|part| part == "..")
+}
+
+fn is_safe_checkout_materialization_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let path = Path::new(trimmed);
+    !path.is_absolute()
+        && !path
+            .components()
+            .any(|component| matches!(component, Component::RootDir | Component::Prefix(_)))
 }
 
 fn is_safe_workspace_relative_file_path(value: &str) -> bool {
@@ -20206,6 +20227,29 @@ tasks:
     }
 
     #[test]
+    fn validates_ensure_git_checkout_sibling_path_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: ../ui
+      source:
+        git: https://github.com/cenit-io/ui.git
+        ref: main
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("sibling ensure_git_checkout action should validate");
+    }
+
+    #[test]
     fn validates_ensure_git_checkouts_action_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -20231,6 +20275,34 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_git_checkouts action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_git_checkouts_sibling_paths_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkouts
+      checkouts:
+        - path: ../ui
+          source:
+            git: https://github.com/cenit-io/ui.git
+            ref: main
+        - path: ../sdk
+          source:
+            git: https://github.com/example/sdk.git
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("sibling ensure_git_checkouts action should validate");
     }
 
     #[test]

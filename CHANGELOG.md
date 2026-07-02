@@ -32,6 +32,11 @@
   same multi-checkout step with file/env prep, moving-head advisories stay per checkout, and the
   published contract/docs/examples now describe the widened VCS materialization surface directly,
   including the workspace task JSON schema and capability reference surfaces
+- widened `action.kind: ensure_git_checkout` / `ensure_git_checkouts` so declared checkout targets
+  may now use sibling or workspace-relative paths such as `../ui` instead of being artificially
+  constrained to repo-internal paths; validator and runner now agree on that bootstrap truth, so
+  repos whose documented local runtime depends on side-by-side checkouts no longer need shell glue
+  just to materialize the required workspace layout
 
 - added first-class `compose.build: true` for `tasks.<name>.compose.kind: run`, so documented
   one-off Compose contributor shells like `docker compose run --rm --build ...` no longer need

@@ -2450,7 +2450,9 @@ Use `action.kind: ensure_git_checkout` when setup truthfully owns deterministic 
 one sibling checkout, vendored dependency repo, or other Git-backed working tree without shell
 bootstrap glue. Ota clones `action.source.git` into `action.path` only when that path is missing,
 optionally checks out `action.source.ref`, and then leaves existing directories untouched on repeat
-runs. This is intentionally a materialization surface, not an update/reset surface: use it when
+runs. `action.path` may stay repo-internal (`vendor/wagtail`) or point at a declared sibling /
+workspace-relative target (`../ui`) as long as it remains a relative path without an absolute
+prefix. This is intentionally a materialization surface, not an update/reset surface: use it when
 bootstrap needs “make sure this checkout exists”, not when setup should implicitly pull, fetch, or
 rewrite a repo that is already present. When `action.source.ref` is omitted, Ota intentionally
 tracks the remote default branch head and `ota validate` / `ota doctor` warn that the checkout is

@@ -57777,6 +57777,10 @@ tasks:
             path_entries.extend(env::split_paths(existing));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
+        let sibling_checkout = fixture.dir.path().parent().unwrap().join("ota-ui-sibling");
+        if sibling_checkout.exists() {
+            fs::remove_dir_all(&sibling_checkout).unwrap();
+        }
         unsafe {
             env::set_var("PATH", &joined_path);
             env::set_var("OTA_GIT_LOG", &log_path);
@@ -57818,6 +57822,89 @@ tasks:
             "{}",
             second.stdout
         );
+    }
+
+    #[test]
+    fn ensure_git_checkout_action_clones_sibling_path() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: ../ota-ui-sibling
+      source:
+        git: https://github.com/cenit-io/ui.git
+        ref: main
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("git-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let log_path = fixture.dir.path().join("git.log");
+        let git_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nsetlocal enabledelayedexpansion\r\n>> \"%OTA_GIT_LOG%\" echo %CD%^|%*\r\nif \"%1\"==\"clone\" (\r\n  mkdir \"%4\" >nul 2>nul\r\n  > \"%4\\.git\" type nul\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"checkout\" (\r\n  > \"{state}\\checkout-%2\" type nul\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n",
+                state = state_dir.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_GIT_LOG\"\nif [ \"$1\" = \"clone\" ]; then\n  mkdir -p \"$4\"\n  : > \"$4/.git\"\n  exit 0\nfi\nif [ \"$1\" = \"checkout\" ]; then\n  : > \"{state}/checkout-$2\"\n  exit 0\nfi\nexit 1\n",
+                state = state_dir.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "git", &git_body);
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_GIT_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        let sibling_checkout = fixture.dir.path().parent().unwrap().join("ota-ui-sibling");
+        if sibling_checkout.exists() {
+            fs::remove_dir_all(&sibling_checkout).unwrap();
+        }
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_GIT_LOG", &log_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("sibling ensure_git_checkout action should run");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_GIT_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_GIT_LOG");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(sibling_checkout.join(".git").exists());
+        assert!(state_dir.join("checkout-main").exists());
+        let git_log = fs::read_to_string(&log_path).unwrap();
+        assert!(
+            git_log.contains("clone -- https://github.com/cenit-io/ui.git ../ota-ui-sibling")
+        );
+        assert!(git_log.contains(&format!("{}|checkout main", sibling_checkout.display())));
     }
 
     #[test]
