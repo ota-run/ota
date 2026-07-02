@@ -372,13 +372,10 @@ fn collect_ci_verification_aggregate_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationAggregateChange> {
-    let detected_tasks = recover_ci_verification_aggregate_task_sequence(existing, signals);
-
-    if detected_tasks.is_empty() {
+    let workflow_candidates = collect_ci_verification_workflow_task_sequences(existing, signals);
+    if workflow_candidates.is_empty() {
         return Vec::new();
     }
-
-    let detected_rendered = render_string_list(&detected_tasks);
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
         let Some(aggregate) = task.aggregate.as_ref() else {
@@ -399,15 +396,26 @@ fn collect_ci_verification_aggregate_changes(
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        if existing_tasks == detected_tasks {
+        if workflow_candidates.iter().any(|(_, detected_tasks)| {
+            detected_tasks
+                .iter()
+                .map(String::as_str)
+                .eq(existing_tasks.iter().copied())
+        }) {
             continue;
         }
+
+        let Some((source, detected_tasks)) =
+            best_matching_ci_verification_workflow_candidate(&existing_tasks, &workflow_candidates)
+        else {
+            continue;
+        };
 
         changes.push(CiVerificationAggregateChange {
             field,
             existing: aggregate.tasks.join(", "),
-            detected: detected_rendered.clone(),
-            source: String::from(".github/workflows/"),
+            detected: render_string_list(detected_tasks),
+            source: source.clone(),
             kind: CiVerificationAggregateChangeKind::Update,
         });
     }
@@ -415,11 +423,40 @@ fn collect_ci_verification_aggregate_changes(
     changes
 }
 
-fn recover_ci_verification_aggregate_task_sequence(
+fn collect_ci_verification_workflow_task_sequences(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
-) -> Vec<String> {
+) -> Vec<(String, Vec<String>)> {
     let recovered_signals = recover_ci_verification_task_signals(existing, signals);
+    let mut signals_by_workflow = BTreeMap::<String, Vec<CiVerificationTaskSignal>>::new();
+    for signal in recovered_signals {
+        for scope in [
+            ci_verification_signal_workflow_lane_source(&signal.source),
+            ci_verification_signal_workflow_source(&signal.source),
+        ] {
+            signals_by_workflow
+                .entry(scope)
+                .or_default()
+                .push(signal.clone());
+        }
+    }
+
+    signals_by_workflow
+        .into_iter()
+        .filter_map(|(source, workflow_signals)| {
+            let detected_tasks = recover_ci_verification_aggregate_task_sequence_from_signals(
+                existing,
+                &workflow_signals,
+            );
+            (!detected_tasks.is_empty()).then_some((source, detected_tasks))
+        })
+        .collect()
+}
+
+fn recover_ci_verification_aggregate_task_sequence_from_signals(
+    existing: &Contract,
+    recovered_signals: &[CiVerificationTaskSignal],
+) -> Vec<String> {
     let mut detected_tasks = Vec::new();
     let mut seen = BTreeMap::<String, ()>::new();
 
@@ -473,6 +510,81 @@ fn recover_ci_verification_aggregate_task_sequence(
         index += 1;
     }
     detected_tasks
+}
+
+fn ci_verification_signal_workflow_lane_source(source: &str) -> String {
+    source.split("::").next().unwrap_or(source).to_string()
+}
+
+fn ci_verification_signal_workflow_source(source: &str) -> String {
+    ci_verification_signal_workflow_lane_source(source)
+        .split('#')
+        .next()
+        .unwrap_or(source)
+        .to_string()
+}
+
+fn best_matching_ci_verification_workflow_candidate<'a>(
+    existing_tasks: &[&str],
+    workflow_candidates: &'a [(String, Vec<String>)],
+) -> Option<&'a (String, Vec<String>)> {
+    workflow_candidates
+        .iter()
+        .max_by_key(|(_, detected_tasks)| {
+            let overlap = existing_tasks
+                .iter()
+                .filter(|task| detected_tasks.iter().any(|detected| detected == **task))
+                .count();
+            let normalized_overlap = existing_tasks
+                .iter()
+                .filter(|task| {
+                    let existing_family = ci_verifier_task_family(task);
+                    detected_tasks.iter().any(|detected| {
+                        ci_verifier_task_family(detected.as_str()) == existing_family
+                    })
+                })
+                .count();
+            let extras = detected_tasks
+                .iter()
+                .filter(|detected| !existing_tasks.iter().any(|task| *task == detected.as_str()))
+                .count();
+            let missing = existing_tasks
+                .iter()
+                .filter(|task| !detected_tasks.iter().any(|detected| detected == **task))
+                .count();
+            let ordered_prefix = existing_tasks
+                .iter()
+                .zip(detected_tasks.iter().map(String::as_str))
+                .take_while(|(left, right)| **left == *right)
+                .count();
+            (
+                normalized_overlap,
+                overlap,
+                ordered_prefix,
+                usize::MAX - extras,
+                usize::MAX - missing,
+            )
+        })
+}
+
+fn ci_verifier_task_family<'a>(name: &'a str) -> &'a str {
+    let normalized = name.trim();
+    if normalized.starts_with("lint") {
+        "lint"
+    } else if normalized.starts_with("typecheck") || normalized.starts_with("check-types") {
+        "typecheck"
+    } else if normalized.starts_with("test") {
+        "test"
+    } else if normalized.starts_with("format")
+        || normalized.starts_with("prettier")
+        || normalized.starts_with("spotless")
+    {
+        "format"
+    } else if normalized.starts_with("validate") {
+        "validate"
+    } else {
+        normalized.split(':').next().unwrap_or(normalized)
+    }
 }
 
 fn recover_ci_verification_task_signals(

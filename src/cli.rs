@@ -24580,6 +24580,387 @@ tasks:
     }
 
     #[test]
+    fn doctor_prefers_matching_ci_workflow_lane_over_repo_wide_verifier_union() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-core.yml"),
+            r#"
+name: core
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task:
+          - lint
+          - typecheck
+          - test
+    steps:
+      - run: npx nx ${{ matrix.task }} web
+"#,
+        )
+        .expect("write core workflow");
+        fs::write(
+            dir.path().join(".github/workflows/ci-sdk.yml"),
+            r#"
+name: sdk
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task:
+          - lint
+          - typecheck
+          - test:unit
+          - test:integration
+    steps:
+      - run: npx nx ${{ matrix.task }} sdk
+"#,
+        )
+        .expect("write sdk workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:
+    run: npx nx lint web
+  typecheck:
+    run: npx nx typecheck web
+  test:
+    run: npx nx test web
+  test:unit:
+    run: npx nx test:unit sdk
+  test:integration:
+    run: npx nx test:integration sdk
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - typecheck
+        - test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once one workflow lane already matches the declared aggregate verifier set: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_prefers_matching_ci_job_lane_within_same_workflow_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task:
+          - lint
+          - typecheck
+          - test
+    steps:
+      - run: npx nx ${{ matrix.task }} web
+  sdk:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task:
+          - lint
+          - typecheck
+          - test:unit
+          - test:integration
+    steps:
+      - run: npx nx ${{ matrix.task }} sdk
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:
+    run: npx nx lint web
+  typecheck:
+    run: npx nx typecheck web
+  test:
+    run: npx nx test web
+  test:unit:
+    run: npx nx test:unit sdk
+  test:integration:
+    run: npx nx test:integration sdk
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - typecheck
+        - test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once one job lane in the same workflow file matches the declared aggregate verifier set: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_ci_verifier_aggregate_from_local_reusable_workflows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/quality-checks.yml"),
+            r#"
+name: quality checks
+on:
+  pull_request:
+jobs:
+  client-lint:
+    uses: ./.github/workflows/client-lint.yml
+  client-unit-tests:
+    uses: ./.github/workflows/client-unit-tests.yml
+"#,
+        )
+        .expect("write caller workflow");
+        fs::write(
+            dir.path().join(".github/workflows/client-lint.yml"),
+            r#"
+name: client lint
+on:
+  workflow_call:
+jobs:
+  client-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn run lint:ci
+"#,
+        )
+        .expect("write lint callee");
+        fs::write(
+            dir.path().join(".github/workflows/client-unit-tests.yml"),
+            r#"
+name: client unit tests
+on:
+  workflow_call:
+jobs:
+  client-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn run test:unit:ci
+"#,
+        )
+        .expect("write unit callee");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:ci:
+    run: yarn run lint:ci
+  test:unit:ci:
+    run: yarn run test:unit:ci
+  verify:
+    aggregate:
+      tasks:
+        - lint:ci
+        - test:unit:ci
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once local reusable workflow verification lanes are recovered through the caller workflow: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_prefers_reusable_verification_lane_over_unrelated_direct_test_workflow() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/quality-checks.yml"),
+            r#"
+name: quality checks
+on:
+  pull_request:
+jobs:
+  client-lint:
+    uses: ./.github/workflows/client-lint.yml
+  client-unit-tests:
+    uses: ./.github/workflows/client-unit-tests.yml
+"#,
+        )
+        .expect("write caller workflow");
+        fs::write(
+            dir.path().join(".github/workflows/client-lint.yml"),
+            r#"
+name: client lint
+on:
+  workflow_call:
+jobs:
+  client-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn run lint:ci
+"#,
+        )
+        .expect("write lint callee");
+        fs::write(
+            dir.path().join(".github/workflows/client-unit-tests.yml"),
+            r#"
+name: client unit tests
+on:
+  workflow_call:
+jobs:
+  client-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn run test:unit:ci
+"#,
+        )
+        .expect("write unit callee");
+        fs::write(
+            dir.path().join(".github/workflows/test-storybook.yml"),
+            r#"
+name: storybook
+on:
+  pull_request:
+jobs:
+  storybook-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn test-storybook:ci
+"#,
+        )
+        .expect("write storybook workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:
+    run: yarn lint
+  test:
+    run: yarn test:unit
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.iter().any(|finding| {
+                finding["why"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(".github/workflows/quality-checks.yml")
+            }),
+            "expected CI drift to anchor to the reusable verification workflow rather than the unrelated storybook test workflow: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+        assert!(
+            ci_drift_findings.iter().all(|finding| {
+                !finding["why"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("test-storybook.yml")
+            }),
+            "expected storybook workflow not to win best-match selection once reusable verification lanes are recovered: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_reports_agents_md_safe_task_drift_from_contract() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(

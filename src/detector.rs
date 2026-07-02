@@ -1262,6 +1262,7 @@ pub(crate) fn collect_github_actions_verification_tasks(
     workflow_files.sort();
 
     let mut tasks = Vec::new();
+    let mut active_workflows = BTreeSet::new();
     for workflow_path in workflow_files {
         let contents = read_file(&workflow_path)?;
         let workflow: YamlValue =
@@ -1269,58 +1270,110 @@ pub(crate) fn collect_github_actions_verification_tasks(
                 path: workflow_path.display().to_string(),
                 message: source_error.to_string(),
             })?;
-        let Some(jobs) = workflow.get("jobs").and_then(YamlValue::as_mapping) else {
+        if is_workflow_call_only_github_workflow(&workflow) {
+            continue;
+        }
+        collect_github_actions_verification_tasks_from_workflow(
+            root,
+            &workflow_path,
+            None,
+            &mut active_workflows,
+            &mut tasks,
+        )?;
+    }
+
+    Ok(tasks)
+}
+
+fn collect_github_actions_verification_tasks_from_workflow(
+    root: &Path,
+    workflow_path: &Path,
+    caller_job_source: Option<&str>,
+    active_workflows: &mut BTreeSet<String>,
+    tasks: &mut Vec<CiVerificationTaskSignal>,
+) -> Result<(), DetectError> {
+    let workflow_key = workflow_path
+        .strip_prefix(root)
+        .unwrap_or(workflow_path)
+        .display()
+        .to_string();
+    if !active_workflows.insert(workflow_key.clone()) {
+        return Ok(());
+    }
+
+    let contents = read_file(workflow_path)?;
+    let workflow: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source_error| DetectError::Parse {
+            path: workflow_path.display().to_string(),
+            message: source_error.to_string(),
+        })?;
+    let Some(jobs) = workflow.get("jobs").and_then(YamlValue::as_mapping) else {
+        active_workflows.remove(&workflow_key);
+        return Ok(());
+    };
+
+    for (job_name, job_value) in jobs
+        .iter()
+        .filter_map(|(name, value)| Some((name.as_str()?, value)))
+    {
+        let direct_job_source = format!("{workflow_key}#jobs.{job_name}");
+        let job_source = caller_job_source.unwrap_or(&direct_job_source).to_string();
+
+        if let Some(reusable_path) = job_value
+            .get("uses")
+            .and_then(YamlValue::as_str)
+            .and_then(local_reusable_github_workflow_path)
+        {
+            collect_github_actions_verification_tasks_from_workflow(
+                root,
+                &root.join(reusable_path),
+                Some(&job_source),
+                active_workflows,
+                tasks,
+            )?;
+            continue;
+        }
+
+        let matrix_tasks = github_actions_job_matrix_verifier_tasks(job_value);
+        let Some(steps) = job_value.get("steps").and_then(YamlValue::as_sequence) else {
             continue;
         };
-
-        let workflow_source = workflow_path
-            .strip_prefix(root)
-            .unwrap_or(&workflow_path)
-            .display()
-            .to_string();
-
-        for (job_name, job_value) in jobs
-            .iter()
-            .filter_map(|(name, value)| Some((name.as_str()?, value)))
-        {
-            let matrix_tasks = github_actions_job_matrix_verifier_tasks(job_value);
-            let Some(steps) = job_value.get("steps").and_then(YamlValue::as_sequence) else {
-                continue;
+        for (step_index, step) in steps.iter().enumerate() {
+            let step_source_prefix = if caller_job_source.is_some() {
+                format!("{job_source}::{workflow_key}#jobs.{job_name}.steps[{step_index}]")
+            } else {
+                format!("{job_source}.steps[{step_index}]")
             };
-            for (step_index, step) in steps.iter().enumerate() {
-                if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
-                    for command in ci_workflow_simple_run_lines(run) {
-                        let (field, command) = if let Some((task_name, command)) =
-                            infer_ci_verification_task_line(&command)
-                        {
-                            (format!("tasks.{task_name}.run"), command)
-                        } else {
-                            (String::new(), command)
-                        };
-                        tasks.push(CiVerificationTaskSignal {
-                            field,
-                            command,
-                            source: format!(
-                                "{workflow_source}#jobs.{job_name}.steps[{step_index}].run"
-                            ),
-                            exact_command: true,
-                        });
-                    }
-                }
-                for task_name in github_actions_structured_step_verifier_tasks(step, &matrix_tasks)
-                {
+            if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
+                for command in ci_workflow_simple_run_lines(run) {
+                    let (field, command) = if let Some((task_name, command)) =
+                        infer_ci_verification_task_line(&command)
+                    {
+                        (format!("tasks.{task_name}.run"), command)
+                    } else {
+                        (String::new(), command)
+                    };
                     tasks.push(CiVerificationTaskSignal {
-                        field: format!("tasks.{task_name}.run"),
-                        command: task_name.clone(),
-                        source: format!("{workflow_source}#jobs.{job_name}.steps[{step_index}]"),
-                        exact_command: false,
+                        field,
+                        command,
+                        source: format!("{step_source_prefix}.run"),
+                        exact_command: true,
                     });
                 }
+            }
+            for task_name in github_actions_structured_step_verifier_tasks(step, &matrix_tasks) {
+                tasks.push(CiVerificationTaskSignal {
+                    field: format!("tasks.{task_name}.run"),
+                    command: task_name.clone(),
+                    source: step_source_prefix.clone(),
+                    exact_command: false,
+                });
             }
         }
     }
 
-    Ok(tasks)
+    active_workflows.remove(&workflow_key);
+    Ok(())
 }
 
 fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
@@ -1367,6 +1420,18 @@ fn is_external_ci_workflow_cwd_target(target: &str) -> bool {
         || target.starts_with("${HOME}")
         || target.starts_with("$TMPDIR")
         || target.starts_with("${TMPDIR}")
+}
+
+fn is_workflow_call_only_github_workflow(workflow: &YamlValue) -> bool {
+    let Some(on) = workflow.get("on").and_then(YamlValue::as_mapping) else {
+        return false;
+    };
+    on.len() == 1 && on.contains_key(YamlValue::String(String::from("workflow_call")))
+}
+
+fn local_reusable_github_workflow_path(uses: &str) -> Option<&str> {
+    uses.strip_prefix("./")
+        .filter(|path| path.starts_with(".github/workflows/"))
 }
 
 fn github_actions_job_matrix_verifier_tasks(job_value: &YamlValue) -> Vec<String> {
