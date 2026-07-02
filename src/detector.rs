@@ -1,4 +1,3 @@
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
@@ -103,6 +102,7 @@ pub struct CiVerificationTaskSignal {
     pub field: String,
     pub command: String,
     pub source: String,
+    pub exact_command: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1216,11 +1216,16 @@ fn detect_github_actions_workflows(
     builder: &mut DetectBuilder,
 ) -> Result<(), DetectError> {
     for signal in collect_github_actions_verification_tasks(root)? {
-        let task_name = signal
+        if !signal.exact_command {
+            continue;
+        }
+        let Some(task_name) = signal
             .field
             .strip_prefix("tasks.")
             .and_then(|value| value.strip_suffix(".run"))
-            .expect("ci verification field uses task run path");
+        else {
+            continue;
+        };
         builder.set_task(
             task_name.to_string(),
             signal.command,
@@ -1278,20 +1283,37 @@ pub(crate) fn collect_github_actions_verification_tasks(
             .iter()
             .filter_map(|(name, value)| Some((name.as_str()?, value)))
         {
+            let matrix_tasks = github_actions_job_matrix_verifier_tasks(job_value);
             let Some(steps) = job_value.get("steps").and_then(YamlValue::as_sequence) else {
                 continue;
             };
             for (step_index, step) in steps.iter().enumerate() {
-                let Some(run) = step.get("run").and_then(YamlValue::as_str) else {
-                    continue;
-                };
-                for (task_name, command) in infer_ci_verification_tasks(run) {
+                if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
+                    for command in ci_workflow_simple_run_lines(run) {
+                        let (field, command) = if let Some((task_name, command)) =
+                            infer_ci_verification_task_line(&command)
+                        {
+                            (format!("tasks.{task_name}.run"), command)
+                        } else {
+                            (String::new(), command)
+                        };
+                        tasks.push(CiVerificationTaskSignal {
+                            field,
+                            command,
+                            source: format!(
+                                "{workflow_source}#jobs.{job_name}.steps[{step_index}].run"
+                            ),
+                            exact_command: true,
+                        });
+                    }
+                }
+                for task_name in github_actions_structured_step_verifier_tasks(step, &matrix_tasks)
+                {
                     tasks.push(CiVerificationTaskSignal {
                         field: format!("tasks.{task_name}.run"),
-                        command,
-                        source: format!(
-                            "{workflow_source}#jobs.{job_name}.steps[{step_index}].run"
-                        ),
+                        command: task_name.clone(),
+                        source: format!("{workflow_source}#jobs.{job_name}.steps[{step_index}]"),
+                        exact_command: false,
                     });
                 }
             }
@@ -1299,6 +1321,99 @@ pub(crate) fn collect_github_actions_verification_tasks(
     }
 
     Ok(tasks)
+}
+
+fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
+    if ci_workflow_run_changes_to_external_cwd(run) {
+        return Vec::new();
+    }
+
+    let mut commands = Vec::new();
+    for raw_line in run.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.contains("&&")
+            || line.contains("||")
+            || line.contains(';')
+        {
+            continue;
+        }
+
+        commands.push(line.to_string());
+    }
+
+    commands
+}
+
+fn ci_workflow_run_changes_to_external_cwd(run: &str) -> bool {
+    run.lines()
+        .map(str::trim)
+        .filter_map(ci_workflow_cwd_target)
+        .any(is_external_ci_workflow_cwd_target)
+}
+
+fn ci_workflow_cwd_target(line: &str) -> Option<&str> {
+    line.strip_prefix("cd ")
+        .or_else(|| line.strip_prefix("pushd "))
+        .map(str::trim)
+        .filter(|target| !target.is_empty())
+}
+
+fn is_external_ci_workflow_cwd_target(target: &str) -> bool {
+    target.starts_with('/')
+        || target.starts_with('~')
+        || target.starts_with("$HOME")
+        || target.starts_with("${HOME}")
+        || target.starts_with("$TMPDIR")
+        || target.starts_with("${TMPDIR}")
+}
+
+fn github_actions_job_matrix_verifier_tasks(job_value: &YamlValue) -> Vec<String> {
+    job_value
+        .get("strategy")
+        .and_then(|value| value.get("matrix"))
+        .and_then(|value| value.get("task"))
+        .and_then(YamlValue::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(YamlValue::as_str)
+        .filter(|task| is_verifier_task_name(task))
+        .map(String::from)
+        .collect()
+}
+
+fn github_actions_structured_step_verifier_tasks(
+    step: &YamlValue,
+    matrix_tasks: &[String],
+) -> Vec<String> {
+    let mut tasks = Vec::new();
+
+    if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
+        if run.contains("${{ matrix.task }}") {
+            tasks.extend(matrix_tasks.iter().cloned());
+        }
+    }
+
+    if let Some(with_tasks) = step
+        .get("with")
+        .and_then(|value| value.get("tasks"))
+        .and_then(YamlValue::as_str)
+    {
+        if with_tasks.contains("${{ matrix.task }}") {
+            tasks.extend(matrix_tasks.iter().cloned());
+        } else {
+            tasks.extend(
+                with_tasks
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|task| is_verifier_task_name(task))
+                    .map(String::from),
+            );
+        }
+    }
+
+    tasks
 }
 
 fn is_promotable_task_runner_task_name(name: &str) -> bool {
@@ -1421,26 +1536,6 @@ fn normalize_detected_wrapper_command(command: String) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn infer_ci_verification_tasks(run: &str) -> Vec<(String, String)> {
-    let mut tasks = Vec::new();
-    for raw_line in run.lines() {
-        let line = raw_line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.contains("&&")
-            || line.contains("||")
-            || line.contains(';')
-        {
-            continue;
-        }
-
-        if let Some(inferred) = infer_ci_verification_task_line(line) {
-            tasks.push(inferred);
-        }
-    }
-    tasks
-}
-
 pub(crate) fn infer_ci_verification_task_line(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
     let normalized = trimmed
@@ -1453,6 +1548,7 @@ pub(crate) fn infer_ci_verification_task_line(line: &str) -> Option<(String, Str
         "npm" => infer_npm_ci_verification_task(&tokens, trimmed),
         "pnpm" | "yarn" => infer_node_ci_verification_task(first, &tokens, trimmed),
         "bun" => infer_bun_ci_verification_task(&tokens, trimmed),
+        "ruff" => infer_ruff_ci_verification_task(&tokens, trimmed),
         "task" | "just" => {
             let task_name = tokens.get(1)?;
             if is_verifier_task_name(task_name) {
@@ -1528,6 +1624,14 @@ fn infer_cargo_ci_verification_task(tokens: &[&str], original: &str) -> Option<(
         Some("clippy") => Some((String::from("lint"), original.to_string())),
         Some("fmt") => Some((String::from("fmt"), original.to_string())),
         Some("check") => Some((String::from("check"), original.to_string())),
+        _ => None,
+    }
+}
+
+fn infer_ruff_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
+    match tokens.get(1).copied() {
+        Some("format") => Some((String::from("format"), original.to_string())),
+        Some("check") => Some((String::from("lint"), original.to_string())),
         _ => None,
     }
 }

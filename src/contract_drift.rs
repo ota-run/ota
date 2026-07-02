@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -291,10 +291,12 @@ fn collect_ci_verification_governance_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationGovernanceChange> {
-    let ci_tasks = signals
+    let recovered_signals = recover_ci_verification_task_signals(existing, signals);
+    let ci_tasks = recovered_signals
         .iter()
         .filter(|signal| {
-            is_task_command_truth_field(&signal.field)
+            signal.exact_command
+                && is_task_command_truth_field(&signal.field)
                 && is_verification_task_truth_field(&signal.field)
         })
         .map(|signal| {
@@ -314,6 +316,10 @@ fn collect_ci_verification_governance_changes(
         .map(|(field, _)| field.as_str())
         .collect::<Vec<_>>()
         .join(", ");
+    let detected_fields = recovered_signals
+        .iter()
+        .map(|signal| signal.field.as_str())
+        .collect::<Vec<_>>();
 
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
@@ -327,7 +333,7 @@ fn collect_ci_verification_governance_changes(
         }
 
         if let Some((detected_command, source)) = ci_tasks.get(&field) {
-            if detected_command != &existing_command {
+            if !equivalent_ci_verification_commands(&existing_command, detected_command) {
                 changes.push(CiVerificationGovernanceChange {
                     field,
                     existing: existing_command,
@@ -336,6 +342,13 @@ fn collect_ci_verification_governance_changes(
                     kind: CiVerificationGovernanceChangeKind::Update,
                 });
             }
+            continue;
+        }
+
+        if detected_fields
+            .iter()
+            .any(|detected_field| *detected_field == field)
+        {
             continue;
         }
 
@@ -359,13 +372,7 @@ fn collect_ci_verification_aggregate_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationAggregateChange> {
-    let mut seen_detected_tasks = BTreeSet::new();
-    let detected_tasks = signals
-        .iter()
-        .filter_map(|signal| verification_task_name_from_field(&signal.field))
-        .filter(|task_name| is_verifier_task_name(task_name))
-        .filter(|task_name| seen_detected_tasks.insert(*task_name))
-        .collect::<Vec<_>>();
+    let detected_tasks = recover_ci_verification_aggregate_task_sequence(existing, signals);
 
     if detected_tasks.is_empty() {
         return Vec::new();
@@ -406,6 +413,186 @@ fn collect_ci_verification_aggregate_changes(
     }
 
     changes
+}
+
+fn recover_ci_verification_aggregate_task_sequence(
+    existing: &Contract,
+    signals: &[CiVerificationTaskSignal],
+) -> Vec<String> {
+    let recovered_signals = recover_ci_verification_task_signals(existing, signals);
+    let mut detected_tasks = Vec::new();
+    let mut seen = BTreeMap::<String, ()>::new();
+
+    let script_matchers = existing
+        .tasks
+        .iter()
+        .filter_map(|(task_name, task)| {
+            let field = format!("tasks.{task_name}.run");
+            if !is_verification_task_truth_field(&field) {
+                return None;
+            }
+            let execution = task.resolved_execution(current_os())?;
+            if execution.kind != "script" {
+                return None;
+            }
+
+            let body = execution.shell_body()?;
+            let commands = ci_script_command_sequence(body)?;
+            Some((task_name.clone(), commands))
+        })
+        .collect::<Vec<_>>();
+
+    let mut index = 0usize;
+    while index < recovered_signals.len() {
+        let signal = &recovered_signals[index];
+        if !signal.exact_command {
+            if let Some(task_name) = verification_task_name_from_field(&signal.field) {
+                if seen.insert(task_name.to_string(), ()).is_none() {
+                    detected_tasks.push(task_name.to_string());
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        if let Some((task_name, width)) =
+            longest_matching_ci_script_task(&script_matchers, &recovered_signals[index..])
+        {
+            if seen.insert(task_name.clone(), ()).is_none() {
+                detected_tasks.push(task_name);
+            }
+            index += width;
+            continue;
+        }
+
+        if let Some(task_name) = verification_task_name_from_field(&signal.field) {
+            if seen.insert(task_name.to_string(), ()).is_none() {
+                detected_tasks.push(task_name.to_string());
+            }
+        }
+        index += 1;
+    }
+    detected_tasks
+}
+
+fn recover_ci_verification_task_signals(
+    existing: &Contract,
+    signals: &[CiVerificationTaskSignal],
+) -> Vec<CiVerificationTaskSignal> {
+    let mut command_index = BTreeMap::<String, Vec<String>>::new();
+    for (task_name, task) in &existing.tasks {
+        let field = format!("tasks.{task_name}.run");
+        if !is_verification_task_truth_field(&field) {
+            continue;
+        }
+        let Some(command) = existing_task_detectable_command_truth(task) else {
+            continue;
+        };
+        let Some(command_key) = canonicalize_ci_verification_command(&command) else {
+            continue;
+        };
+        command_index.entry(command_key).or_default().push(field);
+    }
+
+    signals
+        .iter()
+        .map(|signal| {
+            if command_index
+                .values()
+                .flatten()
+                .any(|field| field == &signal.field)
+            {
+                return signal.clone();
+            }
+
+            let Some(command_key) = canonicalize_ci_verification_command(&signal.command) else {
+                return signal.clone();
+            };
+            let Some(fields) = command_index.get(&command_key) else {
+                return signal.clone();
+            };
+            if fields.len() != 1 {
+                return signal.clone();
+            }
+
+            let mut recovered = signal.clone();
+            recovered.field = fields[0].clone();
+            recovered
+        })
+        .collect()
+}
+
+fn equivalent_ci_verification_commands(existing: &str, detected: &str) -> bool {
+    existing == detected
+        || canonicalize_ci_verification_command(existing)
+            .zip(canonicalize_ci_verification_command(detected))
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn canonicalize_ci_verification_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains(';')
+    {
+        return None;
+    }
+
+    let mut normalized = trimmed;
+    loop {
+        let next = normalized
+            .strip_prefix("corepack ")
+            .or_else(|| normalized.strip_prefix("uv run "))
+            .or_else(|| normalized.strip_prefix("bundle exec "))
+            .or_else(|| normalized.strip_prefix("python -m "))
+            .or_else(|| normalized.strip_prefix("python3 -m "));
+        let Some(next) = next else {
+            break;
+        };
+        normalized = next.trim_start();
+    }
+
+    Some(normalized.to_string())
+}
+
+fn ci_script_command_sequence(body: &str) -> Option<Vec<String>> {
+    let mut commands = Vec::new();
+    for raw_line in body.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let canonical = canonicalize_ci_verification_command(line)?;
+        commands.push(canonical);
+    }
+    (!commands.is_empty()).then_some(commands)
+}
+
+fn longest_matching_ci_script_task<'a>(
+    script_matchers: &'a [(String, Vec<String>)],
+    signals: &[CiVerificationTaskSignal],
+) -> Option<(String, usize)> {
+    let exact_prefix = signals
+        .iter()
+        .take_while(|signal| signal.exact_command)
+        .collect::<Vec<_>>();
+    let command_slice = exact_prefix
+        .iter()
+        .map(|signal| canonicalize_ci_verification_command(&signal.command))
+        .collect::<Option<Vec<_>>>()?;
+
+    script_matchers
+        .iter()
+        .filter(|(_, matcher)| matcher.len() <= command_slice.len())
+        .filter(|(_, matcher)| {
+            matcher
+                .iter()
+                .zip(command_slice.iter())
+                .all(|(left, right)| left == right)
+        })
+        .max_by_key(|(_, matcher)| matcher.len())
+        .map(|(task_name, matcher)| (task_name.clone(), matcher.len()))
 }
 
 fn existing_task_detectable_command_truth(task: &crate::schema::TaskSpec) -> Option<String> {
@@ -500,8 +687,12 @@ fn verification_task_name_from_field(field: &str) -> Option<&str> {
         .and_then(|value| value.strip_suffix(".run"))
 }
 
-fn render_string_list(values: &[&str]) -> String {
-    values.join(", ")
+fn render_string_list<T: AsRef<str>>(values: &[T]) -> String {
+    values
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn detect_change_ownership(existing: Option<&str>) -> String {

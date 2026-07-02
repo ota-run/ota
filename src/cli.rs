@@ -24115,6 +24115,471 @@ tasks:
     }
 
     #[test]
+    fn doctor_recovers_declared_verifier_task_identity_from_exact_ci_command_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ruff format --check . --exclude .venv --exclude venv
+      - run: npm run test:frontend
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  verify:backend:format:
+    command:
+      exe: ruff
+      args:
+        - format
+        - --check
+        - .
+        - --exclude
+        - .venv
+        - --exclude
+        - venv
+  test:frontend:
+    run: npm run test:frontend
+  verify:
+    aggregate:
+      tasks:
+        - verify:backend:format
+        - test:frontend
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once exact command recovery maps the workflow step onto the declared verifier task: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_declared_script_verifier_task_from_ci_command_sequence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/backend.yml"),
+            r#"
+name: backend
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ruff format --check . --exclude .venv --exclude venv
+"#,
+        )
+        .expect("write backend workflow");
+        fs::write(
+            dir.path().join(".github/workflows/frontend.yml"),
+            r#"
+name: frontend
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run format
+      - run: npm run i18n:parse
+      - run: git diff --exit-code
+      - run: npm run build
+      - run: npm run test:frontend
+"#,
+        )
+        .expect("write frontend workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  verify:backend:format:
+    command:
+      exe: uv
+      args:
+        - run
+        - ruff
+        - format
+        - --check
+        - .
+        - --exclude
+        - .venv
+        - --exclude
+        - venv
+  verify:frontend:
+    script: |
+      npm run format
+      npm run i18n:parse
+      git diff --exit-code
+      npm run build
+  test:frontend:
+    run: npm run test:frontend
+  verify:
+    aggregate:
+      tasks:
+        - verify:backend:format
+        - verify:frontend
+        - test:frontend
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once the workflow command sequence maps onto the declared verifier script task: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_ci_verifier_aggregate_from_matrix_task_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-ui.yml"),
+            r#"
+name: ui
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task:
+          - lint
+          - typecheck
+          - test
+    steps:
+      - run: npx nx ${{ matrix.task }} twenty-ui
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-ui
+tasks:
+  lint:
+    run: npx nx lint twenty-ui
+  typecheck:
+    run: npx nx typecheck twenty-ui
+  test:
+    run: npx nx test twenty-ui
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - typecheck
+        - test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once matrix task identity recovers the declared aggregate verifier set: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_ci_verifier_aggregate_from_local_action_tasks_input() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-server.yml"),
+            r#"
+name: server
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/nx-affected
+        with:
+          tasks: lint,typecheck
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-server
+tasks:
+  lint:
+    run: npx nx lint twenty-server
+  typecheck:
+    run: npx nx typecheck twenty-server
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - typecheck
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once local action tasks input recovers the declared aggregate verifier set: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_ci_test_commands_after_workflow_cwd_mutation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/e2e.yml"),
+            r#"
+name: e2e
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cd /tmp/scaffolded-app
+          yarn test
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: npx nx test frontend
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once repo-external cwd-mutation workflow blocks are excluded from exact command truth: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_preserves_ci_verifier_order_across_mixed_exact_and_structured_steps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/verify.yml"),
+            r#"
+name: verify
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint
+      - uses: ./.github/actions/nx-affected
+        with:
+          tasks: typecheck
+      - run: npm run test
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:
+    run: npm run lint
+  typecheck:
+    run: npm run typecheck
+  test:
+    run: npm run test
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - typecheck
+        - test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once mixed exact and structured CI verifier steps preserve workflow order: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_keeps_repo_local_subdir_ci_verifier_commands() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/subdir.yml"),
+            r#"
+name: subdir
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cd packages/web
+          npm run test
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  test:
+    run: npm run test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once repo-local subdir CI verifier commands are still admitted: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_reports_agents_md_safe_task_drift_from_contract() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
