@@ -37,6 +37,11 @@
   constrained to repo-internal paths; validator and runner now agree on that bootstrap truth, so
   repos whose documented local runtime depends on side-by-side checkouts no longer need shell glue
   just to materialize the required workspace layout
+- added first-class `effects.workspace_writes` for task paths that intentionally mutate sibling or
+  workspace-relative filesystem targets outside the repo root, so deterministic checkout/bootstrap
+  lanes can keep repo-scoped `effects.writes` strict while still declaring broader local workspace
+  materialization truth explicitly; agent-safe task closures continue to require repo-scoped write
+  boundaries, and doctor / run-preview surfaces now report workspace-relative write ownership
 
 - added first-class `compose.build: true` for `tasks.<name>.compose.kind: run`, so documented
   one-off Compose contributor shells like `docker compose run --rm --build ...` no longer need

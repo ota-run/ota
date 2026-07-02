@@ -334,8 +334,8 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
-- each task may include additive `effects` with declared `writes`, `network`, and
-  `external_state`
+- each task may include additive `effects` with declared `writes`, `workspace_writes`,
+  `network`, and `external_state`
 - each task may include additive `prepare`; sequence prepares keep a nested `steps[]` tree, while
   dependency-hydration prepares expose `medium`, `source_kind`, `cwd`, `manager`, and `mode`
 - each task may include additive `launch` when the resolved execution source is structured command

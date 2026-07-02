@@ -6611,13 +6611,20 @@ fn is_safe_checkout_materialization_path(value: &str) -> bool {
 }
 
 fn is_safe_workspace_relative_file_path(value: &str) -> bool {
+    normalize_workspace_relative_file_path(value).is_some()
+}
+
+fn normalize_workspace_relative_file_path(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
-        return false;
+        return None;
     }
     let bytes = trimmed.as_bytes();
     if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        return false;
+        return None;
+    }
+    if trimmed.chars().any(|ch| ch == '\0' || ch == '\n' || ch == '\r') {
+        return None;
     }
     let path = Path::new(trimmed);
     if path.is_absolute()
@@ -6625,11 +6632,24 @@ fn is_safe_workspace_relative_file_path(value: &str) -> bool {
             .components()
             .any(|component| matches!(component, Component::RootDir | Component::Prefix(_)))
     {
-        return false;
+        return None;
     }
-    !trimmed
-        .chars()
-        .any(|ch| ch == '\0' || ch == '\n' || ch == '\r')
+
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => parts.push(String::from("..")),
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(parts.join("/"))
 }
 
 fn task_declares_service_runtime(task: &TaskSpec) -> bool {
@@ -16917,6 +16937,28 @@ fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<Vali
         }
     }
 
+    let mut normalized_workspace_writes = BTreeSet::new();
+    for write_path in &task.effects.workspace_writes {
+        let trimmed = write_path.trim();
+        if trimmed.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `workspace_writes` entries must not be empty"
+            )));
+            continue;
+        }
+        let Some(normalized_path) = normalize_workspace_relative_file_path(trimmed) else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `workspace_writes` entry `{trimmed}` must be a normalized workspace-relative path without an absolute prefix or drive prefix"
+            )));
+            continue;
+        };
+        if !normalized_workspace_writes.insert(normalized_path.clone()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `workspace_writes` must not contain duplicate normalized path `{normalized_path}`"
+            )));
+        }
+    }
+
     let mut declared_external_state = BTreeSet::new();
     for state in &task.effects.external_state {
         let trimmed = state.trim();
@@ -17008,6 +17050,22 @@ fn validate_agent_safe_task_effects(contract: &Contract, errors: &mut Vec<Valida
                     &writable_paths,
                 );
             }
+            for workspace_write_path in task
+                .effects
+                .workspace_writes
+                .iter()
+                .filter_map(|path| normalize_workspace_relative_file_path(path))
+            {
+                if !seen.insert((task_name.to_string(), workspace_write_path.clone())) {
+                    continue;
+                }
+                validate_agent_safe_task_workspace_write_boundary(
+                    errors,
+                    safe_task_name.as_str(),
+                    task_name,
+                    workspace_write_path.as_str(),
+                );
+            }
         }
     }
 }
@@ -17071,6 +17129,23 @@ fn validate_agent_safe_task_effect_write_boundary(
                 "agent-safe task `{safe_task_name}` reaches dependency `{task_name}` with effect `writes: [{write_path}]`, but it is outside the declared `agent.writable_paths` boundary"
             )));
         }
+    }
+}
+
+fn validate_agent_safe_task_workspace_write_boundary(
+    errors: &mut Vec<ValidationError>,
+    safe_task_name: &str,
+    task_name: &str,
+    write_path: &str,
+) {
+    if task_name == safe_task_name {
+        errors.push(ValidationError::new(format!(
+            "agent-safe task `{safe_task_name}` declares effect `workspace_writes: [{write_path}]`, but workspace-relative writes are outside the repo-scoped `agent.writable_paths` / `agent.protected_paths` boundary"
+        )));
+    } else {
+        errors.push(ValidationError::new(format!(
+            "agent-safe task `{safe_task_name}` reaches dependency `{task_name}` with effect `workspace_writes: [{write_path}]`, but workspace-relative writes are outside the repo-scoped `agent.writable_paths` / `agent.protected_paths` boundary"
+        )));
     }
 }
 
@@ -35286,6 +35361,108 @@ agent:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "agent-safe task `build` declares effect `writes: [dist/output]`, but it is outside the declared `agent.writable_paths` boundary",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_workspace_relative_task_effect_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:ui:
+    action:
+      kind: ensure_git_checkout
+      path: ../ui
+      source:
+        git: https://github.com/example/ui.git
+        ref: 0123456789abcdef0123456789abcdef01234567
+    effects:
+      workspace_writes:
+        - ../ui
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("workspace-relative effect writes should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_workspace_relative_task_effect_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:ui:
+    run: echo ok
+    effects:
+      workspace_writes:
+        - /tmp/ui
+        - ../ui
+        - ../ui/
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid workspace-relative effect writes should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `bootstrap:ui` effect `workspace_writes` entry `/tmp/ui` must be a normalized workspace-relative path without an absolute prefix or drive prefix",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `bootstrap:ui` effect `workspace_writes` must not contain duplicate normalized path `../ui`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_agent_safe_task_workspace_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:ui:
+    run: echo ok
+    safe_for_agent: true
+    effects:
+      workspace_writes:
+        - ../ui
+agent: {}
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("agent-safe workspace-relative writes should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "agent-safe task `bootstrap:ui` declares effect `workspace_writes: [../ui]`, but workspace-relative writes are outside the repo-scoped `agent.writable_paths` / `agent.protected_paths` boundary",
             )),
             "{rendered:?}"
         );

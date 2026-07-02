@@ -1783,9 +1783,10 @@ Each task may also include additive `prepare` when the resolved task body is fir
 instead of shell `run` / `script`. Sequence prepares keep a nested `steps[]` tree, while
 dependency-hydration prepares expose structural fields such as `medium`, `source_kind`, `cwd`,
 `manager`, and `mode`.
-Each task may also include additive `effects` when the contract declares durable writes (`writes`),
-a connectivity dependency (`network`), an optional network lane classification (`network_kind`),
-or out-of-repo mutation (`external_state`).
+Each task may also include additive `effects` when the contract declares durable repo writes
+(`writes`), workspace/sibling writes (`workspace_writes`), a connectivity dependency (`network`),
+an optional network lane classification (`network_kind`), or out-of-repo mutation
+(`external_state`).
 When the repo declares `workflows`, `ota tasks --json` includes an additive top-level `workflow`
 object for the default workflow, and member summaries may include the same additive field.
 

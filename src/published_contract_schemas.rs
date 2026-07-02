@@ -1458,6 +1458,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "writes": { "$ref": "#/$defs/stringArray" },
+        "workspace_writes": { "$ref": "#/$defs/stringArray" },
         "network": { "type": "boolean" },
         "network_kind": { "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"] },
         "adapter_state": { "$ref": "#/$defs/stringArray" },

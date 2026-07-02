@@ -4185,6 +4185,8 @@ fn shell_single_quote(input: &str) -> String {
 pub struct TaskEffectsSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_writes: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub network: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4198,6 +4200,7 @@ pub struct TaskEffectsSpec {
 impl TaskEffectsSpec {
     pub fn is_empty(&self) -> bool {
         self.writes.is_empty()
+            && self.workspace_writes.is_empty()
             && !self.network
             && self.network_kind.is_none()
             && self.adapter_state.is_empty()

@@ -39255,6 +39255,11 @@ fn detect_task_field_paths(name: &str, task: &DetectTask) -> Vec<String> {
             fields.push(format!("{prefix}.effects.writes.{index}"));
         }
     }
+    for (index, write) in task.effects.workspace_writes.iter().enumerate() {
+        if !write.trim().is_empty() {
+            fields.push(format!("{prefix}.effects.workspace_writes.{index}"));
+        }
+    }
     if task.effects.network {
         fields.push(format!("{prefix}.effects.network"));
     }
@@ -40609,6 +40614,12 @@ fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> Stri
     if !effects.writes.is_empty() {
         parts.push(format!("writes={}", effects.writes.join(",")));
     }
+    if !effects.workspace_writes.is_empty() {
+        parts.push(format!(
+            "workspace_writes={}",
+            effects.workspace_writes.join(",")
+        ));
+    }
     if effects.network {
         if let Some(kind) = effects.network_kind {
             parts.push(format!("network={}", kind.as_str()));
@@ -40941,6 +40952,7 @@ fn run_preview_governance_summary(
         network: task.effects.network,
         network_kind: task.effects.network_kind,
         writes: task.effects.writes.clone(),
+        workspace_writes: task.effects.workspace_writes.clone(),
         adapter_state: task.effects.adapter_state.clone(),
         external_state: task.effects.external_state.clone(),
         receipt_follow_up_command: String::from("ota receipt --json --archive"),
@@ -53353,6 +53365,7 @@ tasks:
             aggregate: None,
             effects: crate::output::TaskEffectsSummary {
                 writes: Vec::new(),
+                workspace_writes: Vec::new(),
                 network: true,
                 network_kind: Some(crate::schema::TaskNetworkEffectKind::IntegrationTest),
                 adapter_state: Vec::new(),
@@ -53704,6 +53717,7 @@ tasks:
             aggregate: None,
             effects: crate::output::TaskEffectsSummary {
                 writes: vec![String::from("node_modules")],
+                workspace_writes: Vec::new(),
                 network: true,
                 network_kind: Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
                 adapter_state: Vec::new(),
@@ -53838,6 +53852,7 @@ tasks:
             aggregate: None,
             effects: crate::output::TaskEffectsSummary {
                 writes: vec![String::from("node_modules"), String::from(".venv")],
+                workspace_writes: Vec::new(),
                 network: true,
                 network_kind: Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
                 adapter_state: Vec::new(),
@@ -55186,6 +55201,7 @@ workflows:
                     aggregate: None,
                     effects: crate::output::TaskEffectsSummary {
                         writes: vec![String::from("node_modules")],
+                        workspace_writes: Vec::new(),
                         network: true,
                         network_kind: None,
                         adapter_state: Vec::new(),

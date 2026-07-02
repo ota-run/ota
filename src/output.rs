@@ -795,6 +795,8 @@ pub struct RunPreviewGovernanceSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workspace_writes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub adapter_state: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
@@ -3378,6 +3380,8 @@ pub struct TaskSummary<'a> {
 pub struct TaskEffectsSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workspace_writes: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub network: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3455,6 +3459,7 @@ impl TaskEffectsSummary {
     pub fn from_spec(spec: &crate::schema::TaskEffectsSpec) -> Self {
         Self {
             writes: spec.writes.clone(),
+            workspace_writes: spec.workspace_writes.clone(),
             network: spec.network,
             network_kind: spec.network_kind,
             adapter_state: spec.adapter_state.clone(),
@@ -3464,6 +3469,7 @@ impl TaskEffectsSummary {
 
     pub fn is_empty(&self) -> bool {
         self.writes.is_empty()
+            && self.workspace_writes.is_empty()
             && !self.network
             && self.network_kind.is_none()
             && self.adapter_state.is_empty()

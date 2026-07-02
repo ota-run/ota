@@ -249,6 +249,10 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "workspace_writes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "network": { "type": "boolean" },
         "network_kind": {
           "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"]

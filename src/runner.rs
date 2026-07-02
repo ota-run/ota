@@ -1962,6 +1962,9 @@ fn task_write_path_ownership(task: &TaskSpec) -> Vec<String> {
     for path in &task.effects.writes {
         push_unique_owned_path(&mut paths, path.as_str());
     }
+    for path in &task.effects.workspace_writes {
+        push_unique_owned_path(&mut paths, path.as_str());
+    }
     paths
 }
 

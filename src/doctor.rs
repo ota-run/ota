@@ -5179,6 +5179,8 @@ fn diagnose_selected_task_effects(
     let mut hydration_network_tasks = Vec::new();
     let mut integration_test_network_tasks = Vec::new();
     let mut tool_bootstrap_tasks = Vec::new();
+    let mut workspace_write_tasks = Vec::new();
+    let mut workspace_write_paths = BTreeSet::new();
     let mut external_state_tasks = Vec::new();
     let mut external_state_systems = BTreeSet::new();
 
@@ -5198,6 +5200,12 @@ fn diagnose_selected_task_effects(
                 TaskNetworkEffectKind::ToolBootstrap => {
                     tool_bootstrap_tasks.push(task_name.clone())
                 }
+            }
+        }
+        if !task.effects.workspace_writes.is_empty() {
+            workspace_write_tasks.push(task_name.clone());
+            for path in &task.effects.workspace_writes {
+                workspace_write_paths.insert(path.clone());
             }
         }
         if !task.effects.external_state.is_empty() {
@@ -5265,6 +5273,24 @@ fn diagnose_selected_task_effects(
             ),
             "the selected task path includes tasks with `effects.network_kind: tool_bootstrap`; this is a narrower network lane for contract-owned tool installation (for example `pip install uv`), but still depends on package index reachability and mutable tool-install state",
             "keep the tool bootstrap source explicit, prefer first-class `prepare.kind: tool_bootstrap` over shell glue, and keep `effects.network_kind: tool_bootstrap` explicit on that path",
+        ));
+    }
+
+    if !workspace_write_tasks.is_empty() {
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_WORKSPACE_WRITES",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Warn,
+            format!(
+                "Selected task path mutates workspace-relative filesystem paths: {}",
+                workspace_write_paths.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+            format!(
+                "the selected task path includes `{}`, which declares `effects.workspace_writes`; these writes extend beyond repo-scoped `effects.writes` and should stay explicit when sibling checkouts or workspace materialization are part of the runtime path",
+                workspace_write_tasks.join(", ")
+            ),
+            "run the selected path only when those sibling or workspace paths are meant to change, and keep `effects.workspace_writes` explicit on the mutating tasks",
         ));
     }
 

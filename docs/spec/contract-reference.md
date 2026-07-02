@@ -1912,6 +1912,9 @@ Fields:
 `effects` fields:
 
 - `writes`: optional list of normalized relative paths the task body is expected to mutate
+- `workspace_writes`: optional list of normalized workspace-relative paths the task body is
+  expected to mutate when the runnable path truthfully writes outside the repo root, such as a
+  sibling checkout at `../ui`
 - `network`: optional boolean; set `true` when the task requires network access or reaches out to
   remote services during execution
 - `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`,
@@ -1924,6 +1927,8 @@ Fields:
 Task-effect rules:
 
 - use `effects.writes` for durable repo paths the task mutates directly
+- use `effects.workspace_writes` when the task mutates sibling or workspace-relative filesystem
+  paths outside the repo root but still inside the intended local workspace layout
 - use `effects.network: true` when the task depends on networked fetches or remote calls and that
   dependency should stay explicit for CI and agent execution
 - use `effects.network_kind: dependency_hydration` for finite dependency acquisition lanes such as
@@ -1942,6 +1947,8 @@ Task-effect rules:
   repo path, such as a Compose volume that persists Bundler gems or `node_modules`
 - `effects.network_kind` requires `effects.network: true`
 - keep entries relative, normalized, and free of `..` segments
+- keep `effects.workspace_writes` entries normalized and workspace-relative; they may include
+  `..` segments for sibling layout truth, but must not be absolute or drive-prefixed
 - keep `effects.adapter_state` entries as lowercase `<adapter_family>:<state_name>` tokens so
   adapter-owned durability stays machine-readable instead of collapsing back to prose
 - keep `effects.external_state` entries as lowercase tokens so the side-effect surface stays
@@ -1953,8 +1960,12 @@ Task-effect rules:
   instead of `docker_compose`, `postgres` instead of `postgresql`, and `kubernetes` instead of
   `k8s`
 - `effects.writes` is contract truth for agent-safety review, not a log of every transient scratch file
+- `effects.workspace_writes` is the explicit widening for sibling/workspace materialization truth;
+  do not weaken `effects.writes` just to encode out-of-repo paths
 - when a task is agent-safe, declared writes should stay inside `agent.writable_paths` when that boundary is declared
 - agent-safe task writes must not overlap `agent.protected_paths`
+- agent-safe tasks must not declare `effects.workspace_writes` today; repo-scoped
+  `agent.writable_paths` / `agent.protected_paths` do not yet model sibling workspace boundaries
 
 `aggregate` fields:
 

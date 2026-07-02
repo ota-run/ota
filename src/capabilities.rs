@@ -59,6 +59,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.15",
     },
     ContractCapabilitySpec {
+        id: "tasks.effects.workspace_writes",
+        introduced_in: "1.6.23",
+    },
+    ContractCapabilitySpec {
         id: "tasks.effects.network",
         introduced_in: "1.6.15",
     },
@@ -339,6 +343,7 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
             document_has_path(document, &["metadata", "ota", "minimum_version"])
         }
         "tasks.effects.writes" => tasks_effects_writes_present(document),
+        "tasks.effects.workspace_writes" => tasks_effects_workspace_writes_present(document),
         "tasks.effects.network" => tasks_effects_network_present(document),
         "tasks.effects.network_kind" => tasks_effects_network_kind_present(document),
         "tasks.effects.adapter_state" => tasks_effects_adapter_state_present(document),
@@ -396,6 +401,10 @@ fn capability_present_in_contract(
             .tasks
             .values()
             .any(|task| !task.effects.writes.is_empty()),
+        "tasks.effects.workspace_writes" => contract
+            .tasks
+            .values()
+            .any(|task| !task.effects.workspace_writes.is_empty()),
         "tasks.effects.network" => contract.tasks.values().any(|task| task.effects.network),
         "tasks.effects.network_kind" => contract
             .tasks
@@ -526,6 +535,13 @@ fn tasks_effects_writes_present(document: &Value) -> bool {
     tasks.values().any(task_effects_writes_present)
 }
 
+fn tasks_effects_workspace_writes_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(task_effects_workspace_writes_present)
+}
+
 fn tasks_effects_network_present(document: &Value) -> bool {
     let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
         return false;
@@ -582,6 +598,10 @@ fn execution_context_only_on_present(document: &Value) -> bool {
 
 fn task_effects_writes_present(task: &Value) -> bool {
     document_has_path(task, &["effects", "writes"])
+}
+
+fn task_effects_workspace_writes_present(task: &Value) -> bool {
+    document_has_path(task, &["effects", "workspace_writes"])
 }
 
 fn task_effects_network_present(task: &Value) -> bool {
@@ -1147,6 +1167,31 @@ tasks:
             .map(|capability| capability.id)
             .collect::<Vec<_>>();
         assert_eq!(detected, vec!["tasks.action.ensure_git_checkout"]);
+    }
+
+    #[test]
+    fn detects_workspace_writes_capability_from_contract() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:ui:
+    run: echo ok
+    effects:
+      workspace_writes:
+        - ../ui
+"#,
+        )
+        .unwrap();
+
+        let current = Version::parse("1.6.22").unwrap();
+        let detected = unsupported_declared_contract_capabilities_in_contract(&contract, &current)
+            .into_iter()
+            .map(|capability| capability.id)
+            .collect::<Vec<_>>();
+        assert_eq!(detected, vec!["tasks.effects.workspace_writes"]);
     }
 
     #[test]
