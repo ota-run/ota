@@ -6532,6 +6532,7 @@ pub struct TaskToolBootstrapPrepareSpec {
 pub enum TaskBootstrapToolKind {
     Uv,
     PlaywrightBrowsers,
+    CypressBrowsers,
 }
 
 impl TaskBootstrapToolKind {
@@ -6539,6 +6540,7 @@ impl TaskBootstrapToolKind {
         match self {
             Self::Uv => "uv",
             Self::PlaywrightBrowsers => "playwright_browsers",
+            Self::CypressBrowsers => "cypress_browsers",
         }
     }
 }
@@ -6622,6 +6624,9 @@ impl TaskNodePackageManagerToolBootstrapSourceSpec {
             (TaskNodePackageManagerKind::Npm, TaskBootstrapToolKind::PlaywrightBrowsers) => {
                 format!("npx playwright install{deps}{browser_suffix}")
             }
+            (TaskNodePackageManagerKind::Npm, TaskBootstrapToolKind::CypressBrowsers) => {
+                String::from("npx cypress install")
+            }
             (TaskNodePackageManagerKind::Pnpm, TaskBootstrapToolKind::PlaywrightBrowsers) => {
                 match self
                     .filter
@@ -6637,11 +6642,20 @@ impl TaskNodePackageManagerToolBootstrapSourceSpec {
                     None => format!("pnpm exec playwright install{deps}{browser_suffix}"),
                 }
             }
+            (TaskNodePackageManagerKind::Pnpm, TaskBootstrapToolKind::CypressBrowsers) => {
+                String::from("pnpm cypress install")
+            }
             (TaskNodePackageManagerKind::Yarn, TaskBootstrapToolKind::PlaywrightBrowsers) => {
                 format!("yarn playwright install{deps}{browser_suffix}")
             }
+            (TaskNodePackageManagerKind::Yarn, TaskBootstrapToolKind::CypressBrowsers) => {
+                String::from("yarn cypress install")
+            }
             (TaskNodePackageManagerKind::Bun, TaskBootstrapToolKind::PlaywrightBrowsers) => {
                 format!("bunx playwright install{deps}{browser_suffix}")
+            }
+            (TaskNodePackageManagerKind::Bun, TaskBootstrapToolKind::CypressBrowsers) => {
+                String::from("bunx cypress install")
             }
             (_, TaskBootstrapToolKind::Uv) => {
                 format!("{} install {}", self.manager.label(), tool.label())
@@ -9174,6 +9188,29 @@ tasks:
         assert_eq!(
             prepare.preview(),
             "bootstrap tool `playwright_browsers` with yarn playwright install in `.`"
+        );
+    }
+
+    #[test]
+    fn tool_bootstrap_prepare_preview_uses_node_cypress_shape() {
+        let source = super::TaskNodePackageManagerToolBootstrapSourceSpec {
+            cwd: String::from("."),
+            manager: super::TaskNodePackageManagerKind::Pnpm,
+            filter: None,
+        };
+        assert_eq!(
+            source.command_preview(super::TaskBootstrapToolKind::CypressBrowsers, &[], false),
+            "pnpm cypress install"
+        );
+        let prepare = super::TaskPrepareSpec::ToolBootstrap(super::TaskToolBootstrapPrepareSpec {
+            tool: super::TaskBootstrapToolKind::CypressBrowsers,
+            source: super::TaskToolBootstrapSourceSpec::NodePackageManager(source),
+            browsers: Vec::new(),
+            with_deps: false,
+        });
+        assert_eq!(
+            prepare.preview(),
+            "bootstrap tool `cypress_browsers` with pnpm cypress install in `.`"
         );
     }
 

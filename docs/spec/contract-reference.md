@@ -2036,7 +2036,7 @@ Task-effect rules:
     mutations (`copy_if_missing`, `ensure_env_file`, `ensure_file`, `ensure_directory`,
     `ensure_git_checkout`, `ensure_git_template`, `ensure_container_network`, `reset_compose_service_volume`)
 - `prepare.kind: tool_bootstrap`
-  - `prepare.tool`: required bootstrap target; ota currently ships `uv` and `playwright_browsers`
+  - `prepare.tool`: required bootstrap target; ota currently ships `uv`, `playwright_browsers`, and `cypress_browsers`
   - `prepare.browsers`: optional explicit Playwright browser subset; ota currently ships `chromium`, `firefox`, `webkit`, `chrome`, and `msedge`
   - `prepare.with_deps`: optional Playwright dependency lane for `playwright install --with-deps`
   - `prepare.source.kind: pip`
@@ -2113,11 +2113,11 @@ Task-effect rules:
 - `prepare.kind: tool_bootstrap` currently requires `effects.network: true` and `effects.network_kind: tool_bootstrap`; add toolchain requirements that match the selected bootstrap source
 - `prepare.kind: tool_bootstrap` with `source.kind: pip` currently requires `requirements.toolchains: [python]`
 - `prepare.kind: tool_bootstrap` with `source.kind: poetry` currently requires `requirements.toolchains: [python]` and currently only supports `prepare.tool: playwright_browsers`
-- `prepare.kind: tool_bootstrap` with `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]` and currently only supports `prepare.tool: playwright_browsers`
+- `prepare.kind: tool_bootstrap` with `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]` and currently only supports `prepare.tool: playwright_browsers` or `prepare.tool: cypress_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.browsers` currently only applies to `prepare.tool: playwright_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.with_deps: true` currently only applies to `prepare.tool: playwright_browsers`
-- `prepare.kind: tool_bootstrap` with `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm`
-- use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip` or downloading Playwright browsers through a repo-owned Node package manager
+- `prepare.kind: tool_bootstrap` with `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm` and `prepare.tool: playwright_browsers`
+- use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip` or downloading Playwright or Cypress browsers through a repo-owned Node package manager
 - `prepare.kind: dependency_hydration` currently requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Node toolchain truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; host-side repo-local gem hydration also requires `prepare.source.path`, while compose-wrapped lanes may omit it when Bundler truthfully uses the container-default install path; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Ruby toolchain truth for the in-container command
@@ -2165,6 +2165,11 @@ Task-effect rules:
     - `yarn playwright install --with-deps [browsers...]`
     - `bunx playwright install [browsers...]`
     - `bunx playwright install --with-deps [browsers...]`
+  - Node lane for `prepare.tool: cypress_browsers`:
+    - `npx cypress install`
+    - `pnpm cypress install`
+    - `yarn cypress install`
+    - `bunx cypress install`
 - `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
 - `execution.orchestrator.mode: exec` can mediate command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap`
 - `execution.orchestrator.mode: subcommand` is the direct orchestrator CLI lane for structured

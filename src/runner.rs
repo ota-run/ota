@@ -10251,6 +10251,10 @@ fn prepare_task_shell_command(
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
                     ) => format!("npx playwright install{deps}{browser_suffix}"),
                     (
+                        crate::schema::TaskNodePackageManagerKind::Npm,
+                        crate::schema::TaskBootstrapToolKind::CypressBrowsers,
+                    ) => String::from("npx cypress install"),
+                    (
                         crate::schema::TaskNodePackageManagerKind::Pnpm,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
                     ) => match source
@@ -10270,13 +10274,25 @@ fn prepare_task_shell_command(
                         None => format!("pnpm exec playwright install{deps}{browser_suffix}"),
                     },
                     (
+                        crate::schema::TaskNodePackageManagerKind::Pnpm,
+                        crate::schema::TaskBootstrapToolKind::CypressBrowsers,
+                    ) => String::from("pnpm cypress install"),
+                    (
                         crate::schema::TaskNodePackageManagerKind::Yarn,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
                     ) => format!("yarn playwright install{deps}{browser_suffix}"),
                     (
+                        crate::schema::TaskNodePackageManagerKind::Yarn,
+                        crate::schema::TaskBootstrapToolKind::CypressBrowsers,
+                    ) => String::from("yarn cypress install"),
+                    (
                         crate::schema::TaskNodePackageManagerKind::Bun,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
                     ) => format!("bunx playwright install{deps}{browser_suffix}"),
+                    (
+                        crate::schema::TaskNodePackageManagerKind::Bun,
+                        crate::schema::TaskBootstrapToolKind::CypressBrowsers,
+                    ) => String::from("bunx cypress install"),
                     _ => {
                         return Err(RunError::InvalidTaskExecution {
                             task: _task_name.to_string(),
@@ -61008,6 +61024,74 @@ tasks:
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let logged = fs::read_to_string(log_path).unwrap();
         assert!(logged.contains("playwright install"), "{logged}");
+    }
+
+    #[test]
+    fn tool_bootstrap_prepare_executes_node_cypress_browser_install() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.17.0"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: cypress_browsers
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v24.17.0\n");
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\n>> \"%OTA_PNPM_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_PNPM_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "pnpm", pnpm_body);
+        let log_path = fixture.dir.path().join("pnpm.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_PNPM_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_PNPM_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:browsers")
+            .expect("cypress browser bootstrap should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_PNPM_LOG", value) },
+            None => unsafe { env::remove_var("OTA_PNPM_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("cypress install"), "{logged}");
     }
 
     #[test]

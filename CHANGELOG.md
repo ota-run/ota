@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- widened `prepare.kind: tool_bootstrap` with first-class `prepare.tool: cypress_browsers` for
+  `source.kind: node_package_manager`, so repos can now own `npx|pnpm|yarn|bunx cypress install`
+  structurally instead of burying Cypress browser bootstrap inside chained verification shells;
+  validator, runner, task previews, contract reference docs, and published schemas now treat that
+  lane as canonical while keeping Playwright-only fields such as `prepare.browsers`,
+  `prepare.with_deps`, and `prepare.source.filter` strict
 - added first-class `action.kind: ensure_git_template`, so deterministic scaffold/factory bootstrap
   can now own `git clone` plus inherited `.git` removal plus fresh `git init` as one governed
   materialization lane instead of pushing template bootstrap back into shell glue

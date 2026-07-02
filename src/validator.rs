@@ -5334,9 +5334,20 @@ fn validate_task_prepare(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
                     )));
                     }
-                    if spec.tool != crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers {
+                    if !matches!(
+                        spec.tool,
+                        crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers
+                            | crate::schema::TaskBootstrapToolKind::CypressBrowsers
+                    ) {
                         errors.push(ValidationError::new(format!(
-                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.tool: playwright_browsers`"
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.tool: playwright_browsers` or `prepare.tool: cypress_browsers`"
+                    )));
+                    }
+                    if !spec.browsers.is_empty()
+                        && spec.tool != crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers
+                    {
+                        errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must not declare `prepare.browsers` unless `prepare.tool: playwright_browsers`"
                     )));
                     }
                     if let Some(filter) = source.filter.as_deref() {
@@ -5345,9 +5356,11 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare a non-empty `prepare.source.filter` when present"
                         )));
                         }
-                        if source.manager != crate::schema::TaskNodePackageManagerKind::Pnpm {
+                        if source.manager != crate::schema::TaskNodePackageManagerKind::Pnpm
+                            || spec.tool != crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers
+                        {
                             errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
+                            "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm` and `prepare.tool: playwright_browsers`"
                         )));
                         }
                     }
@@ -36598,6 +36611,39 @@ tasks:
     }
 
     #[test]
+    fn accepts_cypress_browser_tool_bootstrap_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: cypress_browsers
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("cypress browser bootstrap should validate");
+    }
+
+    #[test]
     fn accepts_poetry_playwright_browser_tool_bootstrap_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -36713,6 +36759,53 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup:browsers` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_browsers_for_non_playwright_tool_bootstrap() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: cypress_browsers
+      browsers:
+        - chromium
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("browser subset should be rejected for cypress bootstrap")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:browsers` prepare `tool_bootstrap` must not declare `prepare.browsers` unless `prepare.tool: playwright_browsers`"
             )),
             "{rendered:?}"
         );

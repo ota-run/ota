@@ -41210,6 +41210,7 @@ fn render_tool_bootstrap_prepare_text(
                 ("npm", "playwright_browsers") => {
                     format!("npx playwright install{deps}{browser_suffix}")
                 }
+                ("npm", "cypress_browsers") => String::from("npx cypress install"),
                 ("pnpm", "playwright_browsers") => {
                     match filter.filter(|value| !value.trim().is_empty()) {
                         Some(filter) => {
@@ -41220,15 +41221,21 @@ fn render_tool_bootstrap_prepare_text(
                         None => format!("pnpm exec playwright install{deps}{browser_suffix}"),
                     }
                 }
+                ("pnpm", "cypress_browsers") => String::from("pnpm cypress install"),
                 ("yarn", "playwright_browsers") => {
                     format!("yarn playwright install{deps}{browser_suffix}")
                 }
+                ("yarn", "cypress_browsers") => String::from("yarn cypress install"),
                 ("bun", "playwright_browsers") => {
                     format!("bunx playwright install{deps}{browser_suffix}")
                 }
+                ("bun", "cypress_browsers") => String::from("bunx cypress install"),
                 _ => return String::from("-"),
             };
-            format!("bootstrap tool `playwright_browsers` with `{command}` in `{cwd}`")
+            format!(
+                "bootstrap tool `{}` with `{command}` in `{cwd}`",
+                mode.unwrap_or("tool")
+            )
         }
         Some("poetry") => {
             let cwd = cwd.unwrap_or(".");
@@ -41244,7 +41251,10 @@ fn render_tool_bootstrap_prepare_text(
                 }
                 _ => return String::from("-"),
             };
-            format!("bootstrap tool `playwright_browsers` with `{command}` in `{cwd}`")
+            format!(
+                "bootstrap tool `{}` with `{command}` in `{cwd}`",
+                mode.unwrap_or("tool")
+            )
         }
         _ => String::from("-"),
     }
@@ -54536,6 +54546,85 @@ tasks:
         assert!(
             rendered.contains(
                 "Prepare: bootstrap tool `playwright_browsers` with `pnpm --filter web exec playwright install chromium` in `.`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_reports_cypress_browser_tool_bootstrap() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "cypress:browsers",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Install Cypress browsers"),
+            notes: None,
+            category: None,
+            preview: String::from(
+                "bootstrap tool `cypress_browsers` with `pnpm cypress install` in `.`",
+            ),
+            launch_preview: None,
+            env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "tool_bootstrap",
+                steps: Vec::new(),
+                medium: None,
+                source_kind: Some("node_package_manager"),
+                cwd: Some("."),
+                file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
+                manager: Some("pnpm"),
+                filter: None,
+                mode: Some("cypress_browsers"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: false,
+                no_root: false,
+                skip_tests: false,
+                with_deps: false,
+                targets: Vec::new(),
+                browsers: Vec::new(),
+                compose: None,
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            effective_safe_for_agent: false,
+            unsafe_closure_tasks: Vec::new(),
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: bootstrap tool `cypress_browsers` with `pnpm cypress install` in `.`"
             ),
             "{rendered}"
         );

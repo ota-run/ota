@@ -1434,7 +1434,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "tool", "source"],
           "properties": {
             "kind": { "const": "tool_bootstrap" },
-            "tool": { "enum": ["uv", "playwright_browsers"] },
+            "tool": { "enum": ["uv", "playwright_browsers", "cypress_browsers"] },
             "browsers": {
               "type": "array",
               "items": { "enum": ["chromium", "firefox", "webkit", "chrome", "msedge"] }
