@@ -1982,6 +1982,7 @@ Task-effect rules:
 - `compose.exe`: required executable to run inside the selected service for `kind: exec`, `run`, or `attach`
 - `compose.args`: optional argument list passed to `compose.exe` for `kind: exec`, `run`, or `attach`
 - `compose.rm`: optional `compose run --rm`; valid only with `kind: run`
+- `compose.build`: optional `compose run --build`; valid only with `kind: run`
 - `compose.service_ports`: optional `compose run --service-ports`; valid only with `kind: run`
 - `compose.force_recreate`: optional `compose up --force-recreate`; valid only with `kind: up`
 - `compose.force`: optional `compose rm -f`; valid only with `kind: rm`
@@ -2004,6 +2005,7 @@ Task-effect rules:
 - `compose.kind: down` is project-scoped and must not declare `compose.service` or `compose.services`
 - `compose.workdir`, `compose.exe`, and `compose.args` only apply to `compose.kind: exec`, `run`, or `attach`
 - `compose.rm` is only valid with `compose.kind: run`
+- `compose.build` is only valid with `compose.kind: run`
 - `compose.service_ports` is only valid with `compose.kind: run`
 - `compose.force_recreate` is only valid with `compose.kind: up`
 - `compose.force` is only valid with `compose.kind: rm`

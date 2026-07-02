@@ -3739,6 +3739,8 @@ pub struct TaskComposeExecutionSummary<'a> {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rm: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub build: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub service_ports: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
@@ -3768,6 +3770,8 @@ pub struct TaskComposeInvocationSummary<'a> {
     pub workdir: Option<&'a str>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rm: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub build: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub service_ports: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -3984,6 +3988,8 @@ pub struct WorkspaceTaskComposeInvocationSummary {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rm: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub build: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub service_ports: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
@@ -4049,6 +4055,7 @@ fn summarize_task_compose<'a>(
         args: compose.args.iter().map(String::as_str).collect(),
         workdir: compose.invocation.workdir.as_deref(),
         rm: compose.invocation.rm,
+        build: compose.invocation.build,
         service_ports: compose.invocation.service_ports,
         detach: compose.invocation.detach,
         force_recreate: compose.invocation.force_recreate,
@@ -4070,6 +4077,7 @@ fn summarize_task_compose_invocation<'a>(
         services: compose.services.iter().map(String::as_str).collect(),
         workdir: compose.workdir.as_deref(),
         rm: compose.rm,
+        build: compose.build,
         service_ports: compose.service_ports,
         detach: compose.detach,
         force_recreate: compose.force_recreate,
@@ -4091,6 +4099,7 @@ fn summarize_task_compose_invocation_owned(
         services: compose.services.clone(),
         workdir: compose.workdir.clone(),
         rm: compose.rm,
+        build: compose.build,
         service_ports: compose.service_ports,
         detach: compose.detach,
         force_recreate: compose.force_recreate,

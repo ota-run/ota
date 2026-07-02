@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added first-class `compose.build: true` for `tasks.<name>.compose.kind: run`, so documented
+  one-off Compose contributor shells like `docker compose run --rm --build ...` no longer need
+  shell fallback or wrapper-script truth
+
 - added first-class `compose.service_ports: true` for `tasks.<name>.compose.kind: run`, so
   documented one-off Compose dev lanes like `docker compose run --rm --service-ports ...` no
   longer need shell fallback or repo-local wrapper truth

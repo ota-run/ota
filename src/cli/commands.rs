@@ -40691,6 +40691,9 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
     if compose.rm {
         preview.push_str(" --rm");
     }
+    if compose.build {
+        preview.push_str(" --build");
+    }
     if compose.service_ports {
         preview.push_str(" --service-ports");
     }
@@ -54156,6 +54159,7 @@ tasks:
                     services: Vec::new(),
                     workdir: Some("/workspace/app"),
                     rm: false,
+                    build: false,
                     service_ports: false,
                     detach: false,
                     force_recreate: false,
@@ -54250,6 +54254,7 @@ tasks:
                     services: Vec::new(),
                     workdir: Some("/usr/src/app"),
                     rm: true,
+                    build: false,
                     service_ports: false,
                     detach: false,
                     force_recreate: false,
@@ -54559,6 +54564,7 @@ tasks:
                 args: vec!["exec", "rails", "db:migrate"],
                 workdir: Some("/workspace"),
                 rm: false,
+                build: false,
                 service_ports: false,
                 detach: false,
                 force_recreate: false,
@@ -58155,6 +58161,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: false,
+                build: false,
                 service_ports: false,
                 detach: false,
                 force_recreate: false,
@@ -58180,6 +58187,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: false,
+                build: false,
                 service_ports: false,
                 detach: false,
                 force_recreate: false,
@@ -58205,6 +58213,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: true,
+                build: false,
                 service_ports: true,
                 detach: false,
                 force_recreate: false,
@@ -58219,6 +58228,32 @@ tasks:
     }
 
     #[test]
+    fn render_task_compose_text_projects_build() {
+        let rendered =
+            super::render_task_compose_text(&crate::output::TaskComposeExecutionSummary {
+                kind: "run",
+                engine: "docker",
+                service: Some("dev"),
+                services: Vec::new(),
+                exe: Some("bash"),
+                args: Vec::new(),
+                workdir: None,
+                rm: true,
+                build: true,
+                service_ports: false,
+                detach: false,
+                force_recreate: false,
+                force: false,
+                follow: false,
+                remove_volumes: false,
+                timeout_seconds: None,
+                tty: true,
+            });
+
+        assert_eq!(rendered, "docker compose run --rm --build dev bash");
+    }
+
+    #[test]
     fn render_task_compose_text_projects_down_timeout() {
         let rendered =
             super::render_task_compose_text(&crate::output::TaskComposeExecutionSummary {
@@ -58230,6 +58265,7 @@ tasks:
                 args: Vec::new(),
                 workdir: None,
                 rm: false,
+                build: false,
                 service_ports: false,
                 detach: false,
                 force_recreate: false,
