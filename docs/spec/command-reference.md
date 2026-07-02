@@ -2481,6 +2481,8 @@ Current detect sources:
 - `.node-version`
 - `.devcontainer/devcontainer.json`
 - `devbox.json`
+- `AGENTS.md`
+- `CLAUDE.md`
 - `.tool-versions`
 - `mise.toml`
 - `devenv.nix`
@@ -2524,6 +2526,18 @@ For Docker Compose service inference, ota currently derives:
 - `provider` at high confidence
 - `start` / `stop` at high confidence
 - declared `healthcheck.test` at high confidence
+
+For external `AGENTS.md` / `CLAUDE.md`, ota currently admits only narrow structured shapes:
+
+- `safe_tasks`, `verify_after_changes`, `writable_paths`, and `protected_paths` lists as
+  medium-confidence agent-boundary evidence
+- labeled command bullets under explicit command sections such as `## Commands`,
+  `## Build/Test Commands`, or `## Build & Development Commands`
+- exact `| Task | Command |` tables inside those explicit command sections as low-confidence task
+  guidance for narrow canonical lanes such as `build`, `lint`, `test`, `docs`, and `compile`
+
+Ota-generated/self-origin agent docs stay excluded from detect evidence, and broader prose is not
+promoted into executable contract truth.
 
 Dry-run behavior:
 

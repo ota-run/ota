@@ -809,6 +809,14 @@ fn detect_agent_boundary_docs(root: &Path, builder: &mut DetectBuilder) -> Resul
         for path_name in parsed.protected_paths.unwrap_or_default() {
             builder.add_agent_protected_path(path_name, protected_source.clone(), confidence);
         }
+        for task_command in parsed.task_commands {
+            builder.set_task(
+                task_command.task_name.clone(),
+                task_command.command,
+                format!("{file_name}#commands.{}", task_command.source_key),
+                Confidence::Low,
+            );
+        }
     }
 
     Ok(())
@@ -6291,7 +6299,11 @@ fn inference_source_class_for_field_and_source(field: &str, source: &str) -> Inf
     let source_file = normalized.split('#').next().unwrap_or(normalized);
 
     if matches!(source_file, "AGENTS.md" | "CLAUDE.md") {
-        return InferenceSourceClass::AgentBoundary;
+        return if normalized.contains("#commands.") {
+            InferenceSourceClass::TaskCommand
+        } else {
+            InferenceSourceClass::AgentBoundary
+        };
     }
     if source_file.starts_with(".github/workflows/") {
         return InferenceSourceClass::CiVerification;
@@ -6882,6 +6894,89 @@ mod tests {
             inference.field == "agent.protected_paths..github/workflows"
                 && inference.source == "AGENTS.md#protected_paths"
                 && inference.source_class == InferenceSourceClass::AgentBoundary
+        }));
+    }
+
+    #[test]
+    fn detects_structured_agent_doc_command_section_as_low_authority_task_guidance() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# Agent Guidelines for Vercel Terraform Provider
+
+## Build/Test Commands
+- Build: `task build`
+- Test all: `task test`
+- Lint: `task lint`
+- Docs: `task docs`
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.build.run"
+                && inference.value == "task build"
+                && inference.source == "AGENTS.md#commands.build"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "task test"
+                && inference.source == "AGENTS.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.lint.run"
+                && inference.value == "task lint"
+                && inference.source == "AGENTS.md#commands.lint"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.docs.run"
+                && inference.value == "task docs"
+                && inference.source == "AGENTS.md#commands.docs"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
+    fn detects_structured_claude_doc_command_table_as_low_authority_task_guidance() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "CLAUDE.md",
+            r#"# CLAUDE.md
+
+## Commands
+
+| Task | Command |
+| --- | --- |
+| Build | `yaah generate` |
+| Lint | `yaah lint` |
+| Test | `cargo test --workspace` |
+| Compile | `cargo build --workspace` |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.build.run"
+                && inference.value == "yaah generate"
+                && inference.source == "CLAUDE.md#commands.build"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.compile.run"
+                && inference.value == "cargo build --workspace"
+                && inference.source == "CLAUDE.md#commands.compile"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
         }));
     }
 
