@@ -1397,6 +1397,7 @@ fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
             || line.contains("&&")
             || line.contains("||")
             || line.contains(';')
+            || line.contains("${{")
         {
             continue;
         }

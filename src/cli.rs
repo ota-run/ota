@@ -37474,6 +37474,43 @@ java {
     }
 
     #[test]
+    fn detect_write_does_not_promote_ci_interpolated_command_into_task_truth() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "aero"
+}"#,
+        );
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo check ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --all-targets
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["config"]["tasks"]["check"].is_null(),
+            "CI-only interpolated workflow commands must not become local task truth: {}",
+            serde_json::to_string_pretty(&json["config"]["tasks"]).unwrap()
+        );
+        assert!(
+            !output.stdout.contains("${{"),
+            "detect output must not leak GitHub interpolation into contract truth: {}",
+            output.stdout
+        );
+    }
+
+    #[test]
     fn detect_write_does_not_mark_watch_tasks_safe_for_agent() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
