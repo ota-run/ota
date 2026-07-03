@@ -1281,6 +1281,9 @@ pub(crate) fn collect_github_actions_verification_tasks(
         if is_workflow_call_only_github_workflow(&workflow) {
             continue;
         }
+        if !is_verification_oriented_github_workflow(&workflow_path, &workflow) {
+            continue;
+        }
         collect_github_actions_verification_tasks_from_workflow(
             root,
             &workflow_path,
@@ -1436,6 +1439,107 @@ fn is_workflow_call_only_github_workflow(workflow: &YamlValue) -> bool {
         return false;
     };
     on.len() == 1 && on.contains_key(YamlValue::String(String::from("workflow_call")))
+}
+
+fn is_verification_oriented_github_workflow(workflow_path: &Path, workflow: &YamlValue) -> bool {
+    if github_workflow_triggers_pull_request(workflow) {
+        return true;
+    }
+
+    let file_signal = workflow_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(workflow_name_looks_verification_oriented);
+    let name_signal = workflow
+        .get("name")
+        .and_then(YamlValue::as_str)
+        .is_some_and(workflow_name_looks_verification_oriented);
+    let job_signal = workflow
+        .get("jobs")
+        .and_then(YamlValue::as_mapping)
+        .is_some_and(|jobs| {
+            jobs.iter().filter_map(|(name, _)| name.as_str()).any(
+                workflow_name_looks_verification_oriented,
+            )
+        });
+
+    (file_signal || name_signal || job_signal)
+        && !workflow_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .is_some_and(workflow_name_looks_non_verification_oriented)
+        && !workflow
+            .get("name")
+            .and_then(YamlValue::as_str)
+            .is_some_and(workflow_name_looks_non_verification_oriented)
+}
+
+fn github_workflow_triggers_pull_request(workflow: &YamlValue) -> bool {
+    let Some(on) = workflow.get("on") else {
+        return false;
+    };
+    if let Some(value) = on.as_str() {
+        return value == "pull_request";
+    }
+    if let Some(sequence) = on.as_sequence() {
+        return sequence
+            .iter()
+            .filter_map(YamlValue::as_str)
+            .any(|entry| entry == "pull_request");
+    }
+    on.as_mapping().is_some_and(|mapping| {
+        mapping.contains_key(YamlValue::String(String::from("pull_request")))
+    })
+}
+
+fn workflow_name_looks_verification_oriented(value: &str) -> bool {
+    workflow_tokens(value).any(|token| {
+        matches!(
+            token,
+            "ci"
+                | "verify"
+                | "verification"
+                | "test"
+                | "tests"
+                | "lint"
+                | "check"
+                | "checks"
+                | "docs"
+                | "quality"
+                | "chromatic"
+                | "accessibility"
+                | "codeql"
+                | "e2e"
+                | "format"
+        )
+    })
+}
+
+fn workflow_name_looks_non_verification_oriented(value: &str) -> bool {
+    workflow_tokens(value).any(|token| {
+        matches!(
+            token,
+            "deploy"
+                | "release"
+                | "publish"
+                | "sync"
+                | "notify"
+                | "welcome"
+                | "issue"
+                | "cron"
+                | "stale"
+                | "scorecard"
+                | "automate"
+                | "changeset"
+                | "version"
+        )
+    })
+}
+
+fn workflow_tokens(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
 }
 
 fn local_reusable_github_workflow_path(uses: &str) -> Option<&str> {

@@ -25196,6 +25196,84 @@ tasks:
     }
 
     #[test]
+    fn doctor_ignores_deploy_workflow_as_ci_verification_source_when_ci_lane_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: CI
+on:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn lint:docs
+      - run: yarn backstage-cli config:check --lax
+"#,
+        )
+        .expect("write ci workflow");
+        fs::write(
+            dir.path().join(".github/workflows/deploy_packages.yml"),
+            r#"
+name: Deploy Packages
+on:
+  push:
+    branches: [master]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn backstage-cli config:check --lax
+      - run: yarn lint:type-deps
+"#,
+        )
+        .expect("write deploy workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:docs:
+    run: yarn lint:docs
+  config:check:
+    run: yarn backstage-cli config:check --lax
+  verify:
+    aggregate:
+      tasks:
+        - lint:docs
+        - config:check
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once deploy workflows are excluded from verification source selection: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_prefers_reusable_verification_lane_over_unrelated_direct_test_workflow() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
