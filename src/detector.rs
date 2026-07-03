@@ -7264,6 +7264,40 @@ mod tests {
     }
 
     #[test]
+    fn detects_structured_agent_doc_command_first_table_for_wrapped_test_aliases() {
+        for command in [
+            "python3 -m pytest tests/unit",
+            "uv run pytest tests/integration",
+            "poetry run pytest tests/e2e",
+        ] {
+            let fixture = Fixture::new();
+            fixture.write(
+                "AGENTS.md",
+                &format!(
+                    r#"# AGENTS.md
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `{command}` | Run tests |
+"#
+                ),
+            );
+
+            let report = detect_repo(fixture.path()).unwrap();
+
+            assert!(report.inferences.iter().any(|inference| {
+                inference.field == "tasks.test.run"
+                    && inference.value == command
+                    && inference.source == "AGENTS.md#commands.test"
+                    && inference.source_class == InferenceSourceClass::TaskCommand
+                    && inference.confidence == Confidence::Low
+            }));
+        }
+    }
+
+    #[test]
     fn ignores_ota_generated_agent_doc_as_detect_source() {
         let fixture = Fixture::new();
         fixture.write(
