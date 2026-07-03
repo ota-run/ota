@@ -1024,6 +1024,7 @@ fn recover_ci_verification_task_signals(
     }
 
     let mut command_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
+    let mut pytest_target_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
     let mut task_field_index = BTreeMap::<String, String>::new();
     for (task_name, task) in &existing.tasks {
         let Some(field) = task_command_truth_field(task_name, task) else {
@@ -1037,15 +1038,31 @@ fn recover_ci_verification_task_signals(
             continue;
         };
         let Some(command_key) = canonicalize_ci_verification_command(&command) else {
+            if let Some(pytest_target) = ci_pytest_target(&command) {
+                pytest_target_index.entry(pytest_target).or_default().push(
+                    VerificationCommandCandidate {
+                        field: field.clone(),
+                        has_task_env: !task.env.is_empty(),
+                    },
+                );
+            }
             continue;
         };
         command_index
             .entry(command_key)
             .or_default()
             .push(VerificationCommandCandidate {
-                field,
+                field: field.clone(),
                 has_task_env: !task.env.is_empty(),
             });
+        if let Some(pytest_target) = ci_pytest_target(&command) {
+            pytest_target_index.entry(pytest_target).or_default().push(
+                VerificationCommandCandidate {
+                    field,
+                    has_task_env: !task.env.is_empty(),
+                },
+            );
+        }
     }
 
     signals
@@ -1077,9 +1094,37 @@ fn recover_ci_verification_task_signals(
             }
 
             let Some(command_key) = canonicalize_ci_verification_command(&signal.command) else {
+                if let Some(pytest_target) = ci_pytest_target(&signal.command)
+                    && let Some(fields) = pytest_target_index.get(&pytest_target)
+                {
+                    let matched_field = if fields.len() == 1 {
+                        Some(fields[0].field.clone())
+                    } else {
+                        None
+                    };
+                    if let Some(matched_field) = matched_field {
+                        let mut recovered = signal.clone();
+                        recovered.field = matched_field;
+                        return recovered;
+                    }
+                }
                 return signal.clone();
             };
             let Some(fields) = command_index.get(&command_key) else {
+                if let Some(pytest_target) = ci_pytest_target(&signal.command)
+                    && let Some(fields) = pytest_target_index.get(&pytest_target)
+                {
+                    let matched_field = if fields.len() == 1 {
+                        Some(fields[0].field.clone())
+                    } else {
+                        None
+                    };
+                    if let Some(matched_field) = matched_field {
+                        let mut recovered = signal.clone();
+                        recovered.field = matched_field;
+                        return recovered;
+                    }
+                }
                 return signal.clone();
             };
             let matched_field = if fields.len() == 1 {
@@ -1136,7 +1181,7 @@ fn equivalent_ci_verification_commands(existing: &str, detected: &str) -> bool {
 }
 
 fn canonicalize_ci_verification_command(command: &str) -> Option<String> {
-    let trimmed = command.trim();
+    let trimmed = strip_ci_command_presentation_suffix(command.trim()).trim();
     if trimmed.is_empty()
         || trimmed.contains("&&")
         || trimmed.contains("||")
@@ -1147,8 +1192,23 @@ fn canonicalize_ci_verification_command(command: &str) -> Option<String> {
 
     let mut normalized = trimmed;
     loop {
+        let Some((prefix, rest)) = normalized.split_once(' ') else {
+            break;
+        };
+        if prefix.contains('=')
+            && prefix
+                .split_once('=')
+                .is_some_and(|(name, _)| !name.is_empty() && is_shell_identifier(name))
+        {
+            normalized = rest.trim_start();
+            continue;
+        }
+        break;
+    }
+    loop {
         let next = normalized
             .strip_prefix("corepack ")
+            .or_else(|| normalized.strip_prefix("poetry run "))
             .or_else(|| normalized.strip_prefix("uv run "))
             .or_else(|| normalized.strip_prefix("bundle exec "))
             .or_else(|| normalized.strip_prefix("python -m "))
@@ -1177,6 +1237,58 @@ fn canonicalize_ci_verification_command(command: &str) -> Option<String> {
     }
 
     Some(normalized.to_string())
+}
+
+fn strip_ci_command_presentation_suffix(command: &str) -> &str {
+    command
+        .rsplit_once(" in `")
+        .filter(|(_, cwd)| cwd.ends_with('`'))
+        .map(|(command, _)| command)
+        .unwrap_or(command)
+}
+
+fn ci_pytest_target(command: &str) -> Option<String> {
+    let mut normalized = strip_ci_command_presentation_suffix(command.trim()).trim();
+    loop {
+        let Some((first, rest)) = normalized.split_once(' ') else {
+            break;
+        };
+        if first.contains('=')
+            && first
+                .split_once('=')
+                .is_some_and(|(name, _)| !name.is_empty() && is_shell_identifier(name))
+        {
+            normalized = rest.trim_start();
+            continue;
+        }
+        break;
+    }
+
+    loop {
+        let next = normalized
+            .strip_prefix("poetry run ")
+            .or_else(|| normalized.strip_prefix("uv run "))
+            .or_else(|| normalized.strip_prefix("bundle exec "))
+            .or_else(|| normalized.strip_prefix("corepack "));
+        let Some(next) = next else {
+            break;
+        };
+        normalized = next.trim_start();
+    }
+
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.first().copied() != Some("pytest") {
+        return None;
+    }
+
+    tokens
+        .iter()
+        .skip(1)
+        .find(|token| {
+            !token.starts_with('-')
+                && (token.contains('/') || token.ends_with(".py") || token.starts_with("./"))
+        })
+        .map(|value| (*value).to_string())
 }
 
 fn ci_script_command_sequence(body: &str) -> Option<Vec<String>> {

@@ -1442,6 +1442,18 @@ fn is_workflow_call_only_github_workflow(workflow: &YamlValue) -> bool {
 }
 
 fn is_verification_oriented_github_workflow(workflow_path: &Path, workflow: &YamlValue) -> bool {
+    let excluded_by_non_verification_name = workflow_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(workflow_name_looks_non_verification_oriented)
+        || workflow
+            .get("name")
+            .and_then(YamlValue::as_str)
+            .is_some_and(workflow_name_looks_non_verification_oriented);
+    if excluded_by_non_verification_name {
+        return false;
+    }
+
     if github_workflow_triggers_pull_request(workflow) {
         return true;
     }
@@ -1463,15 +1475,7 @@ fn is_verification_oriented_github_workflow(workflow_path: &Path, workflow: &Yam
             )
         });
 
-    (file_signal || name_signal || job_signal)
-        && !workflow_path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .is_some_and(workflow_name_looks_non_verification_oriented)
-        && !workflow
-            .get("name")
-            .and_then(YamlValue::as_str)
-            .is_some_and(workflow_name_looks_non_verification_oriented)
+    file_signal || name_signal || job_signal
 }
 
 fn github_workflow_triggers_pull_request(workflow: &YamlValue) -> bool {
@@ -1520,6 +1524,7 @@ fn workflow_name_looks_non_verification_oriented(value: &str) -> bool {
         matches!(
             token,
             "deploy"
+                | "fix"
                 | "release"
                 | "publish"
                 | "sync"
