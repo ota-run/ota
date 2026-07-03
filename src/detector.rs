@@ -5592,11 +5592,12 @@ impl DetectBuilder {
                     safe_for_agent: false,
                 },
             );
+            let inferred_safe_for_agent = is_agent_safe_verifier_task(name.as_str(), run.as_str());
             self.record(field, run, source.clone(), confidence);
             if internal {
                 self.set_task_internal(name.clone(), source.clone(), confidence);
             }
-            if is_agent_safe_verifier_task_name(&name) {
+            if inferred_safe_for_agent {
                 self.set_task_safe_for_agent(name, source, confidence);
             }
         }
@@ -6716,8 +6717,50 @@ fn is_verifier_task_name(name: &str) -> bool {
         })
 }
 
+fn is_agent_safe_verifier_task(name: &str, command: &str) -> bool {
+    is_agent_safe_verifier_task_name(name)
+        && !has_obviously_effectful_boundary_tokens(command)
+}
+
 fn is_agent_safe_verifier_task_name(name: &str) -> bool {
-    is_verifier_task_name(name) && !is_long_running_task_name(name)
+    is_verifier_task_name(name)
+        && !is_long_running_task_name(name)
+        && !has_obviously_effectful_boundary_tokens(name)
+}
+
+fn has_obviously_effectful_boundary_tokens(value: &str) -> bool {
+    value
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| {
+            matches!(
+                token,
+                "docker"
+                    | "compose"
+                    | "podman"
+                    | "kubectl"
+                    | "helm"
+                    | "terraform"
+                    | "pulumi"
+                    | "kustomize"
+                    | "migrate"
+                    | "migration"
+                    | "deploy"
+                    | "destroy"
+                    | "provision"
+                    | "bootstrap"
+                    | "seed"
+                    | "fixture"
+                    | "up"
+                    | "down"
+                    | "logs"
+                    | "attach"
+                    | "restart"
+                    | "teardown"
+                    | "cluster"
+                    | "service"
+            )
+        })
 }
 
 fn is_long_running_task_name(name: &str) -> bool {
@@ -9871,6 +9914,41 @@ tasks:
                 .get("test")
                 .map(|task| task.run.as_str()),
             Some("task test")
+        );
+    }
+
+    #[test]
+    fn does_not_mark_taskfile_orchestration_verifier_safe_for_agent() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Taskfile.yml",
+            r#"
+version: "3"
+tasks:
+  docker:test:
+    deps: [docker:compose:up]
+    cmds:
+      - defer: task docker:compose:down
+      - task: test:all
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("docker:test")
+                .map(|task| (task.run.as_str(), task.safe_for_agent)),
+            Some(("task docker:test", false))
+        );
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "tasks.docker:test.safe_for_agent"),
+            "task runner orchestration lanes must not be inferred safe_for_agent=true"
         );
     }
 
