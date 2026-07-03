@@ -54,6 +54,8 @@ The product goal is not:
 The product goal is:
 
 - make intentional boundary crossing explicit, classifiable, and auditable in OSS
+- create a first-class crossing record that anchors later reason, receipt, proof, and enterprise
+  approval evidence
 
 ## Canonical product principle
 
@@ -65,6 +67,7 @@ If an operator or agent intentionally crosses the routine safe/default lane, the
 - attributable to a requested path
 - classifiable
 - emitted as harness-authored evidence
+- anchored by a boundary-authored crossing record that the crosser cannot author on their own
 
 That means:
 
@@ -72,9 +75,10 @@ That means:
 - V11.3 defines what is refused versus allowed in agent-enforced execution
 - V11.4 defines the canonical governance model and phase semantics
 - V11.5 and V11.6 let CI and harnesses consume that truth
-- V11.7 adds explicit audited crossing evidence for allowed-but-heavier execution paths
+- V11.7 adds explicit audited crossing records for allowed-but-heavier execution paths
 - the contract and its derived governance model, not caller prose alone, determine whether a
   crossing was required and how it should be classified
+- reason and runtime evidence attach to the crossing record; they do not replace it
 
 What this does not mean:
 
@@ -82,6 +86,7 @@ What this does not mean:
 - turning every non-safe task into a denied path
 - replacing receipts with a separate audit store
 - collapsing refusal and allowed escalation into one ambiguous “warning” state
+- letting the crosser author the audit truth about their own boundary crossing
 
 ## Problem statement
 
@@ -102,11 +107,13 @@ Today the contract can distinguish safety and effect posture, but it still does 
 first-class OSS record for:
 
 - which boundary was crossed
+- which exact lane was crossed
 - whether the selected lane required an explicit audited crossing
 - whether the crossing was routine, escalated, or exceptional
 - who or what principal triggered it
+- what grant or approval binding allowed it, where applicable
 - why the crossing happened
-- whether the crossing changed execution behavior or just review posture
+- which runtime evidence later attached to that crossing
 
 V11.7 is the slice for making that crossing explicit instead of leaving it as implicit context in
 task choice alone.
@@ -114,11 +121,14 @@ task choice alone.
 ## Included capabilities
 
 - contract-owned or contract-derived crossing-required truth
+- first-class boundary-authored crossing records
 - explicit audited crossing intent for allowed higher-risk execution paths
 - optional or required machine-readable crossing reason capture
 - stable crossing classification in receipts and governance output
 - explicit actor/principal attribution in crossing evidence
+- exact lane and grant or approval binding capture where applicable
 - explicit linkage from the crossing to the boundary that was crossed
+- reason and runtime evidence attachments to the crossing record
 - OSS evidence semantics that enterprise approvals and waivers can build on later
 
 ## Non-goals
@@ -128,6 +138,7 @@ task choice alone.
 - do not force reasons on routine default-safe execution
 - do not blur refused execution with allowed-but-audited execution
 - do not create a second governance taxonomy outside V11.4
+- do not treat caller-authored reason text as the primary audit record
 
 ## Core product gaps
 
@@ -152,9 +163,14 @@ Today a reviewer may be able to infer that a heavier lane was used from:
 
 That is still weaker than an explicit crossing record saying:
 
+- which exact lane was crossed
+- which grant or approval binding allowed it, where applicable
 - which boundary was crossed
 - whether the crossing was routine, escalated, or exceptional
-- what reason was supplied
+- what reason was supplied as context
+
+The crossing record is the anchor. Reason and runtime evidence are useful only if they point back
+to that boundary-authored record.
 
 ### 3. OSS evidence needs to be stronger before enterprise approval layers
 
@@ -162,6 +178,7 @@ Enterprise approvals and waivers should not be the first place this truth exists
 
 OSS should already be able to emit:
 
+- a boundary-authored crossing record
 - crossing-required truth
 - crossing intent
 - crossing classification
@@ -178,7 +195,21 @@ Then later enterprise layers can add:
 
 ### 1. Audited crossing model
 
-Define one additive governance concept for execution that is:
+Define one additive governance concept for execution centered on a first-class crossing record.
+
+The crossing record is:
+
+- boundary-authored
+- immutable after creation except for additive attachments
+- linked to one exact task or workflow lane
+- linked to one boundary family and classification
+- linked to the actor/principal mode that triggered it
+- linked to a grant or approval binding where applicable
+
+This record is the durable anchor for later reason, receipt, proof, and enterprise approval
+evidence.
+
+The modeled crossing is:
 
 - allowed
 - non-routine relative to the default-safe lane
@@ -224,7 +255,34 @@ The important part is:
 - no caller deciding for itself whether crossing was required
 - the repo contract and derived governance model remain canonical
 
-### 3. Execution-intent capture
+### 3. Boundary-authored crossing record
+
+When a crossing is required or explicitly requested, Ota should create the crossing record at the
+moment the boundary is crossed.
+
+Minimum record fields:
+
+- crossing id
+- exact task or workflow lane crossed
+- boundary family
+- crossing classification
+- crossing requirement source
+- actor mode
+- principal attribution state
+- grant or approval binding reference, where applicable
+- created timestamp
+- reason state
+- evidence attachment state
+
+The important part is:
+
+- the record is emitted by Ota or the harness boundary, not by the crosser
+- the exact lane and grant binding are stamped synchronously
+- reason and runtime evidence attach to this record later or during execution
+- routine crossings can create this record cheaply and automatically
+- exceptional crossings can require louder reason or approval capture
+
+### 4. Execution-intent capture
 
 Add an explicit opt-in lane for allowed audited crossings.
 
@@ -242,8 +300,9 @@ The important part is:
 - the output distinguishes no-reason, optional-reason, and required-reason cases honestly
 - reason capture remains additive evidence, not the source of truth for whether crossing was
   required
+- caller-supplied reason is preserved as narrative context, not the authoritative audit anchor
 
-### 4. Actor and principal attribution
+### 5. Actor and principal attribution
 
 Crossing evidence should answer more than “a crossing happened.”
 
@@ -267,12 +326,13 @@ The important part is:
 - OSS does not overclaim identity it cannot verify locally
 - enterprise can later layer stronger organizational identity, retention, and approvals on top
 
-### 5. Governance-model integration
+### 6. Governance-model integration
 
 Do not create a second machine output model.
 
 V11.7 should extend the V11.4 governance model with additive fields for:
 
+- crossing record id
 - crossing required / not required
 - crossing requirement source:
   - `declared`
@@ -281,12 +341,15 @@ V11.7 should extend the V11.4 governance model with additive fields for:
 - crossing classification source:
   - `runner_derived`
 - crossing boundary family
+- crossing lane id
 - crossing actor mode
 - crossing principal attribution state
+- crossing grant binding state
 - crossing intent source:
   - `caller_supplied`
   - `runner_defaulted`
 - crossing reason present / missing
+- crossing evidence attachment state
 
 Preflight and post-execution semantics must remain phase-accurate.
 
@@ -299,7 +362,7 @@ The mature rule is:
   execution path
 - if caller intent is preserved, it is preserved as intent metadata, not canonical classification
 
-### 6. Receipt and evidence linkage
+### 7. Receipt and evidence linkage
 
 Crossing evidence should be carried by the existing evidence story, not outside it.
 
@@ -310,12 +373,15 @@ That means:
 - crossing evidence is linked from both surfaces where relevant
 - receipt-linked crossing evidence carries actor/principal attribution and reason state alongside
   boundary family and classification
+- runtime proof and receipt evidence attach to the crossing record instead of floating as separate
+  audit claims
 - refusal and crossing stay distinct outcomes
 
-### 7. OSS / enterprise boundary
+### 8. OSS / enterprise boundary
 
 Keep OSS focused on:
 
+- first-class boundary-authored crossing records
 - explicit crossing-required truth
 - explicit crossing intent
 - explicit crossing classification
@@ -333,11 +399,15 @@ Reserve enterprise for:
 
 V11.7 is complete when:
 
+- Ota creates a first-class crossing record as the immutable anchor for audited boundary crossings
+- the crossing record is boundary-authored, not crosser-authored
+- the crossing record stamps the exact lane crossed and grant or approval binding where applicable
 - Ota can answer whether a crossing was required from contract-owned or contract-derived truth
 - Ota can distinguish routine execution from allowed audited boundary crossings
 - crossing classification is runner-derived governance truth, not merely caller prose
 - crossing evidence can attribute the crossing to an actor/principal mode honestly
 - a crossing can carry machine-readable reason state without collapsing into receipt prose
+- reason and runtime evidence attach to the crossing record instead of replacing it
 - governance output publishes crossing posture in a stable additive form
 - receipts preserve crossing evidence as harness-authored truth
 - refusal remains a distinct execution/governance outcome from allowed audited crossing
