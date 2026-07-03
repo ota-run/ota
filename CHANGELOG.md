@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed script-body tool inference so leading shell comments no longer get treated as required tools;
+  multi-line `script:` tasks now skip comment-prefixed lines before inferring presence-only
+  command requirements for doctor and dry-run surfaces
 - tightened external `AGENTS.md` / `CLAUDE.md` task-command admission so placeholder-heavy
   command templates such as `<PROJECT>` or obvious `path/to/...` scaffolding stay out of detect
   task truth; ota still admits narrow structured boundary-doc command sections, but only when the

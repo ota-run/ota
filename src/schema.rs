@@ -5498,7 +5498,20 @@ fn is_path_lookup_utility(exe: &str) -> bool {
 }
 
 fn inferred_shell_command_executable(body: &str) -> Option<String> {
-    let mut tokens = body
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(exe) = inferred_shell_command_executable_from_line(trimmed) {
+            return Some(exe);
+        }
+    }
+    None
+}
+
+fn inferred_shell_command_executable_from_line(line: &str) -> Option<String> {
+    let mut tokens = line
         .split_whitespace()
         .map(|token| token.trim_matches('"').trim_matches('\''))
         .peekable();
@@ -9908,6 +9921,29 @@ workflows:
             "implicit run-command tool should stay presence-only unless the contract explicitly declares it"
         );
         assert!(!surface.tools.contains_key("docker"));
+    }
+
+    #[test]
+    fn task_requirement_surface_ignores_leading_script_comments_when_inferring_tools() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  smoke:
+    script: |
+      # Start the service
+      npx nx run app:start
+"#,
+        )
+        .unwrap();
+
+        let surface = contract.tasks["smoke"].scoped_requirement_surface();
+
+        assert!(surface.presence_only_tools.contains("npx"), "{surface:?}");
+        assert!(!surface.presence_only_tools.contains("#"), "{surface:?}");
     }
 
     #[test]
