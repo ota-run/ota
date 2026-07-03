@@ -694,7 +694,9 @@ fn collect_ci_verification_governance_changes(
 
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
-        let field = format!("tasks.{task_name}.run");
+        let Some(field) = task_command_truth_field(task_name, task) else {
+            continue;
+        };
         let Some(existing_command) = existing_task_detectable_command_truth(task) else {
             continue;
         };
@@ -1022,11 +1024,15 @@ fn recover_ci_verification_task_signals(
     }
 
     let mut command_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
+    let mut task_field_index = BTreeMap::<String, String>::new();
     for (task_name, task) in &existing.tasks {
-        let field = format!("tasks.{task_name}.run");
+        let Some(field) = task_command_truth_field(task_name, task) else {
+            continue;
+        };
         if !is_verification_task_truth_field(&field) {
             continue;
         }
+        task_field_index.insert(task_name.clone(), field.clone());
         let Some(command) = existing_task_detectable_command_truth(task) else {
             continue;
         };
@@ -1045,6 +1051,15 @@ fn recover_ci_verification_task_signals(
     signals
         .iter()
         .map(|signal| {
+            if let Some(task_name) = verification_task_name_from_field(&signal.field)
+                && let Some(existing_field) = task_field_index.get(task_name)
+                && existing_field != &signal.field
+            {
+                let mut recovered = signal.clone();
+                recovered.field = existing_field.clone();
+                return recovered;
+            }
+
             if command_index
                 .values()
                 .flatten()
@@ -1144,6 +1159,23 @@ fn canonicalize_ci_verification_command(command: &str) -> Option<String> {
         normalized = next.trim_start();
     }
 
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    match tokens[0] {
+        "yarn" | "pnpm" if tokens.get(1) == Some(&"run") => {
+            let script = *tokens.get(2)?;
+            if is_verifier_task_name(script) {
+                let mut canonical = vec![tokens[0], script];
+                canonical.extend(tokens.iter().skip(3).copied());
+                return Some(canonical.join(" "));
+            }
+        }
+        _ => {}
+    }
+
     Some(normalized.to_string())
 }
 
@@ -1189,6 +1221,19 @@ fn longest_matching_ci_script_task<'a>(
 fn existing_task_detectable_command_truth(task: &crate::schema::TaskSpec) -> Option<String> {
     let execution = task.resolved_execution(current_os())?;
     matches!(execution.kind, "run" | "script" | "command").then(|| execution.preview())
+}
+
+fn task_command_truth_field(task_name: &str, task: &crate::schema::TaskSpec) -> Option<String> {
+    if task.command.is_some() {
+        return Some(format!("tasks.{task_name}.command"));
+    }
+    if task.script.is_some() {
+        return Some(format!("tasks.{task_name}.script"));
+    }
+    task.run
+        .as_deref()
+        .filter(|run| !run.trim().is_empty())
+        .map(|_| format!("tasks.{task_name}.run"))
 }
 
 fn matches_governed_external_source(
@@ -1245,7 +1290,8 @@ fn is_runtime_or_toolchain_truth_field(field: &str) -> bool {
 }
 
 fn is_task_command_truth_field(field: &str) -> bool {
-    field.starts_with("tasks.") && field.ends_with(".run")
+    field.starts_with("tasks.")
+        && (field.ends_with(".run") || field.ends_with(".script") || field.ends_with(".command"))
 }
 
 fn is_verification_task_truth_field(field: &str) -> bool {
@@ -1273,9 +1319,12 @@ fn is_verifier_task_name(name: &str) -> bool {
 }
 
 fn verification_task_name_from_field(field: &str) -> Option<&str> {
-    field
-        .strip_prefix("tasks.")
-        .and_then(|value| value.strip_suffix(".run"))
+    field.strip_prefix("tasks.").and_then(|value| {
+        value
+            .strip_suffix(".run")
+            .or_else(|| value.strip_suffix(".script"))
+            .or_else(|| value.strip_suffix(".command"))
+    })
 }
 
 fn render_string_list<T: AsRef<str>>(values: &[T]) -> String {

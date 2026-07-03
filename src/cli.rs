@@ -23936,13 +23936,71 @@ tasks:
                 .iter()
                 .any(|finding| {
                     finding["summary"].as_str().unwrap_or_default()
-                        == "CI verification drift: `tasks.test.run` differs from enforced workflow lane"
+                        == "CI verification drift: `tasks.test.command` differs from enforced workflow lane"
                         && finding["why"]
                             .as_str()
                             .unwrap_or_default()
-                            .contains("`ota.yaml` still declares `tasks.test.run` = `npm run integration`")
+                            .contains(
+                                "`ota.yaml` still declares `tasks.test.command` = `npm run integration`"
+                            )
                 }),
             "expected a CI workflow task governance drift warning for command tasks"
+        );
+    }
+
+    #[test]
+    fn doctor_treats_command_owned_ci_verifier_as_covered_when_workflow_matches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn run check-types
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  check-types:
+    command:
+      exe: corepack
+      args:
+        - yarn
+        - check-types
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once command-owned verifier matches workflow truth: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }
 
