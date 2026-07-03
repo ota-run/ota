@@ -25462,6 +25462,78 @@ tasks:
     }
 
     #[test]
+    fn doctor_recovers_repo_local_verifier_scripts_and_step_named_opaque_checks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-opaque-verifiers.yml"),
+            r#"
+name: opaque verifiers
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: verify changesets
+        run: node scripts/verify-changesets.js
+      - name: verify doc links
+        run: node scripts/verify-links.js
+      - name: check for missing repo fixes
+        run: yarn fix --check
+      - name: verify peer dependency ranges
+        run: yarn lint:peer-deps
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: opaque-verifiers
+tasks:
+  verify:changesets:
+    run: node scripts/verify-changesets.js
+  verify:links:
+    run: node scripts/verify-links.js
+  check:missing-repo-fixes:
+    run: yarn fix --check
+  lint:peer-deps:
+    run: yarn lint:peer-deps
+  verify:
+    aggregate:
+      tasks:
+        - verify:changesets
+        - verify:links
+        - check:missing-repo-fixes
+        - lint:peer-deps
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once repo-local verifier scripts and step-named opaque checks recover declared verifier tasks: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_recovers_actual_renderer_workflow_verifier_union() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");

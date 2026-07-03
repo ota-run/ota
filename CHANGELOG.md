@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened CI verification recovery again so `ota doctor` can now recover repo-local verifier
+  scripts such as `node scripts/verify-*.js` and bounded step-named opaque checks as declared
+  verification tasks, reducing false CI verification drift when the workflow lane is canonical
+  but the verifier body is not an ordinary package-manager subcommand
 - tightened `ota detect` so GitHub Actions `run:` lines containing `${{ ... }}` interpolation no
   longer get promoted into task-command truth, keeping workflow templating and local contract
   execution truth separate instead of hallucinating executable repo tasks from CI expressions

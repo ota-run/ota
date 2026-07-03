@@ -1356,20 +1356,25 @@ fn collect_github_actions_verification_tasks_from_workflow(
             } else {
                 format!("{job_source}.steps[{step_index}]")
             };
+            let step_name = step.get("name").and_then(YamlValue::as_str);
             if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
                 for command in ci_workflow_simple_run_lines(run) {
-                    let (field, command) = if let Some((task_name, command)) =
+                    let (field, command, exact_command) = if let Some((task_name, command)) =
                         infer_ci_verification_task_line(&command)
                     {
-                        (format!("tasks.{task_name}.run"), command)
+                        (format!("tasks.{task_name}.run"), command, true)
+                    } else if let Some(task_name) = step_name
+                        .and_then(infer_ci_verification_task_name_from_step_name)
+                    {
+                        (format!("tasks.{task_name}.run"), command, false)
                     } else {
-                        (String::new(), command)
+                        (String::new(), command, true)
                     };
                     tasks.push(CiVerificationTaskSignal {
                         field,
                         command,
                         source: format!("{step_source_prefix}.run"),
-                        exact_command: true,
+                        exact_command,
                         qualifier: None,
                     });
                 }
@@ -1810,6 +1815,7 @@ pub(crate) fn infer_ci_verification_task_line(line: &str) -> Option<(String, Str
         "npm" => infer_npm_ci_verification_task(&tokens, trimmed),
         "pnpm" | "yarn" => infer_node_ci_verification_task(first, &tokens, trimmed),
         "bun" => infer_bun_ci_verification_task(&tokens, trimmed),
+        "node" => infer_node_script_ci_verification_task(&tokens, trimmed),
         "ruff" => infer_ruff_ci_verification_task(&tokens, trimmed),
         "task" | "just" => {
             let task_name = tokens.get(1)?;
@@ -1886,6 +1892,16 @@ fn infer_bun_ci_verification_task(tokens: &[&str], original: &str) -> Option<(St
     }
 }
 
+fn infer_node_script_ci_verification_task(
+    tokens: &[&str],
+    original: &str,
+) -> Option<(String, String)> {
+    let script_path = *tokens.get(1)?;
+    let stem = Path::new(script_path).file_stem()?.to_str()?;
+    let task_name = ci_verification_task_name_from_verifier_label(stem)?;
+    Some((task_name, original.to_string()))
+}
+
 fn infer_cargo_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
     match tokens.get(1).copied() {
         Some("test") => Some((String::from("test"), original.to_string())),
@@ -1902,6 +1918,37 @@ fn infer_ruff_ci_verification_task(tokens: &[&str], original: &str) -> Option<(S
         Some("check") => Some((String::from("lint"), original.to_string())),
         _ => None,
     }
+}
+
+fn infer_ci_verification_task_name_from_step_name(step_name: &str) -> Option<String> {
+    ci_verification_task_name_from_verifier_label(step_name)
+}
+
+fn ci_verification_task_name_from_verifier_label(value: &str) -> Option<String> {
+    let raw_tokens = value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let verb = raw_tokens.first()?;
+    if !is_verifier_task_name(verb) {
+        return None;
+    }
+    let remainder = raw_tokens
+        .iter()
+        .skip(1)
+        .filter(|token| {
+            !matches!(
+                token.as_str(),
+                "for" | "the" | "all" | "and" | "to" | "run"
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if remainder.is_empty() {
+        return Some(verb.clone());
+    }
+    Some(format!("{verb}:{}", remainder.join("-")))
 }
 
 fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
