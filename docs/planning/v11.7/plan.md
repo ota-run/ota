@@ -329,12 +329,19 @@ Grant scope should be machine-readable and narrow enough to avoid stale standing
 
 Direction:
 
-- scope may be defined by some combination of:
-  - repo
-  - lane or boundary family
-  - environment
-  - actor or principal class
-  - time window
+- the core identity of a grant should be:
+  - actor
+  - action
+  - resource
+- repo and lane should usually be treated as resource-granularity choices inside that identity
+  rather than as drifting parallel grant concepts
+- environment should be treated as a hard wall around grant scope, not as an ordinary wildcardable
+  dimension
+- grant lifetime should default to the justified unit of work where Ota can model it honestly:
+  - `this run`
+  - `this task`
+  - `this batch`
+- calendar TTL should be the fallback only when no truthful work-unit boundary exists
 - Ota should not hardcode one universal scope dimension if the governance model already exposes a
   narrower truthful boundary
 
@@ -343,6 +350,9 @@ The important part is:
 - scope must be evaluated at crossing time, not only when the grant is first created
 - crossing evidence should be able to say whether the selected crossing was in scope, not just
   whether some historical grant existed
+- grants should be reviewable at a blast radius a human can understand in one breath
+- the model should avoid both broad standing authority and approval-fatigue micro-grants
+- grants carry the coarse reviewed scope; crossing records carry the fine-grained per-use detail
 
 ### 4. Execution-intent capture
 
@@ -409,6 +419,9 @@ V11.7 should extend the V11.4 governance model with additive fields for:
 - crossing grant binding state
 - crossing grant liveness state
 - crossing grant scope state
+- crossing grant identity shape
+- crossing grant environment boundary state
+- crossing grant expiry kind
 - crossing intent source:
   - `caller_supplied`
   - `runner_defaulted`
@@ -472,6 +485,9 @@ V11.7 is complete when:
 - a fresh crossing record is emitted for every actual crossing, even when a prior grant is reused
 - Ota re-checks grant liveness and scope at crossing time instead of treating grants as stale
   standing authority
+- grant identity is modeled around actor + action + resource rather than loose approval prose
+- environment remains a hard grant boundary rather than a wildcardable scope field
+- work-unit expiry is the default grant lifetime where Ota can model it honestly
 - Ota can answer whether a crossing was required from contract-owned or contract-derived truth
 - Ota can distinguish routine execution from allowed audited boundary crossings
 - crossing classification is runner-derived governance truth, not merely caller prose
