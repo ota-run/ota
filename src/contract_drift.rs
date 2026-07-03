@@ -726,7 +726,8 @@ fn collect_ci_verification_governance_changes(
         if infer_ci_verification_task_line(existing_command.as_str())
             .is_some_and(|(inferred, _)| inferred == *task_name)
         {
-            if should_treat_ci_verifier_family_root_as_covered(task_name, &detected_verifier_tasks) {
+            if should_treat_ci_verifier_family_root_as_covered(task_name, &detected_verifier_tasks)
+            {
                 continue;
             }
             changes.push(CiVerificationGovernanceChange {
@@ -1013,11 +1014,11 @@ fn recover_ci_verification_task_signals(
                 .any(|candidate| candidate.field == signal.field)
             {
                 if let Some(command_key) = canonicalize_ci_verification_command(&signal.command)
-                    && command_index
-                        .get(&command_key)
-                        .is_some_and(|fields| {
-                            fields.iter().any(|candidate| candidate.field == signal.field)
-                        })
+                    && command_index.get(&command_key).is_some_and(|fields| {
+                        fields
+                            .iter()
+                            .any(|candidate| candidate.field == signal.field)
+                    })
                 {
                     return signal.clone();
                 }

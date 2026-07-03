@@ -21149,9 +21149,7 @@ tasks:
         assert!(stdout.contains("Use: `ota run start`"));
         assert!(stdout.contains("✦ typecheck"));
         assert!(stdout.contains("Use: `ota run typecheck`"));
-        assert!(stdout.contains(
-            "Notes: Use this for local development and manual verification."
-        ));
+        assert!(stdout.contains("Notes: Use this for local development and manual verification."));
         assert!(stdout.contains("Dry Run JSON: `ota run dev --dry-run --json`"));
         assert!(stdout.contains("Dry Run JSON: `ota run start --dry-run --json`"));
         assert!(stdout.contains("Command Preview:"));
