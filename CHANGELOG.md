@@ -147,9 +147,10 @@
   excluded so source provenance does not recurse back into exported contract guidance
 - widened that same agent-doc source family again so explicit external `AGENTS.md` /
   `CLAUDE.md` command sections now contribute low-confidence task guidance for narrow canonical
-  lanes such as `build`, `lint`, `test`, `docs`, and `compile`, including exact
-  `| Task | Command |` tables and labeled command bullets inside explicit command sections,
-  without promoting broader prose or
+  lanes such as `build`, `check`, `lint`, `test`, `docs`, and `compile`, including exact
+  `| Task | Command |` tables, bounded adjacent `| Command | description |` forms when ota can
+  still recover one stable canonical task name from the command itself, and labeled command
+  bullets inside explicit command sections, without promoting broader prose or
   self-origin generated docs into executable contract truth
   overclaiming broader Nix environment ownership
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence

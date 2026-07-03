@@ -2533,8 +2533,11 @@ For external `AGENTS.md` / `CLAUDE.md`, ota currently admits only narrow structu
   medium-confidence agent-boundary evidence
 - labeled command bullets under explicit command sections such as `## Commands`,
   `## Build/Test Commands`, or `## Build & Development Commands`
-- exact `| Task | Command |` tables inside those explicit command sections as low-confidence task
-  guidance for narrow canonical lanes such as `build`, `lint`, `test`, `docs`, and `compile`
+- bounded structured command tables inside those explicit command sections as low-confidence task
+  guidance for narrow canonical lanes such as `build`, `check`, `lint`, `test`, `docs`, and
+  `compile`; ota currently admits exact `| Task | Command |` tables and adjacent
+  `| Command | description |` forms when it can still recover a stable canonical task name from
+  the command itself
 
 Ota-generated/self-origin agent docs stay excluded from detect evidence, and broader prose is not
 promoted into executable contract truth.

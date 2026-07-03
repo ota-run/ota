@@ -140,11 +140,11 @@ fn parse_agent_doc_task_commands(lines: &[&str]) -> Vec<ParsedAgentBoundaryTaskC
         }
         index += 1;
         while index < lines.len() {
-            if is_agent_doc_task_command_table_header(lines, index) {
+            if let Some(header_kind) = classify_agent_doc_task_command_table_header(lines, index) {
                 index += 2;
                 while index < lines.len() {
                     let line = lines[index].trim_end();
-                    if let Some(command) = parse_agent_doc_table_task_command(line) {
+                    if let Some(command) = parse_agent_doc_table_task_command(line, header_kind) {
                         commands.push(command);
                         index += 1;
                     } else {
@@ -159,7 +159,9 @@ fn parse_agent_doc_task_commands(lines: &[&str]) -> Vec<ParsedAgentBoundaryTaskC
             }
             if let Some(command) = parse_agent_doc_bullet_task_command(line) {
                 commands.push(command);
-            } else if let Some(command) = parse_agent_doc_table_task_command(line) {
+            } else if let Some(command) =
+                parse_agent_doc_table_task_command(line, AgentDocCommandTableHeader::TaskCommand)
+            {
                 commands.push(command);
             }
             index += 1;
@@ -168,15 +170,24 @@ fn parse_agent_doc_task_commands(lines: &[&str]) -> Vec<ParsedAgentBoundaryTaskC
     commands
 }
 
-fn is_agent_doc_task_command_table_header(lines: &[&str], index: usize) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentDocCommandTableHeader {
+    TaskCommand,
+    CommandDescription,
+}
+
+fn classify_agent_doc_task_command_table_header(
+    lines: &[&str],
+    index: usize,
+) -> Option<AgentDocCommandTableHeader> {
     let Some(header) = lines.get(index).map(|line| line.trim()) else {
-        return false;
+        return None;
     };
     let Some(separator) = lines.get(index + 1).map(|line| line.trim()) else {
-        return false;
+        return None;
     };
     if !header.starts_with('|') || !separator.starts_with('|') {
-        return false;
+        return None;
     }
     let header_cells = header
         .trim_matches('|')
@@ -188,14 +199,22 @@ fn is_agent_doc_task_command_table_header(lines: &[&str], index: usize) -> bool 
         .split('|')
         .map(str::trim)
         .collect::<Vec<_>>();
-    header_cells.len() >= 2
-        && separator_cells.len() >= 2
-        && header_cells[0] == "task"
-        && header_cells[1] == "command"
+    let valid_separator = separator_cells.len() >= 2
         && separator_cells.iter().all(|cell| !cell.is_empty())
         && separator_cells
             .iter()
-            .all(|cell| cell.chars().all(|ch| ch == '-' || ch == ':' || ch == ' '))
+            .all(|cell| cell.chars().all(|ch| ch == '-' || ch == ':' || ch == ' '));
+    if header_cells.len() < 2 || !valid_separator {
+        return None;
+    }
+
+    match (header_cells[0].as_str(), header_cells[1].as_str()) {
+        ("task", "command") => Some(AgentDocCommandTableHeader::TaskCommand),
+        ("command", "what it does" | "description" | "purpose") => {
+            Some(AgentDocCommandTableHeader::CommandDescription)
+        }
+        _ => None,
+    }
 }
 
 fn is_agent_doc_commands_heading(line: &str) -> bool {
@@ -221,7 +240,10 @@ fn parse_agent_doc_bullet_task_command(line: &str) -> Option<ParsedAgentBoundary
     })
 }
 
-fn parse_agent_doc_table_task_command(line: &str) -> Option<ParsedAgentBoundaryTaskCommand> {
+fn parse_agent_doc_table_task_command(
+    line: &str,
+    header_kind: AgentDocCommandTableHeader,
+) -> Option<ParsedAgentBoundaryTaskCommand> {
     let trimmed = line.trim();
     if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
         return None;
@@ -237,9 +259,19 @@ fn parse_agent_doc_table_task_command(line: &str) -> Option<ParsedAgentBoundaryT
     if cells.len() < 2 {
         return None;
     }
-    let label = cells[0];
-    let command = parse_backticked_command(cells[1])?;
-    let task_name = canonical_agent_doc_task_name(label)?;
+    let (task_name, command) = match header_kind {
+        AgentDocCommandTableHeader::TaskCommand => {
+            let label = cells[0];
+            let command = parse_backticked_command(cells[1])?;
+            let task_name = canonical_agent_doc_task_name(label)?;
+            (task_name, command)
+        }
+        AgentDocCommandTableHeader::CommandDescription => {
+            let command = parse_backticked_command(cells[0])?;
+            let task_name = canonical_agent_doc_task_name_from_command(&command)?;
+            (task_name, command)
+        }
+    };
     Some(ParsedAgentBoundaryTaskCommand {
         source_key: task_name.clone(),
         task_name,
@@ -266,6 +298,7 @@ fn canonical_agent_doc_task_name(label: &str) -> Option<String> {
     let compact = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
     match compact.as_str() {
         "build" => Some(String::from("build")),
+        "check" => Some(String::from("check")),
         "compile" => Some(String::from("compile")),
         "lint" => Some(String::from("lint")),
         "docs" | "doc" | "generate docs" => Some(String::from("docs")),
@@ -273,10 +306,34 @@ fn canonical_agent_doc_task_name(label: &str) -> Option<String> {
         "typecheck" | "type check" => Some(String::from("typecheck")),
         "format" | "fmt" => Some(String::from("fmt")),
         _ if compact.starts_with("build ") => Some(String::from("build")),
+        _ if compact.starts_with("check ") => Some(String::from("check")),
         _ if compact.starts_with("lint ") => Some(String::from("lint")),
         _ if compact.starts_with("test ") => Some(String::from("test")),
         _ if compact.starts_with("docs ") => Some(String::from("docs")),
         _ if compact.starts_with("compile ") => Some(String::from("compile")),
+        _ => None,
+    }
+}
+
+fn canonical_agent_doc_task_name_from_command(command: &str) -> Option<String> {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    match tokens.as_slice() {
+        ["pnpm" | "npm" | "yarn" | "bun", "run", script, ..] => {
+            canonical_agent_doc_task_name(script)
+        }
+        ["pnpm" | "npm" | "yarn" | "bun", script, ..] if !script.starts_with('-') => {
+            canonical_agent_doc_task_name(script)
+        }
+        ["cargo", subcommand, ..] if !subcommand.starts_with('-') => {
+            canonical_agent_doc_task_name(subcommand)
+        }
+        ["task" | "just" | "make", task, ..] if !task.starts_with('-') => {
+            canonical_agent_doc_task_name(task)
+        }
+        ["npx", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_name(task),
+        ["pnpm", "exec", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_name(task),
+        ["npx", "nx", "run", task, ..] => canonical_agent_doc_task_name(task),
+        ["pnpm", "exec", "nx", "run", task, ..] => canonical_agent_doc_task_name(task),
         _ => None,
     }
 }

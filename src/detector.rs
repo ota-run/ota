@@ -7129,6 +7129,56 @@ mod tests {
     }
 
     #[test]
+    fn detects_structured_agent_doc_command_first_table_as_low_authority_task_guidance() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# AGENTS.md
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `pnpm run build` | Builds all packages |
+| `pnpm run check` | Full CI check |
+| `pnpm run test` | Runs all tests |
+| `pnpm run typecheck` | Type checks the repo |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.build.run"
+                && inference.value == "pnpm run build"
+                && inference.source == "AGENTS.md#commands.build"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.check.run"
+                && inference.value == "pnpm run check"
+                && inference.source == "AGENTS.md#commands.check"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "pnpm run test"
+                && inference.source == "AGENTS.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.typecheck.run"
+                && inference.value == "pnpm run typecheck"
+                && inference.source == "AGENTS.md#commands.typecheck"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
     fn ignores_ota_generated_agent_doc_as_detect_source() {
         let fixture = Fixture::new();
         fixture.write(
