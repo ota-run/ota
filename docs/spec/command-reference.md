@@ -2597,6 +2597,12 @@ Current merge-preview behavior:
 - task drift text starts with a compact summary showing affected task count and removal counts by kind
 - with `--concise`, task drift collapses to one line per affected task with removal counts instead of listing every command
 - there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run`, and operator-facing trust/readiness drift stays on `ota doctor`
+- CI verification drift stays on verification-oriented workflow evidence only; deploy, release,
+  publish, sync, and similar workflows no longer become canonical verification truth just because
+  they contain one verifier step
+- declared verifier aggregates can now be satisfied by exact coverage split across more than one
+  verification-oriented workflow file instead of forcing one workflow file to restate the whole
+  aggregate
 
 Current merge-write behavior:
 
@@ -2662,7 +2668,13 @@ Current precedence is conservative:
   `package.json#engines.node` is treated as high-confidence `toolchains.node` runtime truth;
   without a package manager signal, it stays conservative
 - when `package.json#packageManager` is absent, known repo-local Node package-manager markers such as workspace files and lockfiles can determine the tool and task command prefix conservatively
-- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`, `fmt`) are marked with `safe_for_agent: true`; watch/dev/serve variants stay unsafe-by-default because they are usually long-running; other inferred tasks stay unsafe-by-default
+- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`,
+  `fmt`) are marked with `safe_for_agent: true` only when the inferred lane still looks like a
+  bounded verification command; orchestration-flavored lanes such as `docker:test` stay
+  unsafe-by-default, watch/dev/serve variants stay unsafe-by-default because they are usually
+  long-running, and other inferred tasks stay unsafe-by-default
+- GitHub Actions `run:` lines that still contain `${{ ... }}` interpolation are excluded from
+  command-truth inference instead of being promoted into repo task bodies
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
 - `uv.lock` can contribute `uv` tool inference conservatively
 - `requirements.txt` can contribute `pip` tool inference conservatively

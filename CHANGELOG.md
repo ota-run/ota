@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- tightened `ota detect` so GitHub Actions `run:` lines containing `${{ ... }}` interpolation no
+  longer get promoted into task-command truth, keeping workflow templating and local contract
+  execution truth separate instead of hallucinating executable repo tasks from CI expressions
+- tightened safe-task detect inference so verifier-shaped task names that still own orchestration
+  or adapter control lanes, such as `docker:test`, no longer get auto-promoted to
+  `safe_for_agent: true` just because their names contain `test`
+- tightened CI verification drift governance so `ota doctor` now unions exact verifier coverage
+  across multiple verification-oriented GitHub workflow files instead of forcing one best-match
+  file to own the whole aggregate and reporting false drift when the repo truth is intentionally
+  split
+- tightened that same CI verification drift lane again so only verification-oriented GitHub
+  workflows become canonical verification evidence; deploy, release, publish, sync, and similar
+  workflows no longer outrank real verification lanes just because they happen to contain one
+  check step
 - widened `prepare.kind: tool_bootstrap` with first-class `prepare.tool: cypress_browsers` for
   `source.kind: node_package_manager`, so repos can now own `npx|pnpm|yarn|bunx cypress install`
   structurally instead of burying Cypress browser bootstrap inside chained verification shells;
