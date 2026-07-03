@@ -244,7 +244,8 @@ fn parse_agent_doc_bullet_task_command(line: &str) -> Option<ParsedAgentBoundary
     let remainder = trimmed.strip_prefix("- ")?;
     let (label, after_label) = remainder.split_once(':')?;
     let command = parse_backticked_command(after_label.trim())?;
-    let task_name = canonical_agent_doc_task_name(label)?;
+    let task_name = canonical_agent_doc_task_name_from_command(&command)
+        .or_else(|| canonical_agent_doc_task_name(label))?;
     Some(ParsedAgentBoundaryTaskCommand {
         source_key: task_name.clone(),
         task_name,
@@ -275,7 +276,8 @@ fn parse_agent_doc_table_task_command(
         AgentDocCommandTableHeader::TaskCommand => {
             let label = cells[0];
             let command = parse_backticked_command(cells[1])?;
-            let task_name = canonical_agent_doc_task_name(label)?;
+            let task_name = canonical_agent_doc_task_name_from_command(&command)
+                .or_else(|| canonical_agent_doc_task_name(label))?;
             (task_name, command)
         }
         AgentDocCommandTableHeader::CommandDescription => {
@@ -369,30 +371,38 @@ fn canonical_agent_doc_task_name(label: &str) -> Option<String> {
 fn canonical_agent_doc_task_name_from_command(command: &str) -> Option<String> {
     let tokens = command.split_whitespace().collect::<Vec<_>>();
     match tokens.as_slice() {
-        ["pnpm" | "npm" | "yarn" | "bun", "run", script, ..] => {
-            canonical_agent_doc_task_name(script)
-        }
+        ["pnpm" | "npm" | "yarn" | "bun", "run", script, ..] => canonical_agent_doc_task_token(script),
         ["pnpm" | "npm" | "yarn" | "bun", script, ..] if !script.starts_with('-') => {
-            canonical_agent_doc_task_name(script)
+            canonical_agent_doc_task_token(script)
         }
-        ["cargo", subcommand, ..] if !subcommand.starts_with('-') => {
-            canonical_agent_doc_task_name(subcommand)
-        }
+        ["cargo", subcommand, ..] if !subcommand.starts_with('-') => canonical_agent_doc_task_token(subcommand),
         ["pytest", ..] => Some(String::from("test")),
         ["python" | "python3", "-m", "pytest", ..] => Some(String::from("test")),
         ["uv", "run", "pytest", ..] => Some(String::from("test")),
         ["poetry", "run", "pytest", ..] => Some(String::from("test")),
         ["ruff", "check", ..] => Some(String::from("lint")),
         ["python" | "python3", "-m", "build", ..] => Some(String::from("build")),
-        ["task" | "just" | "make", task, ..] if !task.starts_with('-') => {
-            canonical_agent_doc_task_name(task)
-        }
-        ["npx", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_name(task),
-        ["pnpm", "exec", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_name(task),
-        ["npx", "nx", "run", task, ..] => canonical_agent_doc_task_name(task),
-        ["pnpm", "exec", "nx", "run", task, ..] => canonical_agent_doc_task_name(task),
+        ["task" | "just" | "make", task, ..] if !task.starts_with('-') => canonical_agent_doc_task_token(task),
+        ["npx", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_token(task),
+        ["pnpm", "exec", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_token(task),
+        ["npx", "nx", "run", task, ..] => canonical_agent_doc_task_token(task),
+        ["pnpm", "exec", "nx", "run", task, ..] => canonical_agent_doc_task_token(task),
         _ => None,
     }
+}
+
+fn canonical_agent_doc_task_token(token: &str) -> Option<String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ':' | '-' | '_' | '.'))
+    {
+        return Some(trimmed.to_ascii_lowercase());
+    }
+    canonical_agent_doc_task_name(trimmed)
 }
 
 fn strip_parenthetical_segments(value: &str) -> String {
@@ -448,5 +458,35 @@ mod tests {
         );
 
         assert!(parsed.task_commands.is_empty());
+    }
+
+    #[test]
+    fn prefers_command_derived_task_name_over_prose_alias_in_task_tables() {
+        let parsed = parse_agent_boundary_doc(
+            r#"# CLAUDE.md
+
+## Quick Reference Commands
+
+| Task | Command |
+| --- | --- |
+| Check formatting | `pnpm run format:diff` |
+| Format code | `pnpm run format` |
+"#,
+        );
+
+        assert!(
+            parsed
+                .task_commands
+                .iter()
+                .any(|command| command.task_name == "format:diff" && command.command == "pnpm run format:diff")
+        );
+        assert!(
+            parsed
+                .task_commands
+                .iter()
+                .any(|command| command.task_name == "format" && command.command == "pnpm run format")
+        );
+        assert!(!parsed.task_commands.iter().any(|command| command.task_name == "check"));
+        assert!(!parsed.task_commands.iter().any(|command| command.task_name == "fmt"));
     }
 }

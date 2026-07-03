@@ -2544,6 +2544,9 @@ For external `AGENTS.md` / `CLAUDE.md`, ota currently admits only narrow structu
 - placeholder-heavy command templates stay out of detect evidence even inside those structured
   sections; commands that still carry metavars such as `<PROJECT>`, `<tests>`, or obvious
   `path/to/...` scaffolding are guidance prose, not runnable task truth
+- when a structured boundary-doc command already exposes a stable canonical task identity such as
+  `pnpm run format:diff` or `pnpm run test`, ota prefers that command-owned task identity over a
+  prose alias from the table label
 
 Ota-generated/self-origin agent docs stay excluded from detect evidence, and broader prose is not
 promoted into executable contract truth.

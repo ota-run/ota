@@ -7546,9 +7546,9 @@ Available scripts in the `scripts/` directory:
                 && inference.confidence == Confidence::Low
         }));
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.check.run"
+            inference.field == "tasks.format:diff.run"
                 && inference.value == "pnpm run format:diff"
-                && inference.source == "CLAUDE.md#commands.check"
+                && inference.source == "CLAUDE.md#commands.format:diff"
                 && inference.source_class == InferenceSourceClass::TaskCommand
                 && inference.confidence == Confidence::Low
         }));
@@ -7613,6 +7613,63 @@ Generated from `./ota.yaml` by `ota agents`.
                 .iter()
                 .any(|inference| inference.source == "AGENTS.md#commands.test"),
             "placeholder agent-doc commands should not be promoted as runnable task truth"
+        );
+    }
+
+    #[test]
+    fn prefers_command_owned_task_name_over_boundary_doc_alias_when_command_is_canonical() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "eventcatalog-monorepo",
+  "packageManager": "pnpm@10.23.0",
+  "scripts": {
+    "format": "turbo run format",
+    "format:diff": "turbo run format:diff"
+  }
+}"#,
+        );
+        fixture.write(
+            "CLAUDE.md",
+            r#"# CLAUDE.md
+
+## Quick Reference Commands
+
+| Task | Command |
+| --- | --- |
+| Check formatting | `pnpm run format:diff` |
+| Format code | `pnpm run format` |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.format.run"
+                && inference.source == "package.json#scripts.format"
+                && inference.value == "pnpm format"
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.format:diff.run"
+                && inference.source == "package.json#scripts.format:diff"
+                && inference.value == "pnpm format:diff"
+                && inference.confidence == Confidence::High
+        }));
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.source == "CLAUDE.md#commands.check"),
+            "boundary-doc aliases should not create parallel task truth when the command already exposes a canonical task name"
+        );
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.source == "CLAUDE.md#commands.fmt"),
+            "boundary-doc aliases should normalize to the canonical command-owned task identity"
         );
     }
 
