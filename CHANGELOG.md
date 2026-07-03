@@ -156,6 +156,11 @@
   `pytest ...`, `ruff check ...`, and `python -m build` can now map back to stable canonical
   `test`, `lint`, and `build` task names from `| Command | description |` tables instead of
   being ignored unless they were wrapped in package-manager, Make, Taskfile, or Cargo forms
+- widened bounded external agent-doc task-table recovery again so structured sections such as
+  `## Individual Commands` and `## Common Commands`, plus natural-language task labels like
+  `Run all unit tests`, `Run type checking`, and `Format code`, now recover canonical
+  `test`, `typecheck`, and `fmt` task names instead of being dropped even when the table itself
+  is explicit
   overclaiming broader Nix environment ownership
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence
   external environment source already detected by Ota, such as `mise.toml`, `devbox.json`, or

@@ -7298,6 +7298,84 @@ mod tests {
     }
 
     #[test]
+    fn detects_structured_agent_doc_task_table_for_natural_language_labels() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# AGENTS.md
+
+## Commands
+
+| Task | Command |
+| --- | --- |
+| Format code | `./scripts/format.sh` |
+| Run all unit tests | `./scripts/run_tests.sh` |
+| Run type checking | `./scripts/run_mypy.sh` |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.fmt.run"
+                && inference.value == "./scripts/format.sh"
+                && inference.source == "AGENTS.md#commands.fmt"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "./scripts/run_tests.sh"
+                && inference.source == "AGENTS.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.typecheck.run"
+                && inference.value == "./scripts/run_mypy.sh"
+                && inference.source == "AGENTS.md#commands.typecheck"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
+    fn detects_structured_agent_doc_task_table_under_individual_commands_heading() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# AGENTS.md
+
+### Individual Commands
+
+Available scripts in the `scripts/` directory:
+
+| Task | Command |
+| --- | --- |
+| Run all unit tests | `./scripts/run_tests.sh` |
+| Run type checking | `./scripts/run_mypy.sh` |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "./scripts/run_tests.sh"
+                && inference.source == "AGENTS.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.typecheck.run"
+                && inference.value == "./scripts/run_mypy.sh"
+                && inference.source == "AGENTS.md#commands.typecheck"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
     fn ignores_ota_generated_agent_doc_as_detect_source() {
         let fixture = Fixture::new();
         fixture.write(

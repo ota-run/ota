@@ -229,7 +229,12 @@ fn is_agent_doc_commands_heading(line: &str) -> bool {
     trimmed.starts_with('#')
         && matches!(
             heading,
-            "Commands" | "Build/Test Commands" | "Build & Development Commands"
+            "Commands"
+                | "Individual Commands"
+                | "Common Commands"
+                | "Common commands"
+                | "Build/Test Commands"
+                | "Build & Development Commands"
         )
 }
 
@@ -302,21 +307,33 @@ fn canonical_agent_doc_task_name(label: &str) -> Option<String> {
         .replace('/', " ")
         .replace('-', " ");
     let compact = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
-    match compact.as_str() {
+    let compact = compact
+        .strip_prefix("run ")
+        .or_else(|| compact.strip_prefix("execute "))
+        .unwrap_or(&compact);
+    match compact {
         "build" => Some(String::from("build")),
         "check" => Some(String::from("check")),
         "compile" => Some(String::from("compile")),
         "lint" => Some(String::from("lint")),
         "docs" | "doc" | "generate docs" => Some(String::from("docs")),
-        "test" | "tests" | "test all" => Some(String::from("test")),
-        "typecheck" | "type check" => Some(String::from("typecheck")),
-        "format" | "fmt" => Some(String::from("fmt")),
+        "test" | "tests" | "test all" | "all unit tests" | "a specific test" | "unit tests" => {
+            Some(String::from("test"))
+        }
+        "typecheck" | "type check" | "type checking" => Some(String::from("typecheck")),
+        "format" | "fmt" | "format code" => Some(String::from("fmt")),
         _ if compact.starts_with("build ") => Some(String::from("build")),
         _ if compact.starts_with("check ") => Some(String::from("check")),
         _ if compact.starts_with("lint ") => Some(String::from("lint")),
         _ if compact.starts_with("test ") => Some(String::from("test")),
+        _ if compact.ends_with(" test") => Some(String::from("test")),
+        _ if compact.ends_with(" tests") => Some(String::from("test")),
         _ if compact.starts_with("docs ") => Some(String::from("docs")),
         _ if compact.starts_with("compile ") => Some(String::from("compile")),
+        _ if compact.starts_with("type check") || compact.starts_with("typecheck") => {
+            Some(String::from("typecheck"))
+        }
+        _ if compact.starts_with("format ") => Some(String::from("fmt")),
         _ => None,
     }
 }

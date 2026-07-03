@@ -2532,12 +2532,14 @@ For external `AGENTS.md` / `CLAUDE.md`, ota currently admits only narrow structu
 - `safe_tasks`, `verify_after_changes`, `writable_paths`, and `protected_paths` lists as
   medium-confidence agent-boundary evidence
 - labeled command bullets under explicit command sections such as `## Commands`,
-  `## Build/Test Commands`, or `## Build & Development Commands`
+  `## Individual Commands`, `## Common Commands`, `## Build/Test Commands`, or
+  `## Build & Development Commands`
 - bounded structured command tables inside those explicit command sections as low-confidence task
   guidance for narrow canonical lanes such as `build`, `check`, `lint`, `test`, `docs`, and
   `compile`; ota currently admits exact `| Task | Command |` tables and adjacent
   `| Command | description |` forms when it can still recover a stable canonical task name from
-  the command itself
+  the command itself or from a bounded task label such as `Run all unit tests`, `Run type
+  checking`, or `Format code`
 
 Ota-generated/self-origin agent docs stay excluded from detect evidence, and broader prose is not
 promoted into executable contract truth.
