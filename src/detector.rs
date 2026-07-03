@@ -7179,6 +7179,91 @@ mod tests {
     }
 
     #[test]
+    fn detects_structured_agent_doc_command_first_table_for_direct_tool_families() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# AGENTS.md
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `pytest tests/unit` | Run unit tests only |
+| `ruff check pynetbox/ tests/` | Run linter |
+| `python -m build` | Build sdist + wheel |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "pytest tests/unit"
+                && inference.source == "AGENTS.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.lint.run"
+                && inference.value == "ruff check pynetbox/ tests/"
+                && inference.source == "AGENTS.md#commands.lint"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.build.run"
+                && inference.value == "python -m build"
+                && inference.source == "AGENTS.md#commands.build"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
+    fn skips_unrecognized_command_first_rows_without_aborting_the_table() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# AGENTS.md
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `pip install -r requirements.txt` | Install dependencies |
+| `pytest tests/unit` | Run unit tests only |
+| `ruff check src/ tests/` | Run linter |
+| `python -m build` | Build package |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "pytest tests/unit"
+                && inference.source == "AGENTS.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.lint.run"
+                && inference.value == "ruff check src/ tests/"
+                && inference.source == "AGENTS.md#commands.lint"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.build.run"
+                && inference.value == "python -m build"
+                && inference.source == "AGENTS.md#commands.build"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
     fn ignores_ota_generated_agent_doc_as_detect_source() {
         let fixture = Fixture::new();
         fixture.write(

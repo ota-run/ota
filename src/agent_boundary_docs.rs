@@ -144,12 +144,13 @@ fn parse_agent_doc_task_commands(lines: &[&str]) -> Vec<ParsedAgentBoundaryTaskC
                 index += 2;
                 while index < lines.len() {
                     let line = lines[index].trim_end();
-                    if let Some(command) = parse_agent_doc_table_task_command(line, header_kind) {
-                        commands.push(command);
-                        index += 1;
-                    } else {
+                    if !looks_like_agent_doc_table_row(line) {
                         break;
                     }
+                    if let Some(command) = parse_agent_doc_table_task_command(line, header_kind) {
+                        commands.push(command);
+                    }
+                    index += 1;
                 }
                 continue;
             }
@@ -168,6 +169,11 @@ fn parse_agent_doc_task_commands(lines: &[&str]) -> Vec<ParsedAgentBoundaryTaskC
         }
     }
     commands
+}
+
+fn looks_like_agent_doc_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|') && trimmed.ends_with('|')
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,7 +251,7 @@ fn parse_agent_doc_table_task_command(
     header_kind: AgentDocCommandTableHeader,
 ) -> Option<ParsedAgentBoundaryTaskCommand> {
     let trimmed = line.trim();
-    if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+    if !looks_like_agent_doc_table_row(trimmed) {
         return None;
     }
     if trimmed.contains("---") {
@@ -327,6 +333,12 @@ fn canonical_agent_doc_task_name_from_command(command: &str) -> Option<String> {
         ["cargo", subcommand, ..] if !subcommand.starts_with('-') => {
             canonical_agent_doc_task_name(subcommand)
         }
+        ["pytest", ..] => Some(String::from("test")),
+        ["python" | "python3", "-m", "pytest", ..] => Some(String::from("test")),
+        ["uv", "run", "pytest", ..] => Some(String::from("test")),
+        ["poetry", "run", "pytest", ..] => Some(String::from("test")),
+        ["ruff", "check", ..] => Some(String::from("lint")),
+        ["python" | "python3", "-m", "build", ..] => Some(String::from("build")),
         ["task" | "just" | "make", task, ..] if !task.starts_with('-') => {
             canonical_agent_doc_task_name(task)
         }

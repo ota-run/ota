@@ -152,6 +152,10 @@
   still recover one stable canonical task name from the command itself, and labeled command
   bullets inside explicit command sections, without promoting broader prose or
   self-origin generated docs into executable contract truth
+- widened command-first external agent-doc task recovery again so direct tool commands such as
+  `pytest ...`, `ruff check ...`, and `python -m build` can now map back to stable canonical
+  `test`, `lint`, and `build` task names from `| Command | description |` tables instead of
+  being ignored unless they were wrapped in package-manager, Make, Taskfile, or Cargo forms
   overclaiming broader Nix environment ownership
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence
   external environment source already detected by Ota, such as `mise.toml`, `devbox.json`, or
