@@ -2907,6 +2907,12 @@ pub struct WorkflowSummary<'a> {
     pub attach_task: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_task_launch: Option<TaskLaunchSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_safe_for_agent: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_safe_for_agent: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unsafe_closure_tasks: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required_services: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2969,6 +2975,7 @@ impl<'a> WorkflowSummary<'a> {
         workflow_name: &'a str,
     ) -> Option<Self> {
         let workflow = contract.workflow(workflow_name)?;
+        let workflow_safety = crate::cli::workflow_effective_safety(contract, workflow_name);
         let mut exposes = Vec::new();
         let mut expose_surfaces = Vec::new();
         let mut expose_entries = Vec::new();
@@ -3026,6 +3033,9 @@ impl<'a> WorkflowSummary<'a> {
                     task.resolved_execution_for_backend(backend, current_os())
                 })
                 .and_then(|execution| summarize_task_launch(execution.launch())),
+            declared_safe_for_agent: workflow_safety.declared_safe,
+            effective_safe_for_agent: workflow_safety.effective_safe,
+            unsafe_closure_tasks: workflow_safety.unsafe_closure_tasks,
             required_services: contract
                 .selected_workflow_required_service_names(Some(workflow_name)),
             readiness_checks: workflow.readiness.checks.clone(),

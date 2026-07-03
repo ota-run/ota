@@ -15534,6 +15534,13 @@ pub(crate) struct TaskEffectiveSafety {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkflowEffectiveSafety {
+    pub declared_safe: Option<bool>,
+    pub effective_safe: Option<bool>,
+    pub unsafe_closure_tasks: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AgentExecutionRefusal {
     requested_task: String,
     blocked_task: String,
@@ -15764,6 +15771,58 @@ pub(crate) fn task_effective_safety_with_overrides(
         effective_safe: unsafe_closure_tasks.is_empty(),
         unsafe_closure_tasks,
     }
+}
+
+pub(crate) fn workflow_effective_safety(
+    contract: &Contract,
+    workflow_name: &str,
+) -> WorkflowEffectiveSafety {
+    let phase_tasks = selected_workflow_safety_task_names(contract, workflow_name);
+    if phase_tasks.is_empty() {
+        return WorkflowEffectiveSafety {
+            declared_safe: None,
+            effective_safe: None,
+            unsafe_closure_tasks: Vec::new(),
+        };
+    }
+
+    let mut declared_safe = true;
+    let mut unsafe_closure_tasks = BTreeSet::new();
+    for task_name in phase_tasks {
+        let safety = task_effective_safety(contract, task_name.as_str());
+        declared_safe &= safety.declared_safe;
+        unsafe_closure_tasks.extend(safety.unsafe_closure_tasks);
+    }
+
+    WorkflowEffectiveSafety {
+        declared_safe: Some(declared_safe),
+        effective_safe: Some(declared_safe && unsafe_closure_tasks.is_empty()),
+        unsafe_closure_tasks: unsafe_closure_tasks.into_iter().collect(),
+    }
+}
+
+fn selected_workflow_safety_task_names(contract: &Contract, workflow_name: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut push_unique = |task_name: &str| {
+        if !names.iter().any(|existing| existing == task_name) {
+            names.push(task_name.to_string());
+        }
+    };
+
+    if let Some(task_name) = selected_up_prepare_task_name(contract, Some(workflow_name)) {
+        push_unique(task_name);
+    }
+    if let Some(task_name) = selected_up_setup_task_name(contract, Some(workflow_name)) {
+        push_unique(task_name);
+    }
+    if let Some(task_name) = selected_up_run_task_name(contract, Some(workflow_name)) {
+        push_unique(task_name);
+    }
+    if let Some(task_name) = selected_up_attach_task_name(contract, Some(workflow_name)) {
+        push_unique(task_name);
+    }
+
+    names
 }
 
 fn agent_execution_refusal_finding(refusal: &AgentExecutionRefusal, command: &str) -> Finding {
@@ -40711,6 +40770,61 @@ fn render_task_safety_posture_text(task: &TaskSummary<'_>) -> String {
     }
 }
 
+fn render_workflow_safety_posture_text(workflow: &WorkflowSummary<'_>) -> Option<String> {
+    let declared_safe = workflow.declared_safe_for_agent?;
+    let effective_safe = workflow.effective_safe_for_agent?;
+
+    let mut signals = Vec::new();
+    if workflow.run_task_launch.is_some() {
+        signals.push(String::from("launch/service lifecycle"));
+    }
+    if !workflow.required_services.is_empty() {
+        signals.push(format!(
+            "declared services `{}`",
+            workflow.required_services.join(", ")
+        ));
+    }
+    if !workflow.readiness_checks.is_empty()
+        || !workflow.readiness_probes.is_empty()
+        || !workflow.readiness_surfaces.is_empty()
+    {
+        signals.push(String::from("readiness proof"));
+    }
+
+    if declared_safe && !effective_safe {
+        let blockers = if workflow.unsafe_closure_tasks.is_empty() {
+            String::from("review-required closure")
+        } else {
+            format!(
+                "review-required closure via `{}`",
+                workflow.unsafe_closure_tasks.join("`, `")
+            )
+        };
+        if signals.is_empty() {
+            Some(format!("declared agent-safe workflow with {blockers}"))
+        } else {
+            Some(format!(
+                "declared agent-safe workflow with {}; {}",
+                signals.join("; "),
+                blockers
+            ))
+        }
+    } else if effective_safe {
+        if signals.is_empty() {
+            Some(String::from("agent-safe routine workflow lane"))
+        } else {
+            Some(format!("agent-safe workflow with {}", signals.join("; ")))
+        }
+    } else if signals.is_empty() {
+        Some(String::from("review-required workflow lane"))
+    } else {
+        Some(format!(
+            "review-required workflow with {}",
+            signals.join("; ")
+        ))
+    }
+}
+
 fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
     match launch.kind {
         "command" => {
@@ -41633,6 +41747,32 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             render_task_launch_text(launch)
         ));
     }
+    if let Some(declared_safe) = workflow.declared_safe_for_agent {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Safe For Agent:"),
+            if declared_safe { "true" } else { "false" }
+        ));
+    }
+    if let Some(effective_safe) = workflow.effective_safe_for_agent {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Effective Safe For Agent:"),
+            if effective_safe { "true" } else { "false" }
+        ));
+    }
+    if let Some(safety_posture) = render_workflow_safety_posture_text(workflow) {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Safety Posture:"),
+            safety_posture
+        ));
+    }
+    push_rendered_field(
+        &mut output,
+        "Closure Blockers:",
+        render_joined_or_none(&workflow.unsafe_closure_tasks),
+    );
     push_rendered_field(
         &mut output,
         "Services:",
@@ -53569,6 +53709,9 @@ tasks:
             run_task: Some("dev"),
             attach_task: None,
             run_task_launch: None,
+            declared_safe_for_agent: Some(true),
+            effective_safe_for_agent: Some(false),
+            unsafe_closure_tasks: vec![String::from("setup")],
             required_services: vec![String::from("postgres")],
             readiness_checks: vec![String::from("app-health")],
             readiness_probes: vec![String::from("app-ready")],
@@ -53641,6 +53784,16 @@ tasks:
         );
         assert!(rendered.contains("Setup: `ota run setup`"), "{rendered}");
         assert!(rendered.contains("Run: `ota run dev`"), "{rendered}");
+        assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
+        assert!(
+            rendered.contains("Effective Safe For Agent: false"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Safety Posture: declared agent-safe workflow with declared services `postgres`; readiness proof; review-required closure via `setup`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Closure Blockers: setup"), "{rendered}");
         assert!(rendered.contains("Services: postgres"), "{rendered}");
         assert!(
             rendered.contains("Readiness Probes: app-ready"),
@@ -53676,6 +53829,9 @@ tasks:
             run_task: Some("devenv:up"),
             attach_task: None,
             run_task_launch: None,
+            declared_safe_for_agent: Some(true),
+            effective_safe_for_agent: Some(true),
+            unsafe_closure_tasks: Vec::new(),
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
             readiness_probes: Vec::new(),
@@ -53696,6 +53852,10 @@ tasks:
         );
         assert!(
             rendered.contains("Proof: `ota proof runtime --workflow devenv@ws1`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Safety Posture: agent-safe workflow with readiness proof"),
             "{rendered}"
         );
     }
@@ -61195,6 +61355,9 @@ tasks:
                 run_task: Some("build"),
                 attach_task: None,
                 run_task_launch: None,
+                declared_safe_for_agent: Some(true),
+                effective_safe_for_agent: Some(true),
+                unsafe_closure_tasks: Vec::new(),
                 required_services: Vec::new(),
                 readiness_checks: vec![
                     String::from("node-toolchain-ready"),
@@ -61225,6 +61388,11 @@ tasks:
         );
         assert!(text.contains("Setup: `ota run install:app`"), "{text}");
         assert!(text.contains("Run: `ota run build`"), "{text}");
+        assert!(text.contains("Safe For Agent: true"), "{text}");
+        assert!(
+            text.contains("Safety Posture: agent-safe workflow with readiness proof"),
+            "{text}"
+        );
         assert!(
             text.contains("Readiness Checks: node-toolchain-ready,build-output-dir"),
             "{text}"
@@ -70730,6 +70898,9 @@ execution:
             run_task: Some("dev"),
             attach_task: None,
             run_task_launch: None,
+            declared_safe_for_agent: Some(false),
+            effective_safe_for_agent: Some(false),
+            unsafe_closure_tasks: Vec::new(),
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
             readiness_probes: Vec::new(),

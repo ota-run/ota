@@ -47,6 +47,7 @@ use crate::terminal::supports_dynamic_stderr_ui;
 mod commands;
 pub(crate) use commands::parse_container_host_port_conflict;
 pub(crate) use commands::task_effective_safety_with_overrides;
+pub(crate) use commands::workflow_effective_safety;
 
 #[derive(Debug, Parser)]
 #[command(name = "ota")]
