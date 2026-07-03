@@ -164,6 +164,9 @@
 - widened bounded external agent-doc command-section admission again so nearby headings like
   `## Quick Reference Commands` now participate in the same low-authority task-table recovery
   lane instead of being ignored even when the table shape itself is canonical
+- tightened CI verification task recovery so bare package-manager flag invocations such as
+  `yarn --no-check-resolutions` no longer mint fake callable tasks just because a verifier token
+  appears inside the flag name; real verifier scripts and commands continue to recover normally
   overclaiming broader Nix environment ownership
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence
   external environment source already detected by Ota, such as `mise.toml`, `devbox.json`, or

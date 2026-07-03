@@ -1769,11 +1769,17 @@ fn infer_node_ci_verification_task(
     original: &str,
 ) -> Option<(String, String)> {
     let command = *tokens.get(1)?;
+    if command.starts_with('-') {
+        return None;
+    }
     if command == "test" || is_verifier_task_name(command) {
         return Some((command.to_string(), original.to_string()));
     }
     if manager == "yarn" && command == "run" {
         let script = *tokens.get(2)?;
+        if script.starts_with('-') {
+            return None;
+        }
         if is_verifier_task_name(script) {
             return Some((script.to_string(), original.to_string()));
         }
@@ -10471,6 +10477,40 @@ jobs:
                 && inference.source == ".github/workflows/ci.yml#jobs.verify.steps[2].run"
                 && inference.source_class == InferenceSourceClass::CiVerification
                 && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
+    fn ignores_github_actions_node_package_manager_flag_invocations() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: yarn --no-check-resolutions
+      - run: npm run lint
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(!report.contract.tasks.contains_key("--no-check-resolutions"));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("lint")
+                .map(|task| task.run.as_str()),
+            Some("npm run lint")
+        );
+        assert!(!report.inferences.iter().any(|inference| {
+            inference.field == "tasks.--no-check-resolutions.run"
+                && inference.source_class == InferenceSourceClass::CiVerification
         }));
     }
 
