@@ -108,7 +108,7 @@ boundary policy.
 
 - contract-owned runtime boundary policy model for sandbox compilation
 - default-deny network posture where the contract and policy pack require it
-- explicit outbound allowlist modeling for host/service/domain targets
+- explicit outbound policy modeling for host/service/domain and destination-shaped targets
 - explicit writable mount boundary modeling derived from contract-owned edit and runtime boundary
   truth
 - stable provider-facing compilation surface for supported sandbox targets
@@ -150,6 +150,13 @@ What it cannot yet do cleanly is compile:
 
 into a runtime boundary contract a sandbox can consume directly.
 
+It also cannot yet distinguish between outbound destinations where host allowlisting is enough and
+outbound destinations where the real risk lives at a narrower or second-hop boundary, such as:
+
+- multi-tenant hosts
+- relay/fetcher hosts
+- payload-directed send hosts
+
 The contract-placement rule for this slice should stay strict:
 
 - do not add a broad new top-level `runtime_policy` block
@@ -188,13 +195,13 @@ so the portable governance truth stays above runtime-specific policy syntax.
 
 ## Ownership and precedence rules
 
-### 1. Outbound allowlist ownership
+### 1. Outbound policy ownership
 
-V11.8 must define where egress truth actually lives.
+V11.8 must define where outbound runtime truth actually lives.
 
 The mature shape is:
 
-- repo-local execution contract truth declares the narrow runtime egress surface Ota can own
+- repo-local execution contract truth declares the narrow runtime outbound surface Ota can own
 - task or workflow execution scope may narrow or widen that runtime egress surface where the
   selected lane truthfully differs
 - policy packs may further restrict or require stronger defaults, but should not silently invent
@@ -202,19 +209,20 @@ The mature shape is:
 
 Direction:
 
-- existing `effects.network` and `effects.network_kind` remain signal inputs, not the allowlist
-  itself
+- existing `effects.network` and `effects.network_kind` remain signal inputs, not the outbound
+  policy itself
 - repo-wide default egress truth should live on the execution-governance side of the contract,
   not in provider config and not in a parallel top-level policy tree
 - V11.8 adds a dedicated runtime-boundary layer for outbound policy truth rather than overloading
   generic effect metadata
 - that layer must be compilable at repo, workflow, and task scope
+- outbound target shape must be contract-owned and not left to provider-specific heuristics
 
 The important part is:
 
-- outbound allowlist truth does not live in provider config
-- outbound allowlist truth does not get inferred only from effect posture
-- outbound allowlist truth is declared canonically and then compiled
+- outbound policy truth does not live in provider config
+- outbound policy truth does not get inferred only from effect posture
+- outbound policy truth is declared canonically and then compiled
 
 ### 2. Filesystem boundary ownership
 
@@ -323,7 +331,34 @@ Direction:
   - declared hosts
   - declared domains
   - declared service aliases
+- explicit destination-shape classification where first-hop host truth is not enough:
+  - `single_purpose_host`
+  - `multi_tenant_host`
+  - `relay_host`
+  - `send_host`
 - existing effect posture stays advisory unless promoted by explicit runtime-boundary truth
+
+The destination-shape classes should mean:
+
+- `single_purpose_host`
+  - host/domain/service allowlisting is usually sufficient
+- `multi_tenant_host`
+  - host allowlisting alone is too broad because many tenants share one runtime destination
+  - the contract should require a stronger narrowing signal such as tenant/bucket/project scope,
+    private endpoint, or equivalent policy-backed constraint
+- `relay_host`
+  - the first-hop host can fetch or reach arbitrary downstream destinations
+  - the contract should require downstream destination constraints instead of treating the first
+    hop as sufficient
+- `send_host`
+  - the effective destination lives in payload-level recipients, callbacks, or webhook targets
+  - the contract should require recipient/callback allowlist posture above raw host egress
+
+This keeps three different control layers explicit:
+
+- network boundary
+- credential or tenant boundary
+- effective destination boundary
 
 The important part is:
 
@@ -336,6 +371,19 @@ The likely declaration point should be:
 - narrower lane-specific outbound policy attached to the task or workflow execution lane that
   actually performs the call
 - no host allowlist embedded in provider config or effect metadata
+
+Compilation rules should vary by class:
+
+- `single_purpose_host`
+  - compile direct host/domain/service allowlists where supported
+- `multi_tenant_host`
+  - compile first-hop host policy when possible, but mark tenant narrowing as additionally
+    required unless the contract already owns it
+- `relay_host`
+  - compile first-hop host policy plus downstream-destination posture
+- `send_host`
+  - compile first-hop host policy plus recipient/callback destination posture, even when the
+    runtime cannot hard-enforce payload recipients directly
 
 ### 3. Filesystem policy shape
 
@@ -376,6 +424,8 @@ The acceptance bar is:
 
 - Ota can compile one canonical runtime-boundary model into the Codex local sandbox target first
 - and explain where another target would receive authoritative versus advisory fields
+- and make destination-shape constraints explicit instead of pretending every outbound host is the
+  same kind of control surface
 
 ### 5. Evidence and explainability
 
@@ -386,6 +436,7 @@ Ota should publish:
 - what boundary policy was compiled
 - which fields were authoritative
 - which fields stayed advisory
+- which outbound targets required stronger narrowing than first-hop host allowlisting alone
 - why a lane was denied or widened
 
 This should stay machine-readable and aligned with the V11.4 governance model rather than
@@ -397,6 +448,8 @@ V11.8 is complete when:
 
 - Ota can compile contract/governance truth into a stable runtime-boundary policy model
 - the model covers callable surface, writable boundaries, and network posture coherently
+- the model distinguishes simple host allowlists from multi-tenant, relay, and send-style
+  outbound destinations without inventing a second policy taxonomy
 - at least one real sandbox/runtime target can consume that compiled policy
 - the compiled output makes authoritative versus advisory policy explicit
 - the provider-facing compilation is clearly derived from the canonical governance model instead

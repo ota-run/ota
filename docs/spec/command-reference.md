@@ -2541,6 +2541,9 @@ For external `AGENTS.md` / `CLAUDE.md`, ota currently admits only narrow structu
   `| Command | description |` forms when it can still recover a stable canonical task name from
   the command itself or from a bounded task label such as `Run all unit tests`, `Run type
   checking`, or `Format code`
+- placeholder-heavy command templates stay out of detect evidence even inside those structured
+  sections; commands that still carry metavars such as `<PROJECT>`, `<tests>`, or obvious
+  `path/to/...` scaffolding are guidance prose, not runnable task truth
 
 Ota-generated/self-origin agent docs stay excluded from detect evidence, and broader prose is not
 promoted into executable contract truth.

@@ -296,7 +296,34 @@ fn parse_backticked_command(value: &str) -> Option<String> {
     let tail = value.get(start + 1..)?;
     let end = tail.find('`')?;
     let command = tail.get(..end)?.trim();
-    (!command.is_empty()).then(|| command.to_string())
+    (!command.is_empty() && is_concrete_agent_doc_command(command)).then(|| command.to_string())
+}
+
+fn is_concrete_agent_doc_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.contains("path/to/") {
+        return false;
+    }
+
+    let bytes = trimmed.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'<' {
+            continue;
+        }
+        if let Some(relative_end) = bytes[index + 1..].iter().position(|candidate| *candidate == b'>')
+        {
+            let placeholder = &trimmed[index + 1..index + 1 + relative_end];
+            if !placeholder.is_empty()
+                && placeholder
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | ':' | '.'))
+            {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 fn canonical_agent_doc_task_name(label: &str) -> Option<String> {
@@ -380,4 +407,46 @@ fn strip_parenthetical_segments(value: &str) -> String {
         }
     }
     stripped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_agent_boundary_doc;
+
+    #[test]
+    fn parses_compact_markdown_separator_in_common_commands_table() {
+        let parsed = parse_agent_boundary_doc(
+            r#"# CLAUDE.md
+
+## Common commands
+
+| Task | Command |
+|---|---|
+| Run JS tests | `npm run test` |
+| Run full RSpec suite | `bin/rails spec` |
+| One-time setup | `bin/setup` |
+"#,
+        );
+
+        assert!(
+            parsed
+                .task_commands
+                .iter()
+                .any(|command| command.task_name == "test" && command.command == "npm run test")
+        );
+    }
+
+    #[test]
+    fn skips_agent_doc_commands_with_placeholders() {
+        let parsed = parse_agent_boundary_doc(
+            r#"# AGENTS.md
+
+## Commands
+
+- Test all: `uv run --project <PROJECT> pytest path/to/test.py::TestClass::test_method -xvs`
+"#,
+        );
+
+        assert!(parsed.task_commands.is_empty());
+    }
 }

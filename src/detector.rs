@@ -7593,6 +7593,30 @@ Generated from `./ota.yaml` by `ota agents`.
     }
 
     #[test]
+    fn ignores_placeholder_agent_doc_commands_as_task_truth() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "AGENTS.md",
+            r#"# AGENTS.md
+
+## Commands
+
+- Test all: `uv run --project <PROJECT> pytest path/to/test.py::TestClass::test_method -xvs`
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.source == "AGENTS.md#commands.test"),
+            "placeholder agent-doc commands should not be promoted as runnable task truth"
+        );
+    }
+
+    #[test]
     fn ignores_legacy_ota_generated_agent_doc_as_detect_source() {
         let fixture = Fixture::new();
         fixture.write(

@@ -115,6 +115,11 @@ first-class OSS record for:
 - why the crossing happened
 - which runtime evidence later attached to that crossing
 
+It also does not yet distinguish cleanly between:
+
+- a reusable grant that authorizes a class of crossings while live and in scope
+- a fresh crossing record that must be emitted every time the boundary is actually crossed
+
 V11.7 is the slice for making that crossing explicit instead of leaving it as implicit context in
 task choice alone.
 
@@ -127,6 +132,8 @@ task choice alone.
 - stable crossing classification in receipts and governance output
 - explicit actor/principal attribution in crossing evidence
 - exact lane and grant or approval binding capture where applicable
+- explicit separation between reusable grant authority and one-use crossing evidence
+- grant liveness and scope re-check at crossing time
 - explicit linkage from the crossing to the boundary that was crossed
 - reason and runtime evidence attachments to the crossing record
 - OSS evidence semantics that enterprise approvals and waivers can build on later
@@ -179,6 +186,7 @@ Enterprise approvals and waivers should not be the first place this truth exists
 OSS should already be able to emit:
 
 - a boundary-authored crossing record
+- a separate grant reference model where reusable authority exists
 - crossing-required truth
 - crossing intent
 - crossing classification
@@ -201,6 +209,7 @@ The crossing record is:
 
 - boundary-authored
 - immutable after creation except for additive attachments
+- single-use execution evidence, never a reusable approval object
 - linked to one exact task or workflow lane
 - linked to one boundary family and classification
 - linked to the actor/principal mode that triggered it
@@ -214,6 +223,13 @@ The modeled crossing is:
 - allowed
 - non-routine relative to the default-safe lane
 - worth publishing as explicit evidence
+
+The important distinction is:
+
+- grants may be reused while live and in scope
+- crossing records may not be reused
+- every crossing emits a fresh boundary-authored record, even when an existing live grant is what
+  allowed the crossing
 
 Direction:
 
@@ -270,6 +286,8 @@ Minimum record fields:
 - actor mode
 - principal attribution state
 - grant or approval binding reference, where applicable
+- grant liveness state at crossing time
+- grant scope-evaluation result at crossing time
 - created timestamp
 - reason state
 - evidence attachment state
@@ -278,9 +296,53 @@ The important part is:
 
 - the record is emitted by Ota or the harness boundary, not by the crosser
 - the exact lane and grant binding are stamped synchronously
+- grant liveness and scope are re-checked at crossing time before the crossing is finalized as
+  allowed
 - reason and runtime evidence attach to this record later or during execution
 - routine crossings can create this record cheaply and automatically
 - exceptional crossings can require louder reason or approval capture
+
+### 3a. Grant model and liveness
+
+V11.7 should keep grant authority and crossing evidence as separate objects.
+
+Direction:
+
+- a grant is reusable authority, not execution evidence
+- a grant may authorize one lane or boundary family for some bounded scope
+- a crossing record is emitted fresh for each actual crossing and may reference one grant
+- grant reuse is valid only while the grant is:
+  - live
+  - not revoked
+  - not expired
+  - still in scope for the selected crossing
+
+The mature rule is:
+
+- cheap routine crossing comes from reusing a live in-scope grant
+- loud crossing is triggered when the grant is missing, revoked, expired, or out of scope
+- no previous crossing record can be replayed as authority for a new crossing
+
+### 3b. Grant scope dimensions
+
+Grant scope should be machine-readable and narrow enough to avoid stale standing authority.
+
+Direction:
+
+- scope may be defined by some combination of:
+  - repo
+  - lane or boundary family
+  - environment
+  - actor or principal class
+  - time window
+- Ota should not hardcode one universal scope dimension if the governance model already exposes a
+  narrower truthful boundary
+
+The important part is:
+
+- scope must be evaluated at crossing time, not only when the grant is first created
+- crossing evidence should be able to say whether the selected crossing was in scope, not just
+  whether some historical grant existed
 
 ### 4. Execution-intent capture
 
@@ -345,6 +407,8 @@ V11.7 should extend the V11.4 governance model with additive fields for:
 - crossing actor mode
 - crossing principal attribution state
 - crossing grant binding state
+- crossing grant liveness state
+- crossing grant scope state
 - crossing intent source:
   - `caller_supplied`
   - `runner_defaulted`
@@ -373,6 +437,8 @@ That means:
 - crossing evidence is linked from both surfaces where relevant
 - receipt-linked crossing evidence carries actor/principal attribution and reason state alongside
   boundary family and classification
+- receipt-linked crossing evidence also carries grant binding, liveness, and scope-evaluation
+  posture where applicable
 - runtime proof and receipt evidence attach to the crossing record instead of floating as separate
   audit claims
 - refusal and crossing stay distinct outcomes
@@ -402,6 +468,10 @@ V11.7 is complete when:
 - Ota creates a first-class crossing record as the immutable anchor for audited boundary crossings
 - the crossing record is boundary-authored, not crosser-authored
 - the crossing record stamps the exact lane crossed and grant or approval binding where applicable
+- grant authority and crossing evidence remain separate objects
+- a fresh crossing record is emitted for every actual crossing, even when a prior grant is reused
+- Ota re-checks grant liveness and scope at crossing time instead of treating grants as stale
+  standing authority
 - Ota can answer whether a crossing was required from contract-owned or contract-derived truth
 - Ota can distinguish routine execution from allowed audited boundary crossings
 - crossing classification is runner-derived governance truth, not merely caller prose

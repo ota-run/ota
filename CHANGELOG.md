@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- tightened external `AGENTS.md` / `CLAUDE.md` task-command admission so placeholder-heavy
+  command templates such as `<PROJECT>` or obvious `path/to/...` scaffolding stay out of detect
+  task truth; ota still admits narrow structured boundary-doc command sections, but only when the
+  recovered command is concrete enough to be runnable evidence instead of prose guidance
 - widened CI verification recovery again so `ota doctor` can now recover repo-local verifier
   scripts such as `node scripts/verify-*.js` and bounded step-named opaque checks as declared
   verification tasks, reducing false CI verification drift when the workflow lane is canonical
