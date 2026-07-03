@@ -25102,6 +25102,100 @@ tasks:
     }
 
     #[test]
+    fn doctor_does_not_report_ci_drift_when_verifier_aggregate_is_split_across_workflow_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/backend.yml"),
+            r#"
+name: backend
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ruff format --check . --exclude .venv --exclude venv
+"#,
+        )
+        .expect("write backend workflow");
+        fs::write(
+            dir.path().join(".github/workflows/frontend.yml"),
+            r#"
+name: frontend
+jobs:
+  format-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run format
+      - run: npm run i18n:parse
+      - run: git diff --exit-code
+      - run: npm run build
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run test:frontend
+"#,
+        )
+        .expect("write frontend workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  verify:backend:format:
+    command:
+      exe: ruff
+      args:
+        - format
+        - --check
+        - .
+        - --exclude
+        - .venv
+        - --exclude
+        - venv
+  verify:frontend:
+    script: |
+      npm run format
+      npm run i18n:parse
+      git diff --exit-code
+      npm run build
+  test:frontend:
+    run: npm run test:frontend
+  verify:
+    aggregate:
+      tasks:
+        - verify:backend:format
+        - verify:frontend
+        - test:frontend
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once multiple workflow files exactly cover the declared aggregate verifier set: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_prefers_reusable_verification_lane_over_unrelated_direct_test_workflow() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");

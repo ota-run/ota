@@ -779,6 +779,12 @@ fn collect_ci_verification_aggregate_changes(
         }) {
             continue;
         }
+        if workflow_file_union_matches_exact_verifier_aggregate(
+            &existing_tasks,
+            &workflow_candidates,
+        ) {
+            continue;
+        }
 
         let Some((source, detected_tasks)) =
             best_matching_ci_verification_workflow_candidate(&existing_tasks, &workflow_candidates)
@@ -796,6 +802,37 @@ fn collect_ci_verification_aggregate_changes(
     }
 
     changes
+}
+
+fn workflow_file_union_matches_exact_verifier_aggregate(
+    existing_tasks: &[&str],
+    workflow_candidates: &[(String, Vec<String>)],
+) -> bool {
+    let expected = existing_tasks.iter().copied().collect::<BTreeSet<_>>();
+    let workflow_file_candidates = workflow_candidates
+        .iter()
+        .filter(|(source, _)| !source.contains('#'))
+        .collect::<Vec<_>>();
+    if workflow_file_candidates.len() < 2 {
+        return false;
+    }
+
+    let mut union = BTreeSet::<&str>::new();
+    let mut contributing_files = 0usize;
+    for (_, detected_tasks) in workflow_file_candidates {
+        if detected_tasks
+            .iter()
+            .all(|task| expected.contains(task.as_str()))
+        {
+            let before = union.len();
+            union.extend(detected_tasks.iter().map(String::as_str));
+            if union.len() > before {
+                contributing_files += 1;
+            }
+        }
+    }
+
+    contributing_files >= 2 && union == expected
 }
 
 fn collect_ci_verification_workflow_task_sequences(
