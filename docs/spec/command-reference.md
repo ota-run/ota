@@ -2533,7 +2533,8 @@ For external `AGENTS.md` / `CLAUDE.md`, ota currently admits only narrow structu
   medium-confidence agent-boundary evidence
 - labeled command bullets under explicit command sections such as `## Commands`,
   `## Individual Commands`, `## Common Commands`, `## Build/Test Commands`, or
-  `## Build & Development Commands`
+  `## Build & Development Commands`, including nearby bounded variants such as
+  `## Quick Reference Commands`
 - bounded structured command tables inside those explicit command sections as low-confidence task
   guidance for narrow canonical lanes such as `build`, `check`, `lint`, `test`, `docs`, and
   `compile`; ota currently admits exact `| Task | Command |` tables and adjacent

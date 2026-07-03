@@ -161,6 +161,9 @@
   `Run all unit tests`, `Run type checking`, and `Format code`, now recover canonical
   `test`, `typecheck`, and `fmt` task names instead of being dropped even when the table itself
   is explicit
+- widened bounded external agent-doc command-section admission again so nearby headings like
+  `## Quick Reference Commands` now participate in the same low-authority task-table recovery
+  lane instead of being ignored even when the table shape itself is canonical
   overclaiming broader Nix environment ownership
 - widened doctor/explain source-governance drift so manual contracts now warn when a high-confidence
   external environment source already detected by Ota, such as `mise.toml`, `devbox.json`, or

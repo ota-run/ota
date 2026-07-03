@@ -233,6 +233,7 @@ fn is_agent_doc_commands_heading(line: &str) -> bool {
                 | "Individual Commands"
                 | "Common Commands"
                 | "Common commands"
+                | "Quick Reference Commands"
                 | "Build/Test Commands"
                 | "Build & Development Commands"
         )

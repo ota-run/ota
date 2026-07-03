@@ -7376,6 +7376,48 @@ Available scripts in the `scripts/` directory:
     }
 
     #[test]
+    fn detects_structured_agent_doc_task_table_under_quick_reference_commands_heading() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "CLAUDE.md",
+            r#"# CLAUDE.md
+
+## Quick Reference Commands
+
+| Task | Command |
+| --- | --- |
+| Test (all packages) | `pnpm run test` |
+| Check formatting | `pnpm run format:diff` |
+| Build all packages | `pnpm run build` |
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.test.run"
+                && inference.value == "pnpm run test"
+                && inference.source == "CLAUDE.md#commands.test"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.check.run"
+                && inference.value == "pnpm run format:diff"
+                && inference.source == "CLAUDE.md#commands.check"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.build.run"
+                && inference.value == "pnpm run build"
+                && inference.source == "CLAUDE.md#commands.build"
+                && inference.source_class == InferenceSourceClass::TaskCommand
+                && inference.confidence == Confidence::Low
+        }));
+    }
+
+    #[test]
     fn ignores_ota_generated_agent_doc_as_detect_source() {
         let fixture = Fixture::new();
         fixture.write(
