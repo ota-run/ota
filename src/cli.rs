@@ -24908,6 +24908,392 @@ tasks:
     }
 
     #[test]
+    fn doctor_recovers_tag_scoped_local_action_tasks_into_qualified_verifier_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-sdk.yml"),
+            r#"
+name: sdk
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [lint, typecheck, test:unit, test:integration]
+    steps:
+      - uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:sdk
+          tasks: ${{ matrix.task }}
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-sdk
+tasks:
+  lint:sdk:
+    run: npx nx lint twenty-sdk
+  typecheck:sdk:
+    run: npx nx typecheck twenty-sdk
+  test:sdk:unit:
+    run: npx nx test:unit twenty-sdk
+  test:sdk:integration:
+    run: npx nx test:integration twenty-sdk
+  verify:sdk:
+    aggregate:
+      tasks:
+        - lint:sdk
+        - typecheck:sdk
+        - test:sdk:unit
+        - test:sdk:integration
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once scope-qualified local action tasks recover sdk verifier names: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_unrelated_tag_scoped_local_action_workflows_when_matching_verifier_aggregates()
+     {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-shared.yml"),
+            r#"
+name: shared
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [lint, typecheck, test]
+    steps:
+      - uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:shared
+          tasks: ${{ matrix.task }}
+"#,
+        )
+        .expect("write shared workflow");
+        fs::write(
+            dir.path().join(".github/workflows/ci-ui.yml"),
+            r#"
+name: ui
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [lint, typecheck, test]
+    steps:
+      - uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:ui
+          tasks: ${{ matrix.task }}
+"#,
+        )
+        .expect("write ui workflow");
+        fs::write(
+            dir.path().join(".github/workflows/ci-website.yml"),
+            r#"
+name: website
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [lint, typecheck, test]
+    steps:
+      - uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:website
+          tasks: ${{ matrix.task }}
+"#,
+        )
+        .expect("write website workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-ui-and-shared
+tasks:
+  lint:shared:
+    run: npx nx lint twenty-shared
+  typecheck:shared:
+    run: npx nx typecheck twenty-shared
+  test:shared:
+    run: npx nx test twenty-shared
+  verify:shared:
+    aggregate:
+      tasks:
+        - lint:shared
+        - typecheck:shared
+        - test:shared
+  lint:ui:
+    run: npx nx lint twenty-ui
+  typecheck:ui:
+    run: npx nx typecheck twenty-ui
+  test:ui:
+    run: npx nx test twenty-ui
+  verify:ui:
+    aggregate:
+      tasks:
+        - lint:ui
+        - typecheck:ui
+        - test:ui
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once unrelated scope-tagged workflows stop stealing aggregate matches: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_project_qualified_matrix_run_tasks_into_build_and_verifier_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-ui.yml"),
+            r#"
+name: ui
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [build, lint, typecheck, test]
+    steps:
+      - run: npx nx ${{ matrix.task }} twenty-ui
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-ui
+tasks:
+  build:ui:
+    run: npx nx build twenty-ui
+  lint:ui:
+    run: npx nx lint twenty-ui
+  typecheck:ui:
+    run: npx nx typecheck twenty-ui
+  test:ui:
+    run: npx nx test twenty-ui
+  verify:ui:
+    aggregate:
+      tasks:
+        - build:ui
+        - lint:ui
+        - typecheck:ui
+        - test:ui
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once project-qualified matrix runs recover build and verifier task names: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_treats_root_verifier_aggregate_as_covered_by_qualified_workflow_lane() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-ui.yml"),
+            r#"
+name: ui
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [lint, typecheck, test]
+    steps:
+      - run: npx nx ${{ matrix.task }} twenty-ui
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-ui-root
+tasks:
+  lint:
+    run: npx nx lint twenty-ui
+  typecheck:
+    run: npx nx typecheck twenty-ui
+  test:
+    run: npx nx test twenty-ui
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - typecheck
+        - test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once root verifier aggregates are covered by qualified workflow lanes: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_project_qualified_matrix_run_tasks_into_fuzzy_qualified_verifier_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-renderer.yml"),
+            r#"
+name: renderer
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [build, lint, typecheck]
+    steps:
+      - run: npx nx ${{ matrix.task }} twenty-front-component-renderer
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-renderer
+tasks:
+  build:renderer:
+    run: npx nx build twenty-front-component-renderer
+  lint:renderer:
+    run: npx nx lint twenty-front-component-renderer
+  typecheck:renderer:
+    run: npx nx typecheck twenty-front-component-renderer
+  verify:renderer:
+    aggregate:
+      tasks:
+        - build:renderer
+        - lint:renderer
+        - typecheck:renderer
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once project-qualified matrix runs recover fuzzy task qualifiers: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_ignores_ci_test_commands_after_workflow_cwd_mutation() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");

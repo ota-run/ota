@@ -781,6 +781,14 @@ fn collect_ci_verification_aggregate_changes(
         }) {
             continue;
         }
+        if workflow_candidates.iter().any(|(_, detected_tasks)| {
+            should_treat_ci_verifier_family_root_aggregate_as_covered(
+                &existing_tasks,
+                detected_tasks,
+            )
+        }) {
+            continue;
+        }
         if workflow_file_union_matches_exact_verifier_aggregate(
             &existing_tasks,
             &workflow_candidates,
@@ -972,8 +980,8 @@ fn best_matching_ci_verification_workflow_candidate<'a>(
                 .take_while(|(left, right)| **left == *right)
                 .count();
             (
-                normalized_overlap,
                 overlap,
+                normalized_overlap,
                 ordered_prefix,
                 usize::MAX - extras,
                 usize::MAX - missing,
@@ -989,6 +997,8 @@ fn ci_verifier_task_family<'a>(name: &'a str) -> &'a str {
         "typecheck"
     } else if normalized.starts_with("test") {
         "test"
+    } else if normalized.starts_with("build") {
+        "build"
     } else if normalized.starts_with("format")
         || normalized.starts_with("prettier")
         || normalized.starts_with("spotless")
@@ -1013,6 +1023,22 @@ fn should_treat_ci_verifier_family_root_as_covered(
         })
 }
 
+fn should_treat_ci_verifier_family_root_aggregate_as_covered(
+    existing_tasks: &[&str],
+    detected_tasks: &[String],
+) -> bool {
+    let detected_verifier_tasks = detected_tasks
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    existing_tasks.iter().all(|task_name| {
+        detected_verifier_tasks
+            .iter()
+            .any(|detected| detected == task_name)
+            || should_treat_ci_verifier_family_root_as_covered(task_name, &detected_verifier_tasks)
+    })
+}
+
 fn recover_ci_verification_task_signals(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
@@ -1026,6 +1052,7 @@ fn recover_ci_verification_task_signals(
     let mut command_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
     let mut pytest_target_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
     let mut task_field_index = BTreeMap::<String, String>::new();
+    let mut verification_tasks_by_family = BTreeMap::<String, usize>::new();
     for (task_name, task) in &existing.tasks {
         let Some(field) = task_command_truth_field(task_name, task) else {
             continue;
@@ -1034,6 +1061,9 @@ fn recover_ci_verification_task_signals(
             continue;
         }
         task_field_index.insert(task_name.clone(), field.clone());
+        *verification_tasks_by_family
+            .entry(ci_verifier_task_family(task_name).to_string())
+            .or_default() += 1;
         let Some(command) = existing_task_detectable_command_truth(task) else {
             continue;
         };
@@ -1068,6 +1098,38 @@ fn recover_ci_verification_task_signals(
     signals
         .iter()
         .map(|signal| {
+            if let Some(task_name) = verification_task_name_from_field(&signal.field)
+                && let Some(qualifier) = signal.qualifier.as_deref()
+            {
+                let qualified_task_name = qualify_ci_verification_task_name(task_name, qualifier);
+                if let Some(existing_field) = task_field_index.get(&qualified_task_name) {
+                    let mut recovered = signal.clone();
+                    recovered.field = existing_field.clone();
+                    return recovered;
+                }
+
+                if let Some(fuzzy_field) = match_fuzzy_qualified_ci_verifier_task_field(
+                    &task_field_index,
+                    task_name,
+                    qualifier,
+                ) {
+                    let mut recovered = signal.clone();
+                    recovered.field = fuzzy_field;
+                    return recovered;
+                }
+
+                if verification_tasks_by_family
+                    .get(ci_verifier_task_family(task_name))
+                    .copied()
+                    .unwrap_or_default()
+                    > 1
+                {
+                    let mut recovered = signal.clone();
+                    recovered.field.clear();
+                    return recovered;
+                }
+            }
+
             if let Some(task_name) = verification_task_name_from_field(&signal.field)
                 && let Some(existing_field) = task_field_index.get(task_name)
                 && existing_field != &signal.field
@@ -1151,6 +1213,41 @@ fn recover_ci_verification_task_signals(
             recovered
         })
         .collect()
+}
+
+fn match_fuzzy_qualified_ci_verifier_task_field(
+    task_field_index: &BTreeMap<String, String>,
+    task_name: &str,
+    qualifier: &str,
+) -> Option<String> {
+    let family = ci_verifier_task_family(task_name);
+    let qualifier = qualifier.trim();
+    let matches = task_field_index
+        .iter()
+        .filter_map(|(existing_task_name, field)| {
+            (ci_verifier_task_family(existing_task_name) == family)
+                .then_some((existing_task_name.as_str(), field.as_str()))
+        })
+        .filter(|(existing_task_name, _)| {
+            existing_task_name
+                .strip_prefix(family)
+                .and_then(|suffix| suffix.strip_prefix(':'))
+                .is_some_and(|suffix| {
+                    qualifier == suffix
+                        || qualifier.ends_with(&format!("-{suffix}"))
+                        || qualifier.starts_with(&format!("{suffix}-"))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    (matches.len() == 1).then(|| matches[0].1.to_string())
+}
+
+fn qualify_ci_verification_task_name(task_name: &str, qualifier: &str) -> String {
+    match task_name.split_once(':') {
+        Some((root, rest)) => format!("{root}:{qualifier}:{rest}"),
+        None => format!("{task_name}:{qualifier}"),
+    }
 }
 
 fn ci_command_declares_inline_env(command: &str) -> bool {
@@ -1425,6 +1522,7 @@ fn is_verifier_task_name(name: &str) -> bool {
                     | "verify"
                     | "fmt"
                     | "format"
+                    | "build"
                     | "ci"
             )
         })

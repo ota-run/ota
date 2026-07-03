@@ -103,6 +103,7 @@ pub struct CiVerificationTaskSignal {
     pub command: String,
     pub source: String,
     pub exact_command: bool,
+    pub qualifier: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1369,15 +1370,19 @@ fn collect_github_actions_verification_tasks_from_workflow(
                         command,
                         source: format!("{step_source_prefix}.run"),
                         exact_command: true,
+                        qualifier: None,
                     });
                 }
             }
-            for task_name in github_actions_structured_step_verifier_tasks(step, &matrix_tasks) {
+            for (task_name, qualifier) in
+                github_actions_structured_step_verifier_tasks(step, &matrix_tasks)
+            {
                 tasks.push(CiVerificationTaskSignal {
                     field: format!("tasks.{task_name}.run"),
                     command: task_name.clone(),
                     source: step_source_prefix.clone(),
                     exact_command: false,
+                    qualifier,
                 });
             }
         }
@@ -1470,9 +1475,9 @@ fn is_verification_oriented_github_workflow(workflow_path: &Path, workflow: &Yam
         .get("jobs")
         .and_then(YamlValue::as_mapping)
         .is_some_and(|jobs| {
-            jobs.iter().filter_map(|(name, _)| name.as_str()).any(
-                workflow_name_looks_verification_oriented,
-            )
+            jobs.iter()
+                .filter_map(|(name, _)| name.as_str())
+                .any(workflow_name_looks_verification_oriented)
         });
 
     file_signal || name_signal || job_signal
@@ -1500,8 +1505,7 @@ fn workflow_name_looks_verification_oriented(value: &str) -> bool {
     workflow_tokens(value).any(|token| {
         matches!(
             token,
-            "ci"
-                | "verify"
+            "ci" | "verify"
                 | "verification"
                 | "test"
                 | "tests"
@@ -1569,12 +1573,27 @@ fn github_actions_job_matrix_verifier_tasks(job_value: &YamlValue) -> Vec<String
 fn github_actions_structured_step_verifier_tasks(
     step: &YamlValue,
     matrix_tasks: &[String],
-) -> Vec<String> {
+) -> Vec<(String, Option<String>)> {
     let mut tasks = Vec::new();
+    let qualifier = step
+        .get("with")
+        .and_then(|value| value.get("tag"))
+        .and_then(YamlValue::as_str)
+        .and_then(extract_ci_verification_scope_qualifier)
+        .or_else(|| {
+            step.get("run")
+                .and_then(YamlValue::as_str)
+                .and_then(extract_ci_verification_project_qualifier_from_matrix_run)
+        });
 
     if let Some(run) = step.get("run").and_then(YamlValue::as_str) {
         if run.contains("${{ matrix.task }}") {
-            tasks.extend(matrix_tasks.iter().cloned());
+            tasks.extend(
+                matrix_tasks
+                    .iter()
+                    .cloned()
+                    .map(|task| (task, qualifier.clone())),
+            );
         }
     }
 
@@ -1584,19 +1603,44 @@ fn github_actions_structured_step_verifier_tasks(
         .and_then(YamlValue::as_str)
     {
         if with_tasks.contains("${{ matrix.task }}") {
-            tasks.extend(matrix_tasks.iter().cloned());
+            tasks.extend(
+                matrix_tasks
+                    .iter()
+                    .cloned()
+                    .map(|task| (task, qualifier.clone())),
+            );
         } else {
             tasks.extend(
                 with_tasks
                     .split(',')
                     .map(str::trim)
                     .filter(|task| is_verifier_task_name(task))
-                    .map(String::from),
+                    .map(String::from)
+                    .map(|task| (task, qualifier.clone())),
             );
         }
     }
 
     tasks
+}
+
+fn extract_ci_verification_scope_qualifier(value: &str) -> Option<String> {
+    let qualifier = value.trim().strip_prefix("scope:")?.trim();
+    (!qualifier.is_empty()).then(|| qualifier.to_string())
+}
+
+fn extract_ci_verification_project_qualifier_from_matrix_run(run: &str) -> Option<String> {
+    if !run.contains("${{ matrix.task }}") {
+        return None;
+    }
+
+    run.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let (_, remainder) = trimmed.split_once("${{ matrix.task }}")?;
+        let project = remainder.split_whitespace().next()?;
+        let qualifier = project.strip_prefix("twenty-").unwrap_or(project).trim();
+        (!qualifier.is_empty()).then(|| qualifier.to_string())
+    })
 }
 
 fn is_promotable_task_runner_task_name(name: &str) -> bool {
@@ -6827,14 +6871,21 @@ fn is_verifier_task_name(name: &str) -> bool {
         .any(|token| {
             matches!(
                 token,
-                "test" | "tests" | "lint" | "typecheck" | "check" | "verify" | "fmt" | "format"
+                "test"
+                    | "tests"
+                    | "lint"
+                    | "typecheck"
+                    | "check"
+                    | "verify"
+                    | "fmt"
+                    | "format"
+                    | "build"
             )
         })
 }
 
 fn is_agent_safe_verifier_task(name: &str, command: &str) -> bool {
-    is_agent_safe_verifier_task_name(name)
-        && !has_obviously_effectful_boundary_tokens(command)
+    is_agent_safe_verifier_task_name(name) && !has_obviously_effectful_boundary_tokens(command)
 }
 
 fn is_agent_safe_verifier_task_name(name: &str) -> bool {
