@@ -150,6 +150,13 @@ What it cannot yet do cleanly is compile:
 
 into a runtime boundary contract a sandbox can consume directly.
 
+The contract-placement rule for this slice should stay strict:
+
+- do not add a broad new top-level `runtime_policy` block
+- do not teach `effects.network` or `effects.network_kind` to become the allowlist itself
+- keep effect metadata as signal input
+- add only the narrow execution-boundary declarations that the current contract does not yet own
+
 ### 3. Writable boundaries are declared, but not yet compiled
 
 The contract already owns:
@@ -197,6 +204,8 @@ Direction:
 
 - existing `effects.network` and `effects.network_kind` remain signal inputs, not the allowlist
   itself
+- repo-wide default egress truth should live on the execution-governance side of the contract,
+  not in provider config and not in a parallel top-level policy tree
 - V11.8 adds a dedicated runtime-boundary layer for outbound policy truth rather than overloading
   generic effect metadata
 - that layer must be compilable at repo, workflow, and task scope
@@ -224,6 +233,14 @@ The mature rule is:
 - edit-governance truth is the baseline input
 - runtime filesystem policy is the compiled execution boundary
 - provider mounts are downstream renderings of that compiled runtime boundary
+
+The contract-placement rule should stay explicit:
+
+- repo-level runtime filesystem defaults should derive from `agent.writable_paths` and
+  `agent.protected_paths`
+- explicit runtime filesystem widening belongs on execution/runtime boundary declarations, not by
+  mutating the meaning of `agent.*_paths`
+- `agent.*_paths` stay the edit-governance baseline even when runtime compilation grows richer
 
 ### 3. Precedence rule
 
@@ -265,6 +282,30 @@ contract-owned declarations where the current contract is not yet sufficient.
 
 The model should start as one Ota-owned runtime-boundary layer, not a provider-shaped schema.
 
+Contract-shape direction:
+
+- keep repo-wide edit authority under `agent`
+- keep execution/provider selection under `execution`, task execution, and workflow execution
+  truth
+- add runtime-boundary declarations alongside execution truth, not as a second top-level taxonomy
+
+That means the likely ownership shape is:
+
+- repo baseline:
+  - derive filesystem defaults from `agent.writable_paths` / `agent.protected_paths`
+  - declare repo-wide runtime-boundary defaults in the execution/governance layer only where
+    derivation is not sufficient, especially for outbound policy
+- task lane:
+  - allow task-scoped runtime-boundary specialization beside task execution/runtime truth
+- workflow lane:
+  - allow workflow-scoped runtime-boundary specialization where the operational path owns the
+    effective boundary
+
+The important constraint is:
+
+- no parallel workflow-only or provider-only policy surface
+- one boundary model, attached to the executable lane that actually owns the crossing
+
 ### 2. Egress policy shape
 
 Define a first-class Ota model for outbound network control.
@@ -276,7 +317,7 @@ Direction:
   - `allow`
 - explicit ownership:
   - repo-level runtime boundary declaration for shared defaults
-  - task/workflow runtime boundary declaration for lane-specific widening or narrowing
+  - task/workflow execution-boundary declaration for lane-specific widening or narrowing
   - policy-pack restriction overlays for stronger org-wide control
 - explicit outbound targets such as:
   - declared hosts
@@ -288,6 +329,13 @@ The important part is:
 
 - Ota declares the portable meaning
 - provider compilation renders the provider syntax
+
+The likely declaration point should be:
+
+- repo-wide default outbound policy on the execution-governance boundary layer
+- narrower lane-specific outbound policy attached to the task or workflow execution lane that
+  actually performs the call
+- no host allowlist embedded in provider config or effect metadata
 
 ### 3. Filesystem policy shape
 
@@ -301,6 +349,15 @@ Direction:
 - if a lane needs runtime writable boundaries that differ from edit-governance truth, the runtime
   boundary model owns that widening explicitly instead of mutating `agent.*_paths` semantics
 - provider compilation may widen exact mount semantics, but not invent the policy
+
+The likely declaration point should be:
+
+- repo-wide edit defaults remain under `agent`
+- lane-specific runtime writable/read-only truth attaches to the executable task/workflow runtime
+  boundary when the sandboxed execution boundary is intentionally different from human edit
+  authority
+- provider mount generation consumes that compiled lane boundary rather than trying to reinterpret
+  repo paths ad hoc
 
 ### 4. Provider compilation targets
 
