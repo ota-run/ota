@@ -74,6 +74,9 @@ know:
 - what tasks or workflows are callable in agent mode
 - what refusal conditions exist
 - what mode/context/backend is required
+- what exact lane/action identity is being requested
+- what resource granularity the selected lane governs
+- what environment boundary the selected lane belongs to
 - what writable/protected boundaries matter
 - what effect or egress class the selected path implies
 
@@ -159,6 +162,9 @@ Include:
 
 - effective mode
 - effective context/backend
+- exact lane/action identity in stable machine-readable form
+- resource identity or granularity for the selected lane where the contract already owns it
+- explicit environment boundary for the selected lane
 - runtime/proof expectations where relevant
 
 ### 3. Boundary and effect export
@@ -192,6 +198,27 @@ The harness should be able to know:
 
 That should come from Ota directly, not a prompt convention.
 
+### 5. Identity and boundary export discipline
+
+V11.6 should export enough identity that harnesses do not have to reconstruct grant or boundary
+meaning ad hoc later.
+
+Direction:
+
+- actor mode must be exported where Ota can know it honestly
+- lane/action identity must be stable enough to bind review, refusal, and grant evaluation to one
+  exact executable unit
+- resource identity or resource granularity should be exported where the contract already exposes
+  it
+- environment should be exported as a hard execution boundary, not left implicit inside broader
+  execution requirements
+
+The important part is:
+
+- `11.6` does not create the grant model itself
+- but it must export enough identity for `11.7` grants and `11.8` runtime boundaries to be
+  evaluated without harness guesswork
+
 ## Acceptance bar
 
 V11.6 is complete when:
@@ -200,6 +227,8 @@ V11.6 is complete when:
 - harnesses can consume that surface without scraping human output
 - refusal conditions and execution requirements are explicit enough that external runners do not
   need to guess Ota semantics
+- the export is sufficient for a harness to evaluate exact lane/action identity, environment
+  boundary, and review/refusal posture without reconstructing them ad hoc
 - the harness-facing export is explicitly derived from the V11.4 governance model instead of
   defining a parallel taxonomy
 
