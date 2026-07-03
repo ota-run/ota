@@ -28,7 +28,8 @@ use serde_yaml::{Mapping, Value as YamlValue};
 
 use crate::detector::{
     CiVerificationTaskSignal, Confidence, DetectService, Inference,
-    collect_github_actions_verification_tasks, detect_repo, infer_ci_verification_task_line,
+    ci_bounded_shell_command_line, collect_github_actions_verification_tasks, detect_repo,
+    infer_ci_verification_task_line,
 };
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
@@ -789,10 +790,8 @@ fn collect_ci_verification_aggregate_changes(
         }) {
             continue;
         }
-        if workflow_file_union_matches_exact_verifier_aggregate(
-            &existing_tasks,
-            &workflow_candidates,
-        ) {
+        if workflow_candidate_union_covers_verifier_aggregate(&existing_tasks, &workflow_candidates)
+        {
             continue;
         }
 
@@ -814,35 +813,35 @@ fn collect_ci_verification_aggregate_changes(
     changes
 }
 
-fn workflow_file_union_matches_exact_verifier_aggregate(
+fn workflow_candidate_union_covers_verifier_aggregate(
     existing_tasks: &[&str],
     workflow_candidates: &[(String, Vec<String>)],
 ) -> bool {
-    let expected = existing_tasks.iter().copied().collect::<BTreeSet<_>>();
-    let workflow_file_candidates = workflow_candidates
-        .iter()
-        .filter(|(source, _)| !source.contains('#'))
-        .collect::<Vec<_>>();
-    if workflow_file_candidates.len() < 2 {
+    if workflow_candidates.len() < 2 {
         return false;
     }
 
-    let mut union = BTreeSet::<&str>::new();
-    let mut contributing_files = 0usize;
-    for (_, detected_tasks) in workflow_file_candidates {
-        if detected_tasks
-            .iter()
-            .all(|task| expected.contains(task.as_str()))
-        {
+    let mut union = BTreeSet::<String>::new();
+    let mut contributing_candidates = 0usize;
+    for (_, detected_tasks) in workflow_candidates {
+        if detected_tasks.iter().all(|task| {
+            existing_tasks
+                .iter()
+                .any(|existing| verifier_aggregate_member_covers_detected(existing, task))
+        }) {
             let before = union.len();
-            union.extend(detected_tasks.iter().map(String::as_str));
+            union.extend(detected_tasks.iter().cloned());
             if union.len() > before {
-                contributing_files += 1;
+                contributing_candidates += 1;
             }
         }
     }
 
-    contributing_files >= 2 && union == expected
+    contributing_candidates >= 2
+        && should_treat_ci_verifier_family_root_aggregate_as_covered(
+            existing_tasks,
+            &union.into_iter().collect::<Vec<_>>(),
+        )
 }
 
 fn collect_ci_verification_workflow_task_sequences(
@@ -1021,6 +1020,12 @@ fn should_treat_ci_verifier_family_root_as_covered(
             let detected = detected.trim();
             detected != task_name && ci_verifier_task_family(detected) == family
         })
+}
+
+fn verifier_aggregate_member_covers_detected(existing_task: &str, detected_task: &str) -> bool {
+    existing_task == detected_task
+        || (existing_task == ci_verifier_task_family(existing_task)
+            && ci_verifier_task_family(existing_task) == ci_verifier_task_family(detected_task))
 }
 
 fn should_treat_ci_verifier_family_root_aggregate_as_covered(
@@ -1235,7 +1240,6 @@ fn match_fuzzy_qualified_ci_verifier_task_field(
                 .is_some_and(|suffix| {
                     qualifier == suffix
                         || qualifier.ends_with(&format!("-{suffix}"))
-                        || qualifier.starts_with(&format!("{suffix}-"))
                 })
         })
         .collect::<Vec<_>>();
@@ -1391,11 +1395,12 @@ fn ci_pytest_target(command: &str) -> Option<String> {
 fn ci_script_command_sequence(body: &str) -> Option<Vec<String>> {
     let mut commands = Vec::new();
     for raw_line in body.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
+        let Some(line) = ci_bounded_shell_command_line(raw_line) else {
             continue;
-        }
-        let canonical = canonicalize_ci_verification_command(line)?;
+        };
+        let Some(canonical) = canonicalize_ci_verification_command(&line) else {
+            continue;
+        };
         commands.push(canonical);
     }
     (!commands.is_empty()).then_some(commands)

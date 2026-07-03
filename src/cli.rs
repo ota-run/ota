@@ -25294,6 +25294,544 @@ tasks:
     }
 
     #[test]
+    fn doctor_treats_verifier_aggregate_as_covered_by_union_of_workflow_candidates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-renderer.yml"),
+            r#"
+name: renderer
+jobs:
+  render-task:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [build, lint, typecheck]
+    steps:
+      - run: npx nx ${{ matrix.task }} twenty-front-component-renderer
+  render-test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx nx build twenty-sdk
+      - run: npx nx storybook:test twenty-front-component-renderer
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-renderer-union
+tasks:
+  build:sdk:
+    run: npx nx build twenty-sdk
+  build:renderer:
+    run: npx nx build twenty-front-component-renderer
+  lint:renderer:
+    run: npx nx lint twenty-front-component-renderer
+  typecheck:renderer:
+    run: npx nx typecheck twenty-front-component-renderer
+  test:renderer:
+    run: npx nx storybook:test twenty-front-component-renderer
+  verify:renderer:
+    aggregate:
+      tasks:
+        - build:sdk
+        - build:renderer
+        - lint:renderer
+        - typecheck:renderer
+        - test:renderer
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once verifier aggregate truth is covered by the union of eligible workflow candidates: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_bounded_shell_smoke_sequence_as_verifier_task() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-emails.yml"),
+            r#"
+name: emails
+jobs:
+  emails-test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx nx build twenty-emails
+      - run: |
+          # Start the email server in the background
+          npx nx run twenty-emails:start &
+          SERVER_PID=$!
+
+          # Wait for server to start
+          sleep 20
+
+          # Check if server is running
+          if ! curl -s http://localhost:4001/preview/test.email > /dev/null; then
+            echo "Email server failed to start"
+            kill $SERVER_PID
+            exit 1
+          fi
+
+          # Kill the server
+          kill $SERVER_PID
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-emails
+tasks:
+  build:emails:
+    run: npx nx build twenty-emails
+  test:emails:
+    script: |
+      # Start the email server in the background
+      npx nx run twenty-emails:start &
+      server_pid=$!
+
+      # Wait for server to start
+      sleep 20
+
+      # Check if server is running
+      if ! curl -s http://localhost:4001/preview/test.email > /dev/null; then
+        echo "Email server failed to start"
+        kill $server_pid
+        exit 1
+      fi
+
+      # Kill the server
+      kill $server_pid
+  verify:emails:
+    aggregate:
+      tasks:
+        - build:emails
+        - test:emails
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once bounded shell smoke verification sequences recover declared verifier tasks: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_actual_renderer_workflow_verifier_union() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-front-component-renderer.yml"),
+            r#"
+name: CI Front Component Renderer
+jobs:
+  renderer-task:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [build, typecheck, lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/yarn-install
+      - name: Run ${{ matrix.task }}
+        run: npx nx ${{ matrix.task }} twenty-front-component-renderer
+  renderer-sb-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/yarn-install
+      - name: Build storybook
+        run: npx nx storybook:build twenty-front-component-renderer
+  renderer-sb-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/yarn-install
+      - name: Build dependencies
+        run: npx nx build twenty-sdk
+      - name: Serve storybook & run tests
+        run: |
+          npx http-server packages/twenty-front-component-renderer/storybook-static --port 6008 --silent &
+          timeout 30 bash -c 'until curl -sf http://localhost:6008 > /dev/null 2>&1; do sleep 1; done'
+          npx nx storybook:test twenty-front-component-renderer
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-renderer-actual
+tasks:
+  build:sdk:
+    run: npx nx build twenty-sdk
+  build:renderer:
+    run: npx nx build twenty-front-component-renderer
+  lint:renderer:
+    run: npx nx lint twenty-front-component-renderer
+  typecheck:renderer:
+    run: npx nx typecheck twenty-front-component-renderer
+  test:renderer:
+    run: npx nx storybook:test twenty-front-component-renderer
+  verify:renderer:
+    aggregate:
+      tasks:
+        - build:sdk
+        - build:renderer
+        - lint:renderer
+        - typecheck:renderer
+        - test:renderer
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once the actual renderer workflow shape recovers the full verifier union: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_actual_renderer_workflow_verifier_union_for_command_tasks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci-front-component-renderer.yml"),
+            r#"
+name: CI Front Component Renderer
+jobs:
+  renderer-task:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [build, typecheck, lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/yarn-install
+      - name: Run ${{ matrix.task }}
+        run: npx nx ${{ matrix.task }} twenty-front-component-renderer
+  renderer-sb-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/yarn-install
+      - name: Build dependencies
+        run: npx nx build twenty-sdk
+      - name: Serve storybook & run tests
+        run: |
+          npx http-server packages/twenty-front-component-renderer/storybook-static --port 6008 --silent &
+          timeout 30 bash -c 'until curl -sf http://localhost:6008 > /dev/null 2>&1; do sleep 1; done'
+          npx nx storybook:test twenty-front-component-renderer
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-renderer-command
+tasks:
+  build:sdk:
+    command:
+      exe: npx
+      args: [nx, build, twenty-sdk]
+  build:renderer:
+    command:
+      exe: npx
+      args: [nx, build, twenty-front-component-renderer]
+  lint:renderer:
+    command:
+      exe: npx
+      args: [nx, lint, twenty-front-component-renderer]
+  typecheck:renderer:
+    command:
+      exe: npx
+      args: [nx, typecheck, twenty-front-component-renderer]
+  test:renderer:
+    command:
+      exe: npx
+      args: [nx, storybook:test, twenty-front-component-renderer]
+  verify:renderer:
+    aggregate:
+      tasks:
+        - build:sdk
+        - build:renderer
+        - lint:renderer
+        - typecheck:renderer
+        - test:renderer
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once the actual renderer workflow shape recovers the full verifier union for command tasks: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_recovers_twenty_renderer_workflow_shape_verbatim() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/changed-files.yaml"),
+            r#"
+name: changed-files
+on:
+  workflow_call:
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo changed
+"#,
+        )
+        .expect("write reusable workflow");
+        fs::write(
+            dir.path().join(".github/workflows/ci-front-component-renderer.yaml"),
+            r#"
+name: CI Front Component Renderer
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  changed-files-check:
+    if: github.event_name != 'merge_group'
+    uses: ./.github/workflows/changed-files.yaml
+    with:
+      files: |
+        package.json
+        yarn.lock
+        packages/twenty-front-component-renderer/**
+        packages/twenty-sdk/**
+        packages/twenty-shared/**
+        !packages/twenty-sdk/package.json
+  renderer-task:
+    needs: changed-files-check
+    if: needs.changed-files-check.outputs.any_changed == 'true'
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        task: [build, typecheck, lint]
+    steps:
+      - name: Fetch custom Github Actions and base branch history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+      - name: Install dependencies
+        uses: ./.github/actions/yarn-install
+      - name: Run ${{ matrix.task }}
+        run: npx nx ${{ matrix.task }} twenty-front-component-renderer
+  renderer-sb-build:
+    needs: changed-files-check
+    if: needs.changed-files-check.outputs.any_changed == 'true'
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch custom Github Actions and base branch history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+      - name: Install dependencies
+        uses: ./.github/actions/yarn-install
+      - name: Build storybook
+        run: npx nx storybook:build twenty-front-component-renderer
+  renderer-sb-test:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    needs: renderer-sb-build
+    env:
+      STORYBOOK_URL: http://localhost:6008
+    steps:
+      - name: Fetch custom Github Actions and base branch history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+      - name: Install dependencies
+        uses: ./.github/actions/yarn-install
+      - name: Build dependencies
+        run: npx nx build twenty-sdk
+      - name: Download storybook build
+        uses: actions/download-artifact@v4
+        with:
+          name: storybook-twenty-front-component-renderer
+          path: packages/twenty-front-component-renderer/storybook-static
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: v4-playwright-browsers-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      - name: Install Playwright
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          cd packages/twenty-front-component-renderer
+          npx playwright install chromium
+      - name: Serve storybook & run tests
+        run: |
+          npx http-server packages/twenty-front-component-renderer/storybook-static --port 6008 --silent &
+          timeout 30 bash -c 'until curl -sf http://localhost:6008 > /dev/null 2>&1; do sleep 1; done'
+          npx nx storybook:test twenty-front-component-renderer
+"#,
+        )
+        .expect("write workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: twenty-renderer-verbatim
+tasks:
+  build:sdk:
+    command:
+      exe: npx
+      args: [nx, build, twenty-sdk]
+  build:renderer:
+    command:
+      exe: npx
+      args: [nx, build, twenty-front-component-renderer]
+  lint:renderer:
+    command:
+      exe: npx
+      args: [nx, lint, twenty-front-component-renderer]
+  typecheck:renderer:
+    command:
+      exe: npx
+      args: [nx, typecheck, twenty-front-component-renderer]
+  test:renderer:
+    command:
+      exe: npx
+      args: [nx, storybook:test, twenty-front-component-renderer]
+  verify:renderer:
+    aggregate:
+      tasks:
+        - build:sdk
+        - build:renderer
+        - lint:renderer
+        - typecheck:renderer
+        - test:renderer
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.is_empty(),
+            "expected no CI drift once the verbatim twenty renderer workflow shape recovers the full verifier union: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+    }
+
+    #[test]
     fn doctor_ignores_ci_test_commands_after_workflow_cwd_mutation() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");

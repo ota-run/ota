@@ -1392,28 +1392,63 @@ fn collect_github_actions_verification_tasks_from_workflow(
     Ok(())
 }
 
-fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
+pub(crate) fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
     if ci_workflow_run_changes_to_external_cwd(run) {
         return Vec::new();
     }
 
-    let mut commands = Vec::new();
-    for raw_line in run.lines() {
-        let line = raw_line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.contains("&&")
-            || line.contains("||")
-            || line.contains(';')
-            || line.contains("${{")
-        {
-            continue;
-        }
+    run.lines().filter_map(ci_bounded_shell_command_line).collect()
+}
 
-        commands.push(line.to_string());
+pub(crate) fn ci_bounded_shell_command_line(raw_line: &str) -> Option<String> {
+    let mut line = raw_line.trim();
+    if line.is_empty()
+        || line.starts_with('#')
+        || line.contains("${{")
+        || line.contains("&&")
+        || line.contains("||")
+    {
+        return None;
     }
 
-    commands
+    if let Some(stripped) = line
+        .strip_prefix("if ! ")
+        .or_else(|| line.strip_prefix("if "))
+        .and_then(|candidate| candidate.strip_suffix("; then"))
+    {
+        line = stripped.trim();
+    }
+
+    line = line.trim_end_matches('&').trim_end();
+
+    if line.is_empty()
+        || matches!(line, "then" | "fi" | "do" | "done" | "else")
+        || line.starts_with("trap ")
+        || line.starts_with("exit ")
+        || line.starts_with("echo ")
+        || line.starts_with("kill ")
+    {
+        return None;
+    }
+
+    if !line.contains(' ')
+        && line
+            .split_once('=')
+            .is_some_and(|(name, value)| !value.is_empty() && is_shell_identifier(name))
+    {
+        return None;
+    }
+
+    Some(line.to_string())
+}
+
+fn is_shell_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn ci_workflow_run_changes_to_external_cwd(run: &str) -> bool {
