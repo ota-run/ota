@@ -94,6 +94,11 @@ V11.1 is the slice for turning that from architectural truth into fast visible p
 - do not claim that safe task visibility alone makes a repo autonomous for agents
 - do not build a generic PR review dashboard
 - do not widen execution governance into hosted workflow approval product scope
+- do not implement new external source detection or source-precedence governance from V11.2
+- do not implement runner refusal, `--agent` execution enforcement, or safe-surface denial logic from
+  V11.3
+- do not introduce new contract authoring surfaces just to explain governance output; V11.1 is about
+  visibility and proof on top of existing contract truth
 
 ## Product outcomes
 
@@ -296,6 +301,30 @@ This keeps the work honest:
 - stage proof third
 - broader documentation and pressure proof last
 
+## Explicit out-of-scope gates
+
+V11.1 must not drift into later V11 lanes during implementation.
+
+Hard gates:
+
+- do not add new detection families, source ranking, source precedence, or source drift heuristics
+  that belong to V11.2
+- do not add runner refusal, new `--agent` enforcement semantics, or workflow/task denial behavior
+  that belongs to V11.3
+- do not add new org-policy pack rules, merge-gate identities, harness capability exports, or
+  sandbox compilation targets from later V11 slices
+- do not treat receipt as an execution phase; receipt remains evidence emitted after or about the
+  execution/proof path
+- do not widen human output by inventing a second safety taxonomy; reuse declared-safe,
+  effective-safe, closure blockers, stop/review, stage family, receipt, and proof language
+
+Implementation review should reject a V11.1 patch if it:
+
+- adds new contract schema solely for governance visibility
+- adds new source-ingestion logic unrelated to execution/proof visibility
+- adds runtime refusal semantics instead of visibility semantics
+- claims merge-gate or sandbox enforcement instead of pointing to the existing evidence surface
+
 ## Pressure-test bar
 
 V11.1 is not done until real repos prove that operators can see execution governance quickly.
@@ -310,6 +339,39 @@ Every pressure repo used for this slice should prove:
 - workflow dry-run and proof lanes where advertised
 - CI-usable machine-readable artifact retention for the executed path
 
+V11.1 pressure should use these concrete repo roles:
+
+- `create-chrome-extension`
+  - prove clean agent-safe routine lanes
+  - expected surfaces:
+    - `ota tasks --use`
+    - `ota tasks --safe --use`
+    - `ota run build --dry-run --json`
+    - real container-backed task execution plus archived receipt inspection
+- `backstage`
+  - prove declared-safe but closure-unsafe posture and workflow visibility
+  - expected surfaces:
+    - `ota tasks --use`
+    - `ota tasks --safe --use`
+    - `ota run config:check --dry-run --json`
+    - workflow `app` surface must publish safety posture, setup/run/proof path, and closure truth
+- `osf.io`
+  - prove heavier Docker/runtime proof and review-required external-state lanes
+  - expected surfaces:
+    - `ota tasks --use`
+    - `ota tasks --safe --use`
+    - `ota run app:up --dry-run --json`
+    - real workflow/runtime proof where advertised plus receipt retention for the executed path
+
+Required pressure outcomes per repo:
+
+- text output shows selected runnable lane, safety posture, and dry-run follow-up
+- JSON output shows selected task/workflow identity, stage-family actions, governance posture, and
+  receipt follow-up command
+- at least one executed path yields an archived receipt and a valid `ota receipt --json --archive`
+  follow-up
+- where workflows are declared, workflow surfaces show setup/run/proof routing and safety posture
+
 ## Acceptance bar
 
 - normal execution surfaces point operators clearly to the right receipt/proof artifact
@@ -318,3 +380,64 @@ Every pressure repo used for this slice should prove:
 - staged verification and proof phases are visible in execution-governance output
 - CI and agents can consume the governance story without stitching together unrelated heuristics
 - public docs and examples make execution governance concrete within the first few operator steps
+
+## Definition of done
+
+V11.1 is done only when all of the following are true.
+
+### Command-surface outcomes
+
+- `ota tasks --use`
+  - task entries publish:
+    - runnable use command
+    - command/prepare/launch preview as applicable
+    - declared safe and effective safe posture
+    - closure blockers when effective safety is false
+    - dry-run JSON follow-up
+  - workflow entries publish:
+    - `ota up --workflow ...`
+    - `ota proof runtime --workflow ...`
+    - setup/run/attach routing where declared
+    - declared safe and effective safe posture
+    - closure blockers when effective safety is false
+- `ota tasks --safe --use`
+  - only effective-safe task lanes are listed
+  - workflow summary, when shown alongside task output, must not contradict effective-safe task
+    truth
+- `ota run --dry-run --json`
+  - emits selected task/workflow identity
+  - emits governance posture including effective safe and closure blockers where applicable
+  - emits stage-family actions across prepare/setup/verify/proof where applicable
+  - emits receipt follow-up routing for the selected path
+- `ota doctor`
+  - must keep workflow/use/proof guidance legible
+  - must keep agent-safe posture and review-required signals aligned with the execution surfaces
+
+### JSON contract deltas
+
+The shipped JSON/operator contract for this slice must prove:
+
+- task dry-run JSON includes closure-aware governance posture
+- workflow summary JSON includes declared-safe versus effective-safe truth
+- machine-readable outputs keep receipt/proof follow-up commands explicit
+- staged actions are labeled by stage family instead of leaving operators to infer them from freeform logs
+
+### Required test evidence
+
+- targeted command-render tests for:
+  - workflow safety visibility
+  - closure-blocker visibility
+  - stage-family rendering
+  - receipt/proof follow-up routing
+- at least one real-repo proof for:
+  - clean agent-safe lane
+  - declared-safe but closure-unsafe lane
+  - heavier review-required workflow/runtime lane
+- regression coverage must fail if workflow summaries lose closure-aware safety posture while task
+  summaries keep it
+
+### Exit and evidence semantics
+
+- success-path visibility must not require reading raw logs to find receipt/proof follow-up
+- no new refusal/deny exit semantics are added in V11.1
+- receipt remains evidence, not an execution phase
