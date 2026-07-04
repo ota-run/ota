@@ -264,19 +264,38 @@ The contract-placement rule should stay explicit:
 V11.8 should define one explicit precedence model before implementation:
 
 1. policy-pack hard restrictions
-2. task/workflow-scoped runtime boundary truth
-3. repo-level runtime boundary truth
-4. derived defaults from existing contract fields such as `agent.writable_paths` and
+2. task-scoped runtime boundary truth
+3. workflow-scoped runtime boundary truth
+4. repo-level runtime boundary truth
+5. derived defaults from existing contract fields such as `agent.writable_paths` and
    `agent.protected_paths`
-5. effect metadata and posture signals only as advisory inputs where no stronger runtime boundary
+6. effect metadata and posture signals only as advisory inputs where no stronger runtime boundary
    truth exists
 
 That keeps:
 
 - hard deny stronger than local allow
+- task-owned executable truth stronger than workflow path restriction for the same concrete field
 - lane-specific runtime truth stronger than repo-wide defaults
 - derived defaults weaker than explicit runtime-boundary declarations
 - effect posture from masquerading as authoritative allowlist truth
+
+Same-lane merge semantics must also stay explicit:
+
+- when the effective executable lane carries both workflow-scoped and task-scoped runtime boundary
+  truth for the same boundary family, task-scoped truth is the narrower canonical owner
+- workflow-scoped runtime boundary truth may add surrounding operational restriction for the
+  selected path, but it must not silently contradict task-scoped truth for the same concrete
+  field
+- if both scopes declare incompatible values for the same concrete boundary field and the conflict
+  cannot be reduced to a monotonic narrowing, validation should fail instead of letting the
+  compiler guess
+
+That keeps:
+
+- the executable task as the owner of lane-local runtime truth
+- workflow boundaries useful for path-level restriction and composition
+- the compiler deterministic instead of heuristic when both scopes participate
 
 ## Proposed implementation slices
 
