@@ -1706,6 +1706,8 @@ Success:
           "review_required": false,
           "declared_safe_for_agent": true,
           "effective_safe_for_agent": true,
+          "crossing_required": false,
+          "crossing_classification": "routine",
           "receipt_expected": true,
           "proof_expected": true
         }
@@ -1900,8 +1902,10 @@ Success:
           "review_required": false,
           "declared_safe_for_agent": true,
           "effective_safe_for_agent": true,
+          "crossing_required": false,
+          "crossing_classification": "routine",
           "receipt_expected": true,
-          "proof_expected": false
+          "proof_expected": true
         }
       }
     ]
@@ -1961,6 +1965,14 @@ Notes:
 - workflow capability entries publish `preflight.proof_expected: true` because `ota up` is a
   proof-owning lane: the selected workflow is expected to drive readiness or runtime-proof
   evidence when executed
+- workflow capability and run-preview preflight entries can also publish thin audited-crossing
+  posture:
+  - `crossing_required: false` with `crossing_classification: "routine"` means the lane stays
+    inside the routine default-safe path
+  - `crossing_required: true` with `crossing_classification: "escalated"` means the lane is
+    allowed but crosses a heavier execution boundary such as an unsafe task closure
+  - `crossing_boundary_family` names the crossed boundary when ota can recover it honestly
+  - refused lanes do not publish crossing posture yet because no crossing is allowed
 - refused workflow entries may also carry additive `blocked_task` and `closure_path` when the
   selected workflow reaches a non-safe task in its prepare/setup/run/attach closure
 - each workflow entry includes additive fields only when declared or resolved:
@@ -2407,6 +2419,9 @@ selected safety posture from `requested_task`, effect declarations, and mode bra
         "review_required": true,
         "declared_safe_for_agent": false,
         "effective_safe_for_agent": false,
+        "crossing_required": true,
+        "crossing_classification": "escalated",
+        "crossing_boundary_family": "unsafe_task",
         "receipt_expected": true,
         "proof_expected": false
       },
@@ -3657,6 +3672,8 @@ Root monorepo summary output can also include grouped member findings under `mem
   "governance": {
     "preflight": {
       "state": "allowed",
+      "crossing_required": false,
+      "crossing_classification": "routine",
       "receipt_expected": true,
       "proof_expected": true
     },

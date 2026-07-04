@@ -807,6 +807,12 @@ pub struct GovernancePreflightEvaluation {
     pub unsafe_closure_tasks: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal_reason_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_boundary_family: Option<String>,
     pub receipt_expected: bool,
     pub proof_expected: bool,
 }

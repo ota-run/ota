@@ -13647,6 +13647,13 @@ fn harness_preflight_for_task(
     task: &TaskSummary<'_>,
     refusal: Option<&AgentExecutionRefusal>,
 ) -> crate::output::GovernancePreflightEvaluation {
+    let (crossing_required, crossing_classification, crossing_boundary_family) =
+        crossing_preflight_posture(
+            Some(task.effective_safe_for_agent),
+            refusal,
+            &task.unsafe_closure_tasks,
+            "task",
+        );
     crate::output::GovernancePreflightEvaluation {
         state: if refusal.is_some() {
             String::from("refused")
@@ -13658,8 +13665,38 @@ fn harness_preflight_for_task(
         effective_safe_for_agent: Some(task.effective_safe_for_agent),
         unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
         refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        crossing_required,
+        crossing_classification,
+        crossing_boundary_family,
         receipt_expected: true,
         proof_expected: false,
+    }
+}
+
+fn crossing_preflight_posture(
+    effective_safe_for_agent: Option<bool>,
+    refusal: Option<&AgentExecutionRefusal>,
+    unsafe_closure_tasks: &[String],
+    lane_kind: &str,
+) -> (Option<bool>, Option<String>, Option<String>) {
+    if refusal.is_some() {
+        return (None, None, None);
+    }
+    match effective_safe_for_agent {
+        Some(true) => (Some(false), Some(String::from("routine")), None),
+        Some(false) => {
+            let boundary_family = if lane_kind == "task" || !unsafe_closure_tasks.is_empty() {
+                String::from("unsafe_task")
+            } else {
+                String::from("heavier_workflow")
+            };
+            (
+                Some(true),
+                Some(String::from("escalated")),
+                Some(boundary_family),
+            )
+        }
+        None => (None, None, None),
     }
 }
 
@@ -13789,6 +13826,13 @@ fn harness_preflight_for_workflow(
     workflow: &WorkflowSummary<'_>,
     refusal: Option<&AgentExecutionRefusal>,
 ) -> crate::output::GovernancePreflightEvaluation {
+    let (crossing_required, crossing_classification, crossing_boundary_family) =
+        crossing_preflight_posture(
+            workflow.effective_safe_for_agent,
+            refusal,
+            &workflow.unsafe_closure_tasks,
+            "workflow",
+        );
     crate::output::GovernancePreflightEvaluation {
         state: if refusal.is_some() {
             String::from("refused")
@@ -13800,6 +13844,9 @@ fn harness_preflight_for_workflow(
         effective_safe_for_agent: workflow.effective_safe_for_agent,
         unsafe_closure_tasks: workflow.unsafe_closure_tasks.clone(),
         refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        crossing_required,
+        crossing_classification,
+        crossing_boundary_family,
         receipt_expected: true,
         proof_expected: up_lane_proof_expected(
             contract,
@@ -41530,6 +41577,13 @@ fn governance_evaluation_for_task_preview(
     agent: bool,
     refusal: Option<&AgentExecutionRefusal>,
 ) -> crate::output::GovernanceEvaluation {
+    let (crossing_required, crossing_classification, crossing_boundary_family) =
+        crossing_preflight_posture(
+            Some(task.effective_safe_for_agent),
+            refusal,
+            &task.unsafe_closure_tasks,
+            "task",
+        );
     crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(
@@ -41544,6 +41598,9 @@ fn governance_evaluation_for_task_preview(
             effective_safe_for_agent: Some(task.effective_safe_for_agent),
             unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
             refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            crossing_required,
+            crossing_classification,
+            crossing_boundary_family,
             receipt_expected: true,
             proof_expected: false,
         },
@@ -41600,6 +41657,13 @@ fn governance_evaluation_for_workflow_preview(
 ) -> crate::output::GovernanceEvaluation {
     let safety =
         selected_up_workflow_effective_safety(contract, workflow_name, run_behavior_preference);
+    let (crossing_required, crossing_classification, crossing_boundary_family) =
+        crossing_preflight_posture(
+            safety.effective_safe,
+            refusal,
+            &safety.unsafe_closure_tasks,
+            "workflow",
+        );
     crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
@@ -41609,6 +41673,9 @@ fn governance_evaluation_for_workflow_preview(
             effective_safe_for_agent: safety.effective_safe,
             unsafe_closure_tasks: safety.unsafe_closure_tasks,
             refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            crossing_required,
+            crossing_classification,
+            crossing_boundary_family,
             receipt_expected: true,
             proof_expected: up_lane_proof_expected(
                 contract,
@@ -41672,6 +41739,9 @@ fn governance_evaluation_for_up_result(
             effective_safe_for_agent: None,
             unsafe_closure_tasks: Vec::new(),
             refusal_reason_family: refusal_reason_family.clone(),
+            crossing_required: None,
+            crossing_classification: None,
+            crossing_boundary_family: None,
             receipt_expected: true,
             proof_expected,
         },
@@ -58605,6 +58675,18 @@ tasks:
             json["governance"]["evaluation"]["preflight"]["unsafe_closure_tasks"][0],
             "setup"
         );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["crossing_required"],
+            true
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["crossing_classification"],
+            "escalated"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["crossing_boundary_family"],
+            "unsafe_task"
+        );
     }
 
     #[test]
@@ -58822,6 +58904,14 @@ agent:
             true
         );
         assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["preflight"]["crossing_required"],
+            false
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["preflight"]["crossing_classification"],
+            "routine"
+        );
+        assert_eq!(
             json["capability_profile"]["refused_workflows"][0]["lane_id"],
             "workflow:publish"
         );
@@ -58832,6 +58922,10 @@ agent:
         assert_eq!(
             json["capability_profile"]["refused_workflows"][0]["blocked_task"],
             "publish"
+        );
+        assert!(
+            json["capability_profile"]["refused_workflows"][0]["preflight"]["crossing_required"]
+                .is_null()
         );
     }
 
@@ -64263,6 +64357,7 @@ tasks:
         );
         assert_eq!(value["governance"]["preflight"]["proof_expected"], true);
         assert_eq!(value["governance"]["post_execution"]["proof_present"], false);
+        assert!(value["governance"]["preflight"]["crossing_required"].is_null());
     }
 
     #[test]
@@ -64356,6 +64451,7 @@ tasks:
             "{next}"
         );
         assert_eq!(value["governance"]["preflight"]["proof_expected"], true);
+        assert!(value["governance"]["preflight"]["crossing_required"].is_null());
     }
 
     #[test]
@@ -64423,6 +64519,9 @@ tasks:
                         effective_safe_for_agent: None,
                         unsafe_closure_tasks: Vec::new(),
                         refusal_reason_family: None,
+                        crossing_required: None,
+                        crossing_classification: None,
+                        crossing_boundary_family: None,
                         receipt_expected: true,
                         proof_expected: true,
                     },
