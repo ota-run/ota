@@ -2261,7 +2261,24 @@ selected safety posture from `requested_task`, effect declarations, and mode bra
       }
     ],
     "network": false,
-    "receipt_follow_up_command": "ota receipt --json --archive"
+    "receipt_follow_up_command": "ota receipt --json --archive",
+    "evaluation": {
+      "preflight": {
+        "state": "warning_only",
+        "review_required": true,
+        "declared_safe_for_agent": false,
+        "effective_safe_for_agent": false,
+        "receipt_expected": true,
+        "proof_expected": false
+      },
+      "post_execution": {
+        "state": "not_run",
+        "execution_attempted": false,
+        "refusal_occurred": false,
+        "receipt_present": false,
+        "proof_present": false
+      }
+    }
   },
   "plan": {
     "dependency_chain": ["ci"],
@@ -2288,6 +2305,13 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance` is the compact CI/agent-friendly summary for the selected lane:
   `safety_posture`, `review_required`, closure-aware effective safety, effective `default_mode`,
   runnable mode commands, selected effect surface, and the next durable receipt command
+- `governance.evaluation` is the canonical phase-labeled machine surface for this lane:
+  `preflight.state` tells consumers whether the selected path is `allowed`, `warning_only`,
+  `blocked`, or `refused` before execution, while `post_execution.state` keeps execution evidence
+  separate as `not_run`, `refused`, or a satisfied evidence state after execution surfaces exist
+- `ota run <task> --dry-run --json --agent` now reflects the enforced runner boundary in
+  `governance.evaluation.preflight`: unsafe selected tasks or unsafe reachable closures publish
+  `state: "refused"` and return a blocked preview instead of looking runnable in JSON
 - `requested_task.safe_for_agent` is the declared contract safe membership, while
   `requested_task.effective_safe_for_agent` reflects whether the reachable dependency/workflow
   closure remains agent-safe
@@ -3481,7 +3505,8 @@ Root monorepo summary output can also include grouped member findings under `mem
 
 `ota up --json` has two failure classes:
 
-- execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, `findings`, `receipt`, optional `service`/`task`/`exit_code`)
+- execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, additive
+  `governance`, `findings`, `receipt`, optional `service`/`task`/`exit_code`)
 - contract load/validation failed before the `up` pipeline: returns `ValidateFailure` shape (`ok`, `path`, and either `errors` or `error`)
 
 ```json
@@ -3490,6 +3515,21 @@ Root monorepo summary output can also include grouped member findings under `mem
   "path": "/abs/path/to/ota.yaml",
   "status": "READY",
   "phase": "post-up diagnosis",
+  "governance": {
+    "preflight": {
+      "state": "allowed",
+      "receipt_expected": true,
+      "proof_expected": false
+    },
+    "post_execution": {
+      "state": "evidence_satisfied",
+      "execution_attempted": true,
+      "refusal_occurred": false,
+      "receipt_present": true,
+      "proof_present": false,
+      "receipt_status": "ready"
+    }
+  },
   "findings": [],
   "receipt": {
     "ok": true,
@@ -3540,6 +3580,9 @@ Root monorepo summary output can also include grouped member findings under `mem
 
 Optional fields:
 
+- `governance`: the canonical machine-readable governance verdict for the selected `up` path;
+  `preflight` keeps boundary/block/refusal semantics distinct from `post_execution`, which reports
+  what evidence actually exists after the attempted `up` lane
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
 - `receipt.dependency_steps`: additive executed dependency-plane provenance for task-backed phases,
   using the same `task` / `backend` / optional `context` / optional `parent_task` /

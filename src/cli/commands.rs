@@ -15185,6 +15185,7 @@ pub(crate) fn run_command_with_agent(
                     &resolved_path,
                     overrides,
                     members,
+                    agent,
                     format,
                     persist_logs,
                 )
@@ -15307,15 +15308,22 @@ fn run_preview_command(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     members: &[String],
+    agent: bool,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
     let path_display = resolved_path.display().to_string();
     if members.is_empty() {
         return match load_and_validate_target(resolved_path, None) {
-            Ok(target) => {
-                render_run_preview_target(task_name, overrides, None, target, format, persist_logs)
-            }
+            Ok(target) => render_run_preview_target(
+                task_name,
+                overrides,
+                None,
+                target,
+                agent,
+                format,
+                persist_logs,
+            ),
             Err(error) => render_run_preview_contract_problem(
                 resolved_path,
                 None,
@@ -15349,6 +15357,7 @@ fn run_preview_command(
             overrides,
             Some(member.as_str()),
             target,
+            agent,
             format,
             persist_logs,
         );
@@ -16192,6 +16201,7 @@ fn render_run_preview_target(
     overrides: ExecutionOverrides,
     member: Option<&str>,
     mut target: LoadedContractTarget,
+    agent: bool,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
@@ -16346,7 +16356,8 @@ fn render_run_preview_target(
             return match format {
                 OutputFormat::Text => CommandOutput::failure(text),
                 OutputFormat::Json => {
-                    let governance = run_preview_governance_summary(&requested_task);
+                    let governance =
+                        run_preview_governance_summary(&requested_task, &summary, agent, None);
                     let artifact_routing =
                         run_preview_artifact_routing(&target.contract_path, None);
                     CommandOutput {
@@ -16408,9 +16419,8 @@ fn render_run_preview_target(
         task_name.as_str(),
         overrides,
     );
-    let governance = run_preview_governance_summary(&requested_task);
     let artifact_routing = run_preview_artifact_routing(&target.contract_path, None);
-    let summary = run_preview_summary(
+    let mut summary = run_preview_summary(
         &target.contract,
         task_name.as_str(),
         member,
@@ -16418,6 +16428,21 @@ fn render_run_preview_target(
         &preconditions_report,
         overrides,
     );
+    let refusal = if agent {
+        agent_execution_refusal_for_task(&target.contract, task_name.as_str(), overrides)
+    } else {
+        None
+    };
+    if let Some(refusal) = refusal.as_ref() {
+        summary.verdict = DoctorVerdict::AgentBlocked;
+        summary.agent_verdict = DoctorVerdict::AgentBlocked;
+        summary.error_count = summary.error_count.max(1);
+        summary.primary_blocker =
+            primary_blocker_from_findings(std::slice::from_ref(&agent_execution_refusal_finding(
+                refusal,
+                &repo_run_command_with_overrides(task_name.as_str(), member, overrides, &[]),
+            )));
+    }
     let (requested_context, selected_context) = run_preview_context_selection(
         declared_execution.as_ref(),
         &execution_plan,
@@ -16461,12 +16486,12 @@ fn render_run_preview_target(
                 task: task_name.as_str(),
                 dry_run: true,
                 preview_status: doctor_preview_status_label(summary.verdict),
-                summary,
+                summary: summary.clone(),
                 contract_identity,
                 declared_execution,
                 resolved: execution_plan,
                 overrides: applied_overrides,
-                requested_task,
+                requested_task: requested_task.clone(),
                 requested_context,
                 selected_context,
                 env_summary: env_report.summary,
@@ -16482,7 +16507,12 @@ fn render_run_preview_target(
                     .provisioning
                     .as_ref()
                     .map(|value| &value.request),
-                governance,
+                governance: run_preview_governance_summary(
+                    &requested_task,
+                    &summary,
+                    agent,
+                    refusal.as_ref(),
+                ),
                 artifact_routing,
                 plan,
             }),
@@ -41050,6 +41080,9 @@ fn run_preview_runnable_modes(
 
 fn run_preview_governance_summary(
     task: &TaskSummary<'_>,
+    summary: &DoctorSummary,
+    agent: bool,
+    refusal: Option<&AgentExecutionRefusal>,
 ) -> crate::output::RunPreviewGovernanceSummary {
     crate::output::RunPreviewGovernanceSummary {
         safety_posture: if task.safe_for_agent && !task.effective_safe_for_agent {
@@ -41072,7 +41105,186 @@ fn run_preview_governance_summary(
         adapter_state: task.effects.adapter_state.clone(),
         external_state: task.effects.external_state.clone(),
         receipt_follow_up_command: String::from("ota receipt --json --archive"),
+        evaluation: governance_evaluation_for_task_preview(task, summary, agent, refusal),
     }
+}
+
+fn governance_evaluation_for_task_preview(
+    task: &TaskSummary<'_>,
+    summary: &DoctorSummary,
+    agent: bool,
+    refusal: Option<&AgentExecutionRefusal>,
+) -> crate::output::GovernanceEvaluation {
+    crate::output::GovernanceEvaluation {
+        preflight: crate::output::GovernancePreflightEvaluation {
+            state: governance_preflight_state(
+                summary,
+                Some(task.effective_safe_for_agent),
+                agent,
+                refusal,
+            )
+            .to_string(),
+            review_required: Some(!task.effective_safe_for_agent),
+            declared_safe_for_agent: Some(task.safe_for_agent),
+            effective_safe_for_agent: Some(task.effective_safe_for_agent),
+            unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
+            refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            receipt_expected: true,
+            proof_expected: false,
+        },
+        post_execution: crate::output::GovernancePostExecutionEvidence {
+            state: String::from("not_run"),
+            execution_attempted: false,
+            refusal_occurred: false,
+            refusal_reason_family: None,
+            receipt_present: false,
+            proof_present: false,
+            receipt_status: None,
+        },
+    }
+}
+
+fn selected_up_workflow_effective_safety(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    run_behavior_preference: UpRunBehaviorPreference,
+) -> WorkflowEffectiveSafety {
+    let phase_tasks =
+        selected_up_agent_task_names(contract, workflow_name, run_behavior_preference);
+    if phase_tasks.is_empty() {
+        return WorkflowEffectiveSafety {
+            declared_safe: None,
+            effective_safe: None,
+            unsafe_closure_tasks: Vec::new(),
+        };
+    }
+
+    let mut declared_safe = true;
+    let mut unsafe_closure_tasks = BTreeSet::new();
+    for task_name in phase_tasks {
+        let safety = task_effective_safety(contract, task_name.as_str());
+        declared_safe &= safety.declared_safe;
+        unsafe_closure_tasks.extend(safety.unsafe_closure_tasks);
+    }
+
+    WorkflowEffectiveSafety {
+        declared_safe: Some(declared_safe),
+        effective_safe: Some(declared_safe && unsafe_closure_tasks.is_empty()),
+        unsafe_closure_tasks: unsafe_closure_tasks.into_iter().collect(),
+    }
+}
+
+fn governance_evaluation_for_workflow_preview(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    run_behavior_preference: UpRunBehaviorPreference,
+    summary: &DoctorSummary,
+    agent: bool,
+    refusal: Option<&AgentExecutionRefusal>,
+) -> crate::output::GovernanceEvaluation {
+    let safety =
+        selected_up_workflow_effective_safety(contract, workflow_name, run_behavior_preference);
+    crate::output::GovernanceEvaluation {
+        preflight: crate::output::GovernancePreflightEvaluation {
+            state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
+                .to_string(),
+            review_required: safety.effective_safe.map(std::ops::Not::not),
+            declared_safe_for_agent: safety.declared_safe,
+            effective_safe_for_agent: safety.effective_safe,
+            unsafe_closure_tasks: safety.unsafe_closure_tasks,
+            refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            receipt_expected: true,
+            proof_expected: false,
+        },
+        post_execution: crate::output::GovernancePostExecutionEvidence {
+            state: String::from("not_run"),
+            execution_attempted: false,
+            refusal_occurred: false,
+            refusal_reason_family: None,
+            receipt_present: false,
+            proof_present: false,
+            receipt_status: None,
+        },
+    }
+}
+
+fn governance_evaluation_for_up_result(
+    ok: bool,
+    _status: &str,
+    phase: &str,
+    receipt: &ExecutionReceipt,
+) -> crate::output::GovernanceEvaluation {
+    let refusal_reason_family = receipt
+        .blocked
+        .iter()
+        .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
+        .map(str::to_string);
+    let execution_attempted = !matches!(phase, "preconditions" | "preview");
+    let preflight_state = if refusal_reason_family.is_some() {
+        "refused"
+    } else if matches!(
+        phase,
+        "preconditions" | "preview" | "provisioning" | "activation"
+    ) && !ok
+    {
+        "blocked"
+    } else if ok {
+        "allowed"
+    } else {
+        "warning_only"
+    };
+    let post_execution_state = if refusal_reason_family.is_some() {
+        "refused"
+    } else if execution_attempted {
+        "evidence_satisfied"
+    } else {
+        "not_run"
+    };
+
+    crate::output::GovernanceEvaluation {
+        preflight: crate::output::GovernancePreflightEvaluation {
+            state: preflight_state.to_string(),
+            review_required: None,
+            declared_safe_for_agent: None,
+            effective_safe_for_agent: None,
+            unsafe_closure_tasks: Vec::new(),
+            refusal_reason_family: refusal_reason_family.clone(),
+            receipt_expected: true,
+            proof_expected: false,
+        },
+        post_execution: crate::output::GovernancePostExecutionEvidence {
+            state: post_execution_state.to_string(),
+            execution_attempted,
+            refusal_occurred: refusal_reason_family.is_some(),
+            refusal_reason_family,
+            receipt_present: true,
+            proof_present: false,
+            receipt_status: receipt.status.clone(),
+        },
+    }
+}
+
+fn governance_preflight_state(
+    summary: &DoctorSummary,
+    effective_safe_for_agent: Option<bool>,
+    agent: bool,
+    refusal: Option<&AgentExecutionRefusal>,
+) -> &'static str {
+    if agent && refusal.is_some() {
+        return "refused";
+    }
+    if matches!(
+        summary.verdict,
+        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked
+    ) {
+        return "blocked";
+    }
+    if matches!(summary.verdict, DoctorVerdict::Risky)
+        || effective_safe_for_agent.is_some_and(std::ops::Not::not)
+    {
+        return "warning_only";
+    }
+    "allowed"
 }
 
 fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
@@ -48013,6 +48225,7 @@ fn render_up_result(
             &preview.contract_identity,
             &preview.execution,
             &preview.plan,
+            &preview.governance,
             &preview.blockers,
             result.ok,
             format,
@@ -48087,6 +48300,7 @@ fn render_up_preview_result(
     contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
+    governance: &crate::output::GovernanceEvaluation,
     blockers: &[Finding],
     ready: bool,
     format: OutputFormat,
@@ -48109,6 +48323,7 @@ fn render_up_preview_result(
                 contract_identity: contract_identity.clone(),
                 execution: execution.clone(),
                 plan: plan.clone(),
+                governance: governance.clone(),
                 blockers,
             }),
             stderr: None,
@@ -48130,6 +48345,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
             "plan": preview.plan,
+            "governance": preview.governance,
             "blockers": preview.blockers,
         })
     } else {
@@ -48157,6 +48373,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "status": result.status,
             "phase": result.phase,
             "cause": cause,
+            "governance": governance_evaluation_for_up_result(result.ok, result.status, result.phase, &receipt),
             "findings": result.report.findings,
             "receipt": receipt,
             "stderr": result.stderr,
@@ -48180,14 +48397,23 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
             "plan": preview.plan,
+            "governance": preview.governance,
             "blockers": preview.blockers,
         })
     } else {
+        let receipt = normalized_up_receipt(
+            Some(member),
+            result.status,
+            result.phase,
+            &result.report.findings,
+            (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
+            &result.receipt,
+        );
         let cause = primary_up_failure_cause(
             result.status,
             result.phase,
             &result.report.findings,
-            result.receipt.backend.as_deref(),
+            receipt.backend.as_deref(),
             (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
             result.service.as_deref(),
             result.task.as_deref(),
@@ -48199,7 +48425,9 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "status": result.status,
             "phase": result.phase,
             "cause": cause,
+            "governance": governance_evaluation_for_up_result(result.ok, result.status, result.phase, &receipt),
             "findings": result.report.findings,
+            "receipt": receipt,
             "stderr": result.stderr,
             "service": result.service,
             "task": result.task,
@@ -57165,6 +57393,20 @@ agent:
         assert_eq!(json["phase"], "preconditions");
         assert_eq!(json["receipt"]["status"], "blocked");
         assert_eq!(json["findings"][0]["code"], "OTA_AGENT_EXECUTION_REFUSED");
+        assert_eq!(json["governance"]["preflight"]["state"], "refused");
+        assert_eq!(
+            json["governance"]["preflight"]["refusal_reason_family"],
+            "requested_task_not_safe"
+        );
+        assert_eq!(json["governance"]["post_execution"]["state"], "refused");
+        assert_eq!(
+            json["governance"]["post_execution"]["execution_attempted"],
+            false
+        );
+        assert_eq!(
+            json["governance"]["post_execution"]["receipt_present"],
+            true
+        );
     }
 
     #[test]
@@ -57849,6 +58091,26 @@ tasks:
         assert_eq!(json["governance"]["network"], true);
         assert_eq!(json["governance"]["network_kind"], "integration_test");
         assert_eq!(json["governance"]["external_state"][0], "staging_api");
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["state"],
+            "blocked"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["review_required"],
+            true
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["receipt_expected"],
+            true
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["state"],
+            "not_run"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["execution_attempted"],
+            false
+        );
         assert_eq!(json["governance"]["runnable_modes"][0]["mode"], "container");
         assert_eq!(
             json["governance"]["runnable_modes"][0]["command"],
@@ -57912,6 +58174,72 @@ tasks:
         assert_eq!(json["requested_task"]["safe_for_agent"], true);
         assert_eq!(json["requested_task"]["effective_safe_for_agent"], false);
         assert_eq!(json["requested_task"]["unsafe_closure_tasks"][0], "setup");
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["state"],
+            "warning_only"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["unsafe_closure_tasks"][0],
+            "setup"
+        );
+    }
+
+    #[test]
+    fn run_dry_run_agent_json_marks_preflight_refusal_without_execution() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  publish:
+    run: echo publish
+agent:
+  safe_tasks: []
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["state"],
+            "refused"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["refusal_reason_family"],
+            "requested_task_not_safe"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["state"],
+            "not_run"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["refusal_occurred"],
+            false
+        );
     }
 
     #[test]
@@ -63422,6 +63750,27 @@ tasks:
                     staged_skipped: Vec::new(),
                     dependency_chain: Vec::new(),
                     dependency_steps: Vec::new(),
+                },
+                governance: crate::output::GovernanceEvaluation {
+                    preflight: crate::output::GovernancePreflightEvaluation {
+                        state: String::from("blocked"),
+                        review_required: None,
+                        declared_safe_for_agent: None,
+                        effective_safe_for_agent: None,
+                        unsafe_closure_tasks: Vec::new(),
+                        refusal_reason_family: None,
+                        receipt_expected: true,
+                        proof_expected: false,
+                    },
+                    post_execution: crate::output::GovernancePostExecutionEvidence {
+                        state: String::from("not_run"),
+                        execution_attempted: false,
+                        refusal_occurred: false,
+                        refusal_reason_family: None,
+                        receipt_present: false,
+                        proof_present: false,
+                        receipt_status: None,
+                    },
                 },
                 blockers: Vec::new(),
             }),
@@ -93484,6 +93833,7 @@ fn render_up_json(
             status,
             phase,
             cause,
+            governance: governance_evaluation_for_up_result(ready, status, phase, &receipt),
             findings: &report.findings,
             receipt,
             artifact_routing: up_artifact_routing(contract_path, None),
@@ -94818,6 +95168,7 @@ struct RepoUpPreview {
     contract_identity: ContractIdentity,
     execution: UpPreviewExecution,
     plan: UpPreviewPlan,
+    governance: crate::output::GovernanceEvaluation,
     blockers: Vec<Finding>,
 }
 
@@ -99034,7 +99385,7 @@ fn build_up_preview(
     }
 
     RepoUpPreview {
-        summary,
+        summary: summary.clone(),
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
@@ -99045,6 +99396,14 @@ fn build_up_preview(
             task: primary_task.map(String::from),
         },
         plan,
+        governance: governance_evaluation_for_workflow_preview(
+            contract,
+            workflow_name,
+            run_behavior_preference,
+            &summary,
+            false,
+            None,
+        ),
         blockers: preflight
             .findings
             .iter()

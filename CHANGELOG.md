@@ -113,6 +113,11 @@
   starts, returns ota-authored blocked receipts/results instead of treating the safe surface as
   review-only guidance, and is now recognized correctly on `ota run <task> --agent` instead of
   being misread as task input after the task selector
+- widened machine-readable execution governance again with a canonical phase-labeled
+  `governance.evaluation` block on `ota run --dry-run --json` plus additive `governance` on
+  `ota up --json`: external consumers can now read explicit preflight `allowed|warning_only|blocked|refused`
+  posture separately from post-execution evidence state, and `ota run --dry-run --json --agent`
+  now truthfully publishes runner refusal instead of looking runnable in preview JSON
 - widened `orchestrators` with first-class launcher ownership and direct `mode: subcommand`
   mediation so repos can declare truth like `nix run ...#devenv -- test` or `devenv up` without
   faking direct PATH ownership or misusing `task` / `exec`; validator, selected-path diagnosis,

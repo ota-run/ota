@@ -8281,7 +8281,7 @@ impl<'a> TaskExecution<'a> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct TaskVariantView<'a> {
     pub os: &'a str,
     pub kind: &'a str,

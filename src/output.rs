@@ -778,6 +778,42 @@ pub struct ArtifactRoute {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernancePreflightEvaluation {
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_safe_for_agent: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_safe_for_agent: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unsafe_closure_tasks: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal_reason_family: Option<String>,
+    pub receipt_expected: bool,
+    pub proof_expected: bool,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernancePostExecutionEvidence {
+    pub state: String,
+    pub execution_attempted: bool,
+    pub refusal_occurred: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal_reason_family: Option<String>,
+    pub receipt_present: bool,
+    pub proof_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_status: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernanceEvaluation {
+    pub preflight: GovernancePreflightEvaluation,
+    pub post_execution: GovernancePostExecutionEvidence,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct RunPreviewGovernanceSummary {
     pub safety_posture: String,
     pub review_required: bool,
@@ -801,6 +837,7 @@ pub struct RunPreviewGovernanceSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
     pub receipt_follow_up_command: String,
+    pub evaluation: GovernanceEvaluation,
 }
 
 #[derive(Debug, Serialize)]
@@ -2385,6 +2422,7 @@ pub struct UpStatus<'a> {
     pub phase: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cause: Option<&'a str>,
+    pub governance: GovernanceEvaluation,
     pub findings: &'a [Finding],
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2501,6 +2539,7 @@ pub struct UpPreviewStatus<'a> {
     pub contract_identity: ContractIdentity,
     pub execution: UpPreviewExecution,
     pub plan: UpPreviewPlan,
+    pub governance: GovernanceEvaluation,
     #[serde(skip_serializing_if = "<[Finding]>::is_empty")]
     pub blockers: &'a [Finding],
 }
@@ -3317,7 +3356,7 @@ impl<'a> AgentBootstrapOtaSourceSummary<'a> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct TaskSummary<'a> {
     pub name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3711,7 +3750,7 @@ pub fn summarize_task_aggregate(
     })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct TaskModeView<'a> {
     pub mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
