@@ -23889,6 +23889,25 @@ tasks:
                 }),
             "expected a CI workflow task governance drift warning"
         );
+        let finding = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .find(|finding| {
+                finding["summary"].as_str().unwrap_or_default()
+                    == "CI verification drift: `tasks.test.run` differs from enforced workflow lane"
+            })
+            .expect("ci verification finding");
+        assert_eq!(
+            finding["metadata"]["governance"]["merge_check_id"],
+            "ota.verify.test"
+        );
+        assert_eq!(finding["metadata"]["governance"]["lane_task"], "test");
+        assert_eq!(finding["metadata"]["governance"]["lane_kind"], "task");
+        assert_eq!(
+            finding["metadata"]["governance"]["provider_sources"][0],
+            ".github/workflows/"
+        );
     }
 
     #[test]
@@ -24300,6 +24319,28 @@ tasks:
                 }),
             "expected a CI workflow verification removal drift warning"
         );
+        let finding = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .find(|finding| {
+                finding["summary"].as_str().unwrap_or_default()
+                    == "CI verification drift: `tasks.test:coverage.run` is no longer detected from enforced workflow verification"
+            })
+            .expect("ci verification removal finding");
+        assert_eq!(
+            finding["metadata"]["governance"]["merge_check_id"],
+            "ota.verify.test-coverage"
+        );
+        assert_eq!(
+            finding["metadata"]["governance"]["lane_task"],
+            "test:coverage"
+        );
+        assert_eq!(finding["metadata"]["governance"]["lane_kind"], "task");
+        assert_eq!(
+            finding["metadata"]["governance"]["provider_sources"][0],
+            ".github/workflows/"
+        );
     }
 
     #[test]
@@ -24328,13 +24369,13 @@ project:
 tasks:
   lint:
     run: npm run lint
-  test:
-    run: npm test
+  test:coverage:
+    run: npm run test:coverage
   verify:
     aggregate:
       tasks:
         - lint
-        - test
+        - test:coverage
 "#,
         )
         .expect("write ota.yaml");
@@ -24355,9 +24396,32 @@ tasks:
                         && finding["why"]
                             .as_str()
                             .unwrap_or_default()
+                            .contains("`tasks.verify.aggregate.tasks` = `lint, test:coverage`")
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
                             .contains("currently detects verifier tasks `lint, test:unit`")
                 }),
             "expected a CI workflow aggregate verification drift warning"
+        );
+        let finding = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .find(|finding| {
+                finding["summary"].as_str().unwrap_or_default()
+                    == "CI verification drift: `tasks.verify.aggregate.tasks` differs from enforced workflow verification set"
+            })
+            .expect("aggregate ci verification finding");
+        assert_eq!(
+            finding["metadata"]["governance"]["merge_check_id"],
+            "ota.verify.verify"
+        );
+        assert_eq!(finding["metadata"]["governance"]["lane_task"], "verify");
+        assert_eq!(finding["metadata"]["governance"]["lane_kind"], "aggregate");
+        assert_eq!(
+            finding["metadata"]["governance"]["provider_sources"][0],
+            ".github/workflows/ci.yml"
         );
     }
 

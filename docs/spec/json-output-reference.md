@@ -2000,6 +2000,16 @@ Failure:
         "checked_at": "...",
         "command": "...",
         "path": "..."
+      },
+      "metadata": {
+        "governance": {
+          "merge_check_id": "ota.verify.test",
+          "lane_task": "test",
+          "lane_kind": "task",
+          "provider_sources": [
+            ".github/workflows/ci.yml#jobs.verify.steps[0].run"
+          ]
+        }
       }
     }
   ]
@@ -2012,6 +2022,11 @@ Finding objects always include stable identity fields:
 Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
 These keys are optional and backward-compatible.
+CI verification drift findings may also include additive `metadata.governance` with a canonical
+Ota-owned `merge_check_id`, the owning verifier `lane_task`, `lane_kind` (`task` or `aggregate`),
+and the currently recovered provider source locations. This is the first stable machine-readable
+merge-check identity layer for CI/merge consumers; workflow/job/check display names remain provider
+render targets, not canonical truth.
 When ota can trace the diagnosis source, finding objects may also include `provenance` and
 `provenance_key`. Current shipped provenance keys include `repo_contract`, `org_policy`, and
 `repo_signals`.

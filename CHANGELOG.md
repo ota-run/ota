@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened CI verification governance findings with additive machine-readable
+  `metadata.governance.merge_check_id` plus verifier lane metadata on `ota doctor --json`, so
+  CI/merge consumers can key off stable Ota-owned verification-lane identity instead of brittle
+  workflow/job/check display names while Ota continues to recover actual provider source paths
 - tightened `ota detect` package-script task inference so pure guidance-only scripts such as
   `echo "use 'yarn start' instead"` or `echo '... no longer supported'` no longer become
   runnable task truth; this closes a mixed-signal precedence gap where redirect-only

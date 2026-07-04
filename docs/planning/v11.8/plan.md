@@ -157,6 +157,15 @@ outbound destinations where the real risk lives at a narrower or second-hop boun
 - relay/fetcher hosts
 - payload-directed send hosts
 
+It also does not yet declare the downstream-destination truth strongly enough for the lanes where
+first-hop host policy is not the real boundary, such as:
+
+- webhook delivery targets
+- email recipient domains
+- SMS destination scope
+- downstream fetch/import targets behind a relay host
+- object-storage bucket or tenant targets behind shared storage hosts
+
 The contract-placement rule for this slice should stay strict:
 
 - do not add a broad new top-level `runtime_policy` block
@@ -336,6 +345,8 @@ Direction:
   - `multi_tenant_host`
   - `relay_host`
   - `send_host`
+- explicit destination-constrained outbound declarations for the lanes where the effective
+  destination is narrower than the first-hop host
 - narrow destination-constrained outbound exceptions where the effective destination is the real
   control surface rather than the first-hop host alone
 - existing effect posture stays advisory unless promoted by explicit runtime-boundary truth
@@ -371,6 +382,17 @@ The likely contract-owned examples are:
 - allowed SMS destination scope
 - allowed object-storage targets where first-hop shared host truth is too broad
 
+The destination-constrained declarations should be first-class contract truth, not just a note that
+one host class is special.
+
+The likely declaration shapes are:
+
+- downstream webhook or callback destination allowlists
+- recipient-domain allowlists
+- SMS destination allowlists or scoped destination groups
+- downstream host/path allowlists for relay-style fetchers
+- bucket/tenant/project target constraints for shared storage or multi-tenant service lanes
+
 This keeps three different control layers explicit:
 
 - network boundary
@@ -389,6 +411,25 @@ The likely declaration point should be:
   actually performs the call
 - no host allowlist embedded in provider config or effect metadata
 
+The ownership and distribution rule should stay explicit:
+
+- one canonical destination-policy declaration may live in a versioned shared source
+- each repo or service must pin and consume that shared truth locally
+- no central policy service should sit in the hot path for execution
+- stale, missing, or unpinned destination-policy truth should fail closed when the selected lane
+  requires destination constraints
+
+The intended reuse model should stay explicit:
+
+- repo-local declaration and enforcement is the default honest path for one-off or low-fanout
+  lanes
+- central declaration becomes valuable when the same destination truth is reused across multiple
+  repos or services and copy-paste drift becomes the real risk
+- even in that shared case, the decision still executes locally in the repo-owned send or relay
+  path
+- Ota should not assume a live central decision service or central proxy to make the crossing
+  authoritative
+
 Compilation rules should vary by class:
 
 - `single_purpose_host`
@@ -405,8 +446,49 @@ Compilation rules should vary by class:
 Destination-constrained outbound should compile as:
 
 - hard runtime policy where the runtime can really enforce the downstream destination boundary
-- explicit boundary requirement plus machine-readable advisory where the runtime cannot hard-enforce
-  the effective destination itself
+- explicit local app-path enforcement requirement where the runtime cannot express the effective
+  destination boundary directly but the repo-owned lane still can
+- machine-readable advisory only where neither the runtime nor the selected lane can enforce the
+  destination boundary directly
+
+The enforcement posture must be explicit in compiled output:
+
+- `authoritative_runtime_enforced`
+- `authoritative_app_enforced`
+- `advisory_only`
+
+The source posture for destination-constrained truth must also be explicit:
+
+- `repo_local_authoritative`
+- `shared_pinned_authoritative`
+- `advisory_only`
+
+That source posture answers a different question from the enforcement posture:
+
+- source posture says where the authoritative destination truth came from
+- enforcement posture says where that truth is actually enforced
+
+The mature destination-constrained model is therefore:
+
+- data may be local or centrally declared
+- the decision remains local
+- the selected lane fails closed on stale or unresolved pinned destination truth
+- no live central dependency is required for governed execution
+
+That posture should be published per destination-constrained lane so operators and harnesses can
+see whether Ota is compiling:
+
+- real runtime boundary policy
+- required local lane enforcement
+- or only a non-authoritative warning surface
+
+Explainability should also stay explicit:
+
+- host allowlist was authoritative or advisory
+- destination constraint was required or not required
+- destination constraint was runtime-enforced, app-enforced, or advisory-only
+- destination truth was repo-local authoritative or shared-pinned authoritative
+- shared destination-policy source was pinned, stale, or missing
 
 The important rule is:
 
@@ -465,6 +547,11 @@ Ota should publish:
 - which fields were authoritative
 - which fields stayed advisory
 - which outbound targets required stronger narrowing than first-hop host allowlisting alone
+- which destination-constrained lanes required pinned shared policy truth
+- whether shared destination policy was resolved locally, missing, or stale
+- whether a destination-constrained lane relied on runtime enforcement or local app-path
+  enforcement
+- whether destination truth was repo-local or shared-pinned at the time of compilation
 - why a lane was denied or widened
 
 This should stay machine-readable and aligned with the V11.4 governance model rather than
@@ -478,6 +565,11 @@ V11.8 is complete when:
 - the model covers callable surface, writable boundaries, and network posture coherently
 - the model distinguishes simple host allowlists from multi-tenant, relay, and send-style
   outbound destinations without inventing a second policy taxonomy
+- destination-constrained outbound lanes are first-class contract truth rather than implied host
+  annotations
+- the compiled output makes central-declaration / local-enforcement posture explicit for
+  destination-constrained lanes
+- the compiled output distinguishes destination-truth source posture from enforcement posture
 - at least one real sandbox/runtime target can consume that compiled policy
 - the compiled output makes authoritative versus advisory policy explicit
 - the provider-facing compilation is clearly derived from the canonical governance model instead

@@ -114,6 +114,56 @@ pub struct FindingIdentity {
     pub owner: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct FindingMetadataJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance: Option<FindingGovernanceMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct FindingGovernanceMetadata {
+    merge_check_id: String,
+    lane_task: String,
+    lane_kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    provider_sources: Vec<String>,
+}
+
+fn backticked_segments(text: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut remainder = text;
+    while let Some((_, tail)) = remainder.split_once('`') {
+        let Some((segment, rest)) = tail.split_once('`') else {
+            break;
+        };
+        segments.push(segment.to_string());
+        remainder = rest;
+    }
+    segments
+}
+
+fn merge_check_slug_from_lane_task(task_name: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for character in task_name.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+            last_dash = false;
+        } else if !slug.is_empty() && !last_dash {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        String::from("unknown")
+    } else {
+        slug
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DoctorMode {
@@ -3313,6 +3363,52 @@ impl FindingIdentity {
 }
 
 impl Finding {
+    fn governance_metadata(&self) -> Option<FindingGovernanceMetadata> {
+        let code = self.code();
+        if !matches!(
+            code,
+            "OTA_CI_VERIFICATION_DRIFT" | "OTA_CI_VERIFICATION_REMOVED"
+        ) {
+            return None;
+        }
+
+        let field = self
+            .summary
+            .strip_prefix("CI verification drift: `")?
+            .split_once('`')
+            .map(|(field, _)| field.to_string())?;
+        let lane_task = field
+            .strip_prefix("tasks.")
+            .and_then(|rest| rest.split_once('.'))
+            .map(|(task_name, _)| task_name.to_string())?;
+        let lane_kind = if field.ends_with(".aggregate.tasks") {
+            "aggregate"
+        } else {
+            "task"
+        };
+        let provider_sources = if self.why.contains("workflow verification in `")
+            || self.why.contains("workflow verification under `")
+        {
+            backticked_segments(&self.why)
+                .into_iter()
+                .nth(3)
+                .map(|value| vec![value])
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        Some(FindingGovernanceMetadata {
+            merge_check_id: format!(
+                "ota.verify.{}",
+                merge_check_slug_from_lane_task(lane_task.as_str())
+            ),
+            lane_task,
+            lane_kind: lane_kind.to_string(),
+            provider_sources,
+        })
+    }
+
     pub(crate) fn identified(
         code: &str,
         category: &str,
@@ -3818,12 +3914,14 @@ impl Serialize for Finding {
         let drift = self.drift_context();
         let toolchain_opportunity = self.toolchain_opportunity_context();
         let provenance = self.provenance_context();
+        let governance = self.governance_metadata();
         let mut state = serializer.serialize_struct(
             "Finding",
             8 + policy.map(|_| 5).unwrap_or_default()
                 + drift.map(|_| 2).unwrap_or_default()
                 + toolchain_opportunity.map(|_| 1).unwrap_or_default()
-                + provenance.map(|_| 2).unwrap_or_default(),
+                + provenance.map(|_| 2).unwrap_or_default()
+                + governance.as_ref().map(|_| 1).unwrap_or_default(),
         )?;
 
         state.serialize_field("code", self.code())?;
@@ -3875,6 +3973,15 @@ impl Serialize for Finding {
         if let Some(provenance) = provenance {
             state.serialize_field("provenance", provenance.provenance)?;
             state.serialize_field("provenance_key", provenance.provenance_key)?;
+        }
+
+        if let Some(governance) = governance {
+            state.serialize_field(
+                "metadata",
+                &FindingMetadataJson {
+                    governance: Some(governance),
+                },
+            )?;
         }
 
         state.end()
