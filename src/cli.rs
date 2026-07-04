@@ -23906,7 +23906,7 @@ tasks:
         assert_eq!(finding["metadata"]["governance"]["lane_kind"], "task");
         assert_eq!(
             finding["metadata"]["governance"]["provider_sources"][0],
-            ".github/workflows/"
+            ".github/workflows/ci.yml#jobs.verify.steps[0].run"
         );
     }
 
@@ -24376,6 +24376,12 @@ tasks:
       tasks:
         - lint
         - test:coverage
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
 "#,
         )
         .expect("write ota.yaml");
@@ -24426,7 +24432,7 @@ tasks:
     }
 
     #[test]
-    fn doctor_reports_aggregate_verification_order_drift_from_ci_workflow_verification_source() {
+    fn doctor_treats_aggregate_verification_member_order_as_equivalent_for_ci_lane_projection() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -24458,6 +24464,12 @@ tasks:
       tasks:
         - test
         - lint
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
 "#,
         )
         .expect("write ota.yaml");
@@ -24467,24 +24479,21 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
         assert!(
-            json["findings"]
-                .as_array()
-                .expect("findings array")
-                .iter()
-                .any(|finding| {
-                    finding["summary"].as_str().unwrap_or_default()
-                        == "CI verification drift: `tasks.verify.aggregate.tasks` differs from enforced workflow verification set"
-                        && finding["why"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .contains("`tasks.verify.aggregate.tasks` = `test, lint`")
-                        && finding["why"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .contains("currently detects verifier tasks `lint, test`")
-                }),
-            "expected a CI workflow aggregate verification order drift warning"
+            ci_drift_findings.is_empty(),
+            "expected no CI drift when the projected required aggregate lane matches the same verifier set in a different order: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }
 
@@ -26841,6 +26850,100 @@ workflows:
         assert!(
             ci_drift_findings.is_empty(),
             "expected no CI drift when the declared workflow is a local verification slice rather than a ci_validation mirror: {}",
+            serde_json::to_string_pretty(&ci_drift_findings).unwrap()
+        );
+        assert!(
+            json["governance"].is_null(),
+            "expected no required verification governance projection for a non-ci workflow intent: {}",
+            serde_json::to_string_pretty(&json).unwrap()
+        );
+    }
+
+    #[test]
+    fn doctor_projects_required_ci_verification_lanes_from_ci_verification_workflow() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            r#"
+name: CI
+on:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: yarn lint:docs
+"#,
+        )
+        .expect("write ci workflow");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: shop
+tasks:
+  lint:docs:
+    run: yarn lint:docs
+  config:check:
+    run: yarn backstage-cli config:check --lax
+  verify:
+    aggregate:
+      tasks:
+        - lint:docs
+        - config:check
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["governance"]["required_verification_lanes"][0]["merge_check_id"],
+            "ota.verify.verify"
+        );
+        assert_eq!(
+            json["governance"]["required_verification_lanes"][0]["lane_task"],
+            "verify"
+        );
+        assert_eq!(
+            json["governance"]["required_verification_lanes"][0]["lane_kind"],
+            "aggregate"
+        );
+        assert_eq!(
+            json["governance"]["required_verification_lanes"][0]["contract_sources"][0],
+            "workflows.verify.run.task"
+        );
+        let ci_drift_findings = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .filter(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("CI verification drift")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ci_drift_findings.iter().any(|finding| {
+                finding["metadata"]["governance"]["merge_check_id"] == "ota.verify.verify"
+                    && finding["summary"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("tasks.verify.aggregate.tasks")
+            }),
+            "expected CI drift to compare the projected required verification lane against workflow wiring: {}",
             serde_json::to_string_pretty(&ci_drift_findings).unwrap()
         );
     }

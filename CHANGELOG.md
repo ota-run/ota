@@ -30,6 +30,10 @@
   `metadata.governance.merge_check_id` plus verifier lane metadata on `ota doctor --json`, so
   CI/merge consumers can key off stable Ota-owned verification-lane identity instead of brittle
   workflow/job/check display names while Ota continues to recover actual provider source paths
+- added top-level `governance.required_verification_lanes` to `ota doctor --json`, projecting
+  merge-relevant verification lanes from `ci_verification` / legacy `ci_validation` workflows
+  before falling back to `agent.verify_after_changes`, so CI drift compares contract-owned required
+  lanes instead of broad task truth
 - tightened `ota detect` package-script task inference so pure guidance-only scripts such as
   `echo "use 'yarn start' instead"` or `echo '... no longer supported'` no longer become
   runnable task truth; this closes a mixed-signal precedence gap where redirect-only

@@ -42,6 +42,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::agent_boundary_docs::parse_agent_boundary_doc;
+use crate::contract_drift::merge_check_id_for_lane_task;
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
     container_engine_candidates_from_backend, matching_declared_execution_context_name,
@@ -140,28 +141,6 @@ fn backticked_segments(text: &str) -> Vec<String> {
         remainder = rest;
     }
     segments
-}
-
-fn merge_check_slug_from_lane_task(task_name: &str) -> String {
-    let mut slug = String::new();
-    let mut last_dash = false;
-    for character in task_name.chars().flat_map(char::to_lowercase) {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character);
-            last_dash = false;
-        } else if !slug.is_empty() && !last_dash {
-            slug.push('-');
-            last_dash = true;
-        }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-    if slug.is_empty() {
-        String::from("unknown")
-    } else {
-        slug
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -3399,10 +3378,7 @@ impl Finding {
         };
 
         Some(FindingGovernanceMetadata {
-            merge_check_id: format!(
-                "ota.verify.{}",
-                merge_check_slug_from_lane_task(lane_task.as_str())
-            ),
+            merge_check_id: merge_check_id_for_lane_task(lane_task.as_str()),
             lane_task,
             lane_kind: lane_kind.to_string(),
             provider_sources,

@@ -33,6 +33,7 @@ use crate::detector::{
 };
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
+use crate::output::{DoctorGovernanceSummary, DoctorRequiredVerificationLane};
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
     ToolchainProvider,
@@ -655,12 +656,62 @@ struct CiVerificationAggregateChange {
     kind: CiVerificationAggregateChangeKind,
 }
 
+#[derive(Debug, Clone)]
+struct ProjectedRequiredVerificationLane {
+    task_name: String,
+    lane_kind: String,
+    contract_sources: Vec<String>,
+}
+
+pub(crate) fn doctor_required_verification_governance(
+    contract: &Contract,
+) -> Option<DoctorGovernanceSummary> {
+    let required_verification_lanes = projected_required_verification_lanes(contract)
+        .into_iter()
+        .map(|lane| DoctorRequiredVerificationLane {
+            merge_check_id: merge_check_id_for_lane_task(&lane.task_name),
+            lane_task: lane.task_name,
+            lane_kind: lane.lane_kind,
+            contract_sources: lane.contract_sources,
+        })
+        .collect::<Vec<_>>();
+    (!required_verification_lanes.is_empty()).then_some(DoctorGovernanceSummary {
+        required_verification_lanes,
+    })
+}
+
+pub(crate) fn merge_check_id_for_lane_task(task_name: &str) -> String {
+    format!("ota.verify.{}", merge_check_slug_from_lane_task(task_name))
+}
+
+fn merge_check_slug_from_lane_task(task_name: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for character in task_name.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+            last_dash = false;
+        } else if !slug.is_empty() && !last_dash {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        String::from("unknown")
+    } else {
+        slug
+    }
+}
+
 fn collect_ci_verification_governance_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationGovernanceChange> {
-    let declared_ci_scope = declared_ci_validation_task_scope(existing);
-    if declared_ci_scope.as_ref().is_some_and(BTreeSet::is_empty) {
+    let lane_names = ci_verification_comparison_lanes(existing);
+    if lane_names.is_empty() {
         return Vec::new();
     }
     let recovered_signals = recover_ci_verification_task_signals(existing, signals);
@@ -698,12 +749,10 @@ fn collect_ci_verification_governance_changes(
         .collect::<Vec<_>>();
 
     let mut changes = Vec::new();
-    for (task_name, task) in &existing.tasks {
-        if let Some(scope) = declared_ci_scope.as_ref()
-            && !scope.contains(task_name)
-        {
+    for task_name in &lane_names {
+        let Some(task) = existing.tasks.get(task_name) else {
             continue;
-        }
+        };
         let Some(field) = task_command_truth_field(task_name, task) else {
             continue;
         };
@@ -759,8 +808,8 @@ fn collect_ci_verification_aggregate_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationAggregateChange> {
-    let declared_ci_scope = declared_ci_validation_task_scope(existing);
-    if declared_ci_scope.as_ref().is_some_and(BTreeSet::is_empty) {
+    let lane_names = ci_verification_comparison_lanes(existing);
+    if lane_names.is_empty() {
         return Vec::new();
     }
     let workflow_candidates = collect_ci_verification_workflow_task_sequences(existing, signals);
@@ -768,12 +817,10 @@ fn collect_ci_verification_aggregate_changes(
         return Vec::new();
     }
     let mut changes = Vec::new();
-    for (task_name, task) in &existing.tasks {
-        if let Some(scope) = declared_ci_scope.as_ref()
-            && !scope.contains(task_name)
-        {
+    for task_name in &lane_names {
+        let Some(task) = existing.tasks.get(task_name) else {
             continue;
-        }
+        };
         let Some(aggregate) = task.aggregate.as_ref() else {
             continue;
         };
@@ -831,47 +878,95 @@ fn collect_ci_verification_aggregate_changes(
     changes
 }
 
-fn declared_ci_validation_task_scope(existing: &Contract) -> Option<BTreeSet<String>> {
-    let workflows = existing.workflows.as_ref()?;
-    if workflows.items.is_empty() {
-        return None;
-    }
+fn projected_required_verification_lanes(existing: &Contract) -> Vec<ProjectedRequiredVerificationLane> {
+    let mut lanes = BTreeMap::<String, ProjectedRequiredVerificationLane>::new();
 
-    let mut scope = BTreeSet::new();
-    for workflow in workflows
-        .items
-        .values()
-        .filter(|workflow| workflow.intent.as_deref() == Some("ci_validation"))
-    {
-        for task_name in [
-            workflow.setup.as_ref().map(|task| task.task.as_str()),
-            workflow.run.as_ref().map(|task| task.task.as_str()),
-            workflow.attach.as_ref().map(|task| task.task.as_str()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            collect_task_aggregate_scope(existing, task_name, &mut scope);
+    if let Some(workflows) = existing.workflows.as_ref() {
+        for (workflow_name, workflow) in &workflows.items {
+            if !matches!(
+                workflow.intent.as_deref(),
+                Some("ci_verification") | Some("ci_validation")
+            ) {
+                continue;
+            }
+
+            let Some(run_task_name) = workflow.run.as_ref().map(|task| task.task.as_str()) else {
+                continue;
+            };
+            let Some(task) = existing.tasks.get(run_task_name) else {
+                continue;
+            };
+            if !is_verifier_task_name(run_task_name) {
+                continue;
+            }
+
+            let lane_kind = if task.aggregate.is_some() {
+                "aggregate"
+            } else {
+                "task"
+            };
+            let entry = lanes.entry(run_task_name.to_string()).or_insert_with(|| {
+                ProjectedRequiredVerificationLane {
+                    task_name: run_task_name.to_string(),
+                    lane_kind: lane_kind.to_string(),
+                    contract_sources: Vec::new(),
+                }
+            });
+            let source = format!("workflows.{workflow_name}.run.task");
+            if !entry.contract_sources.iter().any(|existing| existing == &source) {
+                entry.contract_sources.push(source);
+            }
         }
     }
 
-    Some(scope)
+    if lanes.is_empty()
+        && let Some(agent) = existing.agent.as_ref()
+    {
+        for task_name in &agent.verify_after_changes {
+            let Some(task) = existing.tasks.get(task_name) else {
+                continue;
+            };
+            if !is_verifier_task_name(task_name) {
+                continue;
+            }
+
+            let lane_kind = if task.aggregate.is_some() {
+                "aggregate"
+            } else {
+                "task"
+            };
+            let entry = lanes.entry(task_name.clone()).or_insert_with(|| {
+                ProjectedRequiredVerificationLane {
+                    task_name: task_name.clone(),
+                    lane_kind: lane_kind.to_string(),
+                    contract_sources: Vec::new(),
+                }
+            });
+            let source = String::from("agent.verify_after_changes");
+            if !entry.contract_sources.iter().any(|existing| existing == &source) {
+                entry.contract_sources.push(source);
+            }
+        }
+    }
+
+    lanes.into_values().collect()
 }
 
-fn collect_task_aggregate_scope(existing: &Contract, task_name: &str, scope: &mut BTreeSet<String>) {
-    if !scope.insert(task_name.to_string()) {
-        return;
+fn ci_verification_comparison_lanes(existing: &Contract) -> Vec<String> {
+    let projected = projected_required_verification_lanes(existing);
+    if !projected.is_empty() {
+        return projected
+            .into_iter()
+            .map(|lane| lane.task_name)
+            .collect::<Vec<_>>();
     }
 
-    let Some(task) = existing.tasks.get(task_name) else {
-        return;
-    };
-
-    if let Some(aggregate) = task.aggregate.as_ref() {
-        for member in &aggregate.tasks {
-            collect_task_aggregate_scope(existing, member, scope);
-        }
-    }
+    existing
+        .tasks
+        .keys()
+        .filter(|task_name| is_verifier_task_name(task_name))
+        .cloned()
+        .collect()
 }
 
 fn workflow_candidate_union_covers_verifier_aggregate(

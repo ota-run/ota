@@ -99,6 +99,8 @@ pub struct DoctorSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance: Option<DoctorGovernanceSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<&'a ProvisioningPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
@@ -111,6 +113,21 @@ pub struct DoctorSuccess<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub toolchains: Vec<ToolchainSelectionSummary>,
     pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorGovernanceSummary {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required_verification_lanes: Vec<DoctorRequiredVerificationLane>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorRequiredVerificationLane {
+    pub merge_check_id: String,
+    pub lane_task: String,
+    pub lane_kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contract_sources: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

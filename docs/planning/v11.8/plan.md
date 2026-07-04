@@ -461,7 +461,7 @@ The source posture for destination-constrained truth must also be explicit:
 
 - `repo_local_authoritative`
 - `shared_pinned_authoritative`
-- `advisory_only`
+- `non_authoritative`
 
 That source posture answers a different question from the enforcement posture:
 

@@ -52,6 +52,7 @@ use crate::adapter_inputs::bind_workflow_adapter_overlays;
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
+    doctor_required_verification_governance,
 };
 use crate::detector::{
     Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
@@ -20478,6 +20479,7 @@ pub fn doctor(
                                 workflow: None,
                                 agent: None,
                                 execution: None,
+                                governance: None,
                                 provisioning: report.provisioning.as_ref().map(|value| &value.plan),
                                 provisioning_request: report
                                     .provisioning
@@ -20934,6 +20936,9 @@ pub fn doctor(
                                             (!required_env_names.is_empty())
                                                 .then_some(&required_env_names),
                                         ),
+                                    governance: doctor_required_verification_governance(
+                                        &target.contract,
+                                    ),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -90682,6 +90687,7 @@ fn proof_runtime_doctor_artifact_json(
         workflow: workflow_summary,
         agent: agent_summary,
         execution: execution_summary,
+        governance: doctor_required_verification_governance(contract),
         provisioning: report.provisioning.as_ref().map(|value| &value.plan),
         provisioning_request: report.provisioning.as_ref().map(|value| &value.request),
         adapter_bootstrap: report.adapter_bootstrap.as_ref(),

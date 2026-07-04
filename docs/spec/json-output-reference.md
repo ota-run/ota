@@ -1935,6 +1935,16 @@ Failure:
       }
     }
   },
+  "governance": {
+    "required_verification_lanes": [
+      {
+        "merge_check_id": "ota.verify.verify",
+        "lane_task": "verify",
+        "lane_kind": "aggregate",
+        "contract_sources": ["workflows.verify.run.task"]
+      }
+    ]
+  },
   "provisioning": {
     "allowed": [
       {
@@ -2018,6 +2028,13 @@ Failure:
 
 Finding objects always include stable identity fields:
 `code`, `category`, `owner`, and `evidence`.
+
+`ota doctor --json` may also include additive top-level `governance.required_verification_lanes`
+when the contract already declares merge-relevant CI verification truth. Ota projects these lanes
+from `workflows.*` with `intent: ci_verification` or legacy `ci_validation`, and falls back to
+`agent.verify_after_changes` only when no explicit CI verification workflows are declared. Each
+projected lane carries the same canonical `merge_check_id` identity that CI verification drift
+findings use.
 
 Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
