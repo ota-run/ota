@@ -41861,15 +41861,7 @@ fn governance_evaluation_for_task_preview(
             receipt_expected: true,
             proof_expected: false,
         },
-        post_execution: crate::output::GovernancePostExecutionEvidence {
-            state: String::from("not_run"),
-            execution_attempted: false,
-            refusal_occurred: false,
-            refusal_reason_family: None,
-            receipt_present: false,
-            proof_present: false,
-            receipt_status: None,
-        },
+        post_execution: preview_post_execution_evidence(refusal, crossing_required),
         crossing: None,
     }
 }
@@ -41942,16 +41934,54 @@ fn governance_evaluation_for_workflow_preview(
                 run_behavior_preference,
             ),
         },
-        post_execution: crate::output::GovernancePostExecutionEvidence {
-            state: String::from("not_run"),
-            execution_attempted: false,
-            refusal_occurred: false,
-            refusal_reason_family: None,
-            receipt_present: false,
-            proof_present: false,
-            receipt_status: None,
-        },
+        post_execution: preview_post_execution_evidence(refusal, crossing_required),
         crossing: None,
+    }
+}
+
+fn preview_post_execution_evidence(
+    refusal: Option<&AgentExecutionRefusal>,
+    crossing_required: Option<bool>,
+) -> crate::output::GovernancePostExecutionEvidence {
+    crate::output::GovernancePostExecutionEvidence {
+        state: String::from("not_run"),
+        execution_attempted: false,
+        refusal_occurred: false,
+        refusal_reason_family: None,
+        not_run_reason: Some(if refusal.is_some() {
+            String::from("preflight_refusal")
+        } else {
+            String::from("preview_only")
+        }),
+        crossing_record_state: crossing_record_state(
+            crossing_required,
+            false,
+            refusal.is_some(),
+            false,
+        ),
+        receipt_present: false,
+        proof_present: false,
+        receipt_status: None,
+    }
+}
+
+fn crossing_record_state(
+    crossing_required: Option<bool>,
+    execution_attempted: bool,
+    refusal_occurred: bool,
+    crossing_attached: bool,
+) -> String {
+    if crossing_attached {
+        return String::from("attached");
+    }
+    if refusal_occurred {
+        return String::from("suppressed_by_refusal");
+    }
+    match crossing_required {
+        Some(true) if execution_attempted => String::from("missing_after_execution"),
+        Some(true) => String::from("deferred_until_execution"),
+        Some(false) => String::from("not_required"),
+        None => String::from("not_applicable"),
     }
 }
 
@@ -42004,6 +42034,7 @@ fn governance_evaluation_for_up_result(
             receipt_expected: true,
             proof_expected,
         });
+    let preflight_crossing_required = preflight.crossing_required;
 
     crate::output::GovernanceEvaluation {
         preflight,
@@ -42012,6 +42043,23 @@ fn governance_evaluation_for_up_result(
             execution_attempted,
             refusal_occurred: refusal_reason_family.is_some(),
             refusal_reason_family,
+            not_run_reason: if execution_attempted {
+                None
+            } else if preflight_state == "refused" {
+                Some(String::from("preflight_refusal"))
+            } else if preflight_state == "blocked" {
+                Some(String::from("preflight_blocked"))
+            } else if phase == "preview" {
+                Some(String::from("preview_only"))
+            } else {
+                None
+            },
+            crossing_record_state: crossing_record_state(
+                preflight_crossing_required,
+                execution_attempted,
+                preflight_state == "refused",
+                receipt.crossing.is_some(),
+            ),
             receipt_present: true,
             proof_present,
             receipt_status: receipt.status.clone(),
@@ -59047,6 +59095,14 @@ agent:
             json["governance"]["evaluation"]["post_execution"]["refusal_occurred"],
             false
         );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["not_run_reason"],
+            "preflight_refusal"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
+            "suppressed_by_refusal"
+        );
     }
 
     #[test]
@@ -64871,6 +64927,10 @@ tasks:
             value["governance"]["preflight"]["unsafe_closure_tasks"][0],
             "publish"
         );
+        assert_eq!(
+            value["governance"]["post_execution"]["crossing_record_state"],
+            "missing_after_execution"
+        );
     }
 
     #[test]
@@ -65021,6 +65081,10 @@ tasks:
             value["governance"]["crossing"]["classification"],
             "escalated"
         );
+        assert_eq!(
+            value["governance"]["post_execution"]["crossing_record_state"],
+            "attached"
+        );
     }
 
     #[test]
@@ -65099,6 +65163,8 @@ tasks:
                         execution_attempted: false,
                         refusal_occurred: false,
                         refusal_reason_family: None,
+                        not_run_reason: Some(String::from("preview_only")),
+                        crossing_record_state: String::from("not_applicable"),
                         receipt_present: false,
                         proof_present: false,
                         receipt_status: None,

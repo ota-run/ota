@@ -123,6 +123,11 @@ evidence, not caller-authored narration. The current shipped slice publishes:
 
 Current shipped receipts keep `requirement_source` honest as `derived`, because ota is not yet
 projecting contract-declared crossing requirements or grant/approval truth on this lane.
+The corresponding governance output now also keeps phase semantics explicit for non-run and
+crossing-evidence posture: post-execution governance can publish why execution did not run
+(`preview_only`, `preflight_refusal`, `preflight_blocked`) and whether a crossing record was
+`attached`, `deferred_until_execution`, `suppressed_by_refusal`, `missing_after_execution`,
+`not_required`, or `not_applicable`.
 When a receipt comes from a selected task-backed execution path, it can also include
 `dependency_steps`; each entry records the executed task step's selected backend, optional
 selected context, optional parent task, and `backend_selection_source` such as `override`,

@@ -32,6 +32,10 @@
   when the selected task or workflow crosses a derived heavier execution boundary; the current
   shipped slice keeps requirement source honest as `derived` and records runner-visible actor
   posture plus caller-supplied reason presence without pretending grant or approval semantics yet
+- tightened V11.7 phase semantics for agent-mode governance output: post-execution evidence now
+  publishes additive `not_run_reason` and `crossing_record_state`, so dry-run previews, preflight
+  refusals, and heavier lanes that have not executed yet no longer force consumers to infer why
+  nothing ran or why crossing evidence is absent
 - widened `ota doctor --json` with additive `governance.merge_gate`, publishing a first
   machine-readable merge-oriented governance verdict over projected required verification lanes and
   recovered CI drift metadata; the same surface now stays honest by distinguishing `projected`

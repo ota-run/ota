@@ -109,6 +109,21 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "staged_actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "stage_family"],
+            "properties": {
+              "action": { "type": "string" },
+              "stage_family": {
+                "type": "string",
+                "enum": ["prepare", "setup", "verify", "proof", "receipt"]
+              }
+            }
+          }
+        },
         "notes": {
           "type": "array",
           "items": { "type": "string" }
@@ -168,7 +183,62 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "receipt_follow_up_command": { "type": "string" }
+        "receipt_follow_up_command": { "type": "string" },
+        "evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["preflight", "post_execution"],
+          "properties": {
+            "preflight": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["state", "receipt_expected", "proof_expected"],
+              "properties": {
+                "state": {
+                  "enum": ["allowed", "refused", "blocked", "warning_only"]
+                },
+                "review_required": { "type": "boolean" },
+                "declared_safe_for_agent": { "type": "boolean" },
+                "effective_safe_for_agent": { "type": "boolean" },
+                "unsafe_closure_tasks": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "refusal_reason_family": { "type": "string" },
+                "crossing_required": { "type": "boolean" },
+                "crossing_classification": { "type": "string" },
+                "crossing_boundary_family": { "type": "string" },
+                "receipt_expected": { "type": "boolean" },
+                "proof_expected": { "type": "boolean" }
+              }
+            },
+            "post_execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "execution_attempted",
+                "refusal_occurred",
+                "crossing_record_state",
+                "receipt_present",
+                "proof_present"
+              ],
+              "properties": {
+                "state": {
+                  "enum": ["not_run", "refused", "evidence_satisfied", "evidence_missing"]
+                },
+                "execution_attempted": { "type": "boolean" },
+                "refusal_occurred": { "type": "boolean" },
+                "refusal_reason_family": { "type": "string" },
+                "not_run_reason": { "type": "string" },
+                "crossing_record_state": { "type": "string" },
+                "receipt_present": { "type": "boolean" },
+                "proof_present": { "type": "boolean" },
+                "receipt_status": { "type": "string" }
+              }
+            }
+          }
+        }
       }
     },
     "singleTarget": {

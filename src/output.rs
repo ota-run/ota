@@ -872,6 +872,9 @@ pub struct GovernancePostExecutionEvidence {
     pub refusal_occurred: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal_reason_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_run_reason: Option<String>,
+    pub crossing_record_state: String,
     pub receipt_present: bool,
     pub proof_present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
