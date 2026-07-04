@@ -13663,6 +13663,22 @@ fn harness_preflight_for_task(
     }
 }
 
+fn up_lane_proof_expected(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    _overrides: ExecutionOverrides,
+    _run_behavior_preference: UpRunBehaviorPreference,
+) -> bool {
+    contract.selected_workflow(workflow_name).is_some()
+}
+
+fn up_phase_proof_present(phase: &str) -> bool {
+    matches!(
+        phase,
+        "services" | "readiness" | "post-up diagnosis" | "cleanup"
+    )
+}
+
 fn task_harness_environment_boundary(task: &TaskSummary<'_>) -> Option<HarnessEnvironmentBoundary> {
     Some(HarnessEnvironmentBoundary {
         kind: String::from("task"),
@@ -13769,6 +13785,7 @@ fn workflow_effects_summary(
 }
 
 fn harness_preflight_for_workflow(
+    contract: &Contract,
     workflow: &WorkflowSummary<'_>,
     refusal: Option<&AgentExecutionRefusal>,
 ) -> crate::output::GovernancePreflightEvaluation {
@@ -13784,7 +13801,12 @@ fn harness_preflight_for_workflow(
         unsafe_closure_tasks: workflow.unsafe_closure_tasks.clone(),
         refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
         receipt_expected: true,
-        proof_expected: false,
+        proof_expected: up_lane_proof_expected(
+            contract,
+            Some(workflow.name),
+            ExecutionOverrides::default(),
+            UpRunBehaviorPreference::Auto,
+        ),
     }
 }
 
@@ -13801,7 +13823,7 @@ fn workflow_harness_capability(
         name: selector.clone(),
         command: format!("ota up --workflow {selector} --agent"),
         environment_boundary: workflow_harness_environment_boundary(contract, workflow),
-        preflight: harness_preflight_for_workflow(workflow, refusal.as_ref()),
+        preflight: harness_preflight_for_workflow(contract, workflow, refusal.as_ref()),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -41570,6 +41592,7 @@ fn selected_up_workflow_effective_safety(
 fn governance_evaluation_for_workflow_preview(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
     run_behavior_preference: UpRunBehaviorPreference,
     summary: &DoctorSummary,
     agent: bool,
@@ -41587,7 +41610,12 @@ fn governance_evaluation_for_workflow_preview(
             unsafe_closure_tasks: safety.unsafe_closure_tasks,
             refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
             receipt_expected: true,
-            proof_expected: false,
+            proof_expected: up_lane_proof_expected(
+                contract,
+                workflow_name,
+                overrides,
+                run_behavior_preference,
+            ),
         },
         post_execution: crate::output::GovernancePostExecutionEvidence {
             state: String::from("not_run"),
@@ -41633,6 +41661,8 @@ fn governance_evaluation_for_up_result(
     } else {
         "not_run"
     };
+    let proof_expected = true;
+    let proof_present = execution_attempted && up_phase_proof_present(phase);
 
     crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
@@ -41643,7 +41673,7 @@ fn governance_evaluation_for_up_result(
             unsafe_closure_tasks: Vec::new(),
             refusal_reason_family: refusal_reason_family.clone(),
             receipt_expected: true,
-            proof_expected: false,
+            proof_expected,
         },
         post_execution: crate::output::GovernancePostExecutionEvidence {
             state: post_execution_state.to_string(),
@@ -41651,7 +41681,7 @@ fn governance_evaluation_for_up_result(
             refusal_occurred: refusal_reason_family.is_some(),
             refusal_reason_family,
             receipt_present: true,
-            proof_present: false,
+            proof_present,
             receipt_status: receipt.status.clone(),
         },
     }
@@ -58788,6 +58818,10 @@ agent:
             "container"
         );
         assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["preflight"]["proof_expected"],
+            true
+        );
+        assert_eq!(
             json["capability_profile"]["refused_workflows"][0]["lane_id"],
             "workflow:publish"
         );
@@ -64227,6 +64261,8 @@ tasks:
             value.get("cause").and_then(|value| value.as_str()),
             Some("backend_startup")
         );
+        assert_eq!(value["governance"]["preflight"]["proof_expected"], true);
+        assert_eq!(value["governance"]["post_execution"]["proof_present"], false);
     }
 
     #[test]
@@ -64319,6 +64355,7 @@ tasks:
             ),
             "{next}"
         );
+        assert_eq!(value["governance"]["preflight"]["proof_expected"], true);
     }
 
     #[test]
@@ -64387,7 +64424,7 @@ tasks:
                         unsafe_closure_tasks: Vec::new(),
                         refusal_reason_family: None,
                         receipt_expected: true,
-                        proof_expected: false,
+                        proof_expected: true,
                     },
                     post_execution: crate::output::GovernancePostExecutionEvidence {
                         state: String::from("not_run"),
@@ -100027,6 +100064,7 @@ fn build_up_preview(
         governance: governance_evaluation_for_workflow_preview(
             contract,
             workflow_name,
+            overrides,
             run_behavior_preference,
             &summary,
             false,

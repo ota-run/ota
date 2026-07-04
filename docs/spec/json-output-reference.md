@@ -569,6 +569,13 @@ Success:
 }
 ```
 
+Notes:
+
+- `governance.preflight.proof_expected: true` on `ota up --json` means the selected workflow is a
+  proof-owning readiness lane, not just a receipt-only execution lane
+- `governance.post_execution.proof_present: true` means the `up` pipeline reached proof/readiness
+  evidence emission during execution
+
 Failure:
 
 ```json
@@ -1700,7 +1707,7 @@ Success:
           "declared_safe_for_agent": true,
           "effective_safe_for_agent": true,
           "receipt_expected": true,
-          "proof_expected": false
+          "proof_expected": true
         }
       }
     ],
@@ -1951,6 +1958,9 @@ Notes:
   exact workflow lane identity, canonical `ota up --workflow ... --agent` commands, workflow
   environment boundaries, and canonical preflight governance state without requiring a harness to
   scrape human output or guess workflow closure safety
+- workflow capability entries publish `preflight.proof_expected: true` because `ota up` is a
+  proof-owning lane: the selected workflow is expected to drive readiness or runtime-proof
+  evidence when executed
 - refused workflow entries may also carry additive `blocked_task` and `closure_path` when the
   selected workflow reaches a non-safe task in its prepare/setup/run/attach closure
 - each workflow entry includes additive fields only when declared or resolved:
@@ -3648,14 +3658,14 @@ Root monorepo summary output can also include grouped member findings under `mem
     "preflight": {
       "state": "allowed",
       "receipt_expected": true,
-      "proof_expected": false
+      "proof_expected": true
     },
     "post_execution": {
       "state": "evidence_satisfied",
       "execution_attempted": true,
       "refusal_occurred": false,
       "receipt_present": true,
-      "proof_present": false,
+      "proof_present": true,
       "receipt_status": "ready"
     }
   },
