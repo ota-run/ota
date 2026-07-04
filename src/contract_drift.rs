@@ -659,6 +659,10 @@ fn collect_ci_verification_governance_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationGovernanceChange> {
+    let declared_ci_scope = declared_ci_validation_task_scope(existing);
+    if declared_ci_scope.as_ref().is_some_and(BTreeSet::is_empty) {
+        return Vec::new();
+    }
     let recovered_signals = recover_ci_verification_task_signals(existing, signals);
     let ci_tasks = recovered_signals
         .iter()
@@ -695,6 +699,11 @@ fn collect_ci_verification_governance_changes(
 
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
+        if let Some(scope) = declared_ci_scope.as_ref()
+            && !scope.contains(task_name)
+        {
+            continue;
+        }
         let Some(field) = task_command_truth_field(task_name, task) else {
             continue;
         };
@@ -750,12 +759,21 @@ fn collect_ci_verification_aggregate_changes(
     existing: &Contract,
     signals: &[CiVerificationTaskSignal],
 ) -> Vec<CiVerificationAggregateChange> {
+    let declared_ci_scope = declared_ci_validation_task_scope(existing);
+    if declared_ci_scope.as_ref().is_some_and(BTreeSet::is_empty) {
+        return Vec::new();
+    }
     let workflow_candidates = collect_ci_verification_workflow_task_sequences(existing, signals);
     if workflow_candidates.is_empty() {
         return Vec::new();
     }
     let mut changes = Vec::new();
     for (task_name, task) in &existing.tasks {
+        if let Some(scope) = declared_ci_scope.as_ref()
+            && !scope.contains(task_name)
+        {
+            continue;
+        }
         let Some(aggregate) = task.aggregate.as_ref() else {
             continue;
         };
@@ -811,6 +829,49 @@ fn collect_ci_verification_aggregate_changes(
     }
 
     changes
+}
+
+fn declared_ci_validation_task_scope(existing: &Contract) -> Option<BTreeSet<String>> {
+    let workflows = existing.workflows.as_ref()?;
+    if workflows.items.is_empty() {
+        return None;
+    }
+
+    let mut scope = BTreeSet::new();
+    for workflow in workflows
+        .items
+        .values()
+        .filter(|workflow| workflow.intent.as_deref() == Some("ci_validation"))
+    {
+        for task_name in [
+            workflow.setup.as_ref().map(|task| task.task.as_str()),
+            workflow.run.as_ref().map(|task| task.task.as_str()),
+            workflow.attach.as_ref().map(|task| task.task.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            collect_task_aggregate_scope(existing, task_name, &mut scope);
+        }
+    }
+
+    Some(scope)
+}
+
+fn collect_task_aggregate_scope(existing: &Contract, task_name: &str, scope: &mut BTreeSet<String>) {
+    if !scope.insert(task_name.to_string()) {
+        return;
+    }
+
+    let Some(task) = existing.tasks.get(task_name) else {
+        return;
+    };
+
+    if let Some(aggregate) = task.aggregate.as_ref() {
+        for member in &aggregate.tasks {
+            collect_task_aggregate_scope(existing, member, scope);
+        }
+    }
 }
 
 fn workflow_candidate_union_covers_verifier_aggregate(

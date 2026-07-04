@@ -336,6 +336,8 @@ Direction:
   - `multi_tenant_host`
   - `relay_host`
   - `send_host`
+- narrow destination-constrained outbound exceptions where the effective destination is the real
+  control surface rather than the first-hop host alone
 - existing effect posture stays advisory unless promoted by explicit runtime-boundary truth
 
 The destination-shape classes should mean:
@@ -353,6 +355,21 @@ The destination-shape classes should mean:
 - `send_host`
   - the effective destination lives in payload-level recipients, callbacks, or webhook targets
   - the contract should require recipient/callback allowlist posture above raw host egress
+
+This destination-constrained outbound shape should stay narrow:
+
+- host allowlisting remains the default baseline
+- destination-constrained outbound is the exception model for lanes where first-hop host truth is
+  not the real boundary
+- the contract should not require destination-shape policy for ordinary single-purpose outbound
+  lanes where host/domain/service allowlisting is already sufficient
+
+The likely contract-owned examples are:
+
+- allowed webhook callback or delivery destinations
+- allowed email recipient domains
+- allowed SMS destination scope
+- allowed object-storage targets where first-hop shared host truth is too broad
 
 This keeps three different control layers explicit:
 
@@ -384,6 +401,17 @@ Compilation rules should vary by class:
 - `send_host`
   - compile first-hop host policy plus recipient/callback destination posture, even when the
     runtime cannot hard-enforce payload recipients directly
+
+Destination-constrained outbound should compile as:
+
+- hard runtime policy where the runtime can really enforce the downstream destination boundary
+- explicit boundary requirement plus machine-readable advisory where the runtime cannot hard-enforce
+  the effective destination itself
+
+The important rule is:
+
+- do not replace host allowlisting with destination-constrained outbound
+- layer destination-constrained outbound on top only where the selected lane truthfully needs it
 
 ### 3. Filesystem policy shape
 

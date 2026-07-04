@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- tightened `ota detect` package-script task inference so pure guidance-only scripts such as
+  `echo "use 'yarn start' instead"` or `echo '... no longer supported'` no longer become
+  runnable task truth; this closes a mixed-signal precedence gap where redirect-only
+  `package.json` scripts could incorrectly outrank the repo's actual documented runnable surface
+- tightened CI verification drift scoping so repos that already declare workflows only get CI
+  verification governance on tasks reachable from workflows with `intent: ci_validation`; local
+  contributor verification slices no longer get falsely treated as CI mirrors just because their
+  task names contain verifier-shaped labels such as `verify`
 - fixed script-body tool inference so leading shell comments no longer get treated as required tools;
   multi-line `script:` tasks now skip comment-prefixed lines before inferring presence-only
   command requirements for doctor and dry-run surfaces

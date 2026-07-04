@@ -896,7 +896,13 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
             .clone()
             .unwrap_or_else(|| "npm".to_string());
 
-        for (name, _) in scripts {
+        for (name, script) in scripts {
+            let Some(script_body) = script.as_str() else {
+                continue;
+            };
+            if package_script_is_non_runnable_guidance(script_body) {
+                continue;
+            }
             if let Some(run) = task_command(&package_manager, name) {
                 builder.set_task(
                     name.to_string(),
@@ -5654,6 +5660,40 @@ fn task_command(package_manager: &str, script_name: &str) -> Option<String> {
     }
 }
 
+fn package_script_is_non_runnable_guidance(script: &str) -> bool {
+    let trimmed = script.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if !is_single_shell_echo_like_command(trimmed, &lower) {
+        return false;
+    }
+
+    lower.contains("use ")
+        || lower.contains(" instead")
+        || lower.contains("do not use")
+        || lower.contains("unsupported")
+        || lower.contains("no longer supported")
+}
+
+fn is_single_shell_echo_like_command(original: &str, lower: &str) -> bool {
+    if original.contains('\n')
+        || original.contains("&&")
+        || original.contains("||")
+        || original.contains(';')
+        || original.contains('|')
+    {
+        return false;
+    }
+
+    lower.starts_with("echo ")
+        || lower.starts_with("printf ")
+        || lower.starts_with("/bin/echo ")
+        || lower.starts_with("/usr/bin/echo ")
+}
+
 fn read_file(path: &Path) -> Result<String, DetectError> {
     fs::read_to_string(path).map_err(|source| DetectError::Read {
         path: path.display().to_string(),
@@ -10147,6 +10187,46 @@ name = "ota-api"
                 .map(|task| task.run.as_str()),
             Some("pnpm dev")
         );
+    }
+
+    #[test]
+    fn ignores_package_scripts_that_only_redirect_to_other_commands() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "backstage-like",
+  "packageManager": "yarn@4.8.1",
+  "scripts": {
+    "dev": "echo \"use 'yarn start' instead\"",
+    "start": "backstage-cli repo start",
+    "plugins:build-bundled": "echo 'bundled plugins are no longer supported'"
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.source == "package.json#scripts.dev"),
+            "redirect-only package scripts should not become runnable task truth"
+        );
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.source == "package.json#scripts.plugins:build-bundled"),
+            "unsupported placeholder scripts should not become runnable task truth"
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.start.run"
+                && inference.source == "package.json#scripts.start"
+                && inference.value == "yarn start"
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
