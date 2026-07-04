@@ -213,7 +213,11 @@ The crossing record is:
 - linked to one exact task or workflow lane
 - linked to one boundary family and classification
 - linked to the actor/principal mode that triggered it
+- linked to the authorizer identity or authorizer-attribution state where a reusable grant or
+  approval binding exists
 - linked to a grant or approval binding where applicable
+- linked to the runner attestation context that actually enforced and emitted the crossing
+  evidence
 
 This record is the durable anchor for later reason, receipt, proof, and enterprise approval
 evidence.
@@ -285,6 +289,8 @@ Minimum record fields:
 - crossing requirement source
 - actor mode
 - principal attribution state
+- authorizer attribution state, where applicable
+- runner attestation state
 - grant or approval binding reference, where applicable
 - grant liveness state at crossing time
 - grant scope-evaluation result at crossing time
@@ -322,6 +328,8 @@ The mature rule is:
 - cheap routine crossing comes from reusing a live in-scope grant
 - loud crossing is triggered when the grant is missing, revoked, expired, or out of scope
 - no previous crossing record can be replayed as authority for a new crossing
+- grant age alone is not enough; stale standing authority should be cut off by bounded work-unit
+  lifetime first, with calendar TTL only as fallback
 
 ### 3b. Grant scope dimensions
 
@@ -388,13 +396,22 @@ Direction:
   - `ci`
   - `harness`
 - triggering principal attribution where available from the execution path
+- explicit authorizer attribution where a reusable grant or approval binding exists
+- explicit runner attestation posture for the execution context that enforced and emitted the
+  crossing evidence
 - explicit distinction between:
   - caller-supplied identity or label
   - runner-known execution mode / principal kind
+  - authorizer identity or authorizer-attribution state
+  - runner identity or runner-attestation state
 
 The important part is:
 
 - receipts and governance output can answer who or what crossed the boundary
+- receipts and governance output can distinguish:
+  - the acting principal
+  - the human or policy authorizer who granted the reusable authority, where applicable
+  - the runner context that actually enforced and attested the crossing
 - OSS does not overclaim identity it cannot verify locally
 - enterprise can later layer stronger organizational identity, retention, and approvals on top
 
@@ -416,6 +433,8 @@ V11.7 should extend the V11.4 governance model with additive fields for:
 - crossing lane id
 - crossing actor mode
 - crossing principal attribution state
+- crossing authorizer attribution state
+- crossing runner attestation state
 - crossing grant binding state
 - crossing grant liveness state
 - crossing grant scope state
@@ -450,6 +469,8 @@ That means:
 - crossing evidence is linked from both surfaces where relevant
 - receipt-linked crossing evidence carries actor/principal attribution and reason state alongside
   boundary family and classification
+- receipt-linked crossing evidence also carries authorizer attribution and runner-attestation
+  posture so later review can separate actor, grant authority, and execution context honestly
 - receipt-linked crossing evidence also carries grant binding, liveness, and scope-evaluation
   posture where applicable
 - runtime proof and receipt evidence attach to the crossing record instead of floating as separate
@@ -488,6 +509,8 @@ V11.7 is complete when:
 - grant identity is modeled around actor + action + resource rather than loose approval prose
 - environment remains a hard grant boundary rather than a wildcardable scope field
 - work-unit expiry is the default grant lifetime where Ota can model it honestly
+- crossing evidence distinguishes the acting principal, the authorizer, and the runner attestation
+  context instead of smearing them into one identity field
 - Ota can answer whether a crossing was required from contract-owned or contract-derived truth
 - Ota can distinguish routine execution from allowed audited boundary crossings
 - crossing classification is runner-derived governance truth, not merely caller prose
