@@ -573,6 +573,10 @@ Notes:
 
 - `governance.preflight.proof_expected: true` on `ota up --json` means the selected workflow is a
   proof-owning readiness lane, not just a receipt-only execution lane
+- when the executed `up` result still carries resolved preflight governance from the selected
+  workflow lane, `governance.preflight` preserves the same crossing posture fields used by preview
+  and harness export, including `crossing_required`, `crossing_classification`, and
+  `crossing_boundary_family` when ota can recover them honestly
 - `governance.post_execution.proof_present: true` means the `up` pipeline reached proof/readiness
   evidence emission during execution
 

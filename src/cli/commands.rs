@@ -41697,6 +41697,7 @@ fn governance_evaluation_for_workflow_preview(
 }
 
 fn governance_evaluation_for_up_result(
+    preflight: Option<&crate::output::GovernancePreflightEvaluation>,
     ok: bool,
     _status: &str,
     phase: &str,
@@ -41731,8 +41732,7 @@ fn governance_evaluation_for_up_result(
     let proof_expected = true;
     let proof_present = execution_attempted && up_phase_proof_present(phase);
 
-    crate::output::GovernanceEvaluation {
-        preflight: crate::output::GovernancePreflightEvaluation {
+    let preflight = preflight.cloned().unwrap_or(crate::output::GovernancePreflightEvaluation {
             state: preflight_state.to_string(),
             review_required: None,
             declared_safe_for_agent: None,
@@ -41744,7 +41744,10 @@ fn governance_evaluation_for_up_result(
             crossing_boundary_family: None,
             receipt_expected: true,
             proof_expected,
-        },
+        });
+
+    crate::output::GovernanceEvaluation {
+        preflight,
         post_execution: crate::output::GovernancePostExecutionEvidence {
             state: post_execution_state.to_string(),
             execution_attempted,
@@ -41755,6 +41758,31 @@ fn governance_evaluation_for_up_result(
             receipt_status: receipt.status.clone(),
         },
     }
+}
+
+fn up_result_preflight_evaluation(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+    report: &DoctorReport,
+    agent: bool,
+    refusal: Option<&AgentExecutionRefusal>,
+) -> crate::output::GovernancePreflightEvaluation {
+    let summary = doctor_summary(
+        report,
+        crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+    );
+    governance_evaluation_for_workflow_preview(
+        contract,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+        &summary,
+        agent,
+        refusal,
+    )
+    .preflight
 }
 
 fn governance_preflight_state(
@@ -48866,7 +48894,13 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "status": result.status,
             "phase": result.phase,
             "cause": cause,
-            "governance": governance_evaluation_for_up_result(result.ok, result.status, result.phase, &receipt),
+            "governance": governance_evaluation_for_up_result(
+                result.governance_preflight.as_ref(),
+                result.ok,
+                result.status,
+                result.phase,
+                &receipt
+            ),
             "findings": result.report.findings,
             "receipt": receipt,
             "stderr": result.stderr,
@@ -48918,7 +48952,13 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "status": result.status,
             "phase": result.phase,
             "cause": cause,
-            "governance": governance_evaluation_for_up_result(result.ok, result.status, result.phase, &receipt),
+            "governance": governance_evaluation_for_up_result(
+                result.governance_preflight.as_ref(),
+                result.ok,
+                result.status,
+                result.phase,
+                &receipt
+            ),
             "findings": result.report.findings,
             "receipt": receipt,
             "stderr": result.stderr,
@@ -63675,6 +63715,7 @@ tasks:
                 findings: Vec::new(),
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -63758,6 +63799,7 @@ tasks:
                 findings: Vec::new(),
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -63887,6 +63929,7 @@ tasks:
                 ],
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -64129,6 +64172,7 @@ tasks:
                 }],
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -64242,6 +64286,7 @@ tasks:
                 ],
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -64337,6 +64382,7 @@ tasks:
                 findings: Vec::new(),
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -64421,6 +64467,7 @@ tasks:
                 findings: Vec::new(),
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -64452,6 +64499,108 @@ tasks:
         );
         assert_eq!(value["governance"]["preflight"]["proof_expected"], true);
         assert!(value["governance"]["preflight"]["crossing_required"].is_null());
+    }
+
+    #[test]
+    fn up_json_preserves_resolved_preflight_crossing_posture() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
+            assumption_set_hash: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("node:24-bookworm")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-deadbeef")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            host_service_cleanup: Vec::new(),
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            dependency_steps: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "provisioning",
+                "PROVISION FAILED",
+                None,
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "PROVISION FAILED",
+            phase: "provisioning",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: None,
+            governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
+                state: String::from("warning_only"),
+                review_required: Some(true),
+                declared_safe_for_agent: Some(true),
+                effective_safe_for_agent: Some(false),
+                unsafe_closure_tasks: vec![String::from("publish")],
+                refusal_reason_family: None,
+                crossing_required: Some(true),
+                crossing_classification: Some(String::from("escalated")),
+                crossing_boundary_family: Some(String::from("unsafe_task")),
+                receipt_expected: true,
+                proof_expected: true,
+            }),
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("verify")),
+            task_command: Some(String::from("cargo test")),
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+
+        let value = super::up_result_json_value("./ota.yaml", &result);
+
+        assert_eq!(value["governance"]["preflight"]["state"], "warning_only");
+        assert_eq!(value["governance"]["preflight"]["crossing_required"], true);
+        assert_eq!(
+            value["governance"]["preflight"]["crossing_classification"],
+            "escalated"
+        );
+        assert_eq!(
+            value["governance"]["preflight"]["crossing_boundary_family"],
+            "unsafe_task"
+        );
+        assert_eq!(
+            value["governance"]["preflight"]["unsafe_closure_tasks"][0],
+            "publish"
+        );
     }
 
     #[test]
@@ -64537,6 +64686,7 @@ tasks:
                 },
                 blockers: Vec::new(),
             }),
+            governance_preflight: None,
             receipt: ExecutionReceipt {
                 ok: false,
                 path: String::from("./ota.yaml"),
@@ -72270,6 +72420,7 @@ agent:
                 findings: Vec::new(),
             },
             preview: None,
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -82787,6 +82938,8 @@ tasks:
             Path::new("ota.yaml"),
             None,
             ExecutionOverrides::default(),
+            super::UpRunBehaviorPreference::Auto,
+            false,
             "setup",
             None,
             String::new(),
@@ -82852,6 +83005,8 @@ tasks:
             Path::new("ota.yaml"),
             None,
             ExecutionOverrides::default(),
+            super::UpRunBehaviorPreference::Auto,
+            false,
             "setup",
             None,
             String::new(),
@@ -94597,7 +94752,7 @@ fn render_up_json(
             status,
             phase,
             cause,
-            governance: governance_evaluation_for_up_result(ready, status, phase, &receipt),
+            governance: governance_evaluation_for_up_result(None, ready, status, phase, &receipt),
             findings: &report.findings,
             receipt,
             artifact_routing: up_artifact_routing(contract_path, None),
@@ -95916,6 +96071,7 @@ struct RepoUpResult {
     phase: &'static str,
     report: DoctorReport,
     preview: Option<RepoUpPreview>,
+    governance_preflight: Option<crate::output::GovernancePreflightEvaluation>,
     receipt: ExecutionReceipt,
     service: Option<String>,
     service_command: Option<String>,
@@ -101816,6 +101972,7 @@ fn run_up_required_services_phase(
                         status: "SERVICE START FAILED",
                         phase,
                         preview: None,
+                        governance_preflight: None,
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
@@ -101856,6 +102013,7 @@ fn run_up_required_services_phase(
                 status: "NOT READY",
                 phase,
                 preview: None,
+                governance_preflight: None,
                 receipt: repo_execution_receipt(
                     resolved_path,
                     contract,
@@ -102458,6 +102616,17 @@ fn execute_repo_up_with_behavior_with_agent(
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let run_behavior =
         resolve_up_run_behavior(contract, workflow_name, overrides, run_behavior_preference);
+    let derive_preflight = |report: &DoctorReport, refusal: Option<&AgentExecutionRefusal>| {
+        up_result_preflight_evaluation(
+            contract,
+            workflow_name,
+            overrides,
+            run_behavior_preference,
+            report,
+            agent,
+            refusal,
+        )
+    };
     let task_execution_overrides = up_task_execution_overrides(
         contract,
         resolved_path,
@@ -102507,6 +102676,7 @@ fn execute_repo_up_with_behavior_with_agent(
                 phase: "preconditions",
                 report,
                 preview: Some(preview),
+                governance_preflight: None,
                 receipt,
                 service: None,
                 service_command: None,
@@ -102523,6 +102693,7 @@ fn execute_repo_up_with_behavior_with_agent(
             status: "BLOCKED",
             phase: "preconditions",
             preview: None,
+            governance_preflight: Some(derive_preflight(&report, None)),
             receipt: repo_execution_receipt_with_overrides(
                 resolved_path,
                 contract,
@@ -102588,6 +102759,7 @@ fn execute_repo_up_with_behavior_with_agent(
             phase: "preview",
             report: preflight,
             preview: Some(preview),
+            governance_preflight: None,
             receipt,
             service: None,
             service_command: None,
@@ -102605,6 +102777,7 @@ fn execute_repo_up_with_behavior_with_agent(
             status: "BLOCKED",
             phase: "preconditions",
             preview: None,
+            governance_preflight: Some(derive_preflight(&preflight, None)),
             receipt: repo_execution_receipt(
                 resolved_path,
                 contract,
@@ -102649,6 +102822,7 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "NOT READY",
                     phase: "preconditions",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(&preflight, None)),
                     receipt: repo_execution_receipt(
                         resolved_path,
                         contract,
@@ -102746,6 +102920,7 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "PROVISION FAILED",
                     phase: "provisioning",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(&report, None)),
                     receipt: repo_execution_receipt(
                         resolved_path,
                         contract,
@@ -102788,6 +102963,7 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "PROVISION FAILED",
                     phase: "provisioning",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(&preflight, None)),
                     receipt: repo_execution_receipt(
                         resolved_path,
                         contract,
@@ -102871,6 +103047,7 @@ fn execute_repo_up_with_behavior_with_agent(
                                     status: "PROVISION FAILED",
                                     phase: "provisioning",
                                     preview: None,
+                                    governance_preflight: Some(derive_preflight(&report, None)),
                                     receipt: repo_execution_receipt(
                                         resolved_path,
                                         contract,
@@ -102971,6 +103148,7 @@ fn execute_repo_up_with_behavior_with_agent(
                                 status: "PROVISION FAILED",
                                 phase: "provisioning",
                                 preview: None,
+                                governance_preflight: Some(derive_preflight(&report, None)),
                                 receipt: repo_execution_receipt(
                                     resolved_path,
                                     contract,
@@ -103013,6 +103191,7 @@ fn execute_repo_up_with_behavior_with_agent(
                                 status: "PROVISION FAILED",
                                 phase: "provisioning",
                                 preview: None,
+                                governance_preflight: Some(derive_preflight(&preflight, None)),
                                 receipt: repo_execution_receipt(
                                     resolved_path,
                                     contract,
@@ -103126,6 +103305,7 @@ fn execute_repo_up_with_behavior_with_agent(
                         status: "ACTIVATION FAILED",
                         phase: "activation",
                         preview: None,
+                        governance_preflight: Some(derive_preflight(&report, None)),
                         receipt: repo_execution_receipt_with_overrides(
                             resolved_path,
                             contract,
@@ -103182,6 +103362,7 @@ fn execute_repo_up_with_behavior_with_agent(
             status: "NOT READY",
             phase: "preconditions",
             preview: None,
+            governance_preflight: Some(derive_preflight(&preflight, None)),
             receipt: repo_execution_receipt(
                 resolved_path,
                 contract,
@@ -103231,6 +103412,7 @@ fn execute_repo_up_with_behavior_with_agent(
             status: "NOT READY",
             phase: "preconditions",
             preview: None,
+            governance_preflight: Some(derive_preflight(&preflight, None)),
             receipt: repo_execution_receipt(
                 resolved_path,
                 contract,
@@ -103311,6 +103493,16 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "PREPARE FAILED",
                     phase: "prepare",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(
+                        &DoctorReport {
+                            ok: false,
+                            provisioning: None,
+                            adapter_bootstrap: None,
+                            execution_target: None,
+                            findings: Vec::new(),
+                        },
+                        None,
+                    )),
                     receipt: repo_execution_receipt_with_overrides(
                         resolved_path,
                         contract,
@@ -103378,6 +103570,7 @@ fn execute_repo_up_with_behavior_with_agent(
                         status: "BLOCKED",
                         phase: "preconditions",
                         preview: None,
+                        governance_preflight: Some(derive_preflight(&preflight, None)),
                         receipt: repo_execution_receipt_with_overrides(
                             resolved_path,
                             contract,
@@ -103431,6 +103624,16 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "PREPARE FAILED",
                     phase: "prepare",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(
+                        &DoctorReport {
+                            ok: false,
+                            provisioning: None,
+                            adapter_bootstrap: None,
+                            execution_target: None,
+                            findings: Vec::new(),
+                        },
+                        None,
+                    )),
                     receipt: repo_execution_receipt(
                         resolved_path,
                         contract,
@@ -103497,6 +103700,7 @@ fn execute_repo_up_with_behavior_with_agent(
                         status: "BLOCKED",
                         phase: "preconditions",
                         preview: None,
+                        governance_preflight: Some(derive_preflight(&preflight, None)),
                         receipt: repo_execution_receipt_with_overrides(
                             resolved_path,
                             contract,
@@ -103556,6 +103760,8 @@ fn execute_repo_up_with_behavior_with_agent(
         &mut stdout,
         &mut stderr,
     )? {
+        let mut result = result;
+        result.governance_preflight = Some(derive_preflight(&preflight, None));
         return Ok(result);
     }
 
@@ -103587,6 +103793,16 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "SETUP FAILED",
                     phase: "setup",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(
+                        &DoctorReport {
+                            ok: false,
+                            provisioning: None,
+                            adapter_bootstrap: None,
+                            execution_target: None,
+                            findings: Vec::new(),
+                        },
+                        None,
+                    )),
                     receipt: repo_execution_receipt_with_overrides(
                         resolved_path,
                         contract,
@@ -103650,6 +103866,7 @@ fn execute_repo_up_with_behavior_with_agent(
                             status: "BLOCKED",
                             phase: "provisioning",
                             preview: None,
+                            governance_preflight: Some(derive_preflight(&refreshed, None)),
                             receipt: repo_execution_receipt_with_overrides(
                                 resolved_path,
                                 contract,
@@ -103691,6 +103908,8 @@ fn execute_repo_up_with_behavior_with_agent(
                     resolved_path,
                     workflow_name,
                     task_execution_overrides,
+                    run_behavior_preference,
+                    agent,
                     setup_task_name,
                     setup_task_command.clone(),
                     stdout.clone(),
@@ -103716,6 +103935,8 @@ fn execute_repo_up_with_behavior_with_agent(
         &mut stdout,
         &mut stderr,
     )? {
+        let mut result = result;
+        result.governance_preflight = Some(derive_preflight(&preflight, None));
         return Ok(result);
     }
 
@@ -103811,6 +104032,16 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "RUN FAILED",
                     phase: "run",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(
+                        &DoctorReport {
+                            ok: false,
+                            provisioning: None,
+                            adapter_bootstrap: None,
+                            execution_target: None,
+                            findings: Vec::new(),
+                        },
+                        None,
+                    )),
                     receipt,
                     report: DoctorReport {
                         ok: false,
@@ -103841,6 +104072,8 @@ fn execute_repo_up_with_behavior_with_agent(
                     resolved_path,
                     workflow_name,
                     task_execution_overrides,
+                    run_behavior_preference,
+                    agent,
                     run_task_name,
                     run_task_command.clone(),
                     stdout.clone(),
@@ -103884,6 +104117,7 @@ fn execute_repo_up_with_behavior_with_agent(
             status: "NOT READY",
             phase: "services",
             preview: None,
+            governance_preflight: Some(derive_preflight(&service_report, None)),
             receipt,
             report: service_report,
             service: None,
@@ -103969,6 +104203,7 @@ fn execute_repo_up_with_behavior_with_agent(
                     status: "ATTACH FAILED",
                     phase: "attach",
                     preview: None,
+                    governance_preflight: Some(derive_preflight(&report, None)),
                     receipt,
                     report,
                     service: None,
@@ -103986,6 +104221,8 @@ fn execute_repo_up_with_behavior_with_agent(
                     resolved_path,
                     workflow_name,
                     overrides,
+                    run_behavior_preference,
+                    agent,
                     attach_task_name,
                     attach_task_command.clone(),
                     stdout.clone(),
@@ -104040,6 +104277,7 @@ fn execute_repo_up_with_behavior_with_agent(
         status: if report.ok { "READY" } else { "NOT READY" },
         phase: "post-up diagnosis",
         preview: None,
+        governance_preflight: Some(derive_preflight(&report, None)),
         receipt,
         report,
         service: None,
@@ -107607,17 +107845,27 @@ fn up_agent_execution_refusal_result(
     let mut receipt = receipt;
     receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];
     refresh_execution_receipt_status(&mut receipt);
+    let report = DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![finding],
+    };
     RepoUpResult {
         ok: false,
         status: "BLOCKED",
         phase: "preconditions",
-        report: DoctorReport {
-            ok: false,
-            provisioning: None,
-            adapter_bootstrap: None,
-            execution_target: None,
-            findings: vec![finding],
-        },
+        governance_preflight: Some(up_result_preflight_evaluation(
+            contract,
+            workflow_name,
+            overrides,
+            UpRunBehaviorPreference::Auto,
+            &report,
+            true,
+            Some(refusal),
+        )),
+        report,
         preview: None,
         receipt,
         service: None,
@@ -108139,6 +108387,8 @@ fn up_backend_fulfillment_blocked_result(
     resolved_path: &Path,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+    agent: bool,
     task_name: &str,
     task_command: Option<String>,
     stdout: String,
@@ -108176,6 +108426,15 @@ fn up_backend_fulfillment_blocked_result(
         None,
         report.findings.first().map(|finding| finding.next.clone()),
     );
+    let governance_preflight = up_result_preflight_evaluation(
+        contract,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+        &report,
+        agent,
+        None,
+    );
 
     Some(RepoUpResult {
         ok: false,
@@ -108183,6 +108442,7 @@ fn up_backend_fulfillment_blocked_result(
         phase: "provisioning",
         report,
         preview: None,
+        governance_preflight: Some(governance_preflight),
         receipt,
         service: None,
         service_command: None,
