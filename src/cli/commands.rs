@@ -13700,6 +13700,137 @@ fn crossing_preflight_posture(
     }
 }
 
+fn actor_mode_label(agent: bool) -> &'static str {
+    if agent { "agent" } else { "human" }
+}
+
+fn new_crossing_id() -> String {
+    format!("crossing-{}", OffsetDateTime::now_utc().unix_timestamp_nanos())
+}
+
+fn crossing_created_at() -> String {
+    format_receipt_metadata_timestamp(OffsetDateTime::now_utc())
+        .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string())
+}
+
+fn build_task_crossing_record(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    reason: Option<&str>,
+) -> Option<crate::output::ExecutionBoundaryCrossing> {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    let safety = task_effective_safety(contract, task_name.as_str());
+    let (crossing_required, crossing_classification, crossing_boundary_family) =
+        crossing_preflight_posture(
+            Some(safety.effective_safe),
+            None,
+            &safety.unsafe_closure_tasks,
+            "task",
+        );
+    if crossing_required != Some(true) {
+        return None;
+    }
+
+    let _ = overrides;
+    Some(crate::output::ExecutionBoundaryCrossing {
+        id: new_crossing_id(),
+        created_at: crossing_created_at(),
+        lane_id: format!("task:{task_name}"),
+        lane_kind: String::from("task"),
+        boundary_family: crossing_boundary_family.unwrap_or_else(|| String::from("unsafe_task")),
+        classification: crossing_classification.unwrap_or_else(|| String::from("escalated")),
+        requirement_source: String::from("derived"),
+        actor_mode: actor_mode_label(agent).to_string(),
+        principal_attribution_state: String::from("runner_mode_only"),
+        intent_source: if reason.is_some() {
+            String::from("caller_supplied")
+        } else {
+            String::from("runner_defaulted")
+        },
+        reason_present: reason.is_some(),
+        reason: reason.map(str::to_string),
+        evidence_attachment_state: String::from("receipt_attached"),
+    })
+}
+
+fn build_workflow_crossing_record(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+    agent: bool,
+    reason: Option<&str>,
+) -> Option<crate::output::ExecutionBoundaryCrossing> {
+    let safety =
+        selected_up_workflow_effective_safety(contract, workflow_name, run_behavior_preference);
+    let (crossing_required, crossing_classification, crossing_boundary_family) =
+        crossing_preflight_posture(
+            safety.effective_safe,
+            None,
+            &safety.unsafe_closure_tasks,
+            "workflow",
+        );
+    if crossing_required != Some(true) {
+        return None;
+    }
+
+    let _ = overrides;
+    Some(crate::output::ExecutionBoundaryCrossing {
+        id: new_crossing_id(),
+        created_at: crossing_created_at(),
+        lane_id: format!(
+            "workflow:{}",
+            workflow_name.unwrap_or("default")
+        ),
+        lane_kind: String::from("workflow"),
+        boundary_family: crossing_boundary_family.unwrap_or_else(|| String::from("unsafe_task")),
+        classification: crossing_classification.unwrap_or_else(|| String::from("escalated")),
+        requirement_source: String::from("derived"),
+        actor_mode: actor_mode_label(agent).to_string(),
+        principal_attribution_state: String::from("runner_mode_only"),
+        intent_source: if reason.is_some() {
+            String::from("caller_supplied")
+        } else {
+            String::from("runner_defaulted")
+        },
+        reason_present: reason.is_some(),
+        reason: reason.map(str::to_string),
+        evidence_attachment_state: String::from("receipt_attached"),
+    })
+}
+
+fn attach_task_crossing_to_receipt(
+    receipt: &mut ExecutionReceipt,
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    reason: Option<&str>,
+) {
+    receipt.crossing = build_task_crossing_record(contract, task_name, overrides, agent, reason);
+}
+
+fn attach_workflow_crossing_to_receipt(
+    receipt: &mut ExecutionReceipt,
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+    agent: bool,
+    reason: Option<&str>,
+) {
+    receipt.crossing = build_workflow_crossing_record(
+        contract,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+        agent,
+        reason,
+    );
+}
+
 fn up_lane_proof_expected(
     contract: &Contract,
     workflow_name: Option<&str>,
@@ -15466,6 +15597,7 @@ fn with_effect_governance_override_map<T>(
     })
 }
 
+#[allow(dead_code)]
 pub fn run_command(
     task_name: &str,
     path: Option<&Path>,
@@ -15481,7 +15613,7 @@ pub fn run_command(
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
-    run_command_with_agent(
+    run_command_with_agent_reason(
         task_name,
         path,
         file_override,
@@ -15491,6 +15623,7 @@ pub fn run_command(
         members,
         task_inputs,
         false,
+        None,
         dry_run,
         debug,
         show_receipt,
@@ -15499,6 +15632,7 @@ pub fn run_command(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn run_command_with_agent(
     task_name: &str,
     path: Option<&Path>,
@@ -15509,6 +15643,42 @@ pub(crate) fn run_command_with_agent(
     members: &[String],
     task_inputs: &[String],
     agent: bool,
+    dry_run: bool,
+    debug: bool,
+    show_receipt: bool,
+    stream: bool,
+    persist_logs: bool,
+) -> CommandOutput {
+    run_command_with_agent_reason(
+        task_name,
+        path,
+        file_override,
+        format,
+        overrides,
+        effect_overrides,
+        members,
+        task_inputs,
+        agent,
+        None,
+        dry_run,
+        debug,
+        show_receipt,
+        stream,
+        persist_logs,
+    )
+}
+
+pub(crate) fn run_command_with_agent_reason(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    task_inputs: &[String],
+    agent: bool,
+    reason: Option<&str>,
     dry_run: bool,
     debug: bool,
     show_receipt: bool,
@@ -15605,6 +15775,9 @@ pub(crate) fn run_command_with_agent(
     if agent {
         debug_lines.push(String::from("DEBUG agent=true"));
     }
+    if let Some(reason) = reason {
+        debug_lines.push(format!("DEBUG reason={reason}"));
+    }
     if normalized_task_inputs != task_inputs {
         debug_lines.push(format!(
             "DEBUG task_inputs={}",
@@ -15655,6 +15828,7 @@ pub(crate) fn run_command_with_agent(
                     members,
                     &normalized_task_inputs,
                     agent,
+                    reason,
                     show_receipt,
                     run_command_streaming_enabled(stream),
                     persist_logs,
@@ -26459,6 +26633,7 @@ pub fn agents(
     )
 }
 
+#[allow(dead_code)]
 pub fn up(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -26475,7 +26650,7 @@ pub fn up(
     detach: bool,
     ready_timeout: Option<&str>,
 ) -> CommandOutput {
-    up_with_agent(
+    up_with_agent_reason(
         path,
         file_override,
         overrides,
@@ -26483,6 +26658,7 @@ pub fn up(
         members,
         workflow_name,
         false,
+        None,
         format,
         debug,
         dry_run,
@@ -26494,6 +26670,7 @@ pub fn up(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn up_with_agent(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -26502,6 +26679,44 @@ pub(crate) fn up_with_agent(
     members: &[String],
     workflow_name: Option<&str>,
     agent: bool,
+    format: OutputFormat,
+    debug: bool,
+    dry_run: bool,
+    stream: bool,
+    show_receipt: bool,
+    attach: bool,
+    detach: bool,
+    ready_timeout: Option<&str>,
+) -> CommandOutput {
+    up_with_agent_reason(
+        path,
+        file_override,
+        overrides,
+        effect_overrides,
+        members,
+        workflow_name,
+        agent,
+        None,
+        format,
+        debug,
+        dry_run,
+        stream,
+        show_receipt,
+        attach,
+        detach,
+        ready_timeout,
+    )
+}
+
+pub(crate) fn up_with_agent_reason(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    workflow_name: Option<&str>,
+    agent: bool,
+    reason: Option<&str>,
     format: OutputFormat,
     debug: bool,
     dry_run: bool,
@@ -26620,6 +26835,9 @@ pub(crate) fn up_with_agent(
     if agent {
         debug_lines.push(String::from("DEBUG agent=true"));
     }
+    if let Some(reason) = reason {
+        debug_lines.push(format!("DEBUG reason={reason}"));
+    }
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
@@ -26668,7 +26886,7 @@ pub(crate) fn up_with_agent(
                             workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                         })
                     {
-                        let root_result = match execute_repo_up_with_behavior_with_agent(
+                        let mut root_result = match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
                             overrides,
@@ -26683,6 +26901,15 @@ pub(crate) fn up_with_agent(
                             Ok(result) => result,
                             Err(error) => return CommandOutput::failure(error),
                         };
+                        attach_crossing_to_up_result(
+                            &mut root_result,
+                            &target.contract,
+                            workflow_name,
+                            overrides,
+                            run_behavior_preference,
+                            agent,
+                            reason,
+                        );
                         let mut overall_ok = root_result.ok;
                         let mut text_sections = vec![render_up_section_with_receipt(
                             &text_path_display,
@@ -26737,7 +26964,7 @@ pub(crate) fn up_with_agent(
                                             };
                                         }
                                     };
-                                let member_result = match execute_repo_up_with_behavior_with_agent(
+                                let mut member_result = match execute_repo_up_with_behavior_with_agent(
                                     &member_target.contract,
                                     &member_target.contract_path,
                                     overrides,
@@ -26752,6 +26979,15 @@ pub(crate) fn up_with_agent(
                                     Ok(result) => result,
                                     Err(error) => return CommandOutput::failure(error),
                                 };
+                                attach_crossing_to_up_result(
+                                    &mut member_result,
+                                    &member_target.contract,
+                                    workflow_name,
+                                    overrides,
+                                    run_behavior_preference,
+                                    agent,
+                                    reason,
+                                );
                                 if !member_result.ok {
                                     overall_ok = false;
                                 }
@@ -26798,13 +27034,24 @@ pub(crate) fn up_with_agent(
                             run_behavior_preference,
                             ready_timeout,
                         ) {
-                            Ok(result) => render_up_result(
-                                &path_display,
-                                &text_path_display,
-                                result,
-                                format,
-                                show_receipt,
-                            ),
+                            Ok(mut result) => {
+                                attach_crossing_to_up_result(
+                                    &mut result,
+                                    &target.contract,
+                                    workflow_name,
+                                    overrides,
+                                    run_behavior_preference,
+                                    agent,
+                                    reason,
+                                );
+                                render_up_result(
+                                    &path_display,
+                                    &text_path_display,
+                                    result,
+                                    format,
+                                    show_receipt,
+                                )
+                            }
                             Err(error) => CommandOutput::failure(error),
                         }
                     }
@@ -26858,7 +27105,7 @@ pub(crate) fn up_with_agent(
                                     };
                                 }
                             };
-                        let result = match execute_repo_up_with_behavior_with_agent(
+                        let mut result = match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
                             overrides,
@@ -26873,6 +27120,15 @@ pub(crate) fn up_with_agent(
                             Ok(result) => result,
                             Err(error) => return CommandOutput::failure(error),
                         };
+                        attach_crossing_to_up_result(
+                            &mut result,
+                            &target.contract,
+                            workflow_name,
+                            overrides,
+                            run_behavior_preference,
+                            agent,
+                            reason,
+                        );
                         if !result.ok {
                             overall_ok = false;
                         }
@@ -41614,6 +41870,7 @@ fn governance_evaluation_for_task_preview(
             proof_present: false,
             receipt_status: None,
         },
+        crossing: None,
     }
 }
 
@@ -41694,6 +41951,7 @@ fn governance_evaluation_for_workflow_preview(
             proof_present: false,
             receipt_status: None,
         },
+        crossing: None,
     }
 }
 
@@ -41758,6 +42016,7 @@ fn governance_evaluation_for_up_result(
             proof_present,
             receipt_status: receipt.status.clone(),
         },
+        crossing: receipt.crossing.clone(),
     }
 }
 
@@ -56586,6 +56845,7 @@ workflows:
             contract_snapshot_hash: Some(String::from("sha256:abc")),
             contract_snapshot_ref: Some(String::from(".ota/contracts/sha256-abc.json")),
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: None,
             context: None,
@@ -57665,6 +57925,7 @@ project:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -63754,6 +64015,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -63842,6 +64104,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: None,
@@ -64044,6 +64307,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64113,6 +64377,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64212,6 +64477,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64333,6 +64599,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64418,6 +64685,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64513,6 +64781,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64605,6 +64874,156 @@ tasks:
     }
 
     #[test]
+    fn task_crossing_record_is_derived_for_review_required_task() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: crossing-test
+tasks:
+  publish:
+    run: cargo publish
+"#,
+        )
+        .expect("contract");
+
+        let crossing = super::build_task_crossing_record(
+            &contract,
+            "publish",
+            ExecutionOverrides::default(),
+            false,
+            Some("release requested"),
+        )
+        .expect("crossing");
+
+        assert_eq!(crossing.lane_id, "task:publish");
+        assert_eq!(crossing.lane_kind, "task");
+        assert_eq!(crossing.boundary_family, "unsafe_task");
+        assert_eq!(crossing.classification, "escalated");
+        assert_eq!(crossing.requirement_source, "derived");
+        assert_eq!(crossing.actor_mode, "human");
+        assert_eq!(crossing.intent_source, "caller_supplied");
+        assert!(crossing.reason_present);
+        assert_eq!(crossing.reason.as_deref(), Some("release requested"));
+        assert_eq!(crossing.evidence_attachment_state, "receipt_attached");
+    }
+
+    #[test]
+    fn up_json_carries_crossing_record_from_receipt() {
+        let crossing = crate::output::ExecutionBoundaryCrossing {
+            id: String::from("crossing-1"),
+            created_at: String::from("2026-07-04T12:00:00.000Z"),
+            lane_id: String::from("workflow:verify"),
+            lane_kind: String::from("workflow"),
+            boundary_family: String::from("unsafe_task"),
+            classification: String::from("escalated"),
+            requirement_source: String::from("derived"),
+            actor_mode: String::from("human"),
+            principal_attribution_state: String::from("runner_mode_only"),
+            intent_source: String::from("caller_supplied"),
+            reason_present: true,
+            reason: Some(String::from("need the full verification lane")),
+            evidence_attachment_state: String::from("receipt_attached"),
+        };
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
+            assumption_set_hash: None,
+            crossing: Some(crossing.clone()),
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("node:24-bookworm")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-deadbeef")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            host_service_cleanup: Vec::new(),
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            dependency_steps: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "verify",
+                "FAILED",
+                None,
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            status: Some(String::from("FAILED")),
+            failed_task: Some(String::from("verify")),
+            failed_dependency: None,
+            failure_origin: Some(String::from("requested")),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "FAILED",
+            phase: "verify",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: None,
+            governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
+                state: String::from("warning_only"),
+                review_required: Some(true),
+                declared_safe_for_agent: Some(false),
+                effective_safe_for_agent: Some(false),
+                unsafe_closure_tasks: vec![String::from("publish")],
+                refusal_reason_family: None,
+                crossing_required: Some(true),
+                crossing_classification: Some(String::from("escalated")),
+                crossing_boundary_family: Some(String::from("unsafe_task")),
+                receipt_expected: true,
+                proof_expected: true,
+            }),
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("verify")),
+            task_command: Some(String::from("cargo test")),
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+
+        let value = super::up_result_json_value("./ota.yaml", &result);
+
+        assert_eq!(value["receipt"]["crossing"]["id"], "crossing-1");
+        assert_eq!(
+            value["receipt"]["crossing"]["reason"],
+            "need the full verification lane"
+        );
+        assert_eq!(value["governance"]["crossing"]["id"], "crossing-1");
+        assert_eq!(
+            value["governance"]["crossing"]["classification"],
+            "escalated"
+        );
+    }
+
+    #[test]
     fn up_preview_json_helpers_include_preview_status_for_root_and_member_results() {
         let result = RepoUpResult {
             ok: false,
@@ -64684,6 +65103,7 @@ tasks:
                         proof_present: false,
                         receipt_status: None,
                     },
+                    crossing: None,
                 },
                 blockers: Vec::new(),
             }),
@@ -64697,6 +65117,7 @@ tasks:
                 contract_snapshot_hash: None,
                 contract_snapshot_ref: None,
                 assumption_set_hash: None,
+                crossing: None,
                 workspace: None,
                 backend: None,
                 context: None,
@@ -72371,6 +72792,7 @@ agent:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -73823,6 +74245,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -73882,6 +74305,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -73941,6 +74365,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -74017,6 +74442,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),
@@ -74093,6 +74519,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -74210,6 +74637,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -74315,6 +74743,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -74428,6 +74857,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -74489,6 +74919,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -77630,6 +78061,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -77713,6 +78145,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -77781,6 +78214,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -77852,6 +78286,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -77917,6 +78352,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -77982,6 +78418,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -78053,6 +78490,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -78880,6 +79318,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -79025,6 +79464,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -79130,6 +79570,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("sandbox:ctx")),
@@ -79738,6 +80179,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -79834,6 +80276,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -79916,6 +80359,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            crossing: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -84403,6 +84847,7 @@ fn run_contract_targets(
     members: &[String],
     task_inputs: &[String],
     agent: bool,
+    reason: Option<&str>,
     show_receipt: bool,
     stream_output: bool,
     persist_logs: bool,
@@ -84418,6 +84863,7 @@ fn run_contract_targets(
             target,
             task_inputs,
             agent,
+            reason,
             show_receipt,
             stream_output,
             persist_logs,
@@ -84442,6 +84888,7 @@ fn run_contract_targets(
             target,
             task_inputs,
             agent,
+            reason,
             show_receipt,
             stream_output,
             persist_logs,
@@ -84458,6 +84905,7 @@ fn run_single_contract_target(
     target: LoadedContractTarget,
     task_inputs: &[String],
     agent: bool,
+    reason: Option<&str>,
     show_receipt: bool,
     stream_output: bool,
     persist_logs: bool,
@@ -84491,6 +84939,8 @@ fn run_single_contract_target(
             member,
             target,
             task_inputs,
+            agent,
+            reason,
             show_receipt,
             &details_footer,
             persist_logs,
@@ -84503,6 +84953,8 @@ fn run_single_contract_target(
         member,
         target,
         task_inputs,
+        agent,
+        reason,
         show_receipt,
         &details_footer,
         persist_logs,
@@ -84855,6 +85307,8 @@ fn run_single_contract_target_streaming(
     member: Option<&str>,
     mut target: LoadedContractTarget,
     task_inputs: &[String],
+    agent: bool,
+    reason: Option<&str>,
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
@@ -84920,6 +85374,14 @@ fn run_single_contract_target_streaming(
             );
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                agent,
+                reason,
+            );
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -84994,6 +85456,14 @@ fn run_single_contract_target_streaming(
             );
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                agent,
+                reason,
+            );
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -85093,6 +85563,14 @@ fn run_single_contract_target_streaming(
                 Some(next_note),
             );
             receipt.blocked = run_error_receipt_blocked_entries(&error);
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                agent,
+                reason,
+            );
             refresh_execution_receipt_status(&mut receipt);
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
@@ -85135,6 +85613,8 @@ fn run_single_contract_target_captured(
     member: Option<&str>,
     mut target: LoadedContractTarget,
     task_inputs: &[String],
+    agent: bool,
+    reason: Option<&str>,
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
@@ -85189,6 +85669,14 @@ fn run_single_contract_target_captured(
             );
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                agent,
+                reason,
+            );
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -85261,6 +85749,14 @@ fn run_single_contract_target_captured(
             );
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                agent,
+                reason,
+            );
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -85360,6 +85856,14 @@ fn run_single_contract_target_captured(
                 Some(next_note),
             );
             receipt.blocked = run_error_receipt_blocked_entries(&error);
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                agent,
+                reason,
+            );
             refresh_execution_receipt_status(&mut receipt);
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
@@ -89052,6 +89556,7 @@ fn run_execution_receipt_with_shared(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        crossing: None,
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         context,
@@ -96083,6 +96588,26 @@ struct RepoUpResult {
     stderr: String,
 }
 
+fn attach_crossing_to_up_result(
+    result: &mut RepoUpResult,
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+    agent: bool,
+    reason: Option<&str>,
+) {
+    attach_workflow_crossing_to_receipt(
+        &mut result.receipt,
+        contract,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+        agent,
+        reason,
+    );
+}
+
 #[derive(Debug, Clone)]
 struct RepoUpPreview {
     summary: DoctorSummary,
@@ -96938,6 +97463,7 @@ fn repo_execution_receipt_with_overrides(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        crossing: None,
         workspace: None,
         backend: context.backend,
         context: context.context,
@@ -97836,6 +98362,7 @@ fn workspace_up_receipt(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        crossing: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -97929,6 +98456,7 @@ fn workspace_status_receipt(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        crossing: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -98026,6 +98554,7 @@ fn workspace_run_receipt(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        crossing: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,

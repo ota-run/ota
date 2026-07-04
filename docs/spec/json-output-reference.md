@@ -134,8 +134,15 @@ human text output:
 - `ota run --json`, `ota up --json`, `ota workspace run --json`, and `ota workspace up --json`:
   inspect `receipt.host_service_cleanup[]` when you need machine-readable evidence that ota
   attempted interrupt-driven host-managed service cleanup and whether each stop succeeded or failed
+- `ota up --json`: inspect additive `governance.crossing` and `receipt.crossing` when the
+  selected workflow crossed a heavier audited execution boundary and the operator supplied intent
+  with `--reason`; the current shipped record keeps `requirement_source: derived` honest instead
+  of pretending contract-declared grant or approval truth
 - `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, ordered `next` steps, and the matching structured lane: engine/resource failures expose `engine`, `resource_kind`, `resource_name`, and `details`, while active execution cleanup barriers expose `registry_path`, typed `reasons[]`, `active_execution_count`, and `owners[]`; generic repo-state failures still fall back to `summary` plus `error`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
+- repo-target `ota up --json` may also include additive `governance.crossing` when the selected
+  workflow execution crossed a heavier audited boundary; this mirrors the same ota-authored
+  record attached to `receipt.crossing`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json --progress-json`, `ota workspace up --json --progress-json`, and
   `ota workspace refresh --json --progress-json`: consume newline-delimited progress events from

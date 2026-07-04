@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added the first audited-crossing execution evidence slice for heavier governed lanes: `ota run`
+  and `ota up` now accept additive `--reason <text>`, repo-target receipts may include
+  `receipt.crossing`, and `ota up --json` can mirror the same record at `governance.crossing`
+  when the selected task or workflow crosses a derived heavier execution boundary; the current
+  shipped slice keeps requirement source honest as `derived` and records runner-visible actor
+  posture plus caller-supplied reason presence without pretending grant or approval semantics yet
 - widened `ota doctor --json` with additive `governance.merge_gate`, publishing a first
   machine-readable merge-oriented governance verdict over projected required verification lanes and
   recovered CI drift metadata; the same surface now stays honest by distinguishing `projected`

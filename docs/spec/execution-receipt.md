@@ -65,6 +65,7 @@ The receipt includes:
 - `path`
 - `scope`
 - `contract`
+- `crossing`
 - `workspace`
 - `backend`
 - `lifecycle`
@@ -102,6 +103,26 @@ When execution was blocked by an active repo-execution ownership conflict, recei
 include `execution_conflict`; this records the typed ownership reasons such as `host_service`,
 `compose_project`, or `persistent_backend_family` while keeping the existing `blocked[]`
 compatibility lane.
+When the selected task or workflow crosses a heavier audited execution boundary, repo-target
+execution receipts may also include additive `crossing`. This record is ota-authored execution
+evidence, not caller-authored narration. The current shipped slice publishes:
+
+- `id`
+- `created_at`
+- `lane_id`
+- `lane_kind`
+- `boundary_family`
+- `classification`
+- `requirement_source`
+- `actor_mode`
+- `principal_attribution_state`
+- `intent_source`
+- `reason_present`
+- optional `reason`
+- `evidence_attachment_state`
+
+Current shipped receipts keep `requirement_source` honest as `derived`, because ota is not yet
+projecting contract-declared crossing requirements or grant/approval truth on this lane.
 When a receipt comes from a selected task-backed execution path, it can also include
 `dependency_steps`; each entry records the executed task step's selected backend, optional
 selected context, optional parent task, and `backend_selection_source` such as `override`,

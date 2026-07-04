@@ -242,6 +242,9 @@ enum Commands {
         /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
+        /// Attach operator intent when crossing a heavier audited execution boundary.
+        #[arg(long)]
+        reason: Option<String>,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
@@ -567,6 +570,9 @@ enum Commands {
         /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
+        /// Attach operator intent when crossing a heavier audited execution boundary.
+        #[arg(long)]
+        reason: Option<String>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -5008,6 +5014,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ephemeral,
             skip_deps,
             effect_override,
+            reason,
             receipt,
             stream,
             log,
@@ -5024,7 +5031,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps,
             };
             if agent {
-                commands::run_command_with_agent(
+                commands::run_command_with_agent_reason(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5034,6 +5041,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &member,
                     &inputs,
                     true,
+                    reason.as_deref(),
                     dry_run,
                     debug,
                     receipt,
@@ -5041,7 +5049,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     log,
                 )
             } else {
-                commands::run_command(
+                commands::run_command_with_agent_reason(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5050,6 +5058,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &effect_override,
                     &member,
                     &inputs,
+                    false,
+                    reason.as_deref(),
                     dry_run,
                     debug,
                     receipt,
@@ -5193,6 +5203,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             host_port,
             receipt,
             effect_override,
+            reason,
             member,
             workflow,
             path,
@@ -5206,7 +5217,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps: false,
             };
             if agent {
-                commands::up_with_agent(
+                commands::up_with_agent_reason(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5214,6 +5225,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &member,
                     workflow.as_deref(),
                     true,
+                    reason.as_deref(),
                     format,
                     debug,
                     dry_run,
@@ -5224,13 +5236,15 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     ready_timeout.as_deref(),
                 )
             } else {
-                commands::up(
+                commands::up_with_agent_reason(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
                     &effect_override,
                     &member,
                     workflow.as_deref(),
+                    false,
+                    reason.as_deref(),
                     format,
                     debug,
                     dry_run,
@@ -17705,6 +17719,7 @@ tasks:
                 log: false,
                 member: Vec::new(),
                 effect_override: Vec::new(),
+                reason: None,
                 path: None,
                 inputs: Vec::new(),
             },
@@ -17745,6 +17760,7 @@ tasks:
                 log: false,
                 member: Vec::new(),
                 effect_override: Vec::new(),
+                reason: None,
                 path: None,
                 inputs: Vec::new(),
             },
@@ -18741,6 +18757,7 @@ tasks:
             receipt: false,
             member: Vec::new(),
             effect_override: Vec::new(),
+            reason: None,
             workflow: None,
         }));
     }
@@ -18767,6 +18784,7 @@ tasks:
             receipt: false,
             member: Vec::new(),
             effect_override: Vec::new(),
+            reason: None,
             workflow: None,
         }));
     }
@@ -18823,6 +18841,7 @@ tasks:
                 receipt: false,
                 member: Vec::new(),
                 effect_override: Vec::new(),
+                reason: None,
                 workflow: None,
             },
         };
@@ -18855,6 +18874,7 @@ tasks:
                 receipt: false,
                 member: Vec::new(),
                 effect_override: Vec::new(),
+                reason: None,
                 workflow: None,
             }),
             Some("Preparing environment...")
@@ -18925,6 +18945,7 @@ tasks:
             log: false,
             member: Vec::new(),
             effect_override: Vec::new(),
+            reason: None,
             path: None,
             inputs: Vec::new(),
         }));
@@ -19307,6 +19328,7 @@ tasks:
                     receipt: false,
                     member: Vec::new(),
                     effect_override: Vec::new(),
+                    reason: None,
                     workflow: None,
                     path: None,
                 },
@@ -27907,6 +27929,7 @@ policies:
             log: false,
             member: Vec::new(),
             effect_override: Vec::new(),
+            reason: None,
             path: None,
             inputs: Vec::new(),
         };

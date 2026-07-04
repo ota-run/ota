@@ -479,6 +479,8 @@ pub struct ExecutionReceipt {
     pub contract_snapshot_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumption_set_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crossing: Option<ExecutionBoundaryCrossing>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -593,6 +595,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(assumption_set_hash) = self.assumption_set_hash.as_ref() {
             map.serialize_entry("assumption_set_hash", assumption_set_hash)?;
+        }
+        if let Some(crossing) = self.crossing.as_ref() {
+            map.serialize_entry("crossing", crossing)?;
         }
         if let Some(workspace) = self.workspace.as_ref() {
             map.serialize_entry("workspace", workspace)?;
@@ -819,6 +824,24 @@ pub struct ArtifactRoute {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionBoundaryCrossing {
+    pub id: String,
+    pub created_at: String,
+    pub lane_id: String,
+    pub lane_kind: String,
+    pub boundary_family: String,
+    pub classification: String,
+    pub requirement_source: String,
+    pub actor_mode: String,
+    pub principal_attribution_state: String,
+    pub intent_source: String,
+    pub reason_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub evidence_attachment_state: String,
+}
+
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct GovernancePreflightEvaluation {
     pub state: String,
@@ -859,6 +882,8 @@ pub struct GovernancePostExecutionEvidence {
 pub struct GovernanceEvaluation {
     pub preflight: GovernancePreflightEvaluation,
     pub post_execution: GovernancePostExecutionEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing: Option<ExecutionBoundaryCrossing>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

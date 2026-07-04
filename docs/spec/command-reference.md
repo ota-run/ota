@@ -1189,6 +1189,7 @@ ota run <task> --skip-deps [PATH]
 ota run <task> --effect-override network:broad=allow [PATH]
 ota run <task> --memory 4GiB [PATH]
 ota run <task> --agent [PATH]
+ota run <task> --reason "release requested" [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
@@ -1201,6 +1202,9 @@ Current behavior:
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure
+- `--reason <text>` attaches operator intent when the selected task path crosses a heavier
+  audited execution boundary; the current shipped slice records that reason only when ota derives
+  `crossing_required` for the selected lane instead of attaching free-form narration to every run
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:tool_bootstrap`, and `external_state:<token>`
@@ -1891,6 +1895,7 @@ ota up --effect-override network:broad=allow [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ota up --agent [PATH]
+ota up --reason "release approved" [PATH]
 ```
 
 Current behavior:
@@ -1900,6 +1905,9 @@ Current behavior:
 - when `--member` is set, prepares the merged member contract
 - repeated `--member` values prepare those members in the provided order
 - `--agent` enforces the declared agent-safe task boundary before setup or workflow execution starts; ota refuses the selected workflow path when any selected prepare/setup/run/attach task sits outside the safe set or reaches an unsafe task closure
+- `--reason <text>` attaches operator intent when the selected workflow crosses a heavier audited
+  execution boundary; repo-target `ota up --json` mirrors the resulting ota-authored crossing
+  record at both `governance.crossing` and `receipt.crossing`
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`
