@@ -13710,7 +13710,9 @@ fn workflow_harness_environment_boundary(
     contract: &Contract,
     workflow: &WorkflowSummary<'_>,
 ) -> Option<HarnessEnvironmentBoundary> {
-    let primary_task = selected_up_primary_task_name(contract, Some(workflow.name))?;
+    let primary_task = selected_up_run_task_name(contract, Some(workflow.name))
+        .or_else(|| selected_up_setup_task_name(contract, Some(workflow.name)))
+        .or_else(|| selected_up_prepare_task_name(contract, Some(workflow.name)))?;
     let effective = effective_task_execution(contract, primary_task, ExecutionOverrides::default());
     Some(HarnessEnvironmentBoundary {
         kind: String::from("workflow"),
@@ -58796,6 +58798,74 @@ agent:
         assert_eq!(
             json["capability_profile"]["refused_workflows"][0]["blocked_task"],
             "publish"
+        );
+    }
+
+    #[test]
+    fn workflow_harness_boundary_prefers_run_task_over_setup_task() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  install:
+    context: host
+    run: npm ci
+    safe_for_agent: true
+  build:
+    context: app
+    run: npm run build
+    safe_for_agent: true
+workflows:
+  default: build
+  build:
+    setup:
+      task: install
+    run:
+      task: build
+agent:
+  safe_tasks:
+    - install
+    - build
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::workflows(
+            Some(repo.path()),
+            None,
+            &[],
+            OutputFormat::Json,
+            false,
+        );
+
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("workflows json");
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["environment_boundary"]["primary_task"],
+            "build"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["environment_boundary"]["backend"],
+            "container"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["environment_boundary"]["context"],
+            "app"
         );
     }
 
