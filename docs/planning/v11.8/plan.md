@@ -416,8 +416,26 @@ The ownership and distribution rule should stay explicit:
 - one canonical destination-policy declaration may live in a versioned shared source
 - each repo or service must pin and consume that shared truth locally
 - no central policy service should sit in the hot path for execution
-- stale, missing, or unpinned destination-policy truth should fail closed when the selected lane
-  requires destination constraints
+- missing or unpinned destination-policy truth should fail closed when the selected lane requires
+  destination constraints
+
+Staleness needs a stricter lifecycle than a single binary state.
+
+The model should distinguish:
+
+- missing / unresolved pin
+- pinned and fresh
+- pinned but aging
+- pinned and stale beyond tolerance
+
+The intended posture is:
+
+- missing or unresolved required destination truth blocks immediately
+- aging pinned truth warns first
+- only clearly stale pinned truth blocks
+
+That avoids turning ordinary deploy lag into accidental service outages while still making pin age
+ visible and governable
 
 The intended reuse model should stay explicit:
 
@@ -429,6 +447,13 @@ The intended reuse model should stay explicit:
   path
 - Ota should not assume a live central decision service or central proxy to make the crossing
   authoritative
+
+The operational stale-pin rule should also stay explicit:
+
+- the dangerous failure is often not rollout coordination but quiet pin age
+- rollout lag is loud; stale pins are silent unless Ota surfaces them on purpose
+- the goal is not "fail every stale pin immediately"
+- the goal is "make pin age visible early and blocking only past a hard limit"
 
 Compilation rules should vary by class:
 
@@ -463,16 +488,24 @@ The source posture for destination-constrained truth must also be explicit:
 - `shared_pinned_authoritative`
 - `non_authoritative`
 
+Freshness posture for shared-pinned destination truth must also be explicit:
+
+- `fresh`
+- `warning`
+- `blocking`
+
 That source posture answers a different question from the enforcement posture:
 
 - source posture says where the authoritative destination truth came from
 - enforcement posture says where that truth is actually enforced
+- freshness posture says whether pinned shared truth is still within the tolerated lifecycle
 
 The mature destination-constrained model is therefore:
 
 - data may be local or centrally declared
 - the decision remains local
-- the selected lane fails closed on stale or unresolved pinned destination truth
+- the selected lane warns on aging pinned truth and fails closed only on missing, unresolved, or
+  hard-stale pinned truth
 - no live central dependency is required for governed execution
 
 That posture should be published per destination-constrained lane so operators and harnesses can
@@ -488,7 +521,9 @@ Explainability should also stay explicit:
 - destination constraint was required or not required
 - destination constraint was runtime-enforced, app-enforced, or advisory-only
 - destination truth was repo-local authoritative or shared-pinned authoritative
-- shared destination-policy source was pinned, stale, or missing
+- shared destination-policy source was pinned, aging, stale, missing, or unresolved
+- pinned destination-policy version or digest was visible in execution evidence
+- pinned destination-policy age and hard-limit posture were visible in governance output
 
 The important rule is:
 
@@ -548,14 +583,61 @@ Ota should publish:
 - which fields stayed advisory
 - which outbound targets required stronger narrowing than first-hop host allowlisting alone
 - which destination-constrained lanes required pinned shared policy truth
-- whether shared destination policy was resolved locally, missing, or stale
+- whether shared destination policy was resolved locally, missing, unresolved, aging, or stale
 - whether a destination-constrained lane relied on runtime enforcement or local app-path
   enforcement
 - whether destination truth was repo-local or shared-pinned at the time of compilation
+- which pinned destination-policy version, revision, or digest was in force
+- how old that pinned truth was
+- whether the freshness posture was `fresh`, `warning`, or `blocking`
 - why a lane was denied or widened
+
+This visibility should not live only in one place.
+
+Direction:
+
+- governance output should carry source posture, freshness posture, and pinned identity
+- receipts should carry the same pinned identity and freshness posture so later audits can answer
+  "which truth did this run enforce"
+- when the selected lane actually starts, the same pinned identity should be available to runtime
+  logs or startup evidence so operators do not need a forensic dig to answer which destination
+  truth was active
+
+The mature operator question should become:
+
+- which destination truth is this service or run on right now
+
+not:
+
+- which repo, build, or deploy six weeks ago happened to pull which shared config
 
 This should stay machine-readable and aligned with the V11.4 governance model rather than
 becoming provider-specific prose.
+
+### 6. Freshness lifecycle and fan-out posture
+
+Pinned shared destination truth should not be governed by one implicit age rule.
+
+Direction:
+
+- repos or policy packs should be able to define a warning threshold and a hard blocking limit
+- the default operational stance should be "warn first, block later"
+- hard blocking should be reserved for pins that are clearly outside tolerated freshness, not for
+  every ordinary lagging consumer
+
+This slice should also acknowledge, without overloading itself, the best follow-on automation:
+
+- a change to central destination data should be able to fan out consumer rebuild or verification
+  triggers where the surrounding CI platform supports it
+
+That fan-out orchestration is adjacent and useful, but it is not the core of `11.8`.
+
+The core of `11.8` is:
+
+- declaring the pinned truth
+- compiling the local enforcement boundary
+- surfacing freshness early
+- blocking only when the pin is truly too stale or missing
 
 ## Acceptance bar
 
@@ -570,6 +652,9 @@ V11.8 is complete when:
 - the compiled output makes central-declaration / local-enforcement posture explicit for
   destination-constrained lanes
 - the compiled output distinguishes destination-truth source posture from enforcement posture
+- the compiled output also distinguishes freshness posture for shared-pinned truth
+- pinned destination-policy identity and age are visible in governance output and receipts
+- warning thresholds and hard blocking limits for stale shared-pinned truth are explicit
 - at least one real sandbox/runtime target can consume that compiled policy
 - the compiled output makes authoritative versus advisory policy explicit
 - the provider-facing compilation is clearly derived from the canonical governance model instead
