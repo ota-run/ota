@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- widened `ota doctor --json` with additive `governance.merge_gate`, publishing a first
+  machine-readable merge-oriented governance verdict over projected required verification lanes and
+  recovered CI drift metadata; the same surface now stays honest by distinguishing `projected`
+  from `drift_detected` instead of pretending full provider alignment when Ota only has partial
+  workflow recovery evidence
 - added additive harness-facing `capability_profile` export on `ota tasks --json` and
   `ota workflows --json`, publishing agent-callable vs refused lanes with canonical preflight
   governance, exact agent commands, environment boundaries, and closure effect posture so

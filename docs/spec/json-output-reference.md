@@ -2066,7 +2066,24 @@ Failure:
         "lane_kind": "aggregate",
         "contract_sources": ["workflows.verify.run.task"]
       }
-    ]
+    ],
+    "merge_gate": {
+      "state": "projected",
+      "blocking": false,
+      "required_lane_count": 1,
+      "drift_lane_count": 0,
+      "lanes": [
+        {
+          "merge_check_id": "ota.verify.verify",
+          "lane_task": "verify",
+          "lane_kind": "aggregate",
+          "state": "projected",
+          "blocking": false,
+          "contract_sources": ["workflows.verify.run.task"],
+          "provider_sources": []
+        }
+      ]
+    }
   },
   "provisioning": {
     "allowed": [
@@ -2158,6 +2175,16 @@ from `workflows.*` with `intent: ci_verification` or legacy `ci_validation`, and
 `agent.verify_after_changes` only when no explicit CI verification workflows are declared. Each
 projected lane carries the same canonical `merge_check_id` identity that CI verification drift
 findings use.
+`ota doctor --json` may also include additive `governance.merge_gate`, a first machine-readable
+merge-oriented governance verdict built from the same projected lanes and CI drift metadata. This
+surface stays honest:
+
+- `state: projected` means Ota has projected the canonical required lanes but is not claiming full
+  provider alignment from current recovery alone
+- `state: drift_detected` means one or more projected lanes already have CI drift findings attached
+  and should be treated as merge-blocking until the workflow wiring is reconciled
+- each `lanes[]` entry carries the same canonical `merge_check_id`, lane identity, and any
+  recovered `provider_sources` from CI drift findings
 
 Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.

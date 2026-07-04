@@ -21395,6 +21395,7 @@ pub fn doctor(
                                         ),
                                     governance: doctor_required_verification_governance(
                                         &target.contract,
+                                        &rewritten_findings,
                                     ),
                                     provisioning: report
                                         .provisioning
@@ -91600,7 +91601,7 @@ fn proof_runtime_doctor_artifact_json(
         workflow: workflow_summary,
         agent: agent_summary,
         execution: execution_summary,
-        governance: doctor_required_verification_governance(contract),
+        governance: doctor_required_verification_governance(contract, &refined_findings),
         provisioning: report.provisioning.as_ref().map(|value| &value.plan),
         provisioning_request: report.provisioning.as_ref().map(|value| &value.request),
         adapter_bootstrap: report.adapter_bootstrap.as_ref(),

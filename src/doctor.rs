@@ -122,12 +122,12 @@ struct FindingMetadataJson {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct FindingGovernanceMetadata {
-    merge_check_id: String,
-    lane_task: String,
-    lane_kind: String,
+pub(crate) struct FindingGovernanceMetadata {
+    pub(crate) merge_check_id: String,
+    pub(crate) lane_task: String,
+    pub(crate) lane_kind: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    provider_sources: Vec<String>,
+    pub(crate) provider_sources: Vec<String>,
 }
 
 fn backticked_segments(text: &str) -> Vec<String> {
@@ -3342,7 +3342,7 @@ impl FindingIdentity {
 }
 
 impl Finding {
-    fn governance_metadata(&self) -> Option<FindingGovernanceMetadata> {
+    pub(crate) fn governance_metadata(&self) -> Option<FindingGovernanceMetadata> {
         let code = self.code();
         if !matches!(
             code,

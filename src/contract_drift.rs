@@ -31,9 +31,11 @@ use crate::detector::{
     ci_bounded_shell_command_line, collect_github_actions_verification_tasks, detect_repo,
     infer_ci_verification_task_line,
 };
-use crate::doctor::{Finding, FindingSeverity};
-use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
-use crate::output::{DoctorGovernanceSummary, DoctorRequiredVerificationLane};
+use crate::doctor::{Finding, FindingGovernanceMetadata, FindingSeverity};
+use crate::output::{
+    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary,
+    DoctorMergeGateLane, DoctorMergeGateSummary, DoctorRequiredVerificationLane,
+};
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
     ToolchainProvider,
@@ -665,6 +667,7 @@ struct ProjectedRequiredVerificationLane {
 
 pub(crate) fn doctor_required_verification_governance(
     contract: &Contract,
+    findings: &[Finding],
 ) -> Option<DoctorGovernanceSummary> {
     let required_verification_lanes = projected_required_verification_lanes(contract)
         .into_iter()
@@ -675,8 +678,52 @@ pub(crate) fn doctor_required_verification_governance(
             contract_sources: lane.contract_sources,
         })
         .collect::<Vec<_>>();
-    (!required_verification_lanes.is_empty()).then_some(DoctorGovernanceSummary {
+    if required_verification_lanes.is_empty() {
+        return None;
+    }
+
+    let drift_by_merge_check_id = findings
+        .iter()
+        .filter_map(Finding::governance_metadata)
+        .map(|metadata| (metadata.merge_check_id.clone(), metadata))
+        .collect::<BTreeMap<String, FindingGovernanceMetadata>>();
+
+    let lanes = required_verification_lanes
+        .iter()
+        .map(|lane| {
+            let drift = drift_by_merge_check_id.get(&lane.merge_check_id);
+            DoctorMergeGateLane {
+                merge_check_id: lane.merge_check_id.clone(),
+                lane_task: lane.lane_task.clone(),
+                lane_kind: lane.lane_kind.clone(),
+                state: if drift.is_some() {
+                    String::from("drift_detected")
+                } else {
+                    String::from("projected")
+                },
+                blocking: drift.is_some(),
+                contract_sources: lane.contract_sources.clone(),
+                provider_sources: drift
+                    .map(|metadata| metadata.provider_sources.clone())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let drift_lane_count = lanes.iter().filter(|lane| lane.blocking).count();
+
+    Some(DoctorGovernanceSummary {
         required_verification_lanes,
+        merge_gate: Some(DoctorMergeGateSummary {
+            state: if drift_lane_count > 0 {
+                String::from("drift_detected")
+            } else {
+                String::from("projected")
+            },
+            blocking: drift_lane_count > 0,
+            required_lane_count: lanes.len(),
+            drift_lane_count,
+            lanes,
+        }),
     })
 }
 
@@ -3279,5 +3326,90 @@ runtimes:
 
         let changes = collect_detect_changes(&existing, &detected, &[]);
         assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn doctor_required_verification_governance_projects_merge_gate_without_drift() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    run: cargo test
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let governance =
+            doctor_required_verification_governance(&contract, &[]).expect("governance");
+        let merge_gate = governance.merge_gate.expect("merge gate");
+
+        assert_eq!(governance.required_verification_lanes.len(), 1);
+        assert_eq!(
+            governance.required_verification_lanes[0].merge_check_id,
+            "ota.verify.verify"
+        );
+        assert_eq!(merge_gate.state, "projected");
+        assert!(!merge_gate.blocking);
+        assert_eq!(merge_gate.required_lane_count, 1);
+        assert_eq!(merge_gate.drift_lane_count, 0);
+        assert_eq!(merge_gate.lanes[0].state, "projected");
+        assert!(merge_gate.lanes[0].provider_sources.is_empty());
+    }
+
+    #[test]
+    fn doctor_required_verification_governance_marks_drifted_lane_and_provider_source() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    run: cargo test
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+        let findings = vec![Finding::identified(
+            "OTA_CI_VERIFICATION_DRIFT",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "CI verification drift: `tasks.verify.run` differs from enforced workflow lane",
+            "`ota.yaml` still declares `tasks.verify.run` = `cargo test`, but workflow verification in `.github/workflows/ci.yml#jobs.verify.steps[0].run` runs `cargo check`",
+            "review whether workflow verification or `tasks.verify.run` is canonical",
+        )];
+
+        let governance =
+            doctor_required_verification_governance(&contract, &findings).expect("governance");
+        let merge_gate = governance.merge_gate.expect("merge gate");
+
+        assert_eq!(merge_gate.state, "drift_detected");
+        assert!(merge_gate.blocking);
+        assert_eq!(merge_gate.required_lane_count, 1);
+        assert_eq!(merge_gate.drift_lane_count, 1);
+        assert_eq!(merge_gate.lanes[0].merge_check_id, "ota.verify.verify");
+        assert_eq!(merge_gate.lanes[0].state, "drift_detected");
+        assert!(merge_gate.lanes[0].blocking);
+        assert_eq!(
+            merge_gate.lanes[0].provider_sources,
+            vec![String::from(".github/workflows/ci.yml#jobs.verify.steps[0].run")]
+        );
     }
 }

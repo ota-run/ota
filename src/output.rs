@@ -119,6 +119,8 @@ pub struct DoctorSuccess<'a> {
 pub struct DoctorGovernanceSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required_verification_lanes: Vec<DoctorRequiredVerificationLane>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_gate: Option<DoctorMergeGateSummary>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -128,6 +130,29 @@ pub struct DoctorRequiredVerificationLane {
     pub lane_kind: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contract_sources: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorMergeGateSummary {
+    pub state: String,
+    pub blocking: bool,
+    pub required_lane_count: usize,
+    pub drift_lane_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<DoctorMergeGateLane>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorMergeGateLane {
+    pub merge_check_id: String,
+    pub lane_task: String,
+    pub lane_kind: String,
+    pub state: String,
+    pub blocking: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contract_sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_sources: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

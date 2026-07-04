@@ -1360,6 +1360,44 @@ agent:
     assert_eq!(json["agent"]["writable_paths"][0], "src");
 }
 
+#[test]
+fn doctor_json_includes_projected_merge_gate_governance() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: merge-gate-app
+tasks:
+  verify:
+    run: printf verify
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+"#,
+    );
+
+    let json_output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&json_output);
+
+    assert_eq!(
+        json["governance"]["required_verification_lanes"][0]["merge_check_id"],
+        "ota.verify.verify"
+    );
+    assert_eq!(json["governance"]["merge_gate"]["state"], "projected");
+    assert_eq!(json["governance"]["merge_gate"]["blocking"], false);
+    assert_eq!(json["governance"]["merge_gate"]["required_lane_count"], 1);
+    assert_eq!(json["governance"]["merge_gate"]["drift_lane_count"], 0);
+    assert_eq!(
+        json["governance"]["merge_gate"]["lanes"][0]["state"],
+        "projected"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn run_executes_task_variant_from_nested_directory_real_fixture() {
