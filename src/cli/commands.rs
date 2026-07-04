@@ -91,14 +91,16 @@ use crate::output::{
     ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
     ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
     ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    ExplainSuccess, ExplainSummary, HarnessCapabilityProfile, HarnessEnvironmentBoundary,
+    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
     InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberWorkflowsSuccess,
-    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
-    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess,
-    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
+    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArtifacts,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffBaseline,
+    ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
     ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
     ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, RunPreviewPlan,
     RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
@@ -13572,6 +13574,310 @@ fn listed_agent_summary<'a>(
     (!agent.is_empty()).then_some(agent)
 }
 
+fn merge_network_kind(
+    current: Option<crate::schema::TaskNetworkEffectKind>,
+    next: crate::schema::TaskNetworkEffectKind,
+) -> Option<crate::schema::TaskNetworkEffectKind> {
+    Some(match (current, next) {
+        (Some(crate::schema::TaskNetworkEffectKind::Broad), _) => {
+            crate::schema::TaskNetworkEffectKind::Broad
+        }
+        (_, crate::schema::TaskNetworkEffectKind::Broad) => {
+            crate::schema::TaskNetworkEffectKind::Broad
+        }
+        (Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap), _)
+        | (_, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
+            crate::schema::TaskNetworkEffectKind::ToolBootstrap
+        }
+        (Some(crate::schema::TaskNetworkEffectKind::IntegrationTest), _)
+        | (_, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
+            crate::schema::TaskNetworkEffectKind::IntegrationTest
+        }
+        _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
+    })
+}
+
+fn collect_task_closure_effects_summary(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> crate::output::TaskEffectsSummary {
+    let mut summary = crate::output::TaskEffectsSummary::default();
+    let mut seen_writes = BTreeSet::new();
+    let mut seen_workspace_writes = BTreeSet::new();
+    let mut seen_adapter_state = BTreeSet::new();
+    let mut seen_external_state = BTreeSet::new();
+
+    for reachable in collect_reachable_task_names_for_visibility(contract, task_name, overrides) {
+        let Some(task) = contract.tasks.get(reachable.as_str()) else {
+            continue;
+        };
+        if task.effects.network {
+            summary.network = true;
+        }
+        if let Some(kind) = task.effects.effective_network_kind() {
+            summary.network_kind = merge_network_kind(summary.network_kind, kind);
+        }
+        for path in &task.effects.writes {
+            if seen_writes.insert(path.clone()) {
+                summary.writes.push(path.clone());
+            }
+        }
+        for path in &task.effects.workspace_writes {
+            if seen_workspace_writes.insert(path.clone()) {
+                summary.workspace_writes.push(path.clone());
+            }
+        }
+        for value in &task.effects.adapter_state {
+            if seen_adapter_state.insert(value.clone()) {
+                summary.adapter_state.push(value.clone());
+            }
+        }
+        for value in &task.effects.external_state {
+            if seen_external_state.insert(value.clone()) {
+                summary.external_state.push(value.clone());
+            }
+        }
+    }
+
+    summary
+}
+
+fn harness_preflight_for_task(
+    task: &TaskSummary<'_>,
+    refusal: Option<&AgentExecutionRefusal>,
+) -> crate::output::GovernancePreflightEvaluation {
+    crate::output::GovernancePreflightEvaluation {
+        state: if refusal.is_some() {
+            String::from("refused")
+        } else {
+            String::from("allowed")
+        },
+        review_required: Some(!task.effective_safe_for_agent),
+        declared_safe_for_agent: Some(task.safe_for_agent),
+        effective_safe_for_agent: Some(task.effective_safe_for_agent),
+        unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
+        refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        receipt_expected: true,
+        proof_expected: false,
+    }
+}
+
+fn task_harness_environment_boundary(task: &TaskSummary<'_>) -> Option<HarnessEnvironmentBoundary> {
+    Some(HarnessEnvironmentBoundary {
+        kind: String::from("task"),
+        backend: Some(task.effective_default_mode.to_string()),
+        context: task.context.map(str::to_string),
+        default_mode: Some(task.effective_default_mode.to_string()),
+        primary_task: None,
+    })
+}
+
+fn task_harness_capability(contract: &Contract, task: &TaskSummary<'_>) -> HarnessLaneCapability {
+    let refusal =
+        agent_execution_refusal_for_task(contract, task.name, ExecutionOverrides::default());
+    let effects =
+        collect_task_closure_effects_summary(contract, task.name, ExecutionOverrides::default());
+    HarnessLaneCapability {
+        lane_id: format!("task:{}", task.name),
+        lane_kind: String::from("task"),
+        name: task.name.to_string(),
+        command: format!("ota run {} --agent", task.name),
+        environment_boundary: task_harness_environment_boundary(task),
+        preflight: harness_preflight_for_task(task, refusal.as_ref()),
+        effects: (!effects.is_empty()).then_some(effects),
+        blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
+        closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
+    }
+}
+
+fn workflow_agent_refusal(
+    contract: &Contract,
+    workflow_name: &str,
+) -> Option<AgentExecutionRefusal> {
+    selected_up_agent_task_names(contract, Some(workflow_name), UpRunBehaviorPreference::Auto)
+        .into_iter()
+        .find_map(|task_name| {
+            agent_execution_refusal_for_task(
+                contract,
+                task_name.as_str(),
+                ExecutionOverrides::default(),
+            )
+        })
+}
+
+fn workflow_harness_environment_boundary(
+    contract: &Contract,
+    workflow: &WorkflowSummary<'_>,
+) -> Option<HarnessEnvironmentBoundary> {
+    let primary_task = selected_up_primary_task_name(contract, Some(workflow.name))?;
+    let effective = effective_task_execution(contract, primary_task, ExecutionOverrides::default());
+    Some(HarnessEnvironmentBoundary {
+        kind: String::from("workflow"),
+        backend: Some(format_backend(effective.backend).to_string()),
+        context: effective.context_name.map(str::to_string),
+        default_mode: None,
+        primary_task: Some(primary_task.to_string()),
+    })
+}
+
+fn workflow_effects_summary(
+    contract: &Contract,
+    workflow_name: &str,
+) -> crate::output::TaskEffectsSummary {
+    let mut summary = crate::output::TaskEffectsSummary::default();
+    let mut seen_writes = BTreeSet::new();
+    let mut seen_workspace_writes = BTreeSet::new();
+    let mut seen_adapter_state = BTreeSet::new();
+    let mut seen_external_state = BTreeSet::new();
+    for task_name in
+        selected_up_agent_task_names(contract, Some(workflow_name), UpRunBehaviorPreference::Auto)
+    {
+        let task_summary = collect_task_closure_effects_summary(
+            contract,
+            task_name.as_str(),
+            ExecutionOverrides::default(),
+        );
+        summary.network |= task_summary.network;
+        if let Some(kind) = task_summary.network_kind {
+            summary.network_kind = merge_network_kind(summary.network_kind, kind);
+        }
+        for path in task_summary.writes {
+            if seen_writes.insert(path.clone()) {
+                summary.writes.push(path);
+            }
+        }
+        for path in task_summary.workspace_writes {
+            if seen_workspace_writes.insert(path.clone()) {
+                summary.workspace_writes.push(path);
+            }
+        }
+        for value in task_summary.adapter_state {
+            if seen_adapter_state.insert(value.clone()) {
+                summary.adapter_state.push(value);
+            }
+        }
+        for value in task_summary.external_state {
+            if seen_external_state.insert(value.clone()) {
+                summary.external_state.push(value);
+            }
+        }
+    }
+    summary
+}
+
+fn harness_preflight_for_workflow(
+    workflow: &WorkflowSummary<'_>,
+    refusal: Option<&AgentExecutionRefusal>,
+) -> crate::output::GovernancePreflightEvaluation {
+    crate::output::GovernancePreflightEvaluation {
+        state: if refusal.is_some() {
+            String::from("refused")
+        } else {
+            String::from("allowed")
+        },
+        review_required: workflow.effective_safe_for_agent.map(std::ops::Not::not),
+        declared_safe_for_agent: workflow.declared_safe_for_agent,
+        effective_safe_for_agent: workflow.effective_safe_for_agent,
+        unsafe_closure_tasks: workflow.unsafe_closure_tasks.clone(),
+        refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        receipt_expected: true,
+        proof_expected: false,
+    }
+}
+
+fn workflow_harness_capability(
+    contract: &Contract,
+    workflow: &WorkflowSummary<'_>,
+) -> HarnessLaneCapability {
+    let selector = workflow_selector_from_summary(workflow);
+    let refusal = workflow_agent_refusal(contract, workflow.name);
+    let effects = workflow_effects_summary(contract, workflow.name);
+    HarnessLaneCapability {
+        lane_id: format!("workflow:{selector}"),
+        lane_kind: String::from("workflow"),
+        name: selector.clone(),
+        command: format!("ota up --workflow {selector} --agent"),
+        environment_boundary: workflow_harness_environment_boundary(contract, workflow),
+        preflight: harness_preflight_for_workflow(workflow, refusal.as_ref()),
+        effects: (!effects.is_empty()).then_some(effects),
+        blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
+        closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
+    }
+}
+
+fn harness_capability_profile_for_tasks(
+    contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
+    tasks: &[TaskSummary<'_>],
+) -> HarnessCapabilityProfile {
+    let mut callable_tasks = Vec::new();
+    let mut refused_tasks = Vec::new();
+    for task in tasks {
+        let capability = task_harness_capability(contract, task);
+        if capability.preflight.state == "allowed" {
+            callable_tasks.push(capability);
+        } else {
+            refused_tasks.push(capability);
+        }
+    }
+    HarnessCapabilityProfile {
+        actor_mode: String::from("agent"),
+        posture: agent.map(|entry| entry.posture.to_string()),
+        entrypoint: agent.and_then(|entry| entry.entrypoint.map(str::to_string)),
+        default_task: agent.and_then(|entry| entry.default_task.map(str::to_string)),
+        verify_after_changes: agent
+            .map(|entry| entry.verify_after_changes.clone())
+            .unwrap_or_default(),
+        writable_paths: agent
+            .map(|entry| entry.writable_paths.clone())
+            .unwrap_or_default(),
+        protected_paths: agent
+            .map(|entry| entry.protected_paths.clone())
+            .unwrap_or_default(),
+        callable_tasks,
+        refused_tasks,
+        callable_workflows: Vec::new(),
+        refused_workflows: Vec::new(),
+    }
+}
+
+fn harness_capability_profile_for_workflows(
+    contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
+    workflows: &[ListedWorkflowSummary<'_>],
+) -> HarnessCapabilityProfile {
+    let mut callable_workflows = Vec::new();
+    let mut refused_workflows = Vec::new();
+    for listed in workflows {
+        let capability = workflow_harness_capability(contract, &listed.workflow);
+        if capability.preflight.state == "allowed" {
+            callable_workflows.push(capability);
+        } else {
+            refused_workflows.push(capability);
+        }
+    }
+    HarnessCapabilityProfile {
+        actor_mode: String::from("agent"),
+        posture: agent.map(|entry| entry.posture.to_string()),
+        entrypoint: agent.and_then(|entry| entry.entrypoint.map(str::to_string)),
+        default_task: agent.and_then(|entry| entry.default_task.map(str::to_string)),
+        verify_after_changes: agent
+            .map(|entry| entry.verify_after_changes.clone())
+            .unwrap_or_default(),
+        writable_paths: agent
+            .map(|entry| entry.writable_paths.clone())
+            .unwrap_or_default(),
+        protected_paths: agent
+            .map(|entry| entry.protected_paths.clone())
+            .unwrap_or_default(),
+        callable_tasks: Vec::new(),
+        refused_tasks: Vec::new(),
+        callable_workflows,
+        refused_workflows,
+    }
+}
+
 pub fn tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -13718,6 +14024,7 @@ pub fn tasks(
                         agent_summary.as_ref(),
                         &task_summaries,
                     )];
+                    let mut member_targets = Vec::new();
                     let mut member_results = Vec::new();
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
@@ -13768,55 +14075,73 @@ pub fn tasks(
                                         );
                                     }
                                 };
-                            let member_tasks =
-                                listed_task_summaries(&member_target.contract, all, &filters);
-                            let member_agent =
-                                listed_agent_summary(&member_target.contract, all, &member_tasks);
-                            let member_workflow = match resolve_selected_workflow_summary(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                                workflow_name,
-                            ) {
-                                Ok(summary) => summary,
-                                Err(error) => {
-                                    return finalize_debug(
-                                        CommandOutput::failure_with_code(error, 2),
-                                        debug,
-                                        debug_lines,
-                                    );
-                                }
-                            };
-                            text_sections.push(render_tasks_output_text(
-                                use_cmd,
-                                &display_contract_target(
-                                    &compact_path_display,
-                                    Some(member.as_str()),
-                                ),
-                                member_workflow.as_ref(),
-                                member_agent.as_ref(),
-                                &member_tasks,
-                            ));
-                            member_results.push(json!({
-                                "member": member,
-                                "workflow": member_workflow,
-                                "agent": member_agent,
-                                "tasks": member_tasks,
-                            }));
+                            member_targets.push((member.as_str(), member_target));
                         }
                     }
+                    for (member, member_target) in &member_targets {
+                        let member_tasks =
+                            listed_task_summaries(&member_target.contract, all, &filters);
+                        let member_agent =
+                            listed_agent_summary(&member_target.contract, all, &member_tasks);
+                        let member_workflow = match resolve_selected_workflow_summary(
+                            &member_target.contract,
+                            &member_target.contract_path,
+                            workflow_name,
+                        ) {
+                            Ok(summary) => summary,
+                            Err(error) => {
+                                return finalize_debug(
+                                    CommandOutput::failure_with_code(error, 2),
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
+                        text_sections.push(render_tasks_output_text(
+                            use_cmd,
+                            &display_contract_target(&compact_path_display, Some(member)),
+                            member_workflow.as_ref(),
+                            member_agent.as_ref(),
+                            &member_tasks,
+                        ));
+                        let member_capability_profile = Some(harness_capability_profile_for_tasks(
+                            &member_target.contract,
+                            member_agent.as_ref(),
+                            &member_tasks,
+                        ));
+                        member_results.push(MemberTasksSuccess {
+                            member,
+                            workflow: member_workflow,
+                            agent: member_agent,
+                            capability_profile: member_capability_profile,
+                            tasks: member_tasks,
+                        });
+                    }
+
+                    let capability_profile = Some(harness_capability_profile_for_tasks(
+                        contract,
+                        agent_summary.as_ref(),
+                        &task_summaries,
+                    ));
 
                     match format {
                         OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
-                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
-                            "ok": true,
-                            "path": path_display,
-                            "workflow": workflow_summary,
-                            "agent": agent_summary,
-                            "members": member_results,
-                            "tasks": task_summaries,
-                        }))),
+                        OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
+                            ok: true,
+                            path: &path_display,
+                            workflow: workflow_summary,
+                            agent: agent_summary,
+                            capability_profile,
+                            members: member_results,
+                            tasks: task_summaries,
+                        })),
                     }
                 } else {
+                    let capability_profile = Some(harness_capability_profile_for_tasks(
+                        contract,
+                        agent_summary.as_ref(),
+                        &task_summaries,
+                    ));
                     match format {
                         OutputFormat::Text => CommandOutput::success(render_tasks_output_text(
                             use_cmd,
@@ -13830,6 +14155,7 @@ pub fn tasks(
                             path: &path_display,
                             workflow: workflow_summary,
                             agent: agent_summary,
+                            capability_profile,
                             members: Vec::new(),
                             tasks: task_summaries,
                         })),
@@ -13838,6 +14164,7 @@ pub fn tasks(
             }
             Ok(_) => {
                 let mut text_sections = Vec::new();
+                let mut member_targets = Vec::new();
                 let mut member_results = Vec::new();
                 for member in members {
                     let target =
@@ -13886,6 +14213,9 @@ pub fn tasks(
                                 );
                             }
                         };
+                    member_targets.push((member.as_str(), target));
+                }
+                for (member, target) in &member_targets {
                     let tasks = listed_task_summaries(&target.contract, all, &filters);
                     let agent = listed_agent_summary(&target.contract, all, &tasks);
                     let workflow = match resolve_selected_workflow_summary(
@@ -13904,27 +14234,36 @@ pub fn tasks(
                     };
                     text_sections.push(render_tasks_output_text(
                         use_cmd,
-                        &display_contract_target(&compact_path_display, Some(member.as_str())),
+                        &display_contract_target(&compact_path_display, Some(member)),
                         workflow.as_ref(),
                         agent.as_ref(),
                         &tasks,
                     ));
-                    member_results.push(json!({
-                        "member": member,
-                        "workflow": workflow,
-                        "agent": agent,
-                        "tasks": tasks,
-                    }));
+                    let capability_profile = Some(harness_capability_profile_for_tasks(
+                        &target.contract,
+                        agent.as_ref(),
+                        &tasks,
+                    ));
+                    member_results.push(MemberTasksSuccess {
+                        member,
+                        workflow,
+                        agent,
+                        capability_profile,
+                        tasks,
+                    });
                 }
 
                 match format {
                     OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
-                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
-                        "ok": true,
-                        "path": path_display,
-                        "members": member_results,
-                        "tasks": Vec::<JsonValue>::new(),
-                    }))),
+                    OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
+                        ok: true,
+                        path: &path_display,
+                        workflow: None,
+                        agent: None,
+                        capability_profile: None,
+                        members: member_results,
+                        tasks: Vec::new(),
+                    })),
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
@@ -14469,6 +14808,13 @@ pub fn workflows(
                             &member_target.contract,
                             &member_target.contract_path,
                         );
+                        let member_tasks = listed_task_summaries(
+                            &member_target.contract,
+                            false,
+                            &TasksListFilters::default(),
+                        );
+                        let member_agent =
+                            listed_agent_summary(&member_target.contract, false, &member_tasks);
                         let member_default = member_target
                             .contract
                             .workflows
@@ -14482,9 +14828,21 @@ pub fn workflows(
                         member_results.push(MemberWorkflowsSuccess {
                             member,
                             default: member_default,
+                            capability_profile: Some(harness_capability_profile_for_workflows(
+                                &member_target.contract,
+                                member_agent.as_ref(),
+                                &member_workflows,
+                            )),
                             workflows: member_workflows,
                         });
                     }
+
+                    let tasks = listed_task_summaries(
+                        &target.contract,
+                        false,
+                        &TasksListFilters::default(),
+                    );
+                    let agent = listed_agent_summary(&target.contract, false, &tasks);
 
                     match format {
                         OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
@@ -14492,11 +14850,22 @@ pub fn workflows(
                             ok: true,
                             path: &path_display,
                             default,
+                            capability_profile: Some(harness_capability_profile_for_workflows(
+                                &target.contract,
+                                agent.as_ref(),
+                                &workflows,
+                            )),
                             members: member_results,
                             workflows,
                         })),
                     }
                 } else {
+                    let tasks = listed_task_summaries(
+                        &target.contract,
+                        false,
+                        &TasksListFilters::default(),
+                    );
+                    let agent = listed_agent_summary(&target.contract, false, &tasks);
                     match format {
                         OutputFormat::Text => CommandOutput::success(render_workflows_output_text(
                             &text_path_display,
@@ -14507,6 +14876,11 @@ pub fn workflows(
                             ok: true,
                             path: &path_display,
                             default,
+                            capability_profile: Some(harness_capability_profile_for_workflows(
+                                &target.contract,
+                                agent.as_ref(),
+                                &workflows,
+                            )),
                             members: Vec::new(),
                             workflows,
                         })),
@@ -14572,6 +14946,12 @@ pub fn workflows(
                         &target.contract,
                         &target.contract_path,
                     );
+                    let tasks = listed_task_summaries(
+                        &target.contract,
+                        false,
+                        &TasksListFilters::default(),
+                    );
+                    let agent = listed_agent_summary(&target.contract, false, &tasks);
                     let default = target
                         .contract
                         .workflows
@@ -14585,6 +14965,11 @@ pub fn workflows(
                     member_results.push(MemberWorkflowsSuccess {
                         member,
                         default,
+                        capability_profile: Some(harness_capability_profile_for_workflows(
+                            &target.contract,
+                            agent.as_ref(),
+                            &workflows,
+                        )),
                         workflows,
                     });
                 }
@@ -14595,6 +14980,7 @@ pub fn workflows(
                         ok: true,
                         path: &path_display,
                         default: None,
+                        capability_profile: None,
                         members: member_results,
                         workflows: Vec::new(),
                     })),
@@ -58244,6 +58630,172 @@ agent:
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["refusal_occurred"],
             false
+        );
+    }
+
+    #[test]
+    fn tasks_json_includes_harness_capability_profile() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  lint:
+    run: cargo fmt --check
+    safe_for_agent: true
+    effects:
+      writes:
+        - reports
+  verify:
+    run: cargo test
+    safe_for_agent: true
+    depends_on:
+      - setup
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - staging_api
+  setup:
+    run: cargo fetch
+agent:
+  posture: readiness_strict
+  safe_tasks:
+    - lint
+    - verify
+  writable_paths:
+    - reports
+  protected_paths:
+    - .github/workflows
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::tasks(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            false,
+            false,
+            false,
+            false,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("tasks json");
+        assert_eq!(json["capability_profile"]["actor_mode"], "agent");
+        assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["lane_id"],
+            "task:lint"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["preflight"]["state"],
+            "allowed"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][0]["lane_id"],
+            "task:setup"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][0]["preflight"]["refusal_reason_family"],
+            "requested_task_not_safe"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["lane_id"],
+            "task:verify"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["preflight"]["refusal_reason_family"],
+            "unsafe_dependency_closure"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["blocked_task"],
+            "setup"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["effects"]["network_kind"],
+            "integration_test"
+        );
+        assert_eq!(
+            json["capability_profile"]["protected_paths"][0],
+            ".github/workflows"
+        );
+    }
+
+    #[test]
+    fn workflows_json_includes_harness_capability_profile() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  verify:
+    context: app
+    run: cargo test
+    safe_for_agent: true
+  publish:
+    context: app
+    run: cargo publish
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+  publish:
+    run:
+      task: publish
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::workflows(Some(repo.path()), None, &[], OutputFormat::Json, false);
+
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("workflows json");
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["lane_id"],
+            "workflow:verify"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["command"],
+            "ota up --workflow verify --agent"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["environment_boundary"]["backend"],
+            "container"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_workflows"][0]["lane_id"],
+            "workflow:publish"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_workflows"][0]["preflight"]["refusal_reason_family"],
+            "requested_task_not_safe"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_workflows"][0]["blocked_task"],
+            "publish"
         );
     }
 

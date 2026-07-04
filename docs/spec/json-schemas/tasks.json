@@ -101,6 +101,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cwd": { "type": "string" },
         "env_files": {
           "type": "array",
           "items": { "type": "string" }
@@ -120,6 +121,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cwd": { "type": "string" },
         "files": {
           "type": "array",
           "items": { "type": "string" }
@@ -344,13 +346,109 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "workspace_writes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "network": { "type": "boolean" },
         "network_kind": {
           "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"]
         },
+        "adapter_state": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "external_state": {
           "type": "array",
           "items": { "type": "string" }
+        }
+      }
+    },
+    "governancePreflightEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "receipt_expected", "proof_expected"],
+      "properties": {
+        "state": { "type": "string" },
+        "review_required": { "type": "boolean" },
+        "declared_safe_for_agent": { "type": "boolean" },
+        "effective_safe_for_agent": { "type": "boolean" },
+        "unsafe_closure_tasks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "refusal_reason_family": { "type": "string" },
+        "receipt_expected": { "type": "boolean" },
+        "proof_expected": { "type": "boolean" }
+      }
+    },
+    "harnessEnvironmentBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "backend": { "type": "string" },
+        "context": { "type": "string" },
+        "default_mode": { "type": "string" },
+        "primary_task": { "type": "string" }
+      }
+    },
+    "harnessLaneCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane_id", "lane_kind", "name", "command", "preflight"],
+      "properties": {
+        "lane_id": { "type": "string" },
+        "lane_kind": { "type": "string" },
+        "name": { "type": "string" },
+        "command": { "type": "string" },
+        "environment_boundary": { "$ref": "#/$defs/harnessEnvironmentBoundary" },
+        "preflight": { "$ref": "#/$defs/governancePreflightEvaluation" },
+        "effects": { "$ref": "#/$defs/taskEffects" },
+        "blocked_task": { "type": "string" },
+        "closure_path": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "harnessCapabilityProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_mode"],
+      "properties": {
+        "actor_mode": { "type": "string" },
+        "posture": { "type": "string" },
+        "entrypoint": { "type": "string" },
+        "default_task": { "type": "string" },
+        "verify_after_changes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "writable_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "callable_tasks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+        },
+        "refused_tasks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+        },
+        "callable_workflows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/harnessLaneCapability" }
+        },
+        "refused_workflows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/harnessLaneCapability" }
         }
       }
     }
@@ -364,10 +462,12 @@
         "ok": { "const": true },
         "path": { "type": "string" },
         "workflow": { "$ref": "#/$defs/workflowSummary" },
+        "capability_profile": { "$ref": "#/$defs/harnessCapabilityProfile" },
         "agent": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "posture": { "type": "string" },
             "entrypoint": { "type": "string" },
             "default_task": { "type": "string" },
             "safe_tasks": {
@@ -524,10 +624,12 @@
             "properties": {
               "member": { "type": "string" },
               "workflow": { "$ref": "#/$defs/workflowSummary" },
+              "capability_profile": { "$ref": "#/$defs/harnessCapabilityProfile" },
               "agent": {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "posture": { "type": "string" },
                   "entrypoint": { "type": "string" },
                   "default_task": { "type": "string" },
                   "safe_tasks": {

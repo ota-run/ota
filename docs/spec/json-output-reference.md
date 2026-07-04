@@ -1679,6 +1679,54 @@ Success:
       }
     }
   },
+  "capability_profile": {
+    "actor_mode": "agent",
+    "writable_paths": ["src", "docs"],
+    "protected_paths": ["Cargo.lock", "LICENSE"],
+    "callable_tasks": [
+      {
+        "lane_id": "task:test",
+        "lane_kind": "task",
+        "name": "test",
+        "command": "ota run test --agent",
+        "environment_boundary": {
+          "kind": "task",
+          "backend": "native",
+          "default_mode": "native"
+        },
+        "preflight": {
+          "state": "allowed",
+          "review_required": false,
+          "declared_safe_for_agent": true,
+          "effective_safe_for_agent": true,
+          "receipt_expected": true,
+          "proof_expected": false
+        }
+      }
+    ],
+    "refused_tasks": [
+      {
+        "lane_id": "task:setup",
+        "lane_kind": "task",
+        "name": "setup",
+        "command": "ota run setup --agent",
+        "environment_boundary": {
+          "kind": "task",
+          "backend": "native",
+          "default_mode": "native"
+        },
+        "preflight": {
+          "state": "refused",
+          "review_required": true,
+          "declared_safe_for_agent": false,
+          "effective_safe_for_agent": false,
+          "refusal_reason_family": "requested_task_not_safe",
+          "receipt_expected": true,
+          "proof_expected": false
+        }
+      }
+    ]
+  },
   "tasks": [
     {
       "name": "setup",
@@ -1740,6 +1788,22 @@ Success:
   ]
 }
 ```
+
+`ota tasks --json` may also include additive top-level `capability_profile`, a derived
+harness-facing agent surface built from the same closure-aware safety and refusal truth that powers
+`ota run --agent`.
+
+Each task capability entry carries:
+
+- stable lane identity via `lane_id` and `lane_kind`
+- the canonical agent invocation in `command`
+- an additive `environment_boundary`
+- canonical `preflight` governance state
+- additive closure effect posture in `effects` when the selected task path owns network, write,
+  adapter, or external-state behavior
+
+Refused task capability entries may also carry additive `blocked_task` and `closure_path` when a
+declared-safe task is refused because its reachable closure leaves the safe surface.
 
 Root monorepo summary output can also include grouped member results:
 
@@ -1810,6 +1874,31 @@ Success:
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
   "default": "app",
+  "capability_profile": {
+    "actor_mode": "agent",
+    "callable_workflows": [
+      {
+        "lane_id": "workflow:quickstart",
+        "lane_kind": "workflow",
+        "name": "quickstart",
+        "command": "ota up --workflow quickstart --agent",
+        "environment_boundary": {
+          "kind": "workflow",
+          "backend": "container",
+          "context": "app",
+          "primary_task": "preview:quickstart"
+        },
+        "preflight": {
+          "state": "allowed",
+          "review_required": false,
+          "declared_safe_for_agent": true,
+          "effective_safe_for_agent": true,
+          "receipt_expected": true,
+          "proof_expected": false
+        }
+      }
+    ]
+  },
   "workflows": [
     {
       "name": "quickstart",
@@ -1856,6 +1945,14 @@ Success:
 Notes:
 
 - root success includes `ok`, `path`, optional `default`, and `workflows`
+- root success may also include additive `capability_profile`, a derived harness-facing workflow
+  surface for agent mode
+- `capability_profile.callable_workflows[]` and `capability_profile.refused_workflows[]` publish
+  exact workflow lane identity, canonical `ota up --workflow ... --agent` commands, workflow
+  environment boundaries, and canonical preflight governance state without requiring a harness to
+  scrape human output or guess workflow closure safety
+- refused workflow entries may also carry additive `blocked_task` and `closure_path` when the
+  selected workflow reaches a non-safe task in its prepare/setup/run/attach closure
 - each workflow entry includes additive fields only when declared or resolved:
   - `intent`
   - `description`

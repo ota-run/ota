@@ -2838,6 +2838,8 @@ pub struct TasksSuccess<'a> {
     pub workflow: Option<WorkflowSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_profile: Option<HarnessCapabilityProfile>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<MemberTasksSuccess<'a>>,
     pub tasks: Vec<TaskSummary<'a>>,
@@ -2850,6 +2852,8 @@ pub struct MemberTasksSuccess<'a> {
     pub workflow: Option<WorkflowSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_profile: Option<HarnessCapabilityProfile>,
     pub tasks: Vec<TaskSummary<'a>>,
 }
 
@@ -2869,6 +2873,8 @@ pub struct WorkflowsSuccess<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_profile: Option<HarnessCapabilityProfile>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<MemberWorkflowsSuccess<'a>>,
     pub workflows: Vec<ListedWorkflowSummary<'a>>,
@@ -2879,6 +2885,8 @@ pub struct MemberWorkflowsSuccess<'a> {
     pub member: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_profile: Option<HarnessCapabilityProfile>,
     pub workflows: Vec<ListedWorkflowSummary<'a>>,
 }
 
@@ -2938,6 +2946,61 @@ pub struct AgentSummary<'a> {
     pub bootstrap: Option<AgentBootstrapSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessCapabilityProfile {
+    pub actor_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub posture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_task: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub verify_after_changes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub writable_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub protected_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub callable_tasks: Vec<HarnessLaneCapability>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub refused_tasks: Vec<HarnessLaneCapability>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub callable_workflows: Vec<HarnessLaneCapability>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub refused_workflows: Vec<HarnessLaneCapability>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessLaneCapability {
+    pub lane_id: String,
+    pub lane_kind: String,
+    pub name: String,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_boundary: Option<HarnessEnvironmentBoundary>,
+    pub preflight: GovernancePreflightEvaluation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effects: Option<TaskEffectsSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_task: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub closure_path: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessEnvironmentBoundary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_task: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

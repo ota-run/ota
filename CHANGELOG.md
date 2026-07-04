@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added additive harness-facing `capability_profile` export on `ota tasks --json` and
+  `ota workflows --json`, publishing agent-callable vs refused lanes with canonical preflight
+  governance, exact agent commands, environment boundaries, and closure effect posture so
+  harnesses/sandboxes can consume Ota’s execution truth without scraping human output or
+  rebuilding safe-task/refusal semantics themselves
 - widened CI verification governance findings with additive machine-readable
   `metadata.governance.merge_check_id` plus verifier lane metadata on `ota doctor --json`, so
   CI/merge consumers can key off stable Ota-owned verification-lane identity instead of brittle
