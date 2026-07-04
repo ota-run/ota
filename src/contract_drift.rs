@@ -165,8 +165,8 @@ pub(crate) fn append_contract_drift_findings(
                         change.field
                     ),
                     format!(
-                        "`ota.yaml` still declares `{}` = `{}`, but workflow verification under `.github/workflows/` no longer detects that verifier lane; current detected verifier tasks: {}",
-                        change.field, change.existing, change.detected
+                        "`ota.yaml` still declares `{}` = `{}`, but workflow verification under `{}` no longer detects that verifier lane; current detected verifier tasks: {}",
+                        change.field, change.existing, change.source, change.detected
                     ),
                 ),
             };
@@ -842,7 +842,8 @@ fn collect_ci_verification_governance_changes(
                 field,
                 existing: existing_command,
                 detected: detected_rendered.clone(),
-                source: String::from(".github/workflows/"),
+                source: best_removed_ci_verification_source(task_name, &recovered_signals)
+                    .unwrap_or_else(|| String::from(".github/workflows/")),
                 kind: CiVerificationGovernanceChangeKind::Removed,
             });
         }
@@ -1146,6 +1147,32 @@ fn ci_verification_signal_workflow_source(source: &str) -> String {
         .next()
         .unwrap_or(source)
         .to_string()
+}
+
+fn best_removed_ci_verification_source(
+    task_name: &str,
+    recovered_signals: &[CiVerificationTaskSignal],
+) -> Option<String> {
+    let task_family = ci_verifier_task_family(task_name);
+    let family_matches = recovered_signals
+        .iter()
+        .filter(|signal| {
+            verification_task_name_from_field(&signal.field).is_some_and(|detected_task| {
+                ci_verifier_task_family(detected_task) == task_family
+            })
+        })
+        .map(|signal| ci_verification_signal_workflow_source(&signal.source))
+        .collect::<BTreeSet<_>>();
+    if let Some(source) = family_matches.into_iter().next() {
+        return Some(source);
+    }
+
+    recovered_signals
+        .iter()
+        .map(|signal| ci_verification_signal_workflow_source(&signal.source))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .next()
 }
 
 fn best_matching_ci_verification_workflow_candidate<'a>(
@@ -3411,5 +3438,29 @@ workflows:
             merge_gate.lanes[0].provider_sources,
             vec![String::from(".github/workflows/ci.yml#jobs.verify.steps[0].run")]
         );
+    }
+
+    #[test]
+    fn removed_ci_verification_drift_prefers_recovered_workflow_source() {
+        let signals = vec![
+            CiVerificationTaskSignal {
+                field: String::from("tasks.test.run"),
+                command: String::from("cargo test"),
+                source: String::from(".github/workflows/check.yml#jobs.test.steps[0].run"),
+                exact_command: true,
+                qualifier: None,
+            },
+            CiVerificationTaskSignal {
+                field: String::from("tasks.format.run"),
+                command: String::from("cargo fmt --check"),
+                source: String::from(".github/workflows/format.yml#jobs.format.steps[0].run"),
+                exact_command: true,
+                qualifier: None,
+            },
+        ];
+
+        let source = best_removed_ci_verification_source("build", &signals).expect("source");
+
+        assert_eq!(source, ".github/workflows/check.yml");
     }
 }
