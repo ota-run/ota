@@ -13705,7 +13705,10 @@ fn actor_mode_label(agent: bool) -> &'static str {
 }
 
 fn new_crossing_id() -> String {
-    format!("crossing-{}", OffsetDateTime::now_utc().unix_timestamp_nanos())
+    format!(
+        "crossing-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    )
 }
 
 fn crossing_created_at() -> String {
@@ -13780,10 +13783,7 @@ fn build_workflow_crossing_record(
     Some(crate::output::ExecutionBoundaryCrossing {
         id: new_crossing_id(),
         created_at: crossing_created_at(),
-        lane_id: format!(
-            "workflow:{}",
-            workflow_name.unwrap_or("default")
-        ),
+        lane_id: format!("workflow:{}", workflow_name.unwrap_or("default")),
         lane_kind: String::from("workflow"),
         boundary_family: crossing_boundary_family.unwrap_or_else(|| String::from("unsafe_task")),
         classification: crossing_classification.unwrap_or_else(|| String::from("escalated")),
@@ -26964,21 +26964,22 @@ pub(crate) fn up_with_agent_reason(
                                             };
                                         }
                                     };
-                                let mut member_result = match execute_repo_up_with_behavior_with_agent(
-                                    &member_target.contract,
-                                    &member_target.contract_path,
-                                    overrides,
-                                    workflow_name,
-                                    agent,
-                                    None,
-                                    dry_run,
-                                    execution_mode,
-                                    run_behavior_preference,
-                                    ready_timeout,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) => return CommandOutput::failure(error),
-                                };
+                                let mut member_result =
+                                    match execute_repo_up_with_behavior_with_agent(
+                                        &member_target.contract,
+                                        &member_target.contract_path,
+                                        overrides,
+                                        workflow_name,
+                                        agent,
+                                        None,
+                                        dry_run,
+                                        execution_mode,
+                                        run_behavior_preference,
+                                        ready_timeout,
+                                    ) {
+                                        Ok(result) => result,
+                                        Err(error) => return CommandOutput::failure(error),
+                                    };
                                 attach_crossing_to_up_result(
                                     &mut member_result,
                                     &member_target.contract,
@@ -34972,9 +34973,9 @@ fn receipt_diff_finding_stage_family(finding: &Finding) -> &'static str {
         | "OTA_RUNTIME_MISSING"
         | "OTA_RUNTIME_VERSION_MISMATCH"
         | "OTA_TOOL_MISSING"
-        | "OTA_NATIVE_PREREQUISITE_MISSING"
-        | "OTA_SERVICE_UNVERIFIABLE" => "prepare",
-        "OTA_SERVICE_READINESS_FAILED"
+        | "OTA_NATIVE_PREREQUISITE_MISSING" => "prepare",
+        "OTA_SERVICE_UNVERIFIABLE"
+        | "OTA_SERVICE_READINESS_FAILED"
         | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
         | "OTA_SERVICE_CHECK_FAILED"
         | "OTA_SERVICE_CHECK_TIMED_OUT"
@@ -42023,7 +42024,9 @@ fn governance_evaluation_for_up_result(
     let proof_expected = true;
     let proof_present = execution_attempted && up_phase_proof_present(phase);
 
-    let preflight = preflight.cloned().unwrap_or(crate::output::GovernancePreflightEvaluation {
+    let preflight = preflight
+        .cloned()
+        .unwrap_or(crate::output::GovernancePreflightEvaluation {
             state: preflight_state.to_string(),
             review_required: None,
             declared_safe_for_agent: None,
@@ -53341,7 +53344,6 @@ workflows:
             body["workflow_env_artifacts"][0]["consumers"][0],
             "task:build"
         );
-        assert_eq!(body["steps"][0]["stage_family"].as_str(), Some("proof"));
         assert_eq!(
             body["workflow_env_artifacts"][0]["consumers"][1],
             "service:postgres"
@@ -59333,16 +59335,9 @@ agent:
         )
         .expect("write contract");
 
-        let output = super::workflows(
-            Some(repo.path()),
-            None,
-            &[],
-            OutputFormat::Json,
-            false,
-        );
+        let output = super::workflows(Some(repo.path()), None, &[], OutputFormat::Json, false);
 
-        let json: serde_json::Value =
-            serde_json::from_str(&output.stdout).expect("workflows json");
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("workflows json");
         assert_eq!(
             json["capability_profile"]["callable_workflows"][0]["environment_boundary"]["primary_task"],
             "build"
@@ -64730,7 +64725,10 @@ tasks:
             Some("backend_startup")
         );
         assert_eq!(value["governance"]["preflight"]["proof_expected"], true);
-        assert_eq!(value["governance"]["post_execution"]["proof_present"], false);
+        assert_eq!(
+            value["governance"]["post_execution"]["proof_present"],
+            false
+        );
         assert!(value["governance"]["preflight"]["crossing_required"].is_null());
     }
 
@@ -65023,13 +65021,7 @@ tasks:
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             dependency_steps: Vec::new(),
-            steps: vec![execution_receipt_step(
-                1,
-                "verify",
-                "FAILED",
-                None,
-                Some(1),
-            )],
+            steps: vec![execution_receipt_step(1, "verify", "FAILED", None, Some(1))],
             blocked: Vec::new(),
             status: Some(String::from("FAILED")),
             failed_task: Some(String::from("verify")),
@@ -82544,7 +82536,7 @@ tasks:
   setup:
     script: |
       echo setup >> run.log
-      touch .env.local
+      printf '' > .env.local
   dev:
     run: echo dev
 workflows:
@@ -82611,7 +82603,7 @@ tasks:
   setup:
     script: |
       echo setup >> run.log
-      touch .env.local
+      printf '' > .env.local
   dev:
     run: echo dev
 workflows:

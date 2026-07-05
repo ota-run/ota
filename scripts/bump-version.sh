@@ -171,30 +171,36 @@ awk -v new_version="$new_version" '
 
 mv "$tmp_file" "$cargo_toml"
 
-tmp_file="$readiness_workflow.tmp.$$"
-awk -v new_version="$new_version" '
-  BEGIN { replaced=0 }
-  /^[[:space:]]*ota-version:[[:space:]]*/ && !replaced {
-    sub(/[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$/, new_version)
-    replaced=1
-  }
-  { print }
-  END {
-    if (!replaced) {
-      exit 3
+workflow_updated=0
+if grep -Eq '^[[:space:]]*ota-version:[[:space:]]*' "$readiness_workflow"; then
+  tmp_file="$readiness_workflow.tmp.$$"
+  awk -v new_version="$new_version" '
+    BEGIN { replaced=0 }
+    /^[[:space:]]*ota-version:[[:space:]]*/ && !replaced {
+      sub(/[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$/, new_version)
+      replaced=1
     }
+    { print }
+    END {
+      if (!replaced) {
+        exit 3
+      }
+    }
+  ' "$readiness_workflow" > "$tmp_file" || {
+    rc=$?
+    rm -f "$tmp_file"
+    if [ "$rc" -eq 3 ]; then
+      echo "error: failed to update ota-version in $readiness_workflow" >&2
+      exit 1
+    fi
+    exit "$rc"
   }
-' "$readiness_workflow" > "$tmp_file" || {
-  rc=$?
-  rm -f "$tmp_file"
-  if [ "$rc" -eq 3 ]; then
-    echo "error: failed to update ota-version in $readiness_workflow" >&2
-    exit 1
-  fi
-  exit "$rc"
-}
-
-mv "$tmp_file" "$readiness_workflow"
+  mv "$tmp_file" "$readiness_workflow"
+  workflow_updated=1
+elif ! grep -Eq '^[[:space:]]*source:[[:space:]]*contract[[:space:]]*$' "$readiness_workflow"; then
+  echo "error: failed to locate ota-version pin or source: contract in $readiness_workflow" >&2
+  exit 1
+fi
 
 tmp_file="$changelog.tmp.$$"
 awk -v new_version="$new_version" '
@@ -227,7 +233,12 @@ awk -v new_version="$new_version" '
 mv "$tmp_file" "$changelog"
 
 printf '🦦 VERSION BUMP\n'
-printf 'Updated: Cargo.toml, CHANGELOG.md, .github/workflows/ota-readiness.yml\n'
+if [ "$workflow_updated" -eq 1 ]; then
+  printf 'Updated: Cargo.toml, CHANGELOG.md, .github/workflows/ota-readiness.yml\n'
+else
+  printf 'Updated: Cargo.toml, CHANGELOG.md\n'
+  printf 'Note: ota-readiness workflow uses `source: contract`; no version pin rewrite needed\n'
+fi
 printf 'From: %s\n' "$current_version"
 printf 'To:   %s\n' "$new_version"
 printf '\nNext:\n'

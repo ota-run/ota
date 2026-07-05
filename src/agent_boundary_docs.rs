@@ -312,13 +312,15 @@ fn is_concrete_agent_doc_command(command: &str) -> bool {
         if *byte != b'<' {
             continue;
         }
-        if let Some(relative_end) = bytes[index + 1..].iter().position(|candidate| *candidate == b'>')
+        if let Some(relative_end) = bytes[index + 1..]
+            .iter()
+            .position(|candidate| *candidate == b'>')
         {
             let placeholder = &trimmed[index + 1..index + 1 + relative_end];
             if !placeholder.is_empty()
-                && placeholder
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | ':' | '.'))
+                && placeholder.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | ':' | '.')
+                })
             {
                 return false;
             }
@@ -371,18 +373,24 @@ fn canonical_agent_doc_task_name(label: &str) -> Option<String> {
 fn canonical_agent_doc_task_name_from_command(command: &str) -> Option<String> {
     let tokens = command.split_whitespace().collect::<Vec<_>>();
     match tokens.as_slice() {
-        ["pnpm" | "npm" | "yarn" | "bun", "run", script, ..] => canonical_agent_doc_task_token(script),
+        ["pnpm" | "npm" | "yarn" | "bun", "run", script, ..] => {
+            canonical_agent_doc_task_token(script)
+        }
         ["pnpm" | "npm" | "yarn" | "bun", script, ..] if !script.starts_with('-') => {
             canonical_agent_doc_task_token(script)
         }
-        ["cargo", subcommand, ..] if !subcommand.starts_with('-') => canonical_agent_doc_task_token(subcommand),
+        ["cargo", subcommand, ..] if !subcommand.starts_with('-') => {
+            canonical_agent_doc_task_token(subcommand)
+        }
         ["pytest", ..] => Some(String::from("test")),
         ["python" | "python3", "-m", "pytest", ..] => Some(String::from("test")),
         ["uv", "run", "pytest", ..] => Some(String::from("test")),
         ["poetry", "run", "pytest", ..] => Some(String::from("test")),
         ["ruff", "check", ..] => Some(String::from("lint")),
         ["python" | "python3", "-m", "build", ..] => Some(String::from("build")),
-        ["task" | "just" | "make", task, ..] if !task.starts_with('-') => canonical_agent_doc_task_token(task),
+        ["task" | "just" | "make", task, ..] if !task.starts_with('-') => {
+            canonical_agent_doc_task_token(task)
+        }
         ["npx", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_token(task),
         ["pnpm", "exec", "nx", "affected", "-t", task, ..] => canonical_agent_doc_task_token(task),
         ["npx", "nx", "run", task, ..] => canonical_agent_doc_task_token(task),
@@ -478,15 +486,25 @@ mod tests {
             parsed
                 .task_commands
                 .iter()
-                .any(|command| command.task_name == "format:diff" && command.command == "pnpm run format:diff")
+                .any(|command| command.task_name == "format:diff"
+                    && command.command == "pnpm run format:diff")
         );
         assert!(
-            parsed
+            parsed.task_commands.iter().any(
+                |command| command.task_name == "format" && command.command == "pnpm run format"
+            )
+        );
+        assert!(
+            !parsed
                 .task_commands
                 .iter()
-                .any(|command| command.task_name == "format" && command.command == "pnpm run format")
+                .any(|command| command.task_name == "check")
         );
-        assert!(!parsed.task_commands.iter().any(|command| command.task_name == "check"));
-        assert!(!parsed.task_commands.iter().any(|command| command.task_name == "fmt"));
+        assert!(
+            !parsed
+                .task_commands
+                .iter()
+                .any(|command| command.task_name == "fmt")
+        );
     }
 }

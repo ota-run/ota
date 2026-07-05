@@ -77,6 +77,8 @@ field is not emitted for that finding family.
 | `OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED` | `contract` | `repo_signals` | `repo_signals` |
 | `OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_DEVCONTAINER_RUNTIME_DRIFT` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_DEVCONTAINER_FORWARD_PORT_DRIFT` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CI_VERIFICATION_REMOVED` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION` | `contract` | `repo_contract` | `repo_contract` |

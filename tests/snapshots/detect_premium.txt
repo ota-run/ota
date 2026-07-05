@@ -5,16 +5,16 @@
 Existing contract comparison:
 ✦  project.name: would update `existing` -> `ota-web`
     Owner: manual
-    Source: package.json#name [high]
+    Source: package.json#name (environment_toolchain) [high]
 ✦  toolchains.node.version: would add `22`
     Owner: detected
-    Source: .nvmrc [high]
+    Source: .nvmrc (environment_toolchain) [high]
 ✦  toolchains.node.package_managers.pnpm: would add `10.1.0`
     Owner: detected
-    Source: package.json#packageManager [high]
+    Source: package.json#packageManager (environment_toolchain) [high]
 ✦  tasks.dev.run: would add `pnpm dev`
     Owner: detected
-    Source: package.json#scripts.dev [high]
+    Source: package.json#scripts.dev (task_command) [high]
 
 Contract
 version: 1
@@ -60,31 +60,6 @@ tasks:
       Run `ota run setup` to execute this task.
       Hydrate Node dependencies through npm.
     internal: true
-agent:
-  posture: readiness_strict
-  entrypoint: setup
-  default_task: setup
-  safe_tasks:
-  - setup
-  verify_after_changes:
-  - setup
-  protected_paths:
-  - ota.yaml
-  inferred_boundary:
-    reviewed: false
-    provenance:
-      protected_paths:
-      - init:contract_file_default
-  bootstrap:
-    ota:
-      note: Only install ota if it is missing and installation is approved.
-      source:
-        kind: version
-        version: v1.6.24
-  notes: |
-    Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo.
-    Use `ota validate` before changes and `ota doctor` after edits.
-    Use `ota run setup` to verify changes.
 
 Annotations:
 ✦ Field: project.name

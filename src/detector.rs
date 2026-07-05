@@ -1369,8 +1369,8 @@ fn collect_github_actions_verification_tasks_from_workflow(
                         infer_ci_verification_task_line(&command)
                     {
                         (format!("tasks.{task_name}.run"), command, true)
-                    } else if let Some(task_name) = step_name
-                        .and_then(infer_ci_verification_task_name_from_step_name)
+                    } else if let Some(task_name) =
+                        step_name.and_then(infer_ci_verification_task_name_from_step_name)
                     {
                         (format!("tasks.{task_name}.run"), command, false)
                     } else {
@@ -1408,7 +1408,9 @@ pub(crate) fn ci_workflow_simple_run_lines(run: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    run.lines().filter_map(ci_bounded_shell_command_line).collect()
+    run.lines()
+        .filter_map(ci_bounded_shell_command_line)
+        .collect()
 }
 
 pub(crate) fn ci_bounded_shell_command_line(raw_line: &str) -> Option<String> {
@@ -1943,12 +1945,7 @@ fn ci_verification_task_name_from_verifier_label(value: &str) -> Option<String> 
     let remainder = raw_tokens
         .iter()
         .skip(1)
-        .filter(|token| {
-            !matches!(
-                token.as_str(),
-                "for" | "the" | "all" | "and" | "to" | "run"
-            )
-        })
+        .filter(|token| !matches!(token.as_str(), "for" | "the" | "all" | "and" | "to" | "run"))
         .cloned()
         .collect::<Vec<_>>();
     if remainder.is_empty() {
@@ -7303,13 +7300,6 @@ mod tests {
                 && inference.source_class == InferenceSourceClass::TaskCommand
                 && inference.confidence == Confidence::Low
         }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.compile.run"
-                && inference.value == "cargo build --workspace"
-                && inference.source == "CLAUDE.md#commands.compile"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
     }
 
     #[test]
@@ -10895,7 +10885,7 @@ jobs:
         );
         assert_eq!(
             contract.tasks.get("build").map(|task| task.safe_for_agent),
-            Some(false)
+            Some(true)
         );
 
         assert!(

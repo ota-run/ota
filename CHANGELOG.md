@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.23
+
 - tightened active-execution ownership around container attachment isolation: shared logical
   write paths now only conflict when they land in the same effective execution namespace, so
   container contexts with distinct `attachments.isolated_paths` volume families can coexist

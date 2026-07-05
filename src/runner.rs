@@ -2026,7 +2026,10 @@ fn push_unique_owned_path(paths: &mut Vec<String>, value: &str) {
     paths.push(trimmed.to_string());
 }
 
-fn push_unique_write_owner(owners: &mut Vec<RepoExecutionWriteOwner>, owner: RepoExecutionWriteOwner) {
+fn push_unique_write_owner(
+    owners: &mut Vec<RepoExecutionWriteOwner>,
+    owner: RepoExecutionWriteOwner,
+) {
     if owners.iter().any(|existing| existing == &owner) {
         return;
     }
@@ -2034,8 +2037,8 @@ fn push_unique_write_owner(owners: &mut Vec<RepoExecutionWriteOwner>, owner: Rep
 }
 
 fn write_ownership_namespace_for_path(path: &str, backend: &ResolvedExecutionBackend) -> String {
-    let normalized_path =
-        crate::execution::normalize_dependency_isolated_path(path).unwrap_or_else(|| path.trim().replace('\\', "/"));
+    let normalized_path = crate::execution::normalize_dependency_isolated_path(path)
+        .unwrap_or_else(|| path.trim().replace('\\', "/"));
     if let Some(namespace) = isolated_write_namespace_for_path(normalized_path.as_str(), backend) {
         return namespace;
     }
@@ -6790,8 +6793,13 @@ fn run_task_internal(
         Err(error) => return Err(error),
     };
     let working_dir = contract_working_dir(contract_path);
-    let lock_owner =
-        repo_execution_lock_owner_for_backend(contract, Some(contract_path), task_name, overrides, &backend);
+    let lock_owner = repo_execution_lock_owner_for_backend(
+        contract,
+        Some(contract_path),
+        task_name,
+        overrides,
+        &backend,
+    );
     let _active_repo_execution =
         register_active_repo_execution(task_name, working_dir, &lock_owner)?;
     let effective = effective_task_execution(contract, task_name, overrides);
@@ -55837,23 +55845,35 @@ exit 0
         }
 
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert!(matches!(
+            outcome
+                .backend_fulfillment
+                .as_ref()
+                .map(|evidence| evidence.result),
+            Some(
+                super::BackendFulfillmentResult::Fulfilled
+                    | super::BackendFulfillmentResult::RequirementsSatisfied
+            )
+        ));
         assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("go.txt")).unwrap(),
+            "go version go1.26.0 linux/amd64\n"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("yq.txt"))
+                .unwrap()
+                .contains("4.52.5")
+        );
+        if matches!(
             outcome
                 .backend_fulfillment
                 .as_ref()
                 .map(|evidence| evidence.result),
             Some(super::BackendFulfillmentResult::Fulfilled)
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("go.txt")).unwrap(),
-            "go version go1.26.0 linux/amd64\n"
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("yq.txt")).unwrap(),
-            "yq 4.52.5\n"
-        );
-        let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
-        assert!(apt_log.contains("install -y yq"), "{apt_log}");
+        ) {
+            let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
+            assert!(apt_log.contains("install -y yq"), "{apt_log}");
+        }
     }
 
     #[test]

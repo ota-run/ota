@@ -27,14 +27,13 @@ use std::path::Path;
 use serde_yaml::{Mapping, Value as YamlValue};
 
 use crate::detector::{
-    CiVerificationTaskSignal, Confidence, DetectService, Inference,
-    ci_bounded_shell_command_line, collect_github_actions_verification_tasks, detect_repo,
-    infer_ci_verification_task_line,
+    CiVerificationTaskSignal, Confidence, DetectService, Inference, ci_bounded_shell_command_line,
+    collect_github_actions_verification_tasks, detect_repo, infer_ci_verification_task_line,
 };
 use crate::doctor::{Finding, FindingGovernanceMetadata, FindingSeverity};
 use crate::output::{
-    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary,
-    DoctorMergeGateLane, DoctorMergeGateSummary, DoctorRequiredVerificationLane,
+    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary, DoctorMergeGateLane,
+    DoctorMergeGateSummary, DoctorRequiredVerificationLane,
 };
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
@@ -926,7 +925,9 @@ fn collect_ci_verification_aggregate_changes(
     changes
 }
 
-fn projected_required_verification_lanes(existing: &Contract) -> Vec<ProjectedRequiredVerificationLane> {
+fn projected_required_verification_lanes(
+    existing: &Contract,
+) -> Vec<ProjectedRequiredVerificationLane> {
     let mut lanes = BTreeMap::<String, ProjectedRequiredVerificationLane>::new();
 
     if let Some(workflows) = existing.workflows.as_ref() {
@@ -961,7 +962,11 @@ fn projected_required_verification_lanes(existing: &Contract) -> Vec<ProjectedRe
                 }
             });
             let source = format!("workflows.{workflow_name}.run.task");
-            if !entry.contract_sources.iter().any(|existing| existing == &source) {
+            if !entry
+                .contract_sources
+                .iter()
+                .any(|existing| existing == &source)
+            {
                 entry.contract_sources.push(source);
             }
         }
@@ -991,7 +996,11 @@ fn projected_required_verification_lanes(existing: &Contract) -> Vec<ProjectedRe
                 }
             });
             let source = String::from("agent.verify_after_changes");
-            if !entry.contract_sources.iter().any(|existing| existing == &source) {
+            if !entry
+                .contract_sources
+                .iter()
+                .any(|existing| existing == &source)
+            {
                 entry.contract_sources.push(source);
             }
         }
@@ -1157,9 +1166,8 @@ fn best_removed_ci_verification_source(
     let family_matches = recovered_signals
         .iter()
         .filter(|signal| {
-            verification_task_name_from_field(&signal.field).is_some_and(|detected_task| {
-                ci_verifier_task_family(detected_task) == task_family
-            })
+            verification_task_name_from_field(&signal.field)
+                .is_some_and(|detected_task| ci_verifier_task_family(detected_task) == task_family)
         })
         .map(|signal| ci_verification_signal_workflow_source(&signal.source))
         .collect::<BTreeSet<_>>();
@@ -1468,8 +1476,7 @@ fn match_fuzzy_qualified_ci_verifier_task_field(
                 .strip_prefix(family)
                 .and_then(|suffix| suffix.strip_prefix(':'))
                 .is_some_and(|suffix| {
-                    qualifier == suffix
-                        || qualifier.ends_with(&format!("-{suffix}"))
+                    qualifier == suffix || qualifier.ends_with(&format!("-{suffix}"))
                 })
         })
         .collect::<Vec<_>>();
@@ -3436,7 +3443,9 @@ workflows:
         assert!(merge_gate.lanes[0].blocking);
         assert_eq!(
             merge_gate.lanes[0].provider_sources,
-            vec![String::from(".github/workflows/ci.yml#jobs.verify.steps[0].run")]
+            vec![String::from(
+                ".github/workflows/ci.yml#jobs.verify.steps[0].run"
+            )]
         );
     }
 
