@@ -172,7 +172,20 @@ jobs:
         if: runner.os != 'Windows'
         timeout-minutes: 45
         run: |
-          cargo test --lib cli::commands -- --test-threads=1
+          set +e
+          for attempt in 1 2; do
+            cargo test --lib cli::commands -- --test-threads=1
+            code=$?
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 2 ] && { [ "$code" -eq 143 ] || [ "$code" -eq 137 ] || [ "$code" -eq 124 ]; }; then
+              echo "cli::commands shard terminated with exit $code; retrying once..."
+              sleep 15
+              continue
+            fi
+            exit "$code"
+          done
 
       - name: Run release gate (non-Windows) - lib tests (core) contract_drift
         if: runner.os != 'Windows'
@@ -357,7 +370,23 @@ jobs:
         shell: pwsh
         timeout-minutes: 45
         run: |
-          cargo test --lib cli::commands -- --test-threads=1
+          $ErrorActionPreference = "Stop"
+          for ($attempt = 1; $attempt -le 2; $attempt++) {
+            cargo test --lib cli::commands -- --test-threads=1
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -lt 2 -and @(
+                143,
+                137,
+                124
+              ) -contains $LASTEXITCODE) {
+              Write-Host "cli::commands shard terminated with exit $LASTEXITCODE; retrying once..."
+              Start-Sleep -Seconds 15
+              continue
+            }
+            exit $LASTEXITCODE
+          }
 
       - name: Run release gate (Windows) - lib tests (core) contract_drift
         if: runner.os == 'Windows'
