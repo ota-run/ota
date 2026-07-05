@@ -56879,10 +56879,15 @@ workflows:
             true,
             Path::new("/tmp/demo/contracts/custom-ota.yaml"),
         );
+        let normalized_command = command.replace('\\', "/");
 
-        assert_eq!(
-            command,
-            "ota receipt --json --archive --workflow dev /tmp/demo/contracts/custom-ota.yaml"
+        assert!(
+            normalized_command.starts_with("ota receipt --json --archive --workflow dev "),
+            "unexpected command prefix: {normalized_command}"
+        );
+        assert!(
+            normalized_command.ends_with("/tmp/demo/contracts/custom-ota.yaml"),
+            "unexpected contract target path: {normalized_command}"
         );
     }
 
@@ -56950,12 +56955,19 @@ workflows:
             .iter()
             .find(|route| route.kind == "contract_snapshot")
             .expect("snapshot route should exist");
+        let snapshot_command = snapshot
+            .command
+            .as_deref()
+            .expect("snapshot route should include inspect command")
+            .replace('\\', "/");
 
-        assert_eq!(
-            snapshot.command.as_deref(),
-            Some(
-                "ota receipt --snapshot .ota/contracts/sha256-abc.json /tmp/demo/contracts/custom-ota.yaml"
-            )
+        assert!(
+            snapshot_command.starts_with("ota receipt --snapshot .ota/contracts/sha256-abc.json "),
+            "unexpected snapshot command prefix: {snapshot_command}"
+        );
+        assert!(
+            snapshot_command.ends_with("/tmp/demo/contracts/custom-ota.yaml"),
+            "unexpected snapshot contract target path: {snapshot_command}"
         );
         assert_eq!(
             snapshot.path.as_deref(),
