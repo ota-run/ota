@@ -1312,9 +1312,8 @@ fn collect_github_actions_verification_tasks_from_workflow(
 ) -> Result<(), DetectError> {
     let workflow_key = workflow_path
         .strip_prefix(root)
-        .unwrap_or(workflow_path)
-        .display()
-        .to_string();
+        .map(|relative| relative_detect_source(root, relative))
+        .unwrap_or_else(|_| workflow_path.display().to_string().replace('\\', "/"));
     if !active_workflows.insert(workflow_key.clone()) {
         return Ok(());
     }
