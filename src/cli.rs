@@ -23902,12 +23902,13 @@ tasks:
                 .expect("findings array")
                 .iter()
                 .any(|finding| {
+                    let why = finding["why"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .replace('\\', "/");
                     finding["summary"].as_str().unwrap_or_default()
                         == "CI verification drift: `tasks.test.run` differs from enforced workflow lane"
-                        && finding["why"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .contains(".github/workflows/ci.yml#jobs.verify.steps[0].run")
+                        && why.contains(".github/workflows/ci.yml#jobs.verify.steps[0].run")
                 }),
             "expected a CI workflow task governance drift warning"
         );
@@ -23927,8 +23928,11 @@ tasks:
         assert_eq!(finding["metadata"]["governance"]["lane_task"], "test");
         assert_eq!(finding["metadata"]["governance"]["lane_kind"], "task");
         assert_eq!(
-            finding["metadata"]["governance"]["provider_sources"][0],
-            ".github/workflows/ci.yml#jobs.verify.steps[0].run"
+            finding["metadata"]["governance"]["provider_sources"][0]
+                .as_str()
+                .unwrap_or_default()
+                .replace('\\', "/"),
+            String::from(".github/workflows/ci.yml#jobs.verify.steps[0].run")
         );
     }
 
@@ -24369,6 +24373,7 @@ tasks:
             finding["metadata"]["governance"]["provider_sources"][0]
                 .as_str()
                 .unwrap_or_default()
+                .replace('\\', "/")
                 .starts_with(".github/workflows/")
         );
     }
@@ -24456,8 +24461,11 @@ workflows:
         assert_eq!(finding["metadata"]["governance"]["lane_task"], "verify");
         assert_eq!(finding["metadata"]["governance"]["lane_kind"], "aggregate");
         assert_eq!(
-            finding["metadata"]["governance"]["provider_sources"][0],
-            ".github/workflows/ci.yml"
+            finding["metadata"]["governance"]["provider_sources"][0]
+                .as_str()
+                .unwrap_or_default()
+                .replace('\\', "/"),
+            String::from(".github/workflows/ci.yml")
         );
     }
 

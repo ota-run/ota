@@ -30449,6 +30449,10 @@ tasks:
 
     #[test]
     fn repo_execution_lock_owner_derives_isolated_container_write_namespace() {
+        let _guard = env_mutex_lock();
+        let fixture = tempdir().expect("tempdir");
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.path());
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -30507,6 +30511,7 @@ tasks:
 
     #[test]
     fn shared_write_path_ownership_allows_distinct_isolated_namespaces() {
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -30563,6 +30568,8 @@ tasks:
         .expect("contract should parse");
 
         let fixture = tempdir().expect("tempdir");
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.path());
         let dev_backend =
             resolve_execution_backend(&contract, "setup:dev", ExecutionOverrides::default())
                 .expect("dev backend");
