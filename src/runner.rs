@@ -1771,6 +1771,12 @@ fn is_false(value: &bool) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoExecutionWriteOwner {
+    pub path: String,
+    pub namespace: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoExecutionLockOwner {
     pub task: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1788,6 +1794,8 @@ pub struct RepoExecutionLockOwner {
     pub env_materialization_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub write_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write_owners: Vec<RepoExecutionWriteOwner>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_task: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1836,6 +1844,7 @@ fn format_repo_execution_lock_timestamp(now: OffsetDateTime) -> String {
 
 fn repo_execution_lock_owner_for_backend(
     contract: &Contract,
+    contract_path: Option<&Path>,
     task_name: &str,
     overrides: ExecutionOverrides,
     backend: &ResolvedExecutionBackend,
@@ -1845,6 +1854,7 @@ fn repo_execution_lock_owner_for_backend(
     let mut compose_projects: Vec<String> = Vec::new();
     let mut env_materialization_paths: Vec<String> = Vec::new();
     let mut write_paths: Vec<String> = Vec::new();
+    let mut write_owners: Vec<RepoExecutionWriteOwner> = Vec::new();
     let mut service_task = false;
     let plan = plan_task_execution_with_overrides(contract, task_name, overrides)
         .expect("active execution owner should plan a known task");
@@ -1874,6 +1884,26 @@ fn repo_execution_lock_owner_for_backend(
         }
         for path in task_write_path_ownership(task) {
             push_unique_owned_path(&mut write_paths, path.as_str());
+            let step_backend = resolve_execution_backend_with_contract_path(
+                contract,
+                step.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(step.backend),
+                    lifecycle: overrides.lifecycle,
+                    host_port: overrides.host_port,
+                    memory: overrides.memory,
+                    skip_deps: overrides.skip_deps,
+                },
+                contract_path,
+            )
+            .unwrap_or_else(|_| backend.clone());
+            push_unique_write_owner(
+                &mut write_owners,
+                RepoExecutionWriteOwner {
+                    path: path.clone(),
+                    namespace: write_ownership_namespace_for_path(path.as_str(), &step_backend),
+                },
+            );
         }
         service_task |= task.service_runtime_for_backend(step.backend).is_some();
     }
@@ -1898,6 +1928,7 @@ fn repo_execution_lock_owner_for_backend(
         persistent_backend_families,
         env_materialization_paths,
         write_paths,
+        write_owners,
         service_task,
         parent_pid: active_execution_parent_pid_from_env(),
         pid: std::process::id(),
@@ -1993,6 +2024,55 @@ fn push_unique_owned_path(paths: &mut Vec<String>, value: &str) {
         return;
     }
     paths.push(trimmed.to_string());
+}
+
+fn push_unique_write_owner(owners: &mut Vec<RepoExecutionWriteOwner>, owner: RepoExecutionWriteOwner) {
+    if owners.iter().any(|existing| existing == &owner) {
+        return;
+    }
+    owners.push(owner);
+}
+
+fn write_ownership_namespace_for_path(path: &str, backend: &ResolvedExecutionBackend) -> String {
+    let normalized_path =
+        crate::execution::normalize_dependency_isolated_path(path).unwrap_or_else(|| path.trim().replace('\\', "/"));
+    if let Some(namespace) = isolated_write_namespace_for_path(normalized_path.as_str(), backend) {
+        return namespace;
+    }
+    String::from("shared:repo-worktree")
+}
+
+fn isolated_write_namespace_for_path(
+    normalized_path: &str,
+    backend: &ResolvedExecutionBackend,
+) -> Option<String> {
+    let ResolvedExecutionBackend::Container {
+        context_name,
+        image,
+        engine,
+        dependency_isolation_paths,
+        ..
+    } = backend
+    else {
+        return None;
+    };
+
+    let isolated_root = dependency_isolation_paths.iter().find(|isolated| {
+        normalized_path == isolated.as_str()
+            || normalized_path
+                .strip_prefix(isolated.as_str())
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })?;
+
+    let mut hasher = DefaultHasher::new();
+    context_name
+        .as_deref()
+        .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
+        .hash(&mut hasher);
+    image.hash(&mut hasher);
+    engine.hash(&mut hasher);
+    isolated_root.hash(&mut hasher);
+    Some(format!("container-isolated:{:x}", hasher.finish()))
 }
 
 fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
@@ -5876,6 +5956,7 @@ fn persistent_cleanup_scope_for_workflow(
         if let Some(backend) = backend.as_ref() {
             let owner = repo_execution_lock_owner_for_backend(
                 contract,
+                None,
                 task_name.as_str(),
                 ExecutionOverrides::default(),
                 backend,
@@ -6710,7 +6791,7 @@ fn run_task_internal(
     };
     let working_dir = contract_working_dir(contract_path);
     let lock_owner =
-        repo_execution_lock_owner_for_backend(contract, task_name, overrides, &backend);
+        repo_execution_lock_owner_for_backend(contract, Some(contract_path), task_name, overrides, &backend);
     let _active_repo_execution =
         register_active_repo_execution(task_name, working_dir, &lock_owner)?;
     let effective = effective_task_execution(contract, task_name, overrides);
@@ -28217,11 +28298,12 @@ fn execution_conflict_reasons_with_active_owner(
     {
         reasons.push(RepoExecutionConflictReason::EnvMaterializationPath);
     }
-    if candidate
-        .write_paths
-        .iter()
-        .any(|path| active.write_paths.contains(path))
-    {
+    if candidate.write_owners.iter().any(|candidate_owner| {
+        active.write_owners.iter().any(|active_owner| {
+            candidate_owner.path == active_owner.path
+                && candidate_owner.namespace == active_owner.namespace
+        })
+    }) {
         reasons.push(RepoExecutionConflictReason::WritePath);
     }
     if candidate.service_task && active.service_task && candidate.task == active.task {
@@ -29479,6 +29561,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -29526,6 +29609,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -29541,6 +29625,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29566,6 +29651,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: 42000,
@@ -29581,6 +29667,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: true,
             parent_pid: Some(parent_owner.pid),
             pid: 42001,
@@ -29606,6 +29693,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29621,6 +29709,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29661,6 +29750,7 @@ mod tests {
             persistent_backend_families: vec![family.clone()],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29676,6 +29766,7 @@ mod tests {
             persistent_backend_families: vec![family],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29717,6 +29808,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29732,6 +29824,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29771,6 +29864,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![String::from(".env.local")],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29786,6 +29880,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![String::from(".env.local")],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29827,6 +29922,10 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![String::from("node_modules")],
+            write_owners: vec![super::RepoExecutionWriteOwner {
+                path: String::from("node_modules"),
+                namespace: String::from("shared:repo-worktree"),
+            }],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29842,6 +29941,10 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![String::from("node_modules")],
+            write_owners: vec![super::RepoExecutionWriteOwner {
+                path: String::from("node_modules"),
+                namespace: String::from("shared:repo-worktree"),
+            }],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -29883,6 +29986,7 @@ mod tests {
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
                     write_paths: vec![],
+                    write_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: u32::MAX,
@@ -29902,6 +30006,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -29925,6 +30030,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             write_paths: vec![],
+            write_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -30013,6 +30119,7 @@ workflows:
         .expect("compose backend");
         let owner = repo_execution_lock_owner_for_backend(
             &fixture.contract,
+            Some(fixture.file_path()),
             "compose:up",
             ExecutionOverrides::default(),
             &backend,
@@ -30098,6 +30205,7 @@ workflows:
                 .expect("worker backend");
         let owner = repo_execution_lock_owner_for_backend(
             &fixture.contract,
+            Some(fixture.file_path()),
             "worker",
             ExecutionOverrides::default(),
             &backend,
@@ -30167,6 +30275,7 @@ tasks:
                 .expect("compose backend");
         let compose_owner = repo_execution_lock_owner_for_backend(
             &contract,
+            Some(Path::new("ota.yaml")),
             "compose:up",
             ExecutionOverrides::default(),
             &compose_backend,
@@ -30181,6 +30290,7 @@ tasks:
                 .expect("env backend");
         let env_owner = repo_execution_lock_owner_for_backend(
             &contract,
+            Some(Path::new("ota.yaml")),
             "setup:env",
             ExecutionOverrides::default(),
             &env_backend,
@@ -30220,6 +30330,7 @@ tasks:
             .expect("build backend");
         let owner = repo_execution_lock_owner_for_backend(
             &contract,
+            Some(Path::new("ota.yaml")),
             "build",
             ExecutionOverrides::default(),
             &backend,
@@ -30260,11 +30371,19 @@ tasks:
                 .expect("install backend");
         let owner = repo_execution_lock_owner_for_backend(
             &contract,
+            Some(Path::new("ota.yaml")),
             "install",
             ExecutionOverrides::default(),
             &backend,
         );
         assert_eq!(owner.write_paths, vec![String::from("node_modules")]);
+        assert_eq!(
+            owner.write_owners,
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from("node_modules"),
+                namespace: String::from("shared:repo-worktree"),
+            }]
+        );
     }
 
     #[test]
@@ -30305,11 +30424,164 @@ tasks:
                 .expect("screenshots backend");
         let owner = repo_execution_lock_owner_for_backend(
             &contract,
+            Some(Path::new("ota.yaml")),
             "screenshots",
             ExecutionOverrides::default(),
             &backend,
         );
         assert_eq!(owner.write_paths, vec![String::from("node_modules")]);
+        assert_eq!(
+            owner.write_owners,
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from("node_modules"),
+                namespace: String::from("shared:repo-worktree"),
+            }]
+        );
+    }
+
+    #[test]
+    fn repo_execution_lock_owner_derives_isolated_container_write_namespace() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    dev:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  install:
+    context: dev
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    effects:
+      writes:
+        - node_modules
+"#,
+        )
+        .expect("contract should parse");
+
+        let backend =
+            resolve_execution_backend(&contract, "install", ExecutionOverrides::default())
+                .expect("install backend");
+        let owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "install",
+            ExecutionOverrides::default(),
+            &backend,
+        );
+        assert_eq!(owner.write_paths, vec![String::from("node_modules")]);
+        assert_eq!(owner.write_owners.len(), 1);
+        assert_eq!(owner.write_owners[0].path, "node_modules");
+        assert!(
+            owner.write_owners[0]
+                .namespace
+                .starts_with("container-isolated:"),
+            "expected isolated namespace, got {}",
+            owner.write_owners[0].namespace
+        );
+    }
+
+    #[test]
+    fn shared_write_path_ownership_allows_distinct_isolated_namespaces() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    dev:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - node_modules
+    verify:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  setup:dev:
+    context: dev
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    effects:
+      writes:
+        - node_modules
+  setup:
+    context: verify
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    effects:
+      writes:
+        - node_modules
+"#,
+        )
+        .expect("contract should parse");
+
+        let fixture = tempdir().expect("tempdir");
+        let dev_backend =
+            resolve_execution_backend(&contract, "setup:dev", ExecutionOverrides::default())
+                .expect("dev backend");
+        let dev_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "setup:dev",
+            ExecutionOverrides::default(),
+            &dev_backend,
+        );
+        let verify_backend =
+            resolve_execution_backend(&contract, "setup", ExecutionOverrides::default())
+                .expect("verify backend");
+        let verify_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "setup",
+            ExecutionOverrides::default(),
+            &verify_backend,
+        );
+
+        assert_ne!(dev_owner.write_owners, verify_owner.write_owners);
+
+        let _guard = register_active_repo_execution("setup:dev", fixture.path(), &dev_owner)
+            .expect("dev owner should register");
+        let _verify_guard = register_active_repo_execution("setup", fixture.path(), &verify_owner)
+            .expect("verify owner should coexist");
     }
 
     #[test]

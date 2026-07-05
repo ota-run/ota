@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- tightened active-execution ownership around container attachment isolation: shared logical
+  write paths now only conflict when they land in the same effective execution namespace, so
+  container contexts with distinct `attachments.isolated_paths` volume families can coexist
+  truthfully while shared repo-worktree writes still block as before
 - added the first audited-crossing execution evidence slice for heavier governed lanes: `ota run`
   and `ota up` now accept additive `--reason <text>`, repo-target receipts may include
   `receipt.crossing`, and `ota up --json` can mirror the same record at `governance.crossing`
