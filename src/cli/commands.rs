@@ -52699,6 +52699,22 @@ workflows:
         assert_eq!(result, Some(child.id()));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proof_runtime_signal_group_target_requires_group_leader_match() {
+        assert_eq!(super::proof_runtime_signal_group_target(42, Some(41)), None);
+        assert_eq!(super::proof_runtime_signal_group_target(42, None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_runtime_signal_group_target_accepts_matching_group_leader() {
+        assert_eq!(
+            super::proof_runtime_signal_group_target(42, Some(42)),
+            Some(42)
+        );
+    }
+
     #[test]
     fn proof_runtime_likely_cause_falls_back_to_detached_run_hint() {
         let fixture = TempDir::new().unwrap();
@@ -92602,7 +92618,10 @@ fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result
 
 #[cfg(unix)]
 fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
-    let target = proof_runtime_process_group_id(process_id)?.unwrap_or(process_id);
+    let process_group_id = proof_runtime_process_group_id(process_id)?;
+    let Some(target) = proof_runtime_signal_group_target(process_id, process_group_id) else {
+        return Ok(());
+    };
     let output = Command::new("kill")
         .arg(format!("-{signal}"))
         .arg(format!("-{target}"))
@@ -92623,6 +92642,17 @@ fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
         Err(format!(
             "could not signal runtime-proof process group with `kill -{signal} -{target}`: {stderr}"
         ))
+    }
+}
+
+#[cfg(unix)]
+fn proof_runtime_signal_group_target(
+    process_id: u32,
+    process_group_id: Option<u32>,
+) -> Option<u32> {
+    match process_group_id {
+        Some(group_id) if group_id == process_id => Some(group_id),
+        _ => None,
     }
 }
 
