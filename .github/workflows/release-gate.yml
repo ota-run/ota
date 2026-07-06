@@ -66,15 +66,18 @@ jobs:
         run: jq -e '.summary.error_count > 0' doctor.json >/dev/null
 
   release-gate:
-    name: Release Gate (${{ matrix.os }})
+    name: Release Gate (${{ matrix.os_label }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-22.04
-          - macos-latest
-          - windows-latest
+        include:
+          - os: ubuntu-22.04
+            os_label: ubuntu-latest
+          - os: macos-latest
+            os_label: macos-latest
+          - os: windows-latest
+            os_label: windows-latest
     env:
       RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/STACK:8388608' || '' }}
       RUST_MIN_STACK: "8388608"
