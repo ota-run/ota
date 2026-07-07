@@ -3094,6 +3094,8 @@ pub struct HarnessEnvironmentBoundary {
 #[derive(Debug, Serialize)]
 pub struct WorkflowSummary<'a> {
     pub name: &'a str,
+    #[serde(rename = "use")]
+    pub usage: LaneUseSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3216,6 +3218,7 @@ impl<'a> WorkflowSummary<'a> {
         }
         Some(Self {
             name: workflow_name,
+            usage: workflow_lane_use_summary(workflow_name, workflow_safety.effective_safe),
             instance: None,
             intent: workflow.intent.as_deref(),
             description: workflow.description.as_deref(),
@@ -3280,6 +3283,12 @@ impl<'a> WorkflowSummary<'a> {
         let (name, _) = contract.selected_workflow(workflow_name)?;
         let mut summary = Self::from_contract_named_inner(contract, contract_path, name)?;
         summary.instance = contract.selected_workflow_instance_name(workflow_name);
+        let workflow_selector = match summary.instance.as_deref() {
+            Some(instance) => format!("{}@{}", summary.name, instance),
+            None => summary.name.to_string(),
+        };
+        summary.usage =
+            workflow_lane_use_summary(workflow_selector.as_str(), summary.effective_safe_for_agent);
         Some(summary)
     }
 
@@ -3533,6 +3542,8 @@ pub struct TaskSummary<'a> {
     pub default_mode: Option<&'static str>,
     #[serde(skip_serializing)]
     pub effective_default_mode: &'static str,
+    #[serde(rename = "use")]
+    pub usage: LaneUseSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3612,6 +3623,21 @@ pub struct TaskEffectsSummary {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct TaskAggregateSummary {
     pub tasks: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct LaneUseSummary {
+    pub human: String,
+    pub agent: AgentLaneUseSummary,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct AgentLaneUseSummary {
+    pub callable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
@@ -3733,6 +3759,7 @@ impl<'a> TaskSummary<'a> {
         let effective_env_files = task.env_files_for_backend_for_os(selected_backend, current_os);
         let effective_adapter_inputs =
             effective_task_adapter_inputs_summary(task, selected_backend, current_os);
+        let inputs = task.inputs_for_os(current_os);
         let preview =
             effective_task_execution_preview(contract, name, task, selected_backend, current_os);
         let launch_preview =
@@ -3742,6 +3769,7 @@ impl<'a> TaskSummary<'a> {
             context: effective.context_name,
             default_mode: task.mode_default_backend().map(task_mode_name),
             effective_default_mode: task_mode_name(selected_backend),
+            usage: task_lane_use_summary(name, &inputs, task_safety.effective_safe),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
@@ -3750,7 +3778,7 @@ impl<'a> TaskSummary<'a> {
             env: effective_env,
             env_files: effective_env_files,
             adapter_inputs: effective_adapter_inputs,
-            inputs: task.inputs_for_os(current_os),
+            inputs,
             kind: resolved_execution.kind,
             run: (resolved_execution.kind == "run")
                 .then(|| resolved_execution.shell_body())
@@ -3876,6 +3904,72 @@ impl<'a> TaskSummary<'a> {
             .retain(|task| visible_task_names.contains(task.as_str()));
         self.after_always
             .retain(|task| visible_task_names.contains(task.as_str()));
+    }
+}
+
+fn append_task_input_placeholders(command: &mut String, inputs: &BTreeMap<String, TaskInputSpec>) {
+    for (name, spec) in inputs {
+        command.push(' ');
+        command.push_str(&format!("--{}", name.replace('_', "-")));
+        command.push(' ');
+        command.push_str(&if spec.allowed.is_empty() {
+            String::from("<value>")
+        } else {
+            format!("<{}>", spec.allowed.join("|"))
+        });
+    }
+}
+
+fn task_lane_use_summary(
+    task_name: &str,
+    inputs: &BTreeMap<String, TaskInputSpec>,
+    effective_safe_for_agent: bool,
+) -> LaneUseSummary {
+    let mut human = format!("ota run {task_name}");
+    append_task_input_placeholders(&mut human, inputs);
+
+    let agent = if effective_safe_for_agent {
+        let mut command = format!("ota run {task_name} --agent");
+        append_task_input_placeholders(&mut command, inputs);
+        AgentLaneUseSummary {
+            callable: true,
+            command: Some(command),
+            reason: None,
+        }
+    } else {
+        AgentLaneUseSummary {
+            callable: false,
+            command: None,
+            reason: Some(String::from("not_safe")),
+        }
+    };
+
+    LaneUseSummary { human, agent }
+}
+
+fn workflow_lane_use_summary(
+    workflow_selector: &str,
+    effective_safe_for_agent: Option<bool>,
+) -> LaneUseSummary {
+    LaneUseSummary {
+        human: format!("ota up --workflow {workflow_selector}"),
+        agent: match effective_safe_for_agent {
+            Some(true) => AgentLaneUseSummary {
+                callable: true,
+                command: Some(format!("ota up --workflow {workflow_selector} --agent")),
+                reason: None,
+            },
+            Some(false) => AgentLaneUseSummary {
+                callable: false,
+                command: None,
+                reason: Some(String::from("not_safe")),
+            },
+            None => AgentLaneUseSummary {
+                callable: false,
+                command: None,
+                reason: Some(String::from("unknown")),
+            },
+        },
     }
 }
 

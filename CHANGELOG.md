@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened task and workflow discovery output so `ota tasks --use`, `ota tasks --safe --use`,
+  and workflow summaries now publish explicit `Humans` and `Agents` commands instead of a single
+  ambiguous `Use` line, and task/workflow JSON now carries the same canonical `use` object with
+  agent callability and reason state
 - added `launch.runtime_projection` for supported long-running command adapters, so explicit
   `runtime.listeners.<name>` bind truth can project `uvicorn` or `rails` host/port argv into
   `launch.kind: command` without duplicating bind flags in `launch.args`

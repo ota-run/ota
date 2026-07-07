@@ -1754,6 +1754,13 @@ Success:
   "tasks": [
     {
       "name": "setup",
+      "use": {
+        "human": "ota run setup --base-url <value>",
+        "agent": {
+          "callable": false,
+          "reason": "not_safe"
+        }
+      },
       "description": "Prepare mixed repo dependencies",
       "notes": "Use this after cloning the repo.\n",
       "kind": "sequence",
@@ -1799,6 +1806,13 @@ Success:
     },
     {
       "name": "test",
+      "use": {
+        "human": "ota run test",
+        "agent": {
+          "callable": true,
+          "command": "ota run test --agent"
+        }
+      },
       "kind": "command",
       "command": {
         "exe": "uv",
@@ -1816,6 +1830,13 @@ Success:
 `ota tasks --json` may also include additive top-level `capability_profile`, a derived
 harness-facing agent surface built from the same closure-aware safety and refusal truth that powers
 `ota run --agent`.
+
+Each task summary now also carries a canonical `use` object:
+
+- `use.human` is the human-oriented runnable command
+- `use.agent.callable: true` plus `use.agent.command` is the canonical agent-mode invocation
+- `use.agent.callable: false` means the lane is not callable in agent mode; `reason` explains the
+  current posture without forcing consumers to scrape human text
 
 Each task capability entry carries:
 
@@ -1942,6 +1963,13 @@ Success:
   "workflows": [
     {
       "name": "quickstart",
+      "use": {
+        "human": "ota up --workflow quickstart",
+        "agent": {
+          "callable": true,
+          "command": "ota up --workflow quickstart --agent"
+        }
+      },
       "intent": "quickstart",
       "description": "Structured packaged command path",
       "notes": "Use this path for local container-backed previews.\n",
@@ -1966,6 +1994,13 @@ Success:
     },
     {
       "name": "backend",
+      "use": {
+        "human": "ota up --workflow backend",
+        "agent": {
+          "callable": false,
+          "reason": "not_safe"
+        }
+      },
       "run_task": "backend",
       "required_services": [],
       "readiness_checks": [],
@@ -1985,6 +2020,9 @@ Success:
 Notes:
 
 - root success includes `ok`, `path`, optional `default`, and `workflows`
+- each workflow summary carries a canonical `use` object with explicit human and agent
+  invocations; non-callable agent lanes publish `callable: false` instead of forcing consumers to
+  infer that from separate safety fields
 - root success may also include additive `capability_profile`, a derived harness-facing workflow
   surface for agent mode
 - `capability_profile.callable_workflows[]` and `capability_profile.refused_workflows[]` publish

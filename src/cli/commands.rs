@@ -14020,9 +14020,7 @@ fn compiled_codex_local_sandbox_policy(
     effects: Option<&crate::output::TaskEffectsSummary>,
 ) -> crate::output::HarnessSandboxPolicy {
     let filesystem = match agent {
-        Some(agent)
-            if !(agent.writable_paths.is_empty() && agent.protected_paths.is_empty()) =>
-        {
+        Some(agent) if !(agent.writable_paths.is_empty() && agent.protected_paths.is_empty()) => {
             crate::output::HarnessSandboxFilesystemPolicy {
                 state: String::from("compiled"),
                 repo_root_mode: Some(String::from("read_only")),
@@ -40328,10 +40326,7 @@ fn collect_prepare_sequence_step_field_paths(
             if spec.python.is_some() {
                 fields.push(format!("{prefix}.python"));
             }
-            if !matches!(
-                spec.provider,
-                crate::schema::TaskVirtualenvProvider::Uv
-            ) {
+            if !matches!(spec.provider, crate::schema::TaskVirtualenvProvider::Uv) {
                 fields.push(format!("{prefix}.provider"));
             }
         }
@@ -41335,11 +41330,7 @@ fn render_tasks_text(
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
-        output.push_str(&format!(
-            "\n  {} `{}`",
-            paint_key("Use:"),
-            paint_code(&format!("ota run {}", task.name))
-        ));
+        push_lane_use_fields(&mut output, &task.usage);
         push_rendered_field(
             &mut output,
             "Command Preview:",
@@ -42541,10 +42532,9 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
         Some("uv") => {
             let cwd = cwd.unwrap_or(".");
             let command = match mode.unwrap_or("sync") {
-                "pip_requirements" => format!(
-                    "uv pip install -r {}",
-                    file.unwrap_or("requirements.txt")
-                ),
+                "pip_requirements" => {
+                    format!("uv pip install -r {}", file.unwrap_or("requirements.txt"))
+                }
                 _ => String::from("uv sync"),
             };
             format!("hydrate {medium} with `{command}` in `{cwd}`")
@@ -42672,7 +42662,6 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     }
 
     for task in tasks {
-        let usage = render_task_use_command(task);
         let command_preview = render_task_command_preview(task);
         let mode_branches = render_task_mode_branches_filtered(task, false);
         let effects = render_task_effects_text(&task.effects);
@@ -42684,11 +42673,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_key("Default Mode:"),
             render_task_default_mode(task)
         ));
-        output.push_str(&format!(
-            "\n  {} `{}`",
-            paint_key("Use:"),
-            paint_code(&usage)
-        ));
+        push_lane_use_fields(&mut output, &task.usage);
         push_rendered_field(
             &mut output,
             "Command Preview:",
@@ -42794,11 +42779,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             description
         ));
     }
-    output.push_str(&format!(
-        "\n  {} `{}`",
-        paint_key("Use:"),
-        paint_code(&format!("ota up --workflow {}", workflow_selector))
-    ));
+    push_lane_use_fields(&mut output, &workflow.usage);
     output.push_str(&format!(
         "\n  {} `{}`",
         paint_key("Proof:"),
@@ -43002,6 +42983,31 @@ fn render_multiline_field(value: &str) -> String {
     output
 }
 
+fn render_agent_lane_use_text(agent: &crate::output::AgentLaneUseSummary) -> String {
+    if agent.callable {
+        return agent
+            .command
+            .as_ref()
+            .map(|command| format!("`{}`", paint_code(command)))
+            .unwrap_or_else(|| String::from("not callable in agent mode"));
+    }
+
+    String::from("not callable in agent mode")
+}
+
+fn push_lane_use_fields(output: &mut String, usage: &crate::output::LaneUseSummary) {
+    output.push_str(&format!(
+        "\n  {} `{}`",
+        paint_key("Humans:"),
+        paint_code(&usage.human)
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Agents:"),
+        render_agent_lane_use_text(&usage.agent)
+    ));
+}
+
 fn render_task_inputs_compact(inputs: &BTreeMap<String, crate::schema::TaskInputSpec>) -> String {
     let labels = inputs
         .keys()
@@ -43053,21 +43059,6 @@ fn render_task_inputs_compact(inputs: &BTreeMap<String, crate::schema::TaskInput
     }
 
     output
-}
-
-fn render_task_use_command(task: &TaskSummary<'_>) -> String {
-    let mut command = format!("ota run {}", task.name);
-    for (name, spec) in &task.inputs {
-        command.push(' ');
-        command.push_str(&format!("--{}", name.replace('_', "-")));
-        command.push(' ');
-        command.push_str(&if spec.allowed.is_empty() {
-            String::from("<value>")
-        } else {
-            format!("<{}>", spec.allowed.join("|"))
-        });
-    }
-    command
 }
 
 fn render_tasks_output_text(
@@ -54458,6 +54449,75 @@ tasks:
         write_executable_script(&dir.join("sh"), &bootstrap_script);
     }
 
+    fn test_task_usage(
+        name: &str,
+        effective_safe_for_agent: bool,
+        inputs: &BTreeMap<String, TaskInputSpec>,
+    ) -> crate::output::LaneUseSummary {
+        let mut human = format!("ota run {name}");
+        for (input_name, spec) in inputs {
+            human.push(' ');
+            human.push_str(&format!("--{}", input_name.replace('_', "-")));
+            human.push(' ');
+            human.push_str(&if spec.allowed.is_empty() {
+                String::from("<value>")
+            } else {
+                format!("<{}>", spec.allowed.join("|"))
+            });
+        }
+        let agent = if effective_safe_for_agent {
+            let mut command = format!("ota run {name} --agent");
+            for (input_name, spec) in inputs {
+                command.push(' ');
+                command.push_str(&format!("--{}", input_name.replace('_', "-")));
+                command.push(' ');
+                command.push_str(&if spec.allowed.is_empty() {
+                    String::from("<value>")
+                } else {
+                    format!("<{}>", spec.allowed.join("|"))
+                });
+            }
+            crate::output::AgentLaneUseSummary {
+                callable: true,
+                command: Some(command),
+                reason: None,
+            }
+        } else {
+            crate::output::AgentLaneUseSummary {
+                callable: false,
+                command: None,
+                reason: Some(String::from("not_safe")),
+            }
+        };
+        crate::output::LaneUseSummary { human, agent }
+    }
+
+    fn test_workflow_usage(
+        selector: &str,
+        effective_safe_for_agent: Option<bool>,
+    ) -> crate::output::LaneUseSummary {
+        crate::output::LaneUseSummary {
+            human: format!("ota up --workflow {selector}"),
+            agent: match effective_safe_for_agent {
+                Some(true) => crate::output::AgentLaneUseSummary {
+                    callable: true,
+                    command: Some(format!("ota up --workflow {selector} --agent")),
+                    reason: None,
+                },
+                Some(false) => crate::output::AgentLaneUseSummary {
+                    callable: false,
+                    command: None,
+                    reason: Some(String::from("not_safe")),
+                },
+                None => crate::output::AgentLaneUseSummary {
+                    callable: false,
+                    command: None,
+                    reason: Some(String::from("unknown")),
+                },
+            },
+        }
+    }
+
     #[test]
     fn render_tasks_text_formats_inputs_as_compact_block() {
         let env = BTreeMap::new();
@@ -54486,6 +54546,7 @@ tasks:
             context: Some("tooling"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("api:automation:tests", true, &inputs),
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
@@ -54566,6 +54627,7 @@ tasks:
             context: Some("tooling"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("api:automation:tests", true, &inputs),
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
@@ -54607,6 +54669,18 @@ tasks:
             rendered.contains("Command Preview: ./scripts/api/run-api-tests.sh"),
             "{rendered}"
         );
+        assert!(
+            rendered.contains(
+                "Humans: `ota run api:automation:tests --base-url <value> --mode <standard|chaos>`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Agents: `ota run api:automation:tests --agent --base-url <value> --mode <standard|chaos>`"
+            ),
+            "{rendered}"
+        );
         assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
         assert!(
             rendered.contains("Safety Posture: agent-safe routine repo-scoped lane"),
@@ -54642,6 +54716,7 @@ tasks:
             context: Some("tooling"),
             default_mode: None,
             effective_default_mode: "container",
+            usage: test_task_usage("verify:live", false, &BTreeMap::new()),
             description: Some("Run the live verification lane"),
             notes: None,
             category: None,
@@ -54709,6 +54784,14 @@ tasks:
             rendered.contains("Command Preview: pnpm test:live"),
             "{rendered}"
         );
+        assert!(
+            rendered.contains("Humans: `ota run verify:live`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Agents: not callable in agent mode"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Safe For Agent: false"), "{rendered}");
         assert!(
             rendered.contains("Effective Safe For Agent: false"),
@@ -54737,6 +54820,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("verify", false, &BTreeMap::new()),
             description: Some("Run the verification entrypoint"),
             notes: None,
             category: Some("test"),
@@ -54779,6 +54863,11 @@ tasks:
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
 
         assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
+        assert!(rendered.contains("Humans: `ota run verify`"), "{rendered}");
+        assert!(
+            rendered.contains("Agents: not callable in agent mode"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("Effective Safe For Agent: false"),
             "{rendered}"
@@ -54801,6 +54890,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("verify", true, &inputs),
             description: Some("Run the canonical verification entrypoint"),
             notes: None,
             category: Some("test"),
@@ -54848,6 +54938,7 @@ tasks:
         let inputs = BTreeMap::new();
         let workflow = WorkflowSummary {
             name: "app",
+            usage: test_workflow_usage("app", Some(false)),
             instance: None,
             intent: Some("local_development"),
             description: Some("Primary local app workflow"),
@@ -54880,6 +54971,7 @@ tasks:
             context: Some("app"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("dev", true, &inputs),
             description: Some("Run the app"),
             notes: None,
             category: None,
@@ -54919,7 +55011,11 @@ tasks:
 
         assert!(rendered.contains("✦ app"), "{rendered}");
         assert!(
-            rendered.contains("Use: `ota up --workflow app`"),
+            rendered.contains("Humans: `ota up --workflow app`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Agents: not callable in agent mode"),
             "{rendered}"
         );
         assert!(
@@ -54968,6 +55064,7 @@ tasks:
     fn render_workflow_summary_text_surfaces_selected_instance_commands() {
         let workflow = WorkflowSummary {
             name: "devenv",
+            usage: test_workflow_usage("devenv@ws1", Some(true)),
             instance: Some(String::from("ws1")),
             intent: Some("packaged_runtime"),
             description: Some("Bring up one selected workspace instance"),
@@ -54996,7 +55093,11 @@ tasks:
         let rendered = strip_ansi_codes(&super::render_workflow_summary_text(&workflow, None));
         assert!(rendered.contains("Instance: ws1"), "{rendered}");
         assert!(
-            rendered.contains("Use: `ota up --workflow devenv@ws1`"),
+            rendered.contains("Humans: `ota up --workflow devenv@ws1`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Agents: `ota up --workflow devenv@ws1 --agent`"),
             "{rendered}"
         );
         assert!(
@@ -55018,6 +55119,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup", true, &inputs),
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
@@ -55079,6 +55181,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup", false, &inputs),
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
@@ -55214,6 +55317,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup:yarn", false, &inputs),
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
@@ -55278,6 +55382,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup:bun", false, &inputs),
             description: Some("Hydrate Bun dependencies"),
             notes: None,
             category: None,
@@ -55364,6 +55469,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup:yarn", false, &inputs),
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
@@ -55443,6 +55549,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup:npm", false, &inputs),
             description: Some("Hydrate npm dependencies with force"),
             notes: None,
             category: None,
@@ -55520,6 +55627,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("setup", false, &inputs),
             description: Some("Hydrate dependencies through compose"),
             notes: None,
             category: None,
@@ -55615,6 +55723,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("deps:ruby", false, &inputs),
             description: Some("Hydrate Ruby dependencies through compose"),
             notes: None,
             category: None,
@@ -55711,6 +55820,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("playwright:browsers", false, &inputs),
             description: Some("Install Playwright browsers"),
             notes: None,
             category: None,
@@ -55790,6 +55900,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("playwright:browsers", false, &inputs),
             description: Some("Install filtered Playwright browsers"),
             notes: None,
             category: None,
@@ -55869,6 +55980,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("cypress:browsers", false, &inputs),
             description: Some("Install Cypress browsers"),
             notes: None,
             category: None,
@@ -55948,6 +56060,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("playwright:browsers", false, &inputs),
             description: Some("Install Playwright browsers via Poetry"),
             notes: None,
             category: None,
@@ -56027,6 +56140,7 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
+            usage: test_task_usage("db:migrate", false, &inputs),
             description: Some("Run database migrations"),
             notes: None,
             category: None,
@@ -56387,6 +56501,7 @@ workflows:
                 context: Some("host"),
                 default_mode: None,
                 effective_default_mode: "native",
+                usage: test_task_usage("quickstart", true, &inputs),
                 description: Some("Run packaged quickstart"),
                 notes: None,
                 category: None,
@@ -56479,6 +56594,7 @@ workflows:
                 context: Some("host"),
                 default_mode: None,
                 effective_default_mode: "native",
+                usage: test_task_usage("selfhost", true, &inputs),
                 description: Some("Start packaged compose stack"),
                 notes: None,
                 category: None,
@@ -58221,7 +58337,10 @@ agent:
             "{stderr}"
         );
         assert!(stderr.contains("Refusal:"), "{stderr}");
-        assert!(stderr.contains("reason: `requested_task_not_safe`"), "{stderr}");
+        assert!(
+            stderr.contains("reason: `requested_task_not_safe`"),
+            "{stderr}"
+        );
         assert!(stderr.contains("closure status: `unsafe`"), "{stderr}");
         assert!(stderr.contains("RUN SUMMARY"), "{stderr}");
         assert!(!stderr.contains("Operation failed"), "{stderr}");
@@ -58340,7 +58459,10 @@ agent:
             "{stdout}"
         );
         assert!(stdout.contains("Refusal:"), "{stdout}");
-        assert!(stdout.contains("reason: `requested_task_not_safe`"), "{stdout}");
+        assert!(
+            stdout.contains("reason: `requested_task_not_safe`"),
+            "{stdout}"
+        );
         assert!(stdout.contains("UP SUMMARY"), "{stdout}");
         assert!(!stdout.contains("Operation failed"), "{stdout}");
         assert!(!stdout.contains("\nContract\n"), "{stdout}");
@@ -62981,6 +63103,7 @@ tasks:
             default: false,
             workflow: WorkflowSummary {
                 name: "build",
+                usage: test_workflow_usage("build", Some(true)),
                 instance: None,
                 intent: Some("local_build"),
                 description: Some("Build artifacts for local installation testing"),
@@ -63017,7 +63140,11 @@ tasks:
         ));
 
         assert!(text.contains("✦ build"), "{text}");
-        assert!(text.contains("Use: `ota up --workflow build`"), "{text}");
+        assert!(text.contains("Humans: `ota up --workflow build`"), "{text}");
+        assert!(
+            text.contains("Agents: `ota up --workflow build --agent`"),
+            "{text}"
+        );
         assert!(
             text.contains("Proof: `ota proof runtime --workflow build`"),
             "{text}"
@@ -72830,6 +72957,7 @@ execution:
         };
         let workflow = WorkflowSummary {
             name: "app",
+            usage: test_workflow_usage("app", Some(false)),
             instance: None,
             intent: Some("local_development"),
             description: None,
@@ -77164,7 +77292,10 @@ tasks:
             rendered.contains("env materialization paths: `.env.local`"),
             "{rendered}"
         );
-        assert!(rendered.contains("write paths: `node_modules`"), "{rendered}");
+        assert!(
+            rendered.contains("write paths: `node_modules`"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("write owners: `shared:repo-worktree (node_modules)`"),
             "{rendered}"
@@ -78299,13 +78430,14 @@ tasks:
         );
         assert!(rendered.contains("Conflicting execution:"), "{rendered}");
         assert!(
-            rendered.contains(
-                "reasons: `persistent_backend_family`, `write_path`, `service_task`"
-            ),
+            rendered.contains("reasons: `persistent_backend_family`, `write_path`, `service_task`"),
             "{rendered}"
         );
         assert!(rendered.contains("task: `dev`"), "{rendered}");
-        assert!(rendered.contains("execution mode: `container`"), "{rendered}");
+        assert!(
+            rendered.contains("execution mode: `container`"),
+            "{rendered}"
+        );
         assert!(rendered.contains("lifecycle: `persistent`"), "{rendered}");
         assert!(
             rendered.contains("persistent backend families: `cc428d004e575a9c`"),

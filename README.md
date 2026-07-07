@@ -671,8 +671,9 @@ ota run test --mode container --ephemeral
 ```
 
 Use `ota tasks --use` to see the exact runnable task surface for the current contract, including
-the command preview, effective default mode, alternate `--mode ...` invocations, safety posture,
-effect surface, and the matching dry-run / receipt follow-up commands:
+the explicit `Humans` and `Agents` commands, command preview, effective default mode, alternate
+`--mode ...` invocations, safety posture, effect surface, and the matching dry-run / receipt
+follow-up commands:
 
 ```bash
 ota tasks --use
