@@ -81,6 +81,10 @@ The mature rule is:
 - downstream systems should be able to tell whether a field is asserted, derived, or attested
 - reconciliation should start from the published governance outcome against its actual decision
   inputs and result, not from a weaker first question like "did this branch execute?"
+- where Ota already has truthful blocker or gate structure, it should publish that decomposition
+  instead of collapsing the decision into an undecomposed flat verdict
+- flat or pure verdicts remain acceptable only on lanes Ota cannot yet decompose honestly without
+  inventing false precision
 
 What this does not mean:
 
@@ -116,15 +120,34 @@ Two concrete failure modes still matter:
 
 V11.9 is the slice for making that trust boundary explicit.
 
+There is also a third trust weakness:
+
+3. undecomposed governance verdicts where richer structure already exists
+- a path is published only as `allow` or `deny`
+- but the engine already knows the blocker set, gate set, or closure conditions that produced the
+  verdict
+- downstream consumers are then forced to trust a flat claim instead of the decision shape Ota
+  already has
+
+V11.9 should tighten that honesty boundary:
+
+- do not force every lane into decomposition before Ota can explain it truthfully
+- do require decomposition on lanes where Ota already has stable blocker or gate structure and is
+  simply failing to publish it
+
 ## Included capabilities
 
 - field-level reconciliation between published governance outcome and the actual decision inputs
   plus result
+- outcome decomposition for governance lanes where Ota already has truthful blocker or gate
+  structure
 - decision-site governance emission rules
 - mandatory evidence-class typing for authoritative machine-readable governance fields
 - preflight/post-execution consistency checks for governance records
 - explicit separation between caller assertion, runner derivation, and runner/harness attestation
 - additive machine-readable state for reconciliation success, failure, or unknown posture
+- pinned replay for authoritative governance paths once reconciliation shape exists
+- explicit hidden decision-input capture for fields replay depends on
 - narrow mechanism-level hook/branch identity checks only where stronger outcome-level
   reconciliation is not available
 
@@ -201,13 +224,18 @@ V11.9 should be built in this trust order:
 2. mandatory evidence classes second
 3. localized decision ownership third
 4. phase-accurate preflight/post-execution consistency fourth
-5. narrow mechanism-level hook/branch identity checks last
+5. pinned replay for authoritative governance paths fifth
+6. hidden decision-input hardening from replay gaps sixth
+7. narrow mechanism-level hook/branch identity checks last
 
 This ordering matters.
 
 - outcome checks are stronger than mechanism checks
+- outcome decomposition is stronger than flat verdict summary when Ota already has the structure
 - provenance classes are stronger than implicit interpretation
 - localized decision ownership is a prerequisite for trustworthy reconciliation
+- replay is stronger once the record, inputs, and decomposition are already trustworthy
+- hidden inputs should be hardened from replay failures instead of guessed upfront
 - hook or branch identity checks are useful tripwires, but they should not become the primary
   trust story
 
@@ -229,11 +257,33 @@ Direction:
   - evidence-required / evidence-missing posture
 - publish reconciliation posture as part of the canonical governance record instead of a separate
   auxiliary export
+- reconcile both directions:
+  - `deny` should cite the blocker set, blocker codes, refusal basis, or closure condition that
+    forced the denial
+  - `allow` should cite the satisfied gates, checks, closure conditions, or admission basis that
+    made the allowance truthful
+- do not accept a flat `allow` or `deny` as the default shape when Ota already has truthful
+  blocker or gate structure available
+- keep flat verdicts only on lanes where decomposition would currently require invented or weakly
+  understood logic
 
 This is the real trust bar.
 
 If a field like `reason`, `refusal`, `crossing`, `required`, or `allowed` can drift from the
 actual decision path, then the JSON is dressed-up prose.
+
+### 1a. Decomposition honesty rule
+
+Add one explicit product rule for authoritative governance paths:
+
+- if Ota already knows the decision shape, it should publish the decision shape
+- if Ota only knows the final verdict honestly, it may publish the final verdict without fake
+  decomposition
+
+This avoids two opposite failures:
+
+- under-modeling a lane Ota already understands well
+- over-modeling a lane Ota does not yet understand well enough to explain honestly
 
 ### 2. Decision-site emission rule
 
@@ -325,7 +375,57 @@ Mechanism-level identity checks should stay narrower:
   available
 - treat them as supplemental trust tripwires, not the main trust story
 
-### 6. Mechanism-level hook or branch checks last
+### 6. Pinned replay for authoritative governance paths
+
+After reconciliation, evidence classes, and localized decision ownership exist, add pinned replay
+for the authoritative governance paths.
+
+Direction:
+
+- be able to re-run the governance evaluation against the same declared inputs and confirm the same
+  verdict plus the same decomposition
+- pin the replay to the actual decision inputs the verdict depended on, not just the contract file
+- start with the strongest governance paths first:
+  - refusal
+  - crossing-required / not-required
+  - crossing classification
+  - merge-required / not-required lane posture
+
+Replay should answer:
+
+- given the same inputs, does Ota produce the same governance verdict?
+- given the same inputs, does Ota produce the same blocker or gate decomposition?
+
+This is a stronger trust move than branch-identity checks because it validates outcome and
+decision shape together.
+
+### 7. Hidden decision-input hardening
+
+Pinned replay is also how Ota should discover which hidden inputs still move the verdict.
+
+Direction:
+
+- make decision inputs explicit instead of letting them stay ambient
+- start from the inputs replay proves are verdict-relevant
+
+Likely hidden inputs include:
+
+- time
+- environment variables
+- feature flags
+- policy pack identity or version
+- baseline receipt or snapshot identity
+- ruleset identity or version
+- any other non-contract input that can move the governance result without changing the contract
+
+The product rule should be:
+
+- if a hidden input can move an authoritative governance verdict, it should become an explicit
+  decision input for that path
+- if Ota cannot yet surface the input explicitly, replay for that path should stay weaker and say
+  so honestly
+
+### 8. Mechanism-level hook or branch checks last
 
 Only after outcome reconciliation is in place should V11.9 add narrower mechanism checks.
 
@@ -338,7 +438,7 @@ Direction:
 - do not let mechanism checks outrank stronger outcome reconciliation in either implementation
   order or product explanation
 
-### 7. Preflight and post-execution consistency
+### 9. Preflight and post-execution consistency
 
 Keep the phase model explicit:
 
@@ -357,7 +457,7 @@ The important part is:
 - caller assertion must not be mistaken for boundary attestation
 - a fired hook and an emitted record should be linkable without re-scraping execution state
 
-### 8. Crossing-specific tightening
+### 10. Crossing-specific tightening
 
 Apply the same trust rule explicitly to V11.7 crossing records.
 
@@ -369,7 +469,7 @@ Direction:
 - reason presence, attachment timing, and record emission should still be attested by the runner
 - no later receipt formatter should invent or re-classify the crossing independently
 
-### 9. Merge/CI-oriented tightening
+### 11. Merge/CI-oriented tightening
 
 Apply the same trust rule to merge-facing governance surfaces from V11.5.
 
@@ -387,6 +487,9 @@ V11.9 is complete when:
 
 - published governance outcome fields reconcile to the actual decision inputs and result before
   Ota relies on narrower hook/branch identity checks
+- governance lanes that already have stable blocker or gate structure publish that decomposition
+  instead of hiding behind undecomposed flat verdicts
+- flat verdicts remain only on lanes Ota cannot yet decompose honestly
 - Ota has an explicit rule that authoritative governance records are emitted from the same
   decision path that made the verdict
 - each authoritative governance record has one localized decision owner instead of later
@@ -399,6 +502,10 @@ V11.9 is complete when:
   assertion context
 - refusal, crossing, and merge-facing governance records can publish reconciliation posture against
   actual decision inputs and result, with narrower hook/branch checks only as additive tripwires
+- authoritative governance replay can confirm the same verdict and the same published blocker/gate
+  decomposition from pinned decision inputs on at least the first high-value governance paths
+- verdict-relevant hidden inputs discovered through replay are either explicit in the decision
+  input model or called out as a remaining trust boundary
 - preflight and post-execution governance semantics remain phase-accurate while still exposing
   reconciliation state
 - downstream consumers no longer need to assume all machine-readable governance fields are equally
