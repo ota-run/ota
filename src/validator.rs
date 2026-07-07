@@ -250,6 +250,10 @@ fn validate_execution(
         return;
     };
 
+    if let Some(runtime_boundary) = execution.runtime_boundary.as_ref() {
+        validate_runtime_boundary("execution.runtime_boundary", runtime_boundary, errors);
+    }
+
     let uses_context_mode = execution.default_context.is_some() || !execution.contexts.is_empty();
 
     for error in execution.context_resolution_errors() {
@@ -2366,6 +2370,13 @@ fn validate_tasks(
                 contract,
                 &format!("tasks.{name}.runtime"),
                 runtime,
+                errors,
+            );
+        }
+        if let Some(runtime_boundary) = task.runtime_boundary.as_ref() {
+            validate_runtime_boundary(
+                &format!("tasks.{name}.runtime_boundary"),
+                runtime_boundary,
                 errors,
             );
         }
@@ -4836,6 +4847,141 @@ fn validate_task_env_files(
     for (index, path) in env_files.iter().enumerate() {
         let field = format!("{scope}[{index}]");
         validate_repo_relative_file_action_path(task_name, field.as_str(), path.as_str(), errors);
+    }
+}
+
+fn validate_runtime_boundary(
+    scope: &str,
+    runtime_boundary: &crate::schema::RuntimeBoundarySpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if let Some(filesystem) = runtime_boundary.filesystem.as_ref() {
+        validate_runtime_boundary_paths(
+            scope,
+            "filesystem.writable_paths",
+            &filesystem.writable_paths,
+            errors,
+        );
+        validate_runtime_boundary_paths(
+            scope,
+            "filesystem.protected_paths",
+            &filesystem.protected_paths,
+            errors,
+        );
+    }
+
+    let Some(network) = runtime_boundary.network.as_ref() else {
+        return;
+    };
+
+    let mut seen_targets = BTreeSet::new();
+    for (index, target) in network.outbound_targets.iter().enumerate() {
+        let target_scope = format!("{scope}.network.outbound_targets[{index}]");
+        if target.value.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`{target_scope}.value` must not be empty"
+            )));
+        }
+        let identity = format!("{}:{}", target.kind.as_str(), target.value.trim());
+        if !target.value.trim().is_empty() && !seen_targets.insert(identity.clone()) {
+            errors.push(ValidationError::new(format!(
+                "`{scope}.network.outbound_targets` must not declare duplicate target `{identity}`"
+            )));
+        }
+
+        let requires_constraint = matches!(
+            target.destination_shape,
+            Some(
+                crate::schema::RuntimeBoundaryDestinationShape::MultiTenantHost
+                    | crate::schema::RuntimeBoundaryDestinationShape::RelayHost
+                    | crate::schema::RuntimeBoundaryDestinationShape::SendHost
+            )
+        );
+        if requires_constraint && target.destination_constraint.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`{target_scope}` declares `destination_shape: {}` but does not declare `destination_constraint`; multi-tenant, relay, and send-style outbound lanes must declare the narrower effective destination truth",
+                target
+                    .destination_shape
+                    .map(crate::schema::RuntimeBoundaryDestinationShape::as_str)
+                    .unwrap_or_default()
+            )));
+        }
+        if target.destination_constraint.is_some() && target.destination_shape.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`{target_scope}.destination_constraint` requires `destination_shape` so ota can classify why first-hop host truth is not sufficient"
+            )));
+        }
+
+        let Some(constraint) = target.destination_constraint.as_ref() else {
+            continue;
+        };
+
+        if constraint.values.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`{target_scope}.destination_constraint.values` must declare at least one constrained destination value"
+            )));
+        }
+        let mut seen_values = BTreeSet::new();
+        for (value_index, value) in constraint.values.iter().enumerate() {
+            if value.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`{target_scope}.destination_constraint.values[{value_index}]` must not be empty"
+                )));
+                continue;
+            }
+            if !seen_values.insert(value.trim().to_string()) {
+                errors.push(ValidationError::new(format!(
+                    "`{target_scope}.destination_constraint.values` must not contain duplicate entry `{}`",
+                    value.trim()
+                )));
+            }
+        }
+
+        match constraint.source_posture {
+            crate::schema::RuntimeBoundaryDestinationConstraintSourcePosture::SharedPinnedAuthoritative => {
+                let Some(shared_pin) = constraint.shared_pin.as_ref() else {
+                    errors.push(ValidationError::new(format!(
+                        "`{target_scope}.destination_constraint.source_posture: shared_pinned_authoritative` requires `shared_pin`"
+                    )));
+                    continue;
+                };
+                if shared_pin.r#ref.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`{target_scope}.destination_constraint.shared_pin.ref` must not be empty"
+                    )));
+                }
+            }
+            _ => {
+                if constraint.shared_pin.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`{target_scope}.destination_constraint.shared_pin` is only valid when `source_posture: shared_pinned_authoritative`"
+                    )));
+                }
+            }
+        }
+    }
+}
+
+fn validate_runtime_boundary_paths(
+    scope: &str,
+    field: &str,
+    values: &[String],
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut seen = BTreeSet::new();
+    for (index, value) in values.iter().enumerate() {
+        let trimmed = value.trim();
+        if !is_safe_repo_relative_file_path(trimmed) {
+            errors.push(ValidationError::new(format!(
+                "`{scope}.{field}[{index}]` must be a repo-relative path that does not escape the repo"
+            )));
+            continue;
+        }
+        if !seen.insert(trimmed.to_string()) {
+            errors.push(ValidationError::new(format!(
+                "`{scope}.{field}` must not contain duplicate path `{trimmed}`"
+            )));
+        }
     }
 }
 
@@ -15833,6 +15979,13 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new(format!(
                 "`workflows.{name}.intent` must not be empty"
             )));
+        }
+        if let Some(runtime_boundary) = workflow.runtime_boundary.as_ref() {
+            validate_runtime_boundary(
+                &format!("workflows.{name}.runtime_boundary"),
+                runtime_boundary,
+                errors,
+            );
         }
         if let Some(profile) = workflow
             .env
@@ -28904,6 +29057,103 @@ tasks:
                 "task `test` must not declare `command.runtime_projection`; this surface is only valid for `launch.kind: command`",
             )
         }));
+    }
+
+    #[test]
+    fn accepts_runtime_boundary_destination_constrained_outbound() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  notify:
+    command:
+      exe: ./bin/send
+    runtime_boundary:
+      network:
+        default: deny
+        outbound_targets:
+          - kind: domain
+            value: api.sendgrid.com
+            destination_shape: send_host
+            destination_constraint:
+              kind: recipient_domain_allowlist
+              values:
+                - example.com
+              source_posture: repo_local_authoritative
+              enforcement: authoritative_app_enforced
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("destination-constrained outbound should validate with explicit constraint");
+    }
+
+    #[test]
+    fn rejects_runtime_boundary_shape_without_destination_constraint() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  fetch:
+    command:
+      exe: ./bin/fetch
+    runtime_boundary:
+      network:
+        default: deny
+        outbound_targets:
+          - kind: host
+            value: relay.internal
+            destination_shape: relay_host
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("relay host should require destination truth");
+        assert!(errors
+            .to_string()
+            .contains("must declare the narrower effective destination truth"));
+    }
+
+    #[test]
+    fn rejects_shared_pinned_destination_constraint_without_pin() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deliver:
+    command:
+      exe: ./bin/deliver
+    runtime_boundary:
+      network:
+        default: deny
+        outbound_targets:
+          - kind: domain
+            value: api.sendgrid.com
+            destination_shape: send_host
+            destination_constraint:
+              kind: recipient_domain_allowlist
+              values:
+                - example.com
+              source_posture: shared_pinned_authoritative
+              enforcement: authoritative_app_enforced
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("shared pinned destination truth should require a pin");
+        assert!(errors.to_string().contains("requires `shared_pin`"));
     }
 
     #[test]

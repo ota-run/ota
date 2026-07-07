@@ -1865,8 +1865,18 @@ Each task capability entry carries:
   is still honestly compiling only the broad effect-owned posture here rather than a host or
   destination allowlist
 - `network.scope: "targeted"` plus `outbound_targets[]` means the selected lane declares explicit
-  runtime-boundary target truth; `enforcement` still stays honest as `advisory_only` in the
-  current shipped slice
+  runtime-boundary target truth
+- `outbound_targets[].destination_constraint` means the lane declares narrower effective
+  destination truth beyond the first-hop host; ota now preserves:
+  - constraint `kind`
+  - constrained `values[]`
+  - `source_posture`
+  - `enforcement`
+  - optional `shared_pin.ref` plus `shared_pin.freshness` when the lane consumes pinned shared
+    destination truth
+- top-level `network.enforcement` still describes the broad compiled lane posture; per-target
+  destination constraints can carry stronger app/runtime enforcement truth than the coarse lane
+  default
 
 Refused task capability entries may also carry additive `blocked_task` and `closure_path` when a
 declared-safe task is refused because its reachable closure leaves the safe surface.

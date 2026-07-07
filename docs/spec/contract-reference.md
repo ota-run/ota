@@ -2140,6 +2140,7 @@ Task-effect rules:
 - `prepare.source.manager: yarn` may also declare `inline_builds: true` when the repo truth is `yarn install --inline-builds`
 - `prepare.source.manager: bun` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `bun install --frozen-lockfile`
 - `prepare.source.compose` wraps the typed hydration lane through `docker|podman compose exec/run`; keep package-manager truth under `prepare.source.kind` and service/container truth under `prepare.source.compose`
+- see [`examples/reference/task-prepare-compose-hydration/ota.yaml`](../../examples/reference/task-prepare-compose-hydration/ota.yaml) for the canonical compose-wrapped Node package hydration shape
 - `prepare.source.kind: bundler` currently executes one of two narrow canonical hydration lanes:
   - host-side or explicit repo-local path truth: `bundle config set path <path> && bundle install`
   - compose-wrapped container-default path truth: `bundle install`
@@ -2284,6 +2285,19 @@ tasks:
   - `value`: required literal target value
   - `destination_shape`: optional `single_purpose_host`, `multi_tenant_host`, `relay_host`, or
     `send_host`
+  - `destination_constraint`: optional narrower effective-destination truth for lanes where
+    first-hop host allowlisting is not sufficient
+    - `kind`: required `callback_host_allowlist`, `recipient_domain_allowlist`,
+      `downstream_host_allowlist`, `bucket_scope`, `tenant_scope`, or
+      `sms_destination_allowlist`
+    - `values`: required ordered constrained destination values
+    - `source_posture`: required `repo_local_authoritative`, `shared_pinned_authoritative`, or
+      `non_authoritative`
+    - `enforcement`: required `authoritative_runtime_enforced`,
+      `authoritative_app_enforced`, or `advisory_only`
+    - `shared_pin`: required when `source_posture: shared_pinned_authoritative`
+      - `ref`: required pinned shared truth identifier
+      - `freshness`: required `fresh`, `warning`, or `blocking`
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
 - `adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` or `podman compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
 - `adapter_inputs.overlays.compose.env_files`: canonical optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` or `podman compose` adapter input truth rather than process dotenv injection
@@ -3507,6 +3521,19 @@ Fields:
     - `value`: required literal target value
     - `destination_shape`: optional `single_purpose_host`, `multi_tenant_host`, `relay_host`, or
       `send_host`
+    - `destination_constraint`: optional narrower effective-destination truth for lanes where
+      first-hop host allowlisting is not sufficient
+      - `kind`: required `callback_host_allowlist`, `recipient_domain_allowlist`,
+        `downstream_host_allowlist`, `bucket_scope`, `tenant_scope`, or
+        `sms_destination_allowlist`
+      - `values`: required ordered constrained destination values
+      - `source_posture`: required `repo_local_authoritative`,
+        `shared_pinned_authoritative`, or `non_authoritative`
+      - `enforcement`: required `authoritative_runtime_enforced`,
+        `authoritative_app_enforced`, or `advisory_only`
+      - `shared_pin`: required when `source_posture: shared_pinned_authoritative`
+        - `ref`: required pinned shared truth identifier
+        - `freshness`: required `fresh`, `warning`, or `blocking`
 - `<name>.adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory the
   workflow should project into selected compose task paths when that path does not already declare one
 - `<name>.adapter_inputs.overlays.compose.env_files`: canonical optional ordered repo-relative adapter-owned

@@ -3068,6 +3068,24 @@ pub struct HarnessSandboxOutboundTarget {
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destination_shape: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination_constraint: Option<HarnessSandboxDestinationConstraint>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessSandboxDestinationConstraint {
+    pub kind: String,
+    pub values: Vec<String>,
+    pub source_posture: String,
+    pub enforcement: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_pin: Option<HarnessSandboxSharedPin>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessSandboxSharedPin {
+    pub r#ref: String,
+    pub freshness: String,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

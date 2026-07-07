@@ -1,0 +1,59 @@
+#                 █████
+#                ░░███
+#        ██████  ███████    ██████
+#       ███░░███░░░███░    ░░░░░███
+#      ░███ ░███  ░███      ███████
+#      ░███ ░███  ░███ ███ ███░░███
+#      ░░██████   ░░█████ ░░████████
+#       ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#    Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#    DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#    Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#    You may not use this file except in compliance with that License.
+#    Unless required by applicable law or agreed to in writing, software distributed under the
+#    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#    either express or implied. See the License for the specific language governing permissions
+#    and limitations under the License.
+#
+#    If you need additional information or have any questions, please email: os@ota.run
+
+version: 1
+
+project:
+  name: runtime-boundary-destination-constrained
+  description: Reference contract for destination-constrained outbound runtime boundary truth
+
+tasks:
+  notify:
+    description: Deliver notification traffic through a send-style host with recipient constraints
+    command:
+      exe: ./bin/notify
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths:
+          - tmp
+      network:
+        default: deny
+        outbound_targets:
+          - kind: domain
+            value: api.sendgrid.com
+            destination_shape: send_host
+            destination_constraint:
+              kind: recipient_domain_allowlist
+              values:
+                - example.com
+                - internal.example
+              source_posture: shared_pinned_authoritative
+              enforcement: authoritative_app_enforced
+              shared_pin:
+                ref: policies/email-destinations@sha256:abc123
+                freshness: warning
+    safe_for_agent: true
+
+agent:
+  safe_tasks:
+    - notify

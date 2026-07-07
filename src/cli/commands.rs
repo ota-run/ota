@@ -14120,6 +14120,20 @@ fn compiled_codex_local_sandbox_policy(
                         .destination_shape
                         .map(crate::schema::RuntimeBoundaryDestinationShape::as_str)
                         .map(str::to_string),
+                    destination_constraint: target.destination_constraint.as_ref().map(
+                        |constraint| crate::output::HarnessSandboxDestinationConstraint {
+                            kind: constraint.kind.as_str().to_string(),
+                            values: constraint.values.clone(),
+                            source_posture: constraint.source_posture.as_str().to_string(),
+                            enforcement: constraint.enforcement.as_str().to_string(),
+                            shared_pin: constraint.shared_pin.as_ref().map(|pin| {
+                                crate::output::HarnessSandboxSharedPin {
+                                    r#ref: pin.r#ref.clone(),
+                                    freshness: pin.freshness.as_str().to_string(),
+                                }
+                            }),
+                        },
+                    ),
                 })
                 .collect(),
         },
@@ -59905,6 +59919,85 @@ agent:
         assert_eq!(
             sandbox["network"]["outbound_targets"][0]["destination_shape"],
             "single_purpose_host"
+        );
+    }
+
+    #[test]
+    fn tasks_json_runtime_boundary_reports_destination_constraints() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  notify:
+    command:
+      exe: ./bin/notify
+    safe_for_agent: true
+    runtime_boundary:
+      network:
+        default: deny
+        outbound_targets:
+          - kind: domain
+            value: api.sendgrid.com
+            destination_shape: send_host
+            destination_constraint:
+              kind: recipient_domain_allowlist
+              values:
+                - example.com
+                - internal.example
+              source_posture: shared_pinned_authoritative
+              enforcement: authoritative_app_enforced
+              shared_pin:
+                ref: policies/email-destinations@sha256:abc123
+                freshness: warning
+agent:
+  safe_tasks:
+    - notify
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::tasks(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            false,
+            false,
+            false,
+            false,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("tasks json");
+        let target = &json["capability_profile"]["callable_tasks"][0]["sandbox_policy"]["network"]
+            ["outbound_targets"][0];
+        assert_eq!(target["destination_shape"], "send_host");
+        assert_eq!(
+            target["destination_constraint"]["kind"],
+            "recipient_domain_allowlist"
+        );
+        assert_eq!(
+            target["destination_constraint"]["source_posture"],
+            "shared_pinned_authoritative"
+        );
+        assert_eq!(
+            target["destination_constraint"]["enforcement"],
+            "authoritative_app_enforced"
+        );
+        assert_eq!(
+            target["destination_constraint"]["shared_pin"]["ref"],
+            "policies/email-destinations@sha256:abc123"
+        );
+        assert_eq!(
+            target["destination_constraint"]["shared_pin"]["freshness"],
+            "warning"
         );
     }
 

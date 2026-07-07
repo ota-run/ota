@@ -974,6 +974,8 @@ pub struct RuntimeBoundaryOutboundTargetSpec {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destination_shape: Option<RuntimeBoundaryDestinationShape>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_constraint: Option<RuntimeBoundaryDestinationConstraintSpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1010,6 +1012,103 @@ impl RuntimeBoundaryDestinationShape {
             Self::MultiTenantHost => "multi_tenant_host",
             Self::RelayHost => "relay_host",
             Self::SendHost => "send_host",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBoundaryDestinationConstraintSpec {
+    pub kind: RuntimeBoundaryDestinationConstraintKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+    pub source_posture: RuntimeBoundaryDestinationConstraintSourcePosture,
+    pub enforcement: RuntimeBoundaryDestinationConstraintEnforcement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_pin: Option<RuntimeBoundarySharedPinSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryDestinationConstraintKind {
+    CallbackHostAllowlist,
+    RecipientDomainAllowlist,
+    DownstreamHostAllowlist,
+    BucketScope,
+    TenantScope,
+    SmsDestinationAllowlist,
+}
+
+impl RuntimeBoundaryDestinationConstraintKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CallbackHostAllowlist => "callback_host_allowlist",
+            Self::RecipientDomainAllowlist => "recipient_domain_allowlist",
+            Self::DownstreamHostAllowlist => "downstream_host_allowlist",
+            Self::BucketScope => "bucket_scope",
+            Self::TenantScope => "tenant_scope",
+            Self::SmsDestinationAllowlist => "sms_destination_allowlist",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryDestinationConstraintSourcePosture {
+    RepoLocalAuthoritative,
+    SharedPinnedAuthoritative,
+    NonAuthoritative,
+}
+
+impl RuntimeBoundaryDestinationConstraintSourcePosture {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RepoLocalAuthoritative => "repo_local_authoritative",
+            Self::SharedPinnedAuthoritative => "shared_pinned_authoritative",
+            Self::NonAuthoritative => "non_authoritative",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryDestinationConstraintEnforcement {
+    AuthoritativeRuntimeEnforced,
+    AuthoritativeAppEnforced,
+    AdvisoryOnly,
+}
+
+impl RuntimeBoundaryDestinationConstraintEnforcement {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AuthoritativeRuntimeEnforced => "authoritative_runtime_enforced",
+            Self::AuthoritativeAppEnforced => "authoritative_app_enforced",
+            Self::AdvisoryOnly => "advisory_only",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBoundarySharedPinSpec {
+    pub r#ref: String,
+    pub freshness: RuntimeBoundarySharedPinFreshness,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundarySharedPinFreshness {
+    Fresh,
+    Warning,
+    Blocking,
+}
+
+impl RuntimeBoundarySharedPinFreshness {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Warning => "warning",
+            Self::Blocking => "blocking",
         }
     }
 }

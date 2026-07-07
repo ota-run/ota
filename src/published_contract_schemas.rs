@@ -429,6 +429,96 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "attachments": { "$ref": "#/$defs/executionContextAttachments" }
       }
     },
+    "runtimeBoundarySharedPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "freshness"],
+      "properties": {
+        "ref": { "type": "string" },
+        "freshness": { "enum": ["fresh", "warning", "blocking"] }
+      }
+    },
+    "runtimeBoundaryDestinationConstraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "values", "source_posture", "enforcement"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "callback_host_allowlist",
+            "recipient_domain_allowlist",
+            "downstream_host_allowlist",
+            "bucket_scope",
+            "tenant_scope",
+            "sms_destination_allowlist"
+          ]
+        },
+        "values": { "$ref": "#/$defs/stringArray" },
+        "source_posture": {
+          "enum": [
+            "repo_local_authoritative",
+            "shared_pinned_authoritative",
+            "non_authoritative"
+          ]
+        },
+        "enforcement": {
+          "enum": [
+            "authoritative_runtime_enforced",
+            "authoritative_app_enforced",
+            "advisory_only"
+          ]
+        },
+        "shared_pin": { "$ref": "#/$defs/runtimeBoundarySharedPin" }
+      }
+    },
+    "runtimeBoundaryOutboundTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["host", "domain", "service_alias"] },
+        "value": { "type": "string" },
+        "destination_shape": {
+          "enum": [
+            "single_purpose_host",
+            "multi_tenant_host",
+            "relay_host",
+            "send_host"
+          ]
+        },
+        "destination_constraint": {
+          "$ref": "#/$defs/runtimeBoundaryDestinationConstraint"
+        }
+      }
+    },
+    "runtimeBoundaryNetwork": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "enum": ["deny", "allow"] },
+        "outbound_targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runtimeBoundaryOutboundTarget" }
+        }
+      }
+    },
+    "runtimeBoundaryFilesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo_root_mode": { "enum": ["read_only", "writable"] },
+        "writable_paths": { "$ref": "#/$defs/stringArray" },
+        "protected_paths": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "runtimeBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filesystem": { "$ref": "#/$defs/runtimeBoundaryFilesystem" },
+        "network": { "$ref": "#/$defs/runtimeBoundaryNetwork" }
+      }
+    },
     "execution": {
       "type": "object",
       "additionalProperties": false,
@@ -452,6 +542,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/executionContext" }
         },
+        "runtime_boundary": { "$ref": "#/$defs/runtimeBoundary" },
         "shared_backends": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/sharedBackend" }
@@ -901,6 +992,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "intent": { "type": "string" },
         "description": { "type": "string" },
         "notes": { "type": "string" },
+        "runtime_boundary": { "$ref": "#/$defs/runtimeBoundary" },
         "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "instances": { "$ref": "#/$defs/workflowInstances" },
         "env": { "$ref": "#/$defs/workflowEnv" },
@@ -1872,6 +1964,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "notes": { "type": "string" },
         "category": { "type": "string" },
         "context": { "type": "string" },
+        "runtime_boundary": { "$ref": "#/$defs/runtimeBoundary" },
         "env": { "$ref": "#/$defs/stringMap" },
         "env_files": { "$ref": "#/$defs/stringArray" },
         "env_bindings": {
