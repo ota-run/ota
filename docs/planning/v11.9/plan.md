@@ -79,6 +79,8 @@ The mature rule is:
 - caller-supplied fields should not be treated as equal to runner-derived or runner-attested
   evidence
 - downstream systems should be able to tell whether a field is asserted, derived, or attested
+- reconciliation should start from the published governance outcome against its actual decision
+  inputs and result, not from a weaker first question like "did this branch execute?"
 
 What this does not mean:
 
@@ -116,12 +118,15 @@ V11.9 is the slice for making that trust boundary explicit.
 
 ## Included capabilities
 
+- field-level reconciliation between published governance outcome and the actual decision inputs
+  plus result
 - decision-site governance emission rules
-- evidence-class typing for machine-readable governance fields
-- reconciliation checks between claimed governance output and fired enforcement path
+- mandatory evidence-class typing for authoritative machine-readable governance fields
 - preflight/post-execution consistency checks for governance records
 - explicit separation between caller assertion, runner derivation, and runner/harness attestation
 - additive machine-readable state for reconciliation success, failure, or unknown posture
+- narrow mechanism-level hook/branch identity checks only where stronger outcome-level
+  reconciliation is not available
 
 ## Non-goals
 
@@ -146,6 +151,9 @@ V11.9 should make the authoritative emission rule explicit:
 
 - the record should be created or stamped on the same authoritative execution line where the
   refusal, crossing, merge-gate classification, or other governance decision is actually made
+- one localized decision owner should own each authoritative governance record; if a verdict is
+  still smeared across modules and then reassembled later, that is an architecture defect this
+  slice should close before calling the field trustworthy
 
 ### 2. Evidence classes are still too implicit
 
@@ -155,6 +163,12 @@ That is still progress, but the schema should say so.
 
 V11.9 should make the evidence-class boundary explicit instead of leaving downstream systems to
 guess.
+
+The important bar here is mandatory, not advisory:
+
+- every authoritative governance field should carry an explicit evidence class
+- downstream consumers should never have to infer whether a field was asserted, derived, or
+  attested from field name alone
 
 ### 3. Claimed enforcement still needs reconciliation
 
@@ -169,15 +183,68 @@ Ota should also be able to say whether:
 - the claimed enforcement path actually fired
 - the emitted record still matches the decision hook that ran
 
+But that mechanism-level question is not the first trust bar.
+
+The stronger first question is:
+
+- does the published governance outcome reconcile to the actual decision inputs and result?
+
+Only after that should Ota ask the narrower follow-on question:
+
+- can the system also prove that the expected mechanism or hook identity fired?
+
+## Implementation order
+
+V11.9 should be built in this trust order:
+
+1. field-level reconciliation first
+2. mandatory evidence classes second
+3. localized decision ownership third
+4. phase-accurate preflight/post-execution consistency fourth
+5. narrow mechanism-level hook/branch identity checks last
+
+This ordering matters.
+
+- outcome checks are stronger than mechanism checks
+- provenance classes are stronger than implicit interpretation
+- localized decision ownership is a prerequisite for trustworthy reconciliation
+- hook or branch identity checks are useful tripwires, but they should not become the primary
+  trust story
+
 ## Proposed implementation slices
 
-### 1. Decision-site emission rule
+### 1. Field-level reconciliation first
+
+Start with the published governance outcome itself.
+
+Direction:
+
+- check whether the emitted governance record reconciles to the actual decision inputs and result
+- do this at field level for high-value fields such as:
+  - refusal reason family
+  - allowed / refused posture
+  - crossing required / not required
+  - crossing classification
+  - merge-required / not-required lane posture
+  - evidence-required / evidence-missing posture
+- publish reconciliation posture as part of the canonical governance record instead of a separate
+  auxiliary export
+
+This is the real trust bar.
+
+If a field like `reason`, `refusal`, `crossing`, `required`, or `allowed` can drift from the
+actual decision path, then the JSON is dressed-up prose.
+
+### 2. Decision-site emission rule
 
 Define a strict product rule for governance records:
 
 - authoritative governance records are emitted from the same decision path that made the verdict
 - later serializers may carry or render those records, but they do not infer or recreate the
   authoritative decision content from scratch
+- each authoritative record should have one localized decision owner
+- if no localized decision owner exists yet for a governance field, this slice should first move
+  the field onto one before claiming full trust refinement
 
 Direction:
 
@@ -185,7 +252,7 @@ Direction:
 - crossing records are created where crossing is decided and allowed
 - merge-gate / required-lane records are created where the governing decision is classified
 
-### 2. Evidence-class model
+### 3. Evidence-class model
 
 Add explicit machine-readable evidence classes for governance fields.
 
@@ -203,7 +270,14 @@ This does not require every field to use all classes.
 It does require Ota to stop treating narrative caller input and verified boundary output as
 indistinguishable machine truth.
 
-### 3. Field-class guidance
+And it should be mandatory for authoritative governance fields:
+
+- if a field is authoritative enough to drive downstream CI, harness, or policy behavior, it
+  should publish an evidence class
+- missing provenance class on an authoritative governance field should be treated as incomplete
+  trust modeling, not as acceptable omission
+
+### 4. Field-class guidance
 
 Define the expected class posture for the main V11 governance fields.
 
@@ -229,15 +303,14 @@ Direction:
 
 The exact field map can stay additive first, but the split must be explicit.
 
-### 4. Reconciliation checks
+### 5. Reconciliation checks
 
 Add reconciliation posture to the governance story.
 
 Direction:
 
-- the system should know whether the authoritative decision hook fired
-- the emitted governance record should be checked against that hook identity or equivalent
-  authoritative path
+- the system should first know whether the published governance outcome reconciles to the actual
+  decision inputs and result
 - consumers should see whether reconciliation is:
   - `satisfied`
   - `mismatch`
@@ -246,7 +319,26 @@ Direction:
 This is not a second governance model.
 It is a trust check on the canonical one.
 
-### 5. Preflight and post-execution consistency
+Mechanism-level identity checks should stay narrower:
+
+- use hook or branch identity checks only where there is no stronger outcome-level reconciliation
+  available
+- treat them as supplemental trust tripwires, not the main trust story
+
+### 6. Mechanism-level hook or branch checks last
+
+Only after outcome reconciliation is in place should V11.9 add narrower mechanism checks.
+
+Direction:
+
+- link the emitted governance record back to the decision hook, branch, or equivalent mechanism
+  identity where that identity is stable and useful
+- keep this narrowest on pure allow/deny paths where the mechanism identity contributes real extra
+  confidence
+- do not let mechanism checks outrank stronger outcome reconciliation in either implementation
+  order or product explanation
+
+### 7. Preflight and post-execution consistency
 
 Keep the phase model explicit:
 
@@ -265,7 +357,7 @@ The important part is:
 - caller assertion must not be mistaken for boundary attestation
 - a fired hook and an emitted record should be linkable without re-scraping execution state
 
-### 6. Crossing-specific tightening
+### 8. Crossing-specific tightening
 
 Apply the same trust rule explicitly to V11.7 crossing records.
 
@@ -277,7 +369,7 @@ Direction:
 - reason presence, attachment timing, and record emission should still be attested by the runner
 - no later receipt formatter should invent or re-classify the crossing independently
 
-### 7. Merge/CI-oriented tightening
+### 9. Merge/CI-oriented tightening
 
 Apply the same trust rule to merge-facing governance surfaces from V11.5.
 
@@ -293,14 +385,20 @@ Direction:
 
 V11.9 is complete when:
 
+- published governance outcome fields reconcile to the actual decision inputs and result before
+  Ota relies on narrower hook/branch identity checks
 - Ota has an explicit rule that authoritative governance records are emitted from the same
   decision path that made the verdict
+- each authoritative governance record has one localized decision owner instead of later
+  cross-module reconstruction
 - the canonical governance model can distinguish at least `asserted`, `derived`, and `attested`
   field posture
+- authoritative governance fields require an explicit evidence class instead of leaving that
+  posture implicit
 - caller-supplied narrative fields such as `--reason` are explicitly typed as non-authoritative
   assertion context
 - refusal, crossing, and merge-facing governance records can publish reconciliation posture against
-  the decision hook that fired
+  actual decision inputs and result, with narrower hook/branch checks only as additive tripwires
 - preflight and post-execution governance semantics remain phase-accurate while still exposing
   reconciliation state
 - downstream consumers no longer need to assume all machine-readable governance fields are equally
