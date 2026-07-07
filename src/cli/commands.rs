@@ -16595,34 +16595,76 @@ fn repo_agent_execution_refusal_receipt(
     receipt
 }
 
-fn render_agent_execution_refusal_text(
-    contract_path: &Path,
-    member: Option<&str>,
-    receipt: &ExecutionReceipt,
-    refusal: &AgentExecutionRefusal,
-    command: &str,
-) -> String {
-    let target = display_contract_target(&compact_contract_path(contract_path), member);
-    let mut text = format_command_header("AGENT EXECUTION REFUSED", &target);
-    let finding = agent_execution_refusal_finding(refusal, command);
-    text.push_str("\n\n");
-    text.push_str(&paint_key("Why:"));
-    text.push(' ');
-    text.push_str(&finding.why);
-    if refusal.path.len() > 1 {
-        text.push_str("\n");
-        text.push_str(&paint_key("Path:"));
-        text.push(' ');
-        text.push_str(&refusal.path.join(" -> "));
+fn receipt_agent_execution_refusal_reason(receipt: &ExecutionReceipt) -> Option<&str> {
+    receipt
+        .blocked
+        .iter()
+        .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
+}
+
+fn agent_execution_refusal_closure_status(reason: &str) -> &'static str {
+    match reason {
+        "unsafe_dependency_closure" => "unsafe_dependency_closure",
+        _ => "unsafe",
     }
-    text.push_str(&render_execution_receipt_text(receipt));
-    text.push('\n');
-    text.push_str(&render_execution_receipt_summary_block(
-        receipt,
-        Some(refusal.requested_task.as_str()),
-        "RUN SUMMARY",
+}
+
+fn agent_execution_refusal_detail_lines(
+    receipt: &ExecutionReceipt,
+    requested_task: &str,
+    blocked_task: &str,
+    reason: &str,
+    path: Option<&[String]>,
+) -> Vec<String> {
+    let mut detail_lines = vec![
+        format!("reason: `{reason}`"),
+        format!("task: `{requested_task}`"),
+    ];
+    if let Some(mode) = receipt.backend.as_deref() {
+        detail_lines.push(format!("mode: `{mode}`"));
+    }
+    detail_lines.push(format!(
+        "closure status: `{}`",
+        agent_execution_refusal_closure_status(reason)
     ));
-    append_receipt_next_block(&mut text, receipt);
+    if blocked_task != requested_task {
+        detail_lines.push(format!("blocked task: `{blocked_task}`"));
+    }
+    if let Some(path) = path
+        && path.len() > 1
+    {
+        detail_lines.push(format!("path: `{}`", path.join(" -> ")));
+    }
+    detail_lines
+}
+
+fn render_agent_execution_refusal_surface(
+    target: &str,
+    receipt: &ExecutionReceipt,
+    finding: &Finding,
+    detail_lines: &[String],
+    task_name: &str,
+    summary_title: Option<&str>,
+) -> String {
+    let mut text = structured_error_text(
+        "AGENT EXECUTION REFUSED",
+        target,
+        "Agent execution refused",
+        std::slice::from_ref(&finding.why),
+        &finding_next_steps(&finding.next),
+    );
+    if !detail_lines.is_empty() {
+        text.push('\n');
+        append_error_detail_section(&mut text, "Refusal:", detail_lines, None);
+    }
+    if let Some(summary_title) = summary_title {
+        text.push_str("\n\n");
+        text.push_str(&render_execution_receipt_summary_block(
+            receipt,
+            Some(task_name),
+            summary_title,
+        ));
+    }
     text
 }
 
@@ -16651,13 +16693,22 @@ fn run_agent_execution_refusal(
         &command,
         &refusal,
     );
+    let finding = agent_execution_refusal_finding(&refusal, &command);
+    let detail_lines = agent_execution_refusal_detail_lines(
+        &receipt,
+        refusal.requested_task.as_str(),
+        refusal.blocked_task.as_str(),
+        refusal.reason,
+        Some(&refusal.path),
+    );
     Some(RunCommandFailure {
-        message: render_agent_execution_refusal_text(
-            contract_path,
-            member,
+        message: render_agent_execution_refusal_surface(
+            &display_contract_target(&compact_contract_path(contract_path), member),
             &receipt,
-            &refusal,
-            &command,
+            &finding,
+            &detail_lines,
+            refusal.requested_task.as_str(),
+            Some("RUN SUMMARY"),
         ),
         summary: None,
         exit_code: 1,
@@ -49104,7 +49155,9 @@ fn render_up_result(
                 "UP SUMMARY",
                 cause,
             ));
-            append_receipt_next_block(&mut stdout, &receipt);
+            if receipt_agent_execution_refusal_reason(&receipt).is_none() {
+                append_receipt_next_block(&mut stdout, &receipt);
+            }
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -58162,10 +58215,17 @@ agent:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("AGENT EXECUTION REFUSED"), "{stderr}");
+        assert!(stderr.contains("Agent execution refused"), "{stderr}");
         assert!(
             stderr.contains("task `publish` is outside the declared agent-safe surface"),
             "{stderr}"
         );
+        assert!(stderr.contains("Refusal:"), "{stderr}");
+        assert!(stderr.contains("reason: `requested_task_not_safe`"), "{stderr}");
+        assert!(stderr.contains("closure status: `unsafe`"), "{stderr}");
+        assert!(stderr.contains("RUN SUMMARY"), "{stderr}");
+        assert!(!stderr.contains("Operation failed"), "{stderr}");
+        assert!(!stderr.contains("\nContract\n"), "{stderr}");
         assert!(
             stderr.contains("rerun `ota run publish --agent`"),
             "{stderr}"
@@ -58220,7 +58280,71 @@ agent:
             stderr.contains("reachable execution closure includes `setup`"),
             "{stderr}"
         );
-        assert!(stderr.contains("Path: verify -> setup"), "{stderr}");
+        assert!(stderr.contains("blocked task: `setup`"), "{stderr}");
+        assert!(stderr.contains("path: `verify -> setup`"), "{stderr}");
+    }
+
+    #[test]
+    fn up_agent_text_refuses_without_generic_wrapper() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+    run:
+      task: serve
+tasks:
+  setup:
+    run: echo setup
+  serve:
+    run: echo serve
+agent:
+  safe_tasks: []
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::up_with_agent(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            None,
+            true,
+            OutputFormat::Text,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi_codes(&output.stdout);
+        assert!(stdout.contains("AGENT EXECUTION REFUSED"), "{stdout}");
+        assert!(stdout.contains("Agent execution refused"), "{stdout}");
+        assert!(stdout.contains("Where:"), "{stdout}");
+        assert!(stdout.contains("/ota.yaml"), "{stdout}");
+        assert!(
+            stdout.contains("task `setup` is outside the declared agent-safe surface"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Refusal:"), "{stdout}");
+        assert!(stdout.contains("reason: `requested_task_not_safe`"), "{stdout}");
+        assert!(stdout.contains("UP SUMMARY"), "{stdout}");
+        assert!(!stdout.contains("Operation failed"), "{stdout}");
+        assert!(!stdout.contains("\nContract\n"), "{stdout}");
+        assert!(stdout.contains("ota tasks --safe --use"), "{stdout}");
     }
 
     #[test]
@@ -91419,6 +91543,27 @@ fn render_up_section_body(
     receipt: &ExecutionReceipt,
     cause: Option<UpFailureCause>,
 ) -> String {
+    if let Some(reason) = receipt_agent_execution_refusal_reason(receipt)
+        && let Some(finding) = report.findings.iter().find(|finding| {
+            finding
+                .identity
+                .as_ref()
+                .is_some_and(|identity| identity.code == "OTA_AGENT_EXECUTION_REFUSED")
+        })
+    {
+        let task_name = task.unwrap_or(phase);
+        let detail_lines =
+            agent_execution_refusal_detail_lines(receipt, task_name, task_name, reason, None);
+        return render_agent_execution_refusal_surface(
+            path,
+            receipt,
+            finding,
+            &detail_lines,
+            task_name,
+            None,
+        );
+    }
+
     if status == "BLOCKED" && phase == "provisioning" {
         return render_up_blocked_provisioning_section(path, contract_path, report, receipt, task);
     }
