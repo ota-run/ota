@@ -1,6 +1,6 @@
 [package]
 name = "ota"
-version = "1.6.23"
+version = "1.6.24"
 edition = "2024"
 license = "Apache-2.0"
 
