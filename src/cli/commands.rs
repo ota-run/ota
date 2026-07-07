@@ -28173,80 +28173,8 @@ fn render_structured_clean_execution_conflict_text(
     reasons: &[RepoExecutionConflictReason],
     owners: &[RepoExecutionLockOwner],
 ) -> String {
-    let mut details = Vec::new();
-    if !reasons.is_empty() {
-        details.push(format!(
-            "reasons: {}",
-            reasons
-                .iter()
-                .map(|reason| format!("`{}`", repo_execution_conflict_reason_label(*reason)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    if let Some(owner) = owners.first() {
-        details.push(format!("task: `{}`", owner.task));
-        if let Some(requested_mode) = owner.requested_mode.as_deref() {
-            details.push(format!("requested mode: `{requested_mode}`"));
-        }
-        details.push(format!("execution mode: `{}`", owner.execution_mode));
-        if let Some(lifecycle) = owner.lifecycle.as_deref() {
-            details.push(format!("lifecycle: `{lifecycle}`"));
-        }
-        if !owner.host_services.is_empty() {
-            details.push(format!(
-                "host services: {}",
-                owner
-                    .host_services
-                    .iter()
-                    .map(|service| format!("`{service}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if !owner.compose_projects.is_empty() {
-            details.push(format!(
-                "compose projects: {}",
-                owner
-                    .compose_projects
-                    .iter()
-                    .map(|project| format!("`{project}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if !owner.persistent_backend_families.is_empty() {
-            details.push(format!(
-                "persistent backend families: {}",
-                owner
-                    .persistent_backend_families
-                    .iter()
-                    .map(|family| format!("`{family}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if !owner.env_materialization_paths.is_empty() {
-            details.push(format!(
-                "env materialization paths: {}",
-                owner
-                    .env_materialization_paths
-                    .iter()
-                    .map(|env_path| format!("`{env_path}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        details.push(format!("pid: `{}`", owner.pid));
-        details.push(format!("started: `{}`", owner.started_at));
-    }
-    if owners.len() > 1 {
-        details.push(format!(
-            "additional active executions: `{}`",
-            owners.len() - 1
-        ));
-    }
-    structured_error_text_with_details(
+    let details = repo_execution_conflict_detail_lines(reasons, owners);
+    let mut output = structured_error_text(
         "CLEAN",
         path,
         "Active execution conflict",
@@ -28259,8 +28187,12 @@ fn render_structured_clean_execution_conflict_text(
                 "or stop the conflicting execution first if you intentionally want cleanup now",
             ),
         ],
-        &details,
-    )
+    );
+    if !details.is_empty() {
+        output.push('\n');
+        append_error_detail_section(&mut output, "Conflicting execution:", &details, None);
+    }
+    output
 }
 
 fn clean_failure_summary_and_why(failure: &CleanExecutionFailure) -> (&'static str, String) {
@@ -62276,6 +62208,7 @@ tasks:
         ));
 
         assert!(rendered.contains("Active execution conflict"), "{rendered}");
+        assert!(rendered.contains("Conflicting execution:"), "{rendered}");
         assert!(
             rendered.contains("reasons: `active_execution_present`, `host_service`"),
             "{rendered}"
@@ -77107,6 +77040,11 @@ tasks:
             rendered.contains("env materialization paths: `.env.local`"),
             "{rendered}"
         );
+        assert!(rendered.contains("write paths: `node_modules`"), "{rendered}");
+        assert!(
+            rendered.contains("write owners: `shared:repo-worktree (node_modules)`"),
+            "{rendered}"
+        );
         assert!(rendered.contains("pid: `48211`"), "{rendered}");
         assert!(
             rendered.contains("started: `2026-06-05T22:14:03Z`"),
@@ -78183,6 +78121,89 @@ tasks:
             ),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn up_run_error_renders_active_execution_conflict_structurally() {
+        let rendered = strip_ansi_codes(&super::render_up_run_error(
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            RunError::RepoExecutionConflict {
+                task: String::from("setup:dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![
+                    RepoExecutionConflictReason::PersistentBackendFamily,
+                    RepoExecutionConflictReason::WritePath,
+                    RepoExecutionConflictReason::ServiceTask,
+                ],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: None,
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("persistent")),
+                    host_services: vec![],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![String::from("cc428d004e575a9c")],
+                    env_materialization_paths: vec![],
+                    write_paths: vec![String::from(".next"), String::from("node_modules")],
+                    write_owners: vec![
+                        crate::runner::RepoExecutionWriteOwner {
+                            path: String::from(".next"),
+                            namespace: String::from("shared:repo-worktree"),
+                        },
+                        crate::runner::RepoExecutionWriteOwner {
+                            path: String::from("node_modules"),
+                            namespace: String::from("shared:repo-worktree"),
+                        },
+                    ],
+                    service_task: true,
+                    parent_pid: None,
+                    pid: 86601,
+                    started_at: String::from("2026-07-06T18:54:15Z"),
+                }],
+            },
+        ));
+
+        assert!(rendered.contains("UP ./ota.yaml"), "{rendered}");
+        assert!(rendered.contains("Active execution conflict"), "{rendered}");
+        assert!(rendered.contains("Where: ./ota.yaml"), "{rendered}");
+        assert!(
+            rendered.contains("active repo executions recorded in")
+                && rendered.contains("`./.ota/state/active-executions.json`")
+                && rendered.contains("conflict with task `setup:dev`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Conflicting execution:"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "reasons: `persistent_backend_family`, `write_path`, `service_task`"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("task: `dev`"), "{rendered}");
+        assert!(rendered.contains("execution mode: `container`"), "{rendered}");
+        assert!(rendered.contains("lifecycle: `persistent`"), "{rendered}");
+        assert!(
+            rendered.contains("persistent backend families: `cc428d004e575a9c`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("write paths: `.next`, `node_modules`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "write owners: `shared:repo-worktree (.next)`, `shared:repo-worktree (node_modules)`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "run `ota up --dry-run` to preview preparation without starting anything"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("then rerun `ota up`"), "{rendered}");
     }
 
     #[test]
@@ -88368,81 +88389,7 @@ fn render_run_structured_error_text(
             owners,
             ..
         } => {
-            if !reasons.is_empty() {
-                detail_lines.push(format!(
-                    "reasons: {}",
-                    reasons
-                        .iter()
-                        .map(|reason| format!(
-                            "`{}`",
-                            repo_execution_conflict_reason_label(*reason)
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-            if let Some(owner) = owners.first() {
-                detail_lines.push(format!("task: `{}`", owner.task));
-                if let Some(requested_mode) = owner.requested_mode.as_deref() {
-                    detail_lines.push(format!("requested mode: `{requested_mode}`"));
-                }
-                detail_lines.push(format!("execution mode: `{}`", owner.execution_mode));
-                if let Some(lifecycle) = owner.lifecycle.as_deref() {
-                    detail_lines.push(format!("lifecycle: `{lifecycle}`"));
-                }
-                if !owner.host_services.is_empty() {
-                    detail_lines.push(format!(
-                        "host services: {}",
-                        owner
-                            .host_services
-                            .iter()
-                            .map(|name| format!("`{name}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                if !owner.compose_projects.is_empty() {
-                    detail_lines.push(format!(
-                        "compose projects: {}",
-                        owner
-                            .compose_projects
-                            .iter()
-                            .map(|project| format!("`{project}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                if !owner.persistent_backend_families.is_empty() {
-                    detail_lines.push(format!(
-                        "persistent backend families: {}",
-                        owner
-                            .persistent_backend_families
-                            .iter()
-                            .map(|family| format!("`{family}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                if !owner.env_materialization_paths.is_empty() {
-                    detail_lines.push(format!(
-                        "env materialization paths: {}",
-                        owner
-                            .env_materialization_paths
-                            .iter()
-                            .map(|path| format!("`{path}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                detail_lines.push(format!("pid: `{}`", owner.pid));
-                detail_lines.push(format!("started: `{}`", owner.started_at));
-            }
-            if owners.len() > 1 {
-                detail_lines.push(format!(
-                    "additional active executions: `{}`",
-                    owners.len() - 1
-                ));
-            }
+            detail_lines.extend(repo_execution_conflict_detail_lines(reasons, owners));
             (
                 String::from("Active execution conflict"),
                 vec![format!(
@@ -89348,6 +89295,108 @@ fn repo_execution_conflict_reason_label(
         crate::runner::RepoExecutionConflictReason::WritePath => "write_path",
         crate::runner::RepoExecutionConflictReason::ServiceTask => "service_task",
     }
+}
+
+fn repo_execution_conflict_detail_lines(
+    reasons: &[RepoExecutionConflictReason],
+    owners: &[RepoExecutionLockOwner],
+) -> Vec<String> {
+    let mut detail_lines = Vec::new();
+    if !reasons.is_empty() {
+        detail_lines.push(format!(
+            "reasons: {}",
+            reasons
+                .iter()
+                .map(|reason| format!("`{}`", repo_execution_conflict_reason_label(*reason)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(owner) = owners.first() {
+        detail_lines.push(format!("task: `{}`", owner.task));
+        if let Some(requested_mode) = owner.requested_mode.as_deref() {
+            detail_lines.push(format!("requested mode: `{requested_mode}`"));
+        }
+        detail_lines.push(format!("execution mode: `{}`", owner.execution_mode));
+        if let Some(lifecycle) = owner.lifecycle.as_deref() {
+            detail_lines.push(format!("lifecycle: `{lifecycle}`"));
+        }
+        if !owner.host_services.is_empty() {
+            detail_lines.push(format!(
+                "host services: {}",
+                owner
+                    .host_services
+                    .iter()
+                    .map(|service| format!("`{service}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.compose_projects.is_empty() {
+            detail_lines.push(format!(
+                "compose projects: {}",
+                owner
+                    .compose_projects
+                    .iter()
+                    .map(|project| format!("`{project}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.persistent_backend_families.is_empty() {
+            detail_lines.push(format!(
+                "persistent backend families: {}",
+                owner
+                    .persistent_backend_families
+                    .iter()
+                    .map(|family| format!("`{family}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.env_materialization_paths.is_empty() {
+            detail_lines.push(format!(
+                "env materialization paths: {}",
+                owner
+                    .env_materialization_paths
+                    .iter()
+                    .map(|env_path| format!("`{env_path}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.write_paths.is_empty() {
+            detail_lines.push(format!(
+                "write paths: {}",
+                owner
+                    .write_paths
+                    .iter()
+                    .map(|path| format!("`{path}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.write_owners.is_empty() {
+            detail_lines.push(format!(
+                "write owners: {}",
+                owner
+                    .write_owners
+                    .iter()
+                    .map(|owner| format!("`{} ({})`", owner.namespace, owner.path))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        detail_lines.push(format!("pid: `{}`", owner.pid));
+        detail_lines.push(format!("started: `{}`", owner.started_at));
+    }
+    if owners.len() > 1 {
+        detail_lines.push(format!(
+            "additional active executions: `{}`",
+            owners.len() - 1
+        ));
+    }
+    detail_lines
 }
 
 fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
@@ -109304,6 +109353,44 @@ fn render_up_run_error(
     error: RunError,
 ) -> String {
     match error {
+        RunError::RepoExecutionConflict {
+            task,
+            path,
+            reasons,
+            owners,
+        } => {
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            let why_lines = vec![format!(
+                "ota could not start the selected workflow path because active repo executions recorded in `{path}` conflict with task `{task}`"
+            )];
+            let next_steps = vec![
+                String::from(
+                    "run `ota up --dry-run` to preview preparation without starting anything",
+                ),
+                String::from(
+                    "wait for the conflicting execution to finish or stop it before retrying",
+                ),
+                String::from("then rerun `ota up`"),
+            ];
+            let detail_lines = repo_execution_conflict_detail_lines(&reasons, &owners);
+            let mut output = structured_error_text(
+                "UP",
+                &where_value,
+                "Active execution conflict",
+                &why_lines,
+                &next_steps,
+            );
+            if !detail_lines.is_empty() {
+                output.push('\n');
+                append_error_detail_section(
+                    &mut output,
+                    "Conflicting execution:",
+                    &detail_lines,
+                    None,
+                );
+            }
+            output
+        }
         RunError::HostPublicationConflict {
             task,
             listener,
