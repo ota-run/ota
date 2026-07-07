@@ -327,6 +327,14 @@ Common operator lanes:
 - `ota tasks --via native`: filter to tasks runnable through native execution
 - `ota tasks --via container`: filter to tasks runnable through container execution
 
+Agent discoverability:
+
+- `ota tasks --safe --use` is the canonical task-discovery surface before agent execution
+- use it to find the effective safe task surface, the canonical `ota run <task>` command, the
+  selected mode hints, the safety posture, and the matching dry-run / receipt follow-up commands
+- once a task is selected from that surface, use `ota run <task> --agent` when the execution
+  itself should enforce the declared agent-safe boundary
+
 JSON output:
 
 - success: `ok`, `path`, `tasks`
@@ -388,6 +396,12 @@ JSON output:
 - repeated `--member` values return grouped per-member results in `members`
 - each workflow includes the resolved workflow summary plus a `default` boolean
 - failure: `ok`, `path`, and either `errors` or `error`
+
+Agent workflow discoverability:
+
+- use `ota workflows --json` when you need machine-readable workflow posture before selecting one
+- use `ota tasks --safe --use` alongside it when the workflow decision depends on which safe task
+  lanes are actually callable underneath that workflow
 
 ## `ota services`
 
@@ -1369,6 +1383,14 @@ ota run build --skip-deps
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
 
+Agent execution:
+
+- use `ota tasks --safe --use` first to discover the effective safe task surface
+- then run the selected task with `ota run <task> --agent`
+- `--agent` is the enforcement lane: ota refuses unsafe requested tasks and unsafe reachable task
+  closures instead of treating safety as review-only guidance
+- without `--agent`, declared tasks still run as the normal human/operator execution lane
+
 ## `ota doctor`
 
 Diagnose repo readiness from a validated contract.
@@ -1999,6 +2021,15 @@ Current behavior:
 - the detailed preview contract lives in [up-preview.md](up-preview.md)
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
+
+Agent execution:
+
+- use `ota up --agent` when the selected workflow path should be enforced against the declared
+  agent-safe boundary before setup or runtime work starts
+- combine it with `--workflow <name>` when one specific workflow is intended:
+  `ota up --workflow <name> --agent`
+- use `ota workflows --json` first when you need machine-readable workflow posture before
+  selecting that lane
 
 ## `ota self-update`
 

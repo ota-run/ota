@@ -6954,7 +6954,9 @@ impl TaskUvHydrationSourceSpec {
             TaskUvHydrationMode::Sync => String::from("uv sync"),
             TaskUvHydrationMode::PipRequirements => format!(
                 "uv pip install -r {}",
-                self.requirements_file.as_deref().unwrap_or("requirements.txt")
+                self.requirements_file
+                    .as_deref()
+                    .unwrap_or("requirements.txt")
             ),
         }
     }

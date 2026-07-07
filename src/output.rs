@@ -4544,13 +4544,11 @@ pub fn summarize_task_action_owned(
             from: None,
             to: Some(spec.path.clone()),
         }),
-        crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => {
-            Some(WorkspaceTaskActionSummary {
-                kind: "ensure_virtualenv",
-                from: Some(spec.provider.label().to_string()),
-                to: Some(spec.path.clone()),
-            })
-        }
+        crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => Some(WorkspaceTaskActionSummary {
+            kind: "ensure_virtualenv",
+            from: Some(spec.provider.label().to_string()),
+            to: Some(spec.path.clone()),
+        }),
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             Some(WorkspaceTaskActionSummary {
                 kind: "ensure_git_checkout",
