@@ -9,6 +9,7 @@
       "required": ["name"],
       "properties": {
         "name": { "type": "string" },
+        "use": { "$ref": "#/$defs/laneUseSummary" },
         "intent": { "type": "string" },
         "description": { "type": "string" },
         "notes": { "type": "string" },
@@ -52,6 +53,25 @@
           "type": "array",
           "items": { "type": "string" }
         }
+      }
+    },
+    "agentLaneUseSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callable"],
+      "properties": {
+        "callable": { "type": "boolean" },
+        "command": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "laneUseSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human", "agent"],
+      "properties": {
+        "human": { "type": "string" },
+        "agent": { "$ref": "#/$defs/agentLaneUseSummary" }
       }
     },
     "taskLaunchVolume": {
@@ -423,15 +443,57 @@
         "source": { "type": "string" }
       }
     },
+    "harnessSandboxSharedPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "freshness"],
+      "properties": {
+        "ref": { "type": "string" },
+        "freshness": { "type": "string" }
+      }
+    },
+    "harnessSandboxDestinationConstraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "values", "source_posture", "enforcement"],
+      "properties": {
+        "kind": { "type": "string" },
+        "values": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source_posture": { "type": "string" },
+        "enforcement": { "type": "string" },
+        "shared_pin": { "$ref": "#/$defs/harnessSandboxSharedPin" }
+      }
+    },
+    "harnessSandboxOutboundTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "type": "string" },
+        "value": { "type": "string" },
+        "destination_shape": { "type": "string" },
+        "destination_constraint": {
+          "$ref": "#/$defs/harnessSandboxDestinationConstraint"
+        }
+      }
+    },
     "harnessSandboxNetworkPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "default", "scope", "source"],
+      "required": ["state", "default", "scope", "enforcement", "source"],
       "properties": {
         "state": { "type": "string" },
         "default": { "type": "string" },
         "scope": { "type": "string" },
-        "source": { "type": "string" }
+        "enforcement": { "type": "string" },
+        "source": { "type": "string" },
+        "outbound_targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/harnessSandboxOutboundTarget" }
+        }
       }
     },
     "harnessSandboxPolicy": {
@@ -563,6 +625,7 @@
             "required": ["name", "kind", "depends_on", "safe_for_agent", "effective_safe_for_agent"],
             "properties": {
               "name": { "type": "string" },
+              "use": { "$ref": "#/$defs/laneUseSummary" },
               "description": { "type": "string" },
               "notes": { "type": "string" },
               "category": { "type": "string" },
@@ -725,6 +788,7 @@
                   "required": ["name", "kind", "depends_on", "safe_for_agent", "effective_safe_for_agent"],
                   "properties": {
                     "name": { "type": "string" },
+                    "use": { "$ref": "#/$defs/laneUseSummary" },
                     "description": { "type": "string" },
                     "notes": { "type": "string" },
                     "category": { "type": "string" },

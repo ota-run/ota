@@ -2431,6 +2431,10 @@ shared readiness verdict.
 `governance` is the compact machine-readable execution-governance summary for this selected task
 path. It keeps the fast-consumption fields together so CI and agents do not have to reconstruct the
 selected safety posture from `requested_task`, effect declarations, and mode branches separately.
+When the selected lane also carries compiled runtime-boundary truth, `governance.sandbox_policy`
+now repeats the same first-target `codex_local` sandbox profile published by `ota tasks --json`,
+so execution-facing preview consumers do not have to call a second command just to recover
+filesystem or outbound boundary posture.
 
 ```json
 {
@@ -3855,6 +3859,10 @@ Optional fields:
 - `governance`: the canonical machine-readable governance verdict for the selected `up` path;
   `preflight` keeps boundary/block/refusal semantics distinct from `post_execution`, which reports
   what evidence actually exists after the attempted `up` lane
+- preview `governance.sandbox_policy` may also be present on `ota up --json --dry-run` when the
+  selected workflow path carries compilable runtime-boundary truth; it repeats the same first
+  `codex_local` sandbox target shape used by task and workflow discovery so preview consumers can
+  recover writable-path and outbound-target posture directly from the selected `up` lane
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
 - `receipt.dependency_steps`: additive executed dependency-plane provenance for task-backed phases,
   using the same `task` / `backend` / optional `context` / optional `parent_task` /

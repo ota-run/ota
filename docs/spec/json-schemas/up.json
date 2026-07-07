@@ -166,7 +166,8 @@
                 "proof_present": { "type": "boolean" },
                 "receipt_status": { "type": "string" }
               }
-            }
+            },
+            "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
           }
         },
         "blockers": {
@@ -334,12 +335,13 @@
                       "not_run_reason": { "type": "string" },
                       "crossing_record_state": { "type": "string" },
                       "receipt_present": { "type": "boolean" },
-                      "proof_present": { "type": "boolean" },
-                      "receipt_status": { "type": "string" }
-                    }
+                    "proof_present": { "type": "boolean" },
+                    "receipt_status": { "type": "string" }
                   }
-                }
-              },
+                },
+                "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
+              }
+            },
               "blockers": {
                 "type": "array",
                 "items": { "$ref": "./shared.json#/$defs/finding" }

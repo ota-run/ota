@@ -183,6 +183,7 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" },
         "receipt_follow_up_command": { "type": "string" },
         "evaluation": {
           "type": "object",

@@ -37,6 +37,12 @@ fn load_schema(path: &str) -> Value {
 fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
+    let sandbox_network = &schema["$defs"]["harnessSandboxNetworkPolicy"]["properties"];
+    let sandbox_outbound_target = &schema["$defs"]["harnessSandboxOutboundTarget"]["properties"];
+    let sandbox_destination_constraint =
+        &schema["$defs"]["harnessSandboxDestinationConstraint"]["properties"];
+    let lane_use = &schema["$defs"]["laneUseSummary"]["properties"];
+    let agent_lane_use = &schema["$defs"]["agentLaneUseSummary"]["properties"];
     let workflow_properties = &schema["$defs"]["workflowSummary"]["properties"];
     let task_command = &schema["$defs"]["taskCommand"]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
@@ -63,6 +69,26 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         .expect("task mode kind enum");
 
     assert!(success.get("workflow").is_some());
+    assert!(sandbox_network.get("enforcement").is_some());
+    assert!(sandbox_network.get("outbound_targets").is_some());
+    assert!(sandbox_outbound_target.get("destination_shape").is_some());
+    assert!(
+        sandbox_outbound_target
+            .get("destination_constraint")
+            .is_some()
+    );
+    assert!(
+        sandbox_destination_constraint
+            .get("source_posture")
+            .is_some()
+    );
+    assert!(sandbox_destination_constraint.get("shared_pin").is_some());
+    assert!(lane_use.get("human").is_some());
+    assert!(lane_use.get("agent").is_some());
+    assert!(agent_lane_use.get("callable").is_some());
+    assert!(agent_lane_use.get("command").is_some());
+    assert!(agent_lane_use.get("reason").is_some());
+    assert!(workflow_properties.get("use").is_some());
     assert!(workflow_properties.get("run_task_launch").is_some());
     assert!(workflow_properties.get("notes").is_some());
     assert!(success.get("agent").is_some());
@@ -78,6 +104,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .get("inferred_boundary_reviewed")
             .is_some()
     );
+    assert!(task_properties.get("use").is_some());
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
     assert!(task_properties.get("after_success").is_some());
@@ -228,6 +255,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .iter()
             .any(|entry| entry == "tool_bootstrap")
     );
+    assert!(member_task_properties.get("use").is_some());
     assert!(member_task_properties.get("requires_services").is_some());
     assert!(member_task_properties.get("after_success").is_some());
     assert!(member_task_properties.get("after_failure").is_some());
@@ -564,11 +592,13 @@ fn up_schema_preview_execution_includes_optional_image() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
     let preview_properties = &schema["oneOf"][0]["properties"];
     let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];
+    let preview_governance = &schema["oneOf"][0]["properties"]["governance"]["properties"];
     let preview_contract_identity =
         &schema["oneOf"][0]["properties"]["contract_identity"]["properties"];
     let preview_member_properties =
         &schema["oneOf"][0]["properties"]["members"]["items"]["properties"];
     let preview_member_execution = &preview_member_properties["execution"]["properties"];
+    let preview_member_governance = &preview_member_properties["governance"]["properties"];
 
     assert!(preview_properties.get("summary").is_some());
     assert_eq!(
@@ -576,6 +606,10 @@ fn up_schema_preview_execution_includes_optional_image() {
         serde_json::json!("./doctor.json#/properties/summary")
     );
     assert!(preview_execution.get("image").is_some());
+    assert_eq!(
+        preview_governance["sandbox_policy"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/harnessSandboxPolicy")
+    );
     assert!(preview_contract_identity.get("project").is_some());
     assert!(preview_contract_identity.get("execution").is_some());
     assert!(preview_contract_identity.get("counts").is_some());
@@ -585,6 +619,10 @@ fn up_schema_preview_execution_includes_optional_image() {
         serde_json::json!("./doctor.json#/properties/summary")
     );
     assert!(preview_member_execution.get("image").is_some());
+    assert_eq!(
+        preview_member_governance["sandbox_policy"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/harnessSandboxPolicy")
+    );
 }
 
 #[test]
@@ -627,6 +665,7 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
     let single_target = &schema["$defs"]["singleTarget"]["properties"];
     let env_summary = &schema["$defs"]["envSummary"]["properties"];
     let plan = &schema["$defs"]["plan"]["properties"];
+    let governance = &schema["$defs"]["governance"]["properties"];
     let simple_failure = &schema["$defs"]["simpleFailure"]["properties"];
 
     assert_eq!(
@@ -664,6 +703,10 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
     assert!(single_target.get("env").is_some());
     assert!(single_target.get("toolchains").is_some());
     assert!(single_target.get("native_prerequisites").is_some());
+    assert_eq!(
+        governance["sandbox_policy"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/harnessSandboxPolicy")
+    );
     assert!(env_summary.get("source_issue_count").is_some());
     assert!(plan.get("dependency_chain").is_some());
     assert!(plan.get("requirement_lines").is_some());

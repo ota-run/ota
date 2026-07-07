@@ -886,6 +886,8 @@ pub struct GovernanceEvaluation {
     pub preflight: GovernancePreflightEvaluation,
     pub post_execution: GovernancePostExecutionEvidence,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<HarnessSandboxPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub crossing: Option<ExecutionBoundaryCrossing>,
 }
 
@@ -912,6 +914,8 @@ pub struct RunPreviewGovernanceSummary {
     pub adapter_state: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<HarnessSandboxPolicy>,
     pub receipt_follow_up_command: String,
     pub evaluation: GovernanceEvaluation,
 }

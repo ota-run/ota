@@ -32,7 +32,10 @@
   effect-owned network posture; destination-constrained outbound lanes can now declare the
   narrower effective destination truth, source posture, enforcement posture, and optional shared
   pin freshness instead of tagging a host as `send_host` / `relay_host` without the real
-  downstream boundary
+  downstream boundary; `ota run --dry-run --json` and `ota up --json --dry-run` governance output
+  now carry the same compiled `sandbox_policy` so execution-facing preview consumers do not need a
+  second task/workflow query to recover the selected lane's filesystem and outbound boundary
+  posture
 - widened workflow-instance ownership with bounded generated instance families under
   `workflows.<name>.instances.generated`, so one explicit default instance can now coexist with a
   finite repeated selector family like `ws1..ws8`; generated templates stay on the existing

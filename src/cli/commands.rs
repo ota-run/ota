@@ -13575,6 +13575,14 @@ fn listed_agent_summary<'a>(
     (!agent.is_empty()).then_some(agent)
 }
 
+fn agent_boundary_summary(contract: &Contract) -> Option<AgentSummary<'_>> {
+    let agent = contract
+        .agent
+        .as_ref()
+        .and_then(AgentSummary::from_config)?;
+    (!agent.is_empty()).then_some(agent)
+}
+
 fn merge_network_kind(
     current: Option<crate::schema::TaskNetworkEffectKind>,
     next: crate::schema::TaskNetworkEffectKind,
@@ -17297,8 +17305,19 @@ fn render_run_preview_target(
             return match format {
                 OutputFormat::Text => CommandOutput::failure(text),
                 OutputFormat::Json => {
-                    let governance =
-                        run_preview_governance_summary(&requested_task, &summary, agent, None);
+                    let preview_agent_summary = listed_agent_summary(
+                        &target.contract,
+                        false,
+                        std::slice::from_ref(&requested_task),
+                    );
+                    let governance = run_preview_governance_summary(
+                        &target.contract,
+                        &requested_task,
+                        preview_agent_summary.as_ref(),
+                        &summary,
+                        agent,
+                        None,
+                    );
                     let artifact_routing =
                         run_preview_artifact_routing(&target.contract_path, None);
                     CommandOutput {
@@ -17389,6 +17408,11 @@ fn render_run_preview_target(
         &execution_plan,
         &requested_task,
     );
+    let preview_agent_summary = listed_agent_summary(
+        &target.contract,
+        false,
+        std::slice::from_ref(&requested_task),
+    );
     let requested_context = requested_context.map(str::to_string);
     let selected_context = selected_context.map(str::to_string);
     let exit_code = if doctor_verdict_blocks_preview(summary.verdict) {
@@ -17449,7 +17473,9 @@ fn render_run_preview_target(
                     .as_ref()
                     .map(|value| &value.request),
                 governance: run_preview_governance_summary(
+                    &target.contract,
                     &requested_task,
+                    preview_agent_summary.as_ref(),
                     &summary,
                     agent,
                     refusal.as_ref(),
@@ -42048,7 +42074,9 @@ fn run_preview_runnable_modes(
 }
 
 fn run_preview_governance_summary(
+    contract: &Contract,
     task: &TaskSummary<'_>,
+    agent_summary: Option<&AgentSummary<'_>>,
     summary: &DoctorSummary,
     agent: bool,
     refusal: Option<&AgentExecutionRefusal>,
@@ -42073,6 +42101,12 @@ fn run_preview_governance_summary(
         workspace_writes: task.effects.workspace_writes.clone(),
         adapter_state: task.effects.adapter_state.clone(),
         external_state: task.effects.external_state.clone(),
+        sandbox_policy: Some(compiled_codex_local_sandbox_policy_for_task(
+            contract,
+            agent_summary,
+            task.name,
+            &task.effects,
+        )),
         receipt_follow_up_command: String::from("ota receipt --json --archive"),
         evaluation: governance_evaluation_for_task_preview(task, summary, agent, refusal),
     }
@@ -42112,6 +42146,7 @@ fn governance_evaluation_for_task_preview(
             proof_expected: false,
         },
         post_execution: preview_post_execution_evidence(refusal, crossing_required),
+        sandbox_policy: None,
         crossing: None,
     }
 }
@@ -42157,6 +42192,17 @@ fn governance_evaluation_for_workflow_preview(
 ) -> crate::output::GovernanceEvaluation {
     let safety =
         selected_up_workflow_effective_safety(contract, workflow_name, run_behavior_preference);
+    let sandbox_policy =
+        contract
+            .selected_workflow(workflow_name)
+            .map(|(selected_workflow_name, _)| {
+                compiled_codex_local_sandbox_policy_for_workflow(
+                    contract,
+                    agent_boundary_summary(contract).as_ref(),
+                    selected_workflow_name,
+                    &workflow_effects_summary(contract, selected_workflow_name),
+                )
+            });
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             safety.effective_safe,
@@ -42185,6 +42231,7 @@ fn governance_evaluation_for_workflow_preview(
             ),
         },
         post_execution: preview_post_execution_evidence(refusal, crossing_required),
+        sandbox_policy,
         crossing: None,
     }
 }
@@ -42316,6 +42363,7 @@ fn governance_evaluation_for_up_result(
             proof_present,
             receipt_status: receipt.status.clone(),
         },
+        sandbox_policy: None,
         crossing: receipt.crossing.clone(),
     }
 }
@@ -59363,6 +59411,18 @@ tasks:
         assert_eq!(json["governance"]["review_required"], true);
         assert_eq!(json["governance"]["default_mode"], "native");
         assert_eq!(
+            json["governance"]["sandbox_policy"]["target"],
+            "codex_local"
+        );
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["network"]["default"],
+            "deny"
+        );
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["filesystem"]["state"],
+            "unavailable"
+        );
+        assert_eq!(
             json["governance"]["receipt_follow_up_command"],
             "ota receipt --json --archive"
         );
@@ -59385,6 +59445,16 @@ version: 1
 project:
   name: demo
 execution:
+  runtime_boundary:
+    filesystem:
+      repo_root_mode: read_only
+      writable_paths:
+        - .cache/playwright
+    network:
+      default: deny
+      outbound_targets:
+        - kind: domain
+          value: api.staging.example.com
   default_context: host
   contexts:
     host:
@@ -59440,6 +59510,26 @@ tasks:
         assert_eq!(json["governance"]["network"], true);
         assert_eq!(json["governance"]["network_kind"], "integration_test");
         assert_eq!(json["governance"]["external_state"][0], "staging_api");
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["target"],
+            "codex_local"
+        );
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["filesystem"]["source"],
+            "execution.runtime_boundary"
+        );
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["network"]["source"],
+            "execution.runtime_boundary"
+        );
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["network"]["default"],
+            "deny"
+        );
+        assert_eq!(
+            json["governance"]["sandbox_policy"]["network"]["outbound_targets"][0]["value"],
+            "api.staging.example.com"
+        );
         assert_eq!(
             json["governance"]["evaluation"]["preflight"]["state"],
             "blocked"
@@ -65948,6 +66038,7 @@ tasks:
                         proof_present: false,
                         receipt_status: None,
                     },
+                    sandbox_policy: None,
                     crossing: None,
                 },
                 blockers: Vec::new(),
