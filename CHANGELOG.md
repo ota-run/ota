@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- tightened native run-path fulfillment around repo-local Python setup lanes: backend/runtime
+  requirement probing now waits until `depends_on` materializes repo-local executables like
+  `.venv/bin/python`, and native Python runtime candidate probing now prefers satisfying
+  version-specific executables before falling back to mismatched generic binaries
 - widened Python setup ownership in two connected ways: `prepare.kind: dependency_hydration`
   with `source.kind: uv` now supports `mode: pip_requirements` plus
   `source.requirements_file` for structural `uv pip install -r ...`, and

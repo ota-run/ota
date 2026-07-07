@@ -8081,6 +8081,50 @@ fn execute_task_with_hooks(
     ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
     ensure_task_adapter_inputs_ready(task_name, task, backend_kind, working_dir)?;
 
+    if !(requested_relation && requested_overrides.skip_deps) {
+        for dependency in task.depends_on_for_backend(backend_kind) {
+            let dependency_spec = contract
+                .tasks
+                .get(dependency)
+                .expect("validated task execution should only reference known dependencies");
+            let dependency_backend_override = dependency_spec
+                .dependency_backend_override_for_parent(requested_overrides.backend, backend_kind);
+            let dependency_overrides = ExecutionOverrides {
+                backend: dependency_backend_override,
+                lifecycle: requested_overrides.lifecycle,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            };
+            let dependency_backend = resolve_execution_backend_with_contract_path(
+                contract,
+                dependency,
+                dependency_overrides,
+                Some(contract_path),
+            )?;
+            let dependency_exit = execute_task_with_hooks(
+                contract,
+                contract_path,
+                dependency,
+                &[],
+                dependency_overrides,
+                policy_env,
+                &dependency_backend,
+                mode.clone(),
+                working_dir,
+                current_os,
+                TaskExecutionRelation::DependsOn {
+                    parent: task_name.to_string(),
+                },
+                generation,
+                state,
+            )?;
+            if dependency_exit != 0 {
+                return Ok(dependency_exit);
+            }
+        }
+    }
+
     let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
     maybe_activate_command_acquisition_tools_on_run_path(
@@ -8130,50 +8174,6 @@ fn execute_task_with_hooks(
         state,
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
-
-    if !(requested_relation && requested_overrides.skip_deps) {
-        for dependency in task.depends_on_for_backend(backend_kind) {
-            let dependency_spec = contract
-                .tasks
-                .get(dependency)
-                .expect("validated task execution should only reference known dependencies");
-            let dependency_backend_override = dependency_spec
-                .dependency_backend_override_for_parent(requested_overrides.backend, backend_kind);
-            let dependency_overrides = ExecutionOverrides {
-                backend: dependency_backend_override,
-                lifecycle: requested_overrides.lifecycle,
-                host_port: None,
-                memory: None,
-                skip_deps: false,
-            };
-            let dependency_backend = resolve_execution_backend_with_contract_path(
-                contract,
-                dependency,
-                dependency_overrides,
-                Some(contract_path),
-            )?;
-            let dependency_exit = execute_task_with_hooks(
-                contract,
-                contract_path,
-                dependency,
-                &[],
-                dependency_overrides,
-                policy_env,
-                &dependency_backend,
-                mode.clone(),
-                working_dir,
-                current_os,
-                TaskExecutionRelation::DependsOn {
-                    parent: task_name.to_string(),
-                },
-                generation,
-                state,
-            )?;
-            if dependency_exit != 0 {
-                return Ok(dependency_exit);
-            }
-        }
-    }
 
     maybe_fulfill_toolchains_on_run_path(
         contract,
@@ -11355,14 +11355,16 @@ fn execute_ensure_virtualenv_action(
     }
     command.arg(path_text);
 
-    let output = command.output().map_err(|source| RunError::FileActionFailed {
-        task: task_name.to_string(),
-        message: format!(
-            "could not start {} virtualenv creation for `{}`: {source}",
-            spec.provider.label(),
-            path_text
-        ),
-    })?;
+    let output = command
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not start {} virtualenv creation for `{}`: {source}",
+                spec.provider.label(),
+                path_text
+            ),
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -11371,7 +11373,11 @@ fn execute_ensure_virtualenv_action(
         } else if !stdout.is_empty() {
             stdout
         } else {
-            format!("{} exited with status {}", spec.provider.label(), output.status)
+            format!(
+                "{} exited with status {}",
+                spec.provider.label(),
+                output.status
+            )
         };
         return Err(RunError::FileActionFailed {
             task: task_name.to_string(),
@@ -14506,7 +14512,12 @@ fn detect_missing_backend_requirements(
     let mut missing = Vec::new();
 
     for (name, required_version) in runtimes {
-        match probe_backend_runtime_requirement_version(backend, working_dir, name.as_str()) {
+        match probe_backend_runtime_requirement_version(
+            backend,
+            working_dir,
+            name.as_str(),
+            required_version.as_str(),
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
                 name: name.clone(),
@@ -14604,6 +14615,7 @@ fn detect_missing_named_container_requirements(
             container_name,
             task_name,
             name.as_str(),
+            required_version.as_str(),
         ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
@@ -14792,23 +14804,28 @@ fn task_tool_executable_name(name: &str) -> &str {
     }
 }
 
-fn task_runtime_executable_candidates(name: &str) -> Vec<String> {
-    match name {
-        "python" => vec![String::from("python3"), String::from("python")],
-        "rust" => vec![String::from("rustc")],
-        _ => vec![name.to_string()],
-    }
+fn task_runtime_executable_candidates(name: &str, requirement: &str) -> Vec<String> {
+    crate::doctor::runtime_executable_candidates(name, requirement)
 }
 
 fn probe_backend_runtime_requirement_version(
     backend: &ResolvedExecutionBackend,
     working_dir: &Path,
     runtime_name: &str,
+    required_version: &str,
 ) -> Result<Option<String>, String> {
+    let mut first_version = None;
     let mut last_error = None;
-    for executable in task_runtime_executable_candidates(runtime_name) {
+    for executable in task_runtime_executable_candidates(runtime_name, required_version) {
         match probe_backend_command_version(backend, working_dir, executable.as_str()) {
-            Ok(Some(version)) => return Ok(Some(version)),
+            Ok(Some(version)) => {
+                if version_matches_requirement(required_version, &version) {
+                    return Ok(Some(version));
+                }
+                if first_version.is_none() {
+                    first_version = Some(version);
+                }
+            }
             Ok(None) => continue,
             Err(error) => {
                 if last_error.is_none() {
@@ -14818,7 +14835,9 @@ fn probe_backend_runtime_requirement_version(
         }
     }
 
-    if let Some(error) = last_error {
+    if let Some(version) = first_version {
+        Ok(Some(version))
+    } else if let Some(error) = last_error {
         Err(error)
     } else {
         Ok(None)
@@ -14830,16 +14849,25 @@ fn probe_named_container_runtime_requirement_version(
     container_name: &str,
     task_name: &str,
     runtime_name: &str,
+    required_version: &str,
 ) -> Result<Option<String>, String> {
+    let mut first_version = None;
     let mut last_error = None;
-    for executable in task_runtime_executable_candidates(runtime_name) {
+    for executable in task_runtime_executable_candidates(runtime_name, required_version) {
         match probe_named_container_command_version(
             engine,
             container_name,
             task_name,
             executable.as_str(),
         ) {
-            Ok(Some(version)) => return Ok(Some(version)),
+            Ok(Some(version)) => {
+                if version_matches_requirement(required_version, &version) {
+                    return Ok(Some(version));
+                }
+                if first_version.is_none() {
+                    first_version = Some(version);
+                }
+            }
             Ok(None) => continue,
             Err(error) => {
                 if last_error.is_none() {
@@ -14849,7 +14877,9 @@ fn probe_named_container_runtime_requirement_version(
         }
     }
 
-    if let Some(error) = last_error {
+    if let Some(version) = first_version {
+        Ok(Some(version))
+    } else if let Some(error) = last_error {
         Err(error)
     } else {
         Ok(None)
@@ -14894,7 +14924,8 @@ fn probe_native_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    let resolved_path = crate::doctor::resolve_command_path(command_name);
+    let resolved_path = crate::doctor::resolve_command_path(command_name)
+        .or_else(|| resolve_probeable_command_path_in_working_dir(working_dir, command_name));
     if resolved_path.is_none() {
         return Ok(None);
     }
@@ -14947,6 +14978,35 @@ fn probe_native_backend_command_version(
     Err(String::from(
         "version probe command failed before ota could read a version",
     ))
+}
+
+fn resolve_probeable_command_path_in_working_dir(
+    working_dir: &Path,
+    command_name: &str,
+) -> Option<PathBuf> {
+    if !(Path::new(command_name).is_absolute()
+        || command_name.contains('/')
+        || command_name.contains('\\'))
+    {
+        return None;
+    }
+    let candidate = if Path::new(command_name).is_absolute() {
+        PathBuf::from(command_name)
+    } else {
+        working_dir.join(command_name)
+    };
+    let metadata = std::fs::metadata(&candidate).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return None;
+        }
+    }
+    Some(candidate)
 }
 
 pub(crate) fn tool_version_probe_arg_sets(
@@ -37591,6 +37651,7 @@ tasks:
             },
             temp.path(),
             "rust",
+            "*",
         )
         .expect("native rust runtime probe should execute");
 
@@ -37600,6 +37661,56 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("1.94.1"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_backend_runtime_requirement_probe_prefers_versioned_python_candidate() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "python3",
+            "#!/bin/sh\nprintf 'Python 3.14.6\\n'\n",
+        );
+        write_fake_bin(
+            &bin_dir,
+            "python3.12",
+            "#!/bin/sh\nprintf 'Python 3.12.13\\n'\n",
+        );
+        write_fake_bin(&bin_dir, "python", "#!/bin/sh\nprintf 'Python 3.11.9\\n'\n");
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let version = super::probe_backend_runtime_requirement_version(
+            &super::ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            temp.path(),
+            "python",
+            "3.12",
+        )
+        .expect("native python runtime probe should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(version.as_deref(), Some("3.12.13"));
     }
 
     #[test]
@@ -61874,6 +61985,94 @@ tasks:
                     .as_str()
             ),
             "{logged}"
+        );
+    }
+
+    #[test]
+    fn run_path_waits_for_depends_on_materialized_repo_local_tool_requirements() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  setup:venv:
+    action:
+      kind: ensure_virtualenv
+      path: .venv
+      python: "3.12"
+    requirements:
+      toolchains:
+        - python
+  test:
+    command:
+      exe: .venv/bin/python
+      args:
+        - --version
+    depends_on:
+      - setup:venv
+    requirements:
+      toolchains:
+        - python
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let uv_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo uv 0.7.12\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"venv\" (\r\n  set target=%2\r\n  if \"%2\"==\"--python\" set target=%4\r\n  mkdir \"%target%\\Scripts\" >nul 2>nul\r\n  > \"%target%\\pyvenv.cfg\" type nul\r\n  > \"%target%\\Scripts\\python.exe\" echo @echo off\r\n  >> \"%target%\\Scripts\\python.exe\" echo echo Python 3.12.8\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n".to_string()
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'uv 0.7.12\\n'\n  exit 0\nfi\nif [ \"$1\" = \"venv\" ]; then\n  target=\"$2\"\n  if [ \"$2\" = \"--python\" ]; then\n    target=\"$4\"\n  fi\n  mkdir -p \"$target/bin\"\n  : > \"$target/pyvenv.cfg\"\n  cat > \"$target/bin/python\" <<'EOF'\n#!/bin/sh\nprintf 'Python 3.12.8\\n'\nEOF\n  chmod +x \"$target/bin/python\"\n  exit 0\nfi\nexit 1\n".to_string()
+        };
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.12.8\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'Python 3.12.8\\n'\n"
+        };
+        let python3_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.12.8\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'Python 3.12.8\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "uv", &uv_body);
+        write_fake_bin(&bin_dir, "python", python_body);
+        write_fake_bin(&bin_dir, "python3", python3_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "test").expect(
+            "depends_on virtualenv materialization should run before repo-local tool probing",
+        );
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert!(fixture.dir.path().join(".venv/pyvenv.cfg").exists());
+        let venv_python = if cfg!(windows) {
+            fixture.dir.path().join(".venv/Scripts/python.exe")
+        } else {
+            fixture.dir.path().join(".venv/bin/python")
+        };
+        assert!(venv_python.exists(), "{venv_python:?}");
+        let combined_output = format!("{}{}", outcome.stdout, outcome.stderr);
+        assert!(
+            combined_output.contains("ensured virtualenv `.venv` with uv"),
+            "{combined_output}"
         );
     }
 

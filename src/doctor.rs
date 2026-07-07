@@ -12425,7 +12425,7 @@ where
         })
 }
 
-fn runtime_executable_candidates(name: &str, requirement: &str) -> Vec<String> {
+pub(crate) fn runtime_executable_candidates(name: &str, requirement: &str) -> Vec<String> {
     match name {
         "python" => python_runtime_executable_candidates(requirement),
         "rust" => vec![String::from("rustc")],
