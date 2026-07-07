@@ -281,3 +281,5 @@ The next slices should build on top of it:
 
 - [V11.5](../v11.5/plan.md): CI and merge-gate projection
 - [V11.6](../v11.6/plan.md): harness and sandbox capability integration
+- [V11.9](../v11.9/plan.md): governance truth reconciliation and evidence classes for keeping
+  shipped governance fields aligned with the exact decision path that emitted them

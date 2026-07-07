@@ -533,3 +533,10 @@ What can later build on top of it in enterprise is:
 - waiver lifecycle
 - policy-scoped exception approval requirements
 - centralized audit, retention, and fleet-level reporting
+
+What should tighten the OSS trust model after this is:
+
+- [V11.9](../v11.9/plan.md): governance truth reconciliation and evidence classes, so
+  boundary-authored crossing records and attached reason/evidence fields stay emitted from the
+  same authoritative decision line and clearly distinguish caller assertions from runner-derived or
+  runner-attested truth

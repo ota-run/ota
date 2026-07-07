@@ -46,6 +46,7 @@ Source direction:
 - [V11.6 plan](../v11.6/plan.md)
 - [V11.7 plan](../v11.7/plan.md)
 - [V11.8 plan](../v11.8/plan.md)
+- [V11.9 plan](../v11.9/plan.md)
 
 V11 theme:
 
@@ -116,6 +117,7 @@ The next OSS governance slices after that are:
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md)
 - [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md)
+- [V11.9: governance truth reconciliation and evidence classes](../v11.9/plan.md)
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
@@ -126,6 +128,9 @@ Those slices make Ota higher in the stack without abandoning the open execution 
   enterprise approval layers build on top
 - V11.8 compiles contract-owned execution boundary truth into real runtime filesystem and egress
   policy for cooperating sandbox targets
+- V11.9 tightens the trust model so governance fields are emitted from the same decision line that
+  made them, typed by evidence class, and checked for post-decision reconciliation instead of
+  drifting into second-read assembled JSON
 
 ## Included capabilities
 
