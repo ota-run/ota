@@ -161,6 +161,9 @@ The top-level surface owns endpoint meaning.
 Each task only opts into the surfaces it actually publishes.
 When that task is a long-running service, prefer `launch.kind: command` so Ota can reason about
 the executable separately from the declared surface contract.
+When the launched adapter is explicitly supported and the bind host/port already live under an
+explicit `runtime.listeners.<name>` entry, prefer `launch.runtime_projection` over duplicating
+bind flags in `launch.args`.
 
 ### Container attachment override
 
@@ -205,6 +208,39 @@ Container-backed runtimes often need this form because the container bind addres
 projection are not always the same endpoint.
 The attachment owns only publication shape.
 It does not redefine what the `site` surface means.
+
+Explicit listener form is also the canonical bind source when a supported launch adapter should
+project host/port argv from runtime truth instead of duplicating them in `launch.args`.
+
+```yaml
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: .venv/bin/uvicorn
+      args: [web.app:app]
+      runtime_projection:
+        listener: web:http
+        adapter: uvicorn
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8000
+              path: /
+              primary: true
+```
 
 Read the object form like this:
 

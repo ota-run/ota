@@ -5813,6 +5813,8 @@ pub struct TaskCommandLaunchSpec {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_projection: Option<TaskCommandRuntimeProjectionSpec>,
 }
 
 impl TaskCommandSpec {
@@ -5828,6 +5830,46 @@ impl TaskCommandSpec {
             preview.push('`');
         }
         preview
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCommandRuntimeProjectionSpec {
+    pub listener: String,
+    pub adapter: TaskCommandRuntimeProjectionAdapter,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskCommandRuntimeProjectionAdapter {
+    Uvicorn,
+    Rails,
+}
+
+impl TaskCommandRuntimeProjectionAdapter {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Uvicorn => "uvicorn",
+            Self::Rails => "rails",
+        }
+    }
+
+    pub fn bind_args(self, address: &str, port: u16) -> Vec<String> {
+        match self {
+            Self::Uvicorn => vec![
+                String::from("--host"),
+                address.to_string(),
+                String::from("--port"),
+                port.to_string(),
+            ],
+            Self::Rails => vec![
+                String::from("-b"),
+                address.to_string(),
+                String::from("-p"),
+                port.to_string(),
+            ],
+        }
     }
 }
 
@@ -9022,6 +9064,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                         String::from("postgresql@17"),
                     ],
                     cwd: None,
+                    runtime_projection: None,
                 }),
                 stop: Some(TaskCommandSpec {
                     exe: String::from("brew"),
@@ -9031,6 +9074,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                         String::from("postgresql@17"),
                     ],
                     cwd: None,
+                    runtime_projection: None,
                 }),
             }),
             ..ServiceSpec::default()

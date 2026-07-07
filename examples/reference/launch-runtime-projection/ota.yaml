@@ -1,0 +1,85 @@
+#
+#                 █████
+#                ░░███
+#        ██████  ███████    ██████
+#       ███░░███░░░███░    ░░░░░███
+#      ░███ ░███  ░███      ███████
+#      ░███ ░███  ░███ ███ ███░░███
+#      ░░██████   ░░█████ ░░████████
+#       ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#    Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#    DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#    Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#    You may not use this file except in compliance with that License.
+#    Unless required by applicable law or agreed to in writing, software distributed under the
+#    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#    either express or implied. See the License for the specific language governing permissions
+#    and limitations under the License.
+#
+#    If you need additional information or have any questions, please email: os@ota.run
+#
+
+version: 1
+project:
+  name: launch-runtime-projection
+  description: Reference contract showing runtime-owned bind truth projected into a supported launch adapter
+
+toolchains:
+  python:
+    version: ">=3.12,<3.14"
+
+surfaces:
+  web:
+    kind: http
+    port: 8000
+    path: /
+
+tasks:
+  dev:
+    description: Start the uvicorn-backed local service without duplicating bind flags in launch args
+    launch:
+      kind: command
+      exe: .venv/bin/uvicorn
+      args:
+        - web.app:app
+      runtime_projection:
+        listener: web:http
+        adapter: uvicorn
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8000
+              path: /
+              primary: true
+      surfaces:
+        - web
+      readiness:
+        kind: http
+        listener: web:http
+        path: /healthz
+    requirements:
+      toolchains:
+        - python
+
+workflows:
+  default: local
+  local:
+    intent: local_development
+    description: Minimal local service workflow using runtime-owned bind projection
+    run:
+      task: dev

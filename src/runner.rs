@@ -2823,7 +2823,34 @@ fn projected_compose_launch_command_for_task(
         exe: launch.engine.as_str().to_string(),
         args: projected_args,
         cwd: None,
+        runtime_projection: None,
     }
+}
+
+fn projected_command_launch_for_task(
+    task: &TaskSpec,
+    backend: Backend,
+    command: &crate::schema::TaskCommandLaunchSpec,
+) -> crate::schema::TaskCommandSpec {
+    let mut projected = projected_structured_command_for_task(task, backend, command);
+    let Some(runtime_projection) = command.runtime_projection.as_ref() else {
+        return projected;
+    };
+    let Some(runtime) = task.service_runtime_for_backend(backend) else {
+        return projected;
+    };
+    let Some(listener) = runtime.listeners.get(runtime_projection.listener.as_str()) else {
+        return projected;
+    };
+    let Some(bind_port) = listener.bind.port.value else {
+        return projected;
+    };
+    projected.args.extend(
+        runtime_projection
+            .adapter
+            .bind_args(listener.bind.address.trim(), bind_port),
+    );
+    projected
 }
 
 pub(crate) fn orchestrator_execution_preview(
@@ -2916,7 +2943,7 @@ fn projected_execution_command_for_preview(
     }
     match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
-            projected_structured_command_for_task(task, backend_kind, command),
+            projected_command_launch_for_task(task, backend_kind, command),
         ),
         Some(crate::schema::TaskLaunchSpec::Compose(compose)) => Some(
             projected_compose_launch_command_for_task(task, backend_kind, compose),
@@ -3164,6 +3191,7 @@ fn projected_compose_invocation_command_for_task(
         exe: compose.engine.as_str().to_string(),
         args: projected_args,
         cwd: task.compose_adapter_cwd_for_backend(backend),
+        runtime_projection: None,
     }
 }
 
@@ -3200,6 +3228,7 @@ fn dependency_hydration_command_specs(
                 exe: source.engine.as_str().to_string(),
                 args: Vec::new(),
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
@@ -3217,6 +3246,7 @@ fn dependency_hydration_command_specs(
                 exe: source.manager.label().to_string(),
                 args,
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
@@ -3231,12 +3261,14 @@ fn dependency_hydration_command_specs(
                         path.clone(),
                     ],
                     cwd: Some(source.cwd.clone()),
+                    runtime_projection: None,
                 });
             }
             commands.push(crate::schema::TaskCommandSpec {
                 exe: String::from("bundle"),
                 args: vec![String::from("install")],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             });
             commands
         }
@@ -3245,6 +3277,7 @@ fn dependency_hydration_command_specs(
                 exe: String::from("composer"),
                 args: vec![String::from("install")],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
@@ -3264,6 +3297,7 @@ fn dependency_hydration_command_specs(
                 exe: String::from("uv"),
                 args,
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
@@ -3279,6 +3313,7 @@ fn dependency_hydration_command_specs(
                 exe: String::from("poetry"),
                 args,
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => {
@@ -3286,6 +3321,7 @@ fn dependency_hydration_command_specs(
                 exe: String::from("go"),
                 args: vec![String::from("mod"), String::from("download")],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => {
@@ -3297,6 +3333,7 @@ fn dependency_hydration_command_specs(
                     String::from("."),
                 ],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => {
@@ -3313,6 +3350,7 @@ fn dependency_hydration_command_specs(
                 },
                 args,
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => {
@@ -3324,6 +3362,7 @@ fn dependency_hydration_command_specs(
                 },
                 args: vec![String::from("dependencies")],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => {
@@ -3331,6 +3370,7 @@ fn dependency_hydration_command_specs(
                 exe: String::from("cargo"),
                 args: vec![String::from("fetch")],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
@@ -3338,6 +3378,7 @@ fn dependency_hydration_command_specs(
                 exe: String::from("dotnet"),
                 args: vec![String::from("restore")],
                 cwd: Some(source.cwd.clone()),
+                runtime_projection: None,
             }]
         }
     }
@@ -8286,7 +8327,7 @@ fn execute_task_with_hooks(
         .map(|compose| projected_compose_command_for_task(task, backend_kind, compose));
     let projected_launch_command = match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
-            projected_structured_command_for_task(task, backend_kind, command),
+            projected_command_launch_for_task(task, backend_kind, command),
         ),
         Some(crate::schema::TaskLaunchSpec::Compose(compose)) => Some(
             projected_compose_launch_command_for_task(task, backend_kind, compose),
@@ -62368,6 +62409,119 @@ tasks:
                 String::from("existing-chart"),
                 String::from("-f"),
                 String::from("values.dev.yaml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_command_launch_appends_uvicorn_bind_args_from_runtime_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: .venv/bin/uvicorn
+      args:
+        - web.app:app
+      runtime_projection:
+        listener: web:http
+        adapter: uvicorn
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8000
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let projected = super::projected_command_launch_for_task(
+            task,
+            Backend::Native,
+            match task.launch.as_ref().unwrap() {
+                crate::schema::TaskLaunchSpec::Command(command) => command,
+                _ => unreachable!("expected command launch"),
+            },
+        );
+
+        assert_eq!(projected.exe, ".venv/bin/uvicorn");
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("web.app:app"),
+                String::from("--host"),
+                String::from("127.0.0.1"),
+                String::from("--port"),
+                String::from("8000"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_command_launch_appends_rails_bind_args_from_runtime_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: bundle
+      args:
+        - exec
+        - rails
+        - server
+      runtime_projection:
+        listener: api
+        adapter: rails
+    runtime:
+      kind: service
+      listeners:
+        api:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let projected = super::projected_command_launch_for_task(
+            task,
+            Backend::Native,
+            match task.launch.as_ref().unwrap() {
+                crate::schema::TaskLaunchSpec::Command(command) => command,
+                _ => unreachable!("expected command launch"),
+            },
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("exec"),
+                String::from("rails"),
+                String::from("server"),
+                String::from("-b"),
+                String::from("0.0.0.0"),
+                String::from("-p"),
+                String::from("3000"),
             ]
         );
     }

@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added `launch.runtime_projection` for supported long-running command adapters, so explicit
+  `runtime.listeners.<name>` bind truth can project `uvicorn` or `rails` host/port argv into
+  `launch.kind: command` without duplicating bind flags in `launch.args`
 - tightened native run-path fulfillment around repo-local Python setup lanes: backend/runtime
   requirement probing now waits until `depends_on` materializes repo-local executables like
   `.venv/bin/python`, and native Python runtime candidate probing now prefers satisfying

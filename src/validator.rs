@@ -2699,6 +2699,9 @@ fn validate_tasks(
                     "task `{name}` must declare a non-empty `command.exe`"
                 )))
             }
+            (_, _, Some(command), _) => {
+                validate_finite_task_command(name, "task", "command", command, errors);
+            }
             (_, _, _, Some(compose)) => {
                 validate_task_compose_execution(name, "task", "compose", compose, errors);
                 validate_task_compose_execution_requirements(
@@ -2935,6 +2938,13 @@ fn validate_tasks(
                         "task `{name}` variant #{index} must declare a non-empty `command.exe`"
                     )))
                 }
+                (None, None, Some(command), None) => validate_finite_task_command(
+                    name,
+                    &format!("variant #{index}"),
+                    "command",
+                    command,
+                    errors,
+                ),
                 (None, None, None, Some(compose)) => validate_task_compose_execution(
                     name,
                     &format!("variant #{index}"),
@@ -3426,6 +3436,13 @@ fn validate_task_mode_execution(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `command.exe`"
                 )))
             }
+            (None, None, Some(command), None, None, None) => validate_finite_task_command(
+                task_name,
+                &format!("mode `{mode_name}`"),
+                "command",
+                command,
+                errors,
+            ),
             (None, None, None, Some(compose), None, None) => validate_task_compose_execution(
                 task_name,
                 &format!("mode `{mode_name}`"),
@@ -4302,6 +4319,20 @@ fn validate_task_compose_execution(
     }
 }
 
+fn validate_finite_task_command(
+    task_name: &str,
+    scope: &str,
+    field_path: &str,
+    command: &crate::schema::TaskCommandSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if command.runtime_projection.is_some() {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` must not declare `{field_path}.runtime_projection`; this surface is only valid for `launch.kind: command`"
+        )));
+    }
+}
+
 fn validate_task_compose_execution_requirements(
     task_name: &str,
     scope: &str,
@@ -4334,6 +4365,7 @@ fn validate_task_launch(
                     "{scope} `{task_name}` must declare a non-empty `launch.exe`"
                 )));
             }
+            validate_command_launch_runtime_projection(task_name, scope, command, runtime, errors);
         }
         crate::schema::TaskLaunchSpec::Compose(compose) => {
             if backend != Backend::Native {
@@ -4441,6 +4473,102 @@ fn validate_task_launch(
             }
         }
     }
+}
+
+fn validate_command_launch_runtime_projection(
+    task_name: &str,
+    scope: &str,
+    command: &crate::schema::TaskCommandLaunchSpec,
+    runtime: Option<&TaskRuntimeSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(projection) = command.runtime_projection.as_ref() else {
+        return;
+    };
+    let Some(runtime) = runtime else {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection`, but does not declare `runtime`"
+        )));
+        return;
+    };
+    if runtime.kind != TaskRuntimeKind::Service {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection`, but runtime kind `{}` is not supported",
+            match runtime.kind {
+                TaskRuntimeKind::Service => "service",
+            }
+        )));
+        return;
+    }
+    let listener_name = projection.listener.trim();
+    if listener_name.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` must declare a non-empty `launch.runtime_projection.listener`"
+        )));
+        return;
+    }
+    let Some(listener) = runtime.listeners.get(listener_name) else {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection.listener: {listener_name}`, but `runtime.listeners.{listener_name}` is not declared"
+        )));
+        return;
+    };
+    if listener.bind.address.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection.listener: {listener_name}`, but `runtime.listeners.{listener_name}.bind.address` must not be empty"
+        )));
+    }
+    if listener.bind.port.mode != TaskRuntimePortMode::Fixed || listener.bind.port.value.is_none() {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection.listener: {listener_name}`, but `runtime.listeners.{listener_name}.bind.port` must declare `mode: fixed` with `value`"
+        )));
+    }
+    if listener.protocol.url_scheme().is_none() {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection.adapter: {}`, but `runtime.listeners.{listener_name}` must use an HTTP-family protocol",
+            projection.adapter.label()
+        )));
+    }
+    if let Some(conflict) = command_launch_runtime_projection_conflicting_arg(
+        command.args.as_slice(),
+        projection.adapter,
+    ) {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection`, but `launch.args` already declares conflicting bind flag `{conflict}`"
+        )));
+    }
+}
+
+fn command_launch_runtime_projection_conflicting_arg(
+    args: &[String],
+    adapter: crate::schema::TaskCommandRuntimeProjectionAdapter,
+) -> Option<&str> {
+    for arg in args {
+        let arg = arg.as_str();
+        match adapter {
+            crate::schema::TaskCommandRuntimeProjectionAdapter::Uvicorn => {
+                if arg == "--host" || arg.starts_with("--host=") {
+                    return Some("--host");
+                }
+                if arg == "--port" || arg.starts_with("--port=") {
+                    return Some("--port");
+                }
+            }
+            crate::schema::TaskCommandRuntimeProjectionAdapter::Rails => {
+                if arg == "-b" || arg == "--binding" || arg.starts_with("--binding=") {
+                    return Some("-b");
+                }
+                if arg == "-p"
+                    || arg == "--port"
+                    || arg.starts_with("--port=")
+                    || arg.starts_with("-p")
+                {
+                    return Some("-p");
+                }
+            }
+        }
+    }
+    None
 }
 
 fn validate_task_action(
@@ -28358,6 +28486,153 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn accepts_task_launch_command_runtime_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: .venv/bin/uvicorn
+      args:
+        - web.app:app
+      runtime_projection:
+        listener: web:http
+        adapter: uvicorn
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8000
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("runtime-projected launch should validate");
+    }
+
+    #[test]
+    fn rejects_task_launch_runtime_projection_with_unknown_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: .venv/bin/uvicorn
+      args:
+        - web.app:app
+      runtime_projection:
+        listener: missing
+        adapter: uvicorn
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "uses `launch.runtime_projection.listener: missing`, but `runtime.listeners.missing` is not declared",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_task_launch_runtime_projection_with_conflicting_bind_args() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: .venv/bin/uvicorn
+      args:
+        - web.app:app
+        - --port
+        - "9000"
+      runtime_projection:
+        listener: web:http
+        adapter: uvicorn
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "uses `launch.runtime_projection`, but `launch.args` already declares conflicting bind flag `--port`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_finite_command_runtime_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    command:
+      exe: uv
+      args:
+        - run
+        - pytest
+      runtime_projection:
+        listener: web:http
+        adapter: uvicorn
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "task `test` must not declare `command.runtime_projection`; this surface is only valid for `launch.kind: command`",
+            )
+        }));
     }
 
     #[test]

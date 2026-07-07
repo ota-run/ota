@@ -379,21 +379,25 @@ impl NodePackageManager {
                 exe: String::from("npm"),
                 args: vec![String::from("run"), script_name.to_string()],
                 cwd: None,
+                runtime_projection: None,
             },
             Self::Pnpm => TaskCommandSpec {
                 exe: String::from("pnpm"),
                 args: vec![script_name.to_string()],
                 cwd: None,
+                runtime_projection: None,
             },
             Self::Yarn => TaskCommandSpec {
                 exe: String::from("yarn"),
                 args: vec![script_name.to_string()],
                 cwd: None,
+                runtime_projection: None,
             },
             Self::Bun => TaskCommandSpec {
                 exe: String::from("bun"),
                 args: vec![String::from("run"), script_name.to_string()],
                 cwd: None,
+                runtime_projection: None,
             },
         }
     }
@@ -424,6 +428,7 @@ impl PythonTestRunner {
                 exe: String::from("uv"),
                 args: vec![String::from("run"), String::from("pytest")],
                 cwd: None,
+                runtime_projection: None,
             },
             Self::Unittest => TaskCommandSpec {
                 exe: String::from("uv"),
@@ -434,6 +439,7 @@ impl PythonTestRunner {
                     String::from("unittest"),
                 ],
                 cwd: None,
+                runtime_projection: None,
             },
         }
     }
@@ -1257,6 +1263,7 @@ fn simple_command_spec(run: &str) -> Option<TaskCommandSpec> {
         exe: exe.clone(),
         args: args.to_vec(),
         cwd: None,
+        runtime_projection: None,
     })
 }
 

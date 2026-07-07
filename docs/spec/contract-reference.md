@@ -2356,6 +2356,11 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
   - `launch.cwd`: optional repo-relative working directory for that structured long-running process
     start; use it when the service launch truth is subdirectory-rooted but still one executable
     plus stable argv
+  - `launch.runtime_projection.listener`: optional explicit `runtime.listeners.<name>` selector
+    for supported server adapters whose bind argv should be projected from canonical runtime
+    listener truth instead of duplicated in `launch.args`
+  - `launch.runtime_projection.adapter`: required when `launch.runtime_projection.listener` is
+    set; currently `uvicorn` and `rails`
 - `launch.kind: compose`
   - `launch.engine`: optional compose CLI engine; `docker` by default, `podman` also supported
   - `launch.action`: required compose launch action; currently `up`
@@ -2603,11 +2608,20 @@ reporting inside the contract surface.
 - for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or
   `script`; if the service start is rooted in a repo subdirectory, prefer `launch.cwd` over fake
   shell `cd ... && ...`
+- when a supported long-running adapter would otherwise duplicate bind flags already declared
+  under `runtime.listeners`, prefer `launch.runtime_projection` so Ota projects bind argv from
+  canonical listener truth instead of carrying `--host` / `--port` or `-b` / `-p` twice
 - for long-running Compose stack startup, prefer `launch.kind: compose` over raw shell or
   `launch.kind: command` carrying `docker compose up ...` argv
 - pair `launch.kind: command` with `runtime.kind: service` plus `runtime.surfaces` or
   `runtime.listeners`; `launch` starts the process, while `runtime` declares what becomes reachable
   and how readiness is proved
+- `launch.runtime_projection` currently binds only to explicit `runtime.listeners.<name>` entries;
+  keep the listener declared explicitly when the launch adapter should project bind argv from
+  runtime-owned listener truth
+- `launch.runtime_projection` requires a fixed `runtime.listeners.<name>.bind.address` plus fixed
+  `bind.port.value`; Ota rejects conflicting manual bind flags in `launch.args` for the supported
+  adapter
 - pair `launch.kind: compose` with `runtime.kind: service`; `launch` owns the persistent
   `compose up` start, while `runtime` still declares what becomes reachable and how readiness is
   proved
@@ -2646,11 +2660,29 @@ tasks:
     launch:
       kind: command
       exe: bundle
-      args: [exec, rails, server, -b, 0.0.0.0, -p, "3000"]
+      args: [exec, rails, server]
+      runtime_projection:
+        listener: api
+        adapter: rails
     runtime:
       kind: service
-      surfaces:
-        - api
+      listeners:
+        api:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+              primary: true
+      surfaces: [api]
 
   quickstart:
     launch:
