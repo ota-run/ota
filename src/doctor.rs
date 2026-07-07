@@ -491,6 +491,7 @@ fn prepare_sequence_step_owns_dependency_hydration(
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)

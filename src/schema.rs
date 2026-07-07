@@ -6131,6 +6131,7 @@ pub enum TaskActionSpec {
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureVirtualenv(TaskEnsureVirtualenvActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
     EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
@@ -6146,6 +6147,7 @@ impl TaskActionSpec {
             Self::EnsureEnvFile(_) => "ensure_env_file",
             Self::EnsureFile(_) => "ensure_file",
             Self::EnsureDirectory(_) => "ensure_directory",
+            Self::EnsureVirtualenv(_) => "ensure_virtualenv",
             Self::EnsureGitCheckout(_) => "ensure_git_checkout",
             Self::EnsureGitTemplate(_) => "ensure_git_template",
             Self::EnsureGitCheckouts(_) => "ensure_git_checkouts",
@@ -6192,6 +6194,19 @@ impl TaskActionSpec {
             }
             Self::EnsureDirectory(action) => {
                 format!("ensure directory `{}` exists", action.path)
+            }
+            Self::EnsureVirtualenv(action) => {
+                let mut preview = format!(
+                    "ensure virtualenv `{}` with {}",
+                    action.path,
+                    action.provider.label()
+                );
+                if let Some(python) = action.python.as_deref() {
+                    preview.push_str(" using python `");
+                    preview.push_str(python.trim());
+                    preview.push('`');
+                }
+                preview
             }
             Self::EnsureGitCheckout(action) => {
                 let mut preview = format!(
@@ -6490,6 +6505,7 @@ pub enum TaskPrepareSequenceStepSpec {
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureVirtualenv(TaskEnsureVirtualenvActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
     EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
@@ -6510,6 +6526,15 @@ impl TaskPrepareSequenceStepSpec {
             Self::EnsureEnvFile(action) => format!("ensure env file `{}`", action.path),
             Self::EnsureFile(action) => format!("ensure file `{}`", action.path),
             Self::EnsureDirectory(action) => format!("ensure directory `{}`", action.path),
+            Self::EnsureVirtualenv(action) => {
+                let mut preview = format!("ensure virtualenv `{}`", action.path);
+                if let Some(python) = action.python.as_deref() {
+                    preview.push_str(" using python `");
+                    preview.push_str(python.trim());
+                    preview.push('`');
+                }
+                preview
+            }
             Self::EnsureGitCheckout(action) => {
                 format!("ensure git checkout `{}`", action.path)
             }
@@ -6915,14 +6940,36 @@ impl TaskComposerHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskUvHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "is_default_uv_hydration_mode")]
+    pub mode: TaskUvHydrationMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirements_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskUvHydrationSourceSpec {
     pub fn command_preview(&self) -> String {
-        String::from("uv sync")
+        match self.mode {
+            TaskUvHydrationMode::Sync => String::from("uv sync"),
+            TaskUvHydrationMode::PipRequirements => format!(
+                "uv pip install -r {}",
+                self.requirements_file.as_deref().unwrap_or("requirements.txt")
+            ),
+        }
     }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskUvHydrationMode {
+    #[default]
+    Sync,
+    PipRequirements,
+}
+
+const fn is_default_uv_hydration_mode(value: &TaskUvHydrationMode) -> bool {
+    matches!(value, TaskUvHydrationMode::Sync)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -7193,6 +7240,35 @@ pub struct TaskEnsureDirectoryActionSpec {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct TaskEnsureVirtualenvActionSpec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "is_default_task_virtualenv_provider")]
+    pub provider: TaskVirtualenvProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskVirtualenvProvider {
+    #[default]
+    Uv,
+}
+
+impl TaskVirtualenvProvider {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Uv => "uv",
+        }
+    }
+}
+
+const fn is_default_task_virtualenv_provider(value: &TaskVirtualenvProvider) -> bool {
+    matches!(value, TaskVirtualenvProvider::Uv)
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskEnsureGitCheckoutActionSpec {
     pub path: String,
     pub source: TaskEnsureGitCheckoutSourceSpec,
@@ -7281,6 +7357,7 @@ pub enum TaskEnsureBundleStepSpec {
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureVirtualenv(TaskEnsureVirtualenvActionSpec),
     EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
     EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
@@ -9136,9 +9213,22 @@ tasks:
     fn uv_prepare_preview_uses_structural_sync_command() {
         let uv = super::TaskUvHydrationSourceSpec {
             cwd: String::from("."),
+            mode: super::TaskUvHydrationMode::Sync,
+            requirements_file: None,
             compose: None,
         };
         assert_eq!(uv.command_preview(), "uv sync");
+    }
+
+    #[test]
+    fn uv_prepare_preview_uses_structural_requirements_command() {
+        let uv = super::TaskUvHydrationSourceSpec {
+            cwd: String::from("."),
+            mode: super::TaskUvHydrationMode::PipRequirements,
+            requirements_file: Some(String::from("requirements.txt")),
+            compose: None,
+        };
+        assert_eq!(uv.command_preview(), "uv pip install -r requirements.txt");
     }
 
     #[test]
@@ -9398,6 +9488,8 @@ tasks:
                         source: super::TaskDependencyHydrationSourceSpec::Uv(
                             super::TaskUvHydrationSourceSpec {
                                 cwd: String::from("api"),
+                                mode: super::TaskUvHydrationMode::Sync,
+                                requirements_file: None,
                                 compose: None,
                             },
                         ),

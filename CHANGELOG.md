@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- widened Python setup ownership in two connected ways: `prepare.kind: dependency_hydration`
+  with `source.kind: uv` now supports `mode: pip_requirements` plus
+  `source.requirements_file` for structural `uv pip install -r ...`, and
+  `action.kind: ensure_virtualenv` now owns deterministic repo-local virtualenv materialization
+  such as `.venv` without shell glue
+- widened dependency-hydration governance so raw `uv sync` and raw
+  `uv pip install -r requirements.txt` lanes now produce replaceable-ownership advisories instead
+  of hiding a first-class Ota setup surface behind shell or command bodies
 - widened harness-facing capability JSON with the first compiled sandbox target,
   `sandbox_policy.target: "codex_local"`, on `ota tasks --json` and
   `ota workflows --json`; task and workflow capability entries can now publish

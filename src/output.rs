@@ -4426,6 +4426,11 @@ fn summarize_task_action<'a>(
             from: None,
             to: Some(spec.path.as_str()),
         }),
+        crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => Some(TaskActionSummary {
+            kind: "ensure_virtualenv",
+            from: Some(spec.provider.label()),
+            to: Some(spec.path.as_str()),
+        }),
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => Some(TaskActionSummary {
             kind: "ensure_git_checkout",
             from: Some(spec.source.git.as_str()),
@@ -4539,6 +4544,13 @@ pub fn summarize_task_action_owned(
             from: None,
             to: Some(spec.path.clone()),
         }),
+        crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => {
+            Some(WorkspaceTaskActionSummary {
+                kind: "ensure_virtualenv",
+                from: Some(spec.provider.label().to_string()),
+                to: Some(spec.path.clone()),
+            })
+        }
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             Some(WorkspaceTaskActionSummary {
                 kind: "ensure_git_checkout",
@@ -4651,6 +4663,9 @@ fn summarize_task_prepare_sequence_step(
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_) => {
             Some(empty_task_prepare_summary("ensure_directory"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(_) => {
+            Some(empty_task_prepare_summary("ensure_virtualenv"))
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_) => {
             Some(empty_task_prepare_summary("ensure_git_checkout"))
@@ -5394,6 +5409,9 @@ fn summarize_task_prepare_sequence_step_owned(
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_) => {
             Some(empty_workspace_task_prepare_summary("ensure_directory"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(_) => {
+            Some(empty_workspace_task_prepare_summary("ensure_virtualenv"))
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_) => {
             Some(empty_workspace_task_prepare_summary("ensure_git_checkout"))

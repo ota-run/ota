@@ -3248,9 +3248,21 @@ fn dependency_hydration_command_specs(
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+            let args = match source.mode {
+                crate::schema::TaskUvHydrationMode::Sync => vec![String::from("sync")],
+                crate::schema::TaskUvHydrationMode::PipRequirements => vec![
+                    String::from("pip"),
+                    String::from("install"),
+                    String::from("-r"),
+                    source
+                        .requirements_file
+                        .clone()
+                        .unwrap_or_else(|| String::from("requirements.txt")),
+                ],
+            };
             vec![crate::schema::TaskCommandSpec {
                 exe: String::from("uv"),
-                args: vec![String::from("sync")],
+                args,
                 cwd: Some(source.cwd.clone()),
             }]
         }
@@ -9865,6 +9877,15 @@ fn execute_prepare_sequence_step(
                 env_overrides,
             )
         }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureVirtualenv(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
             execute_native_file_action_task(
                 contract,
@@ -10515,10 +10536,27 @@ fn prepare_task_shell_command(
                     "cd {} && composer install",
                     shell_quote_command_word(source.cwd.trim(), quote_style)
                 )),
-                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => Ok(format!(
-                    "cd {} && uv sync",
-                    shell_quote_command_word(source.cwd.trim(), quote_style)
-                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+                    let command = match source.mode {
+                        crate::schema::TaskUvHydrationMode::Sync => String::from("uv sync"),
+                        crate::schema::TaskUvHydrationMode::PipRequirements => format!(
+                            "uv pip install -r {}",
+                            shell_quote_command_word(
+                                source
+                                    .requirements_file
+                                    .as_deref()
+                                    .unwrap_or("requirements.txt")
+                                    .trim(),
+                                quote_style
+                            )
+                        ),
+                    };
+                    Ok(format!(
+                        "cd {} && {}",
+                        shell_quote_command_word(source.cwd.trim(), quote_style),
+                        command
+                    ))
+                }
                 crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
                     let mut command = format!(
                         "cd {} && poetry install",
@@ -10647,6 +10685,9 @@ fn prepare_sequence_step_shell_preview(
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(spec) => {
             Ok(format!("ensure directory `{}`", spec.path.trim()))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(spec) => {
+            Ok(format!("ensure virtualenv `{}`", spec.path.trim()))
         }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
             Ok(format!("ensure git checkout `{}`", spec.path.trim()))
@@ -10833,6 +10874,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => {
+            execute_ensure_virtualenv_action(task_name, spec, working_dir, env_overrides)
+        }
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             execute_ensure_git_checkout_action(task_name, spec, working_dir)
         }
@@ -10955,6 +10999,9 @@ fn execute_ensure_bundle_step(
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureVirtualenv(spec) => {
+            execute_ensure_virtualenv_action(task_name, spec, working_dir, env_overrides)
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
             execute_ensure_git_checkout_action(task_name, spec, working_dir)
@@ -11250,6 +11297,92 @@ fn execute_ensure_directory_action(
     Ok(file_action_output(format!(
         "ensured directory `{}`\n",
         spec.path.trim()
+    )))
+}
+
+fn execute_ensure_virtualenv_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureVirtualenvActionSpec,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<TaskCommandOutput, RunError> {
+    let path_text = spec.path.trim();
+    let virtualenv_path = working_dir.join(path_text);
+    if virtualenv_path.exists() {
+        if !virtualenv_path.is_dir() {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not ensure virtualenv `{}` because a non-directory entry already exists at that path",
+                    path_text
+                ),
+            });
+        }
+        if virtualenv_path.join("pyvenv.cfg").is_file() {
+            return Ok(file_action_output(format!(
+                "virtualenv `{}` already exists; no create needed\n",
+                path_text
+            )));
+        }
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not ensure virtualenv `{}` because the existing directory is not a virtualenv",
+                path_text
+            ),
+        });
+    }
+
+    if let Some(parent) = virtualenv_path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not create parent directory for virtualenv `{}`: {source}",
+                path_text
+            ),
+        })?;
+    }
+
+    let mut command = Command::new(spec.provider.label());
+    command.current_dir(working_dir);
+    command.envs(env_overrides);
+    command.arg("venv");
+    if let Some(python) = spec.python.as_deref() {
+        command.arg("--python");
+        command.arg(python.trim());
+    }
+    command.arg(path_text);
+
+    let output = command.output().map_err(|source| RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!(
+            "could not start {} virtualenv creation for `{}`: {source}",
+            spec.provider.label(),
+            path_text
+        ),
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("{} exited with status {}", spec.provider.label(), output.status)
+        };
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not ensure virtualenv `{}`: {detail}", path_text),
+        });
+    }
+
+    Ok(file_action_output(format!(
+        "ensured virtualenv `{}` with {}\n",
+        path_text,
+        spec.provider.label()
     )))
 }
 
@@ -58245,6 +58378,73 @@ tasks:
             second
                 .stdout
                 .contains("`.cache/dev` already exists; no directory create needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_virtualenv_action_creates_virtualenv_once() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:venv:
+    action:
+      kind: ensure_virtualenv
+      path: .venv
+      python: "3.12"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let uv_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"venv\" (\r\n  set target=%4\r\n  if \"%2\"==\"--python\" set target=%4\r\n  mkdir \"%target%\" >nul 2>nul\r\n  > \"%target%\\pyvenv.cfg\" type nul\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n".to_string()
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"venv\" ]; then\n  target=\"$2\"\n  if [ \"$2\" = \"--python\" ]; then\n    target=\"$4\"\n  fi\n  mkdir -p \"$target\"\n  : > \"$target/pyvenv.cfg\"\n  exit 0\nfi\nexit 1\n".to_string()
+        };
+        write_fake_bin(&bin_dir, "uv", &uv_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:venv")
+            .expect("ensure_virtualenv action should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:venv")
+            .expect("ensure_virtualenv action should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(fixture.dir.path().join(".venv/pyvenv.cfg").is_file());
+        assert!(
+            first.stdout.contains("ensured virtualenv `.venv` with uv"),
+            "{}",
+            first.stdout
+        );
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("virtualenv `.venv` already exists; no create needed"),
             "{}",
             second.stdout
         );

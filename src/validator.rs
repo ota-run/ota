@@ -4602,6 +4602,9 @@ fn validate_task_action(
                 errors,
             );
         }
+        crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => {
+            validate_task_ensure_virtualenv_action(task_name, "action", spec, errors);
+        }
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             validate_task_ensure_git_checkout_action(task_name, "action", spec, errors);
         }
@@ -6246,6 +6249,15 @@ fn validate_task_prepare_sequence_step(
                 errors,
             );
         }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureVirtualenv(spec.clone()),
+                errors,
+            );
+        }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
             validate_structured_bootstrap_step(
                 task_name,
@@ -6455,6 +6467,9 @@ fn validate_structured_bootstrap_step(
                 errors,
             );
         }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureVirtualenv(spec) => {
+            validate_task_ensure_virtualenv_action(task_name, prefix, spec, errors);
+        }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
             validate_task_ensure_git_checkout_action(task_name, prefix, spec, errors);
         }
@@ -6604,6 +6619,27 @@ fn validate_task_git_materialization_source_fields(
                 "task `{task_name}` action `{action_kind}` `{prefix}.source.ref` must not contain newline characters"
             )));
         }
+    }
+}
+
+fn validate_task_ensure_virtualenv_action(
+    task_name: &str,
+    prefix: &str,
+    spec: &crate::schema::TaskEnsureVirtualenvActionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_repo_relative_file_action_path(
+        task_name,
+        format!("{prefix}.path").as_str(),
+        spec.path.as_str(),
+        errors,
+    );
+    if let Some(python) = spec.python.as_deref()
+        && python.trim().is_empty()
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` `ensure_virtualenv` must not declare an empty `{prefix}.python`"
+        )));
     }
 }
 
@@ -11735,6 +11771,7 @@ fn obvious_replaceable_dependency_hydration_command(command: &TaskCommandSpec) -
 fn obvious_replaceable_dependency_hydration_argv(argv: &[String]) -> bool {
     obvious_node_package_manager_hydration_argv(argv)
         || obvious_composer_hydration_argv(argv)
+        || obvious_uv_hydration_argv(argv)
         || obvious_yarn_inline_builds_hydration_argv(argv)
         || obvious_npm_force_hydration_argv(argv)
         || obvious_helm_dependency_build_hydration_argv(argv)
@@ -11742,6 +11779,16 @@ fn obvious_replaceable_dependency_hydration_argv(argv: &[String]) -> bool {
 
 fn obvious_composer_hydration_argv(argv: &[String]) -> bool {
     argv.len() == 2 && argv[0] == "composer" && argv[1] == "install"
+}
+
+fn obvious_uv_hydration_argv(argv: &[String]) -> bool {
+    (argv.len() == 2 && argv[0] == "uv" && argv[1] == "sync")
+        || (argv.len() == 5
+            && argv[0] == "uv"
+            && argv[1] == "pip"
+            && argv[2] == "install"
+            && argv[3] == "-r"
+            && !argv[4].trim().is_empty())
 }
 
 fn obvious_node_package_manager_hydration_argv(argv: &[String]) -> bool {
@@ -12846,6 +12893,7 @@ fn collect_ensure_git_checkout_moving_head_advisories_from_prepare_step(
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(_)
         | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)
         | crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => {}
     }
@@ -20485,6 +20533,27 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_directory action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_virtualenv_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:venv:
+    action:
+      kind: ensure_virtualenv
+      path: .venv
+      python: "3.12"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_virtualenv action should validate");
     }
 
     #[test]
@@ -36466,6 +36535,60 @@ tasks:
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
                 if value.task_name == "install"
                     && value.command == "npm ci --force"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_uv_sync_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: uv sync
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "setup"
+                    && value.command == "uv sync"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_uv_requirements_command() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    command:
+      exe: uv
+      args:
+        - pip
+        - install
+        - -r
+        - requirements.txt
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "setup"
+                    && value.command == "uv pip install -r requirements.txt"
         )));
     }
 

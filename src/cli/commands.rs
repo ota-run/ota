@@ -40339,6 +40339,19 @@ fn collect_prepare_sequence_step_field_paths(
             fields.push(format!("{prefix}.kind"));
             fields.push(format!("{prefix}.path"));
         }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.path"));
+            if spec.python.is_some() {
+                fields.push(format!("{prefix}.python"));
+            }
+            if !matches!(
+                spec.provider,
+                crate::schema::TaskVirtualenvProvider::Uv
+            ) {
+                fields.push(format!("{prefix}.provider"));
+            }
+        }
         crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
             fields.push(format!("{prefix}.kind"));
             fields.push(format!("{prefix}.path"));
@@ -42544,7 +42557,14 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
         }
         Some("uv") => {
             let cwd = cwd.unwrap_or(".");
-            format!("hydrate {medium} with `uv sync` in `{cwd}`")
+            let command = match mode.unwrap_or("sync") {
+                "pip_requirements" => format!(
+                    "uv pip install -r {}",
+                    file.unwrap_or("requirements.txt")
+                ),
+                _ => String::from("uv sync"),
+            };
+            format!("hydrate {medium} with `{command}` in `{cwd}`")
         }
         Some("poetry") => {
             let cwd = cwd.unwrap_or(".");

@@ -1048,6 +1048,17 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "ensure_virtualenv" },
+            "path": { "type": "string" },
+            "provider": { "enum": ["uv"] },
+            "python": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "path", "source"],
           "properties": {
             "kind": { "const": "ensure_git_checkout" },
@@ -1346,6 +1357,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "uv" },
             "cwd": { "type": "string" },
+            "mode": { "enum": ["sync", "pip_requirements"] },
+            "requirements_file": { "type": "string" },
             "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },

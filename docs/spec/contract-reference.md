@@ -2077,7 +2077,9 @@ Task-effect rules:
     - `prepare.source.kind: composer`
     - `prepare.source.cwd`: required repo-relative working directory for the Composer install invocation
     - `prepare.source.kind: uv`
-    - `prepare.source.cwd`: required repo-relative working directory for the `uv sync` invocation
+    - `prepare.source.cwd`: required repo-relative working directory for the uv hydration invocation
+    - `prepare.source.mode`: optional uv hydration mode; ota currently ships `sync` and `pip_requirements`
+    - `prepare.source.requirements_file`: required repo-relative requirements file when `prepare.source.mode: pip_requirements`; omit it for `mode: sync`
     - `prepare.source.kind: poetry`
     - `prepare.source.cwd`: required repo-relative working directory for the Poetry install invocation
     - `prepare.source.groups`: optional dependency-group list for `poetry install --with ...` or `--only ...`
@@ -2141,7 +2143,9 @@ Task-effect rules:
   - host-side or explicit repo-local path truth: `bundle config set path <path> && bundle install`
   - compose-wrapped container-default path truth: `bundle install`
 - `prepare.source.kind: composer` currently executes the narrow canonical Composer hydration lane: `composer install`
-- `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
+- `prepare.source.kind: uv` currently executes one of two narrow canonical uv hydration lanes:
+  - `uv sync`
+  - `uv pip install -r <requirements_file>`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare.source.kind: helm` currently executes the narrow canonical Helm chart hydration lane: ota reads `Chart.yaml`, seeds any declared HTTP(S) chart repositories into isolated repo-owned Helm repository state under `.ota/state/helm/...`, then runs `helm dependency build .`
@@ -2371,7 +2375,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, `ensure_git_checkout`, `ensure_git_template`, `ensure_git_checkouts`, `ensure_container_network`,
+  `ensure_file`, `ensure_directory`, `ensure_virtualenv`, `ensure_git_checkout`, `ensure_git_template`, `ensure_git_checkouts`, `ensure_container_network`,
   `reset_compose_service_volume`, or `ensure_bundle`
 - `action` is the first-class host file-preparation surface for deterministic repo mutations; in
   the current shipped slice it is native-only because it mutates the host working tree directly
@@ -2402,6 +2406,10 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
   - `action.random.encoding`: optional `hex` or `base64` (default `hex`)
 - `action.kind: ensure_directory`
   - `action.path`: required repo-relative directory path to create when missing
+- `action.kind: ensure_virtualenv`
+  - `action.path`: required repo-relative virtualenv path to create when missing
+  - `action.provider`: optional virtualenv provider; currently `uv` (default `uv`)
+  - `action.python`: optional explicit Python selector forwarded to the provider
 - `action.kind: ensure_git_checkout`
   - `action.path`: required repo-relative checkout path to create when missing
   - `action.source.git`: required Git remote URL or clone source
@@ -2437,6 +2445,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_env_file`
     - `kind: ensure_file`
     - `kind: ensure_directory`
+    - `kind: ensure_virtualenv`
     - `kind: ensure_git_checkout`
     - `kind: ensure_git_template`
     - `kind: ensure_git_checkouts`
@@ -2470,6 +2479,11 @@ secret token file) without shell glue. It creates `action.path` once from one ex
 Use `action.kind: ensure_directory` when setup needs a deterministic repo-local directory without
 shell glue. It creates `action.path` when missing, no-ops when it already exists as a directory,
 and fails if the path already exists as a non-directory.
+
+Use `action.kind: ensure_virtualenv` when setup truthfully owns creation of one repo-local Python
+virtualenv such as `.venv` without shell glue. Keep dependency installation itself under
+`prepare.kind: dependency_hydration` so Ota owns virtualenv materialization and package hydration
+as separate first-class setup truths instead of collapsing both into one opaque shell lane.
 
 Use `action.kind: ensure_git_checkout` when setup truthfully owns deterministic materialization of
 one sibling checkout, vendored dependency repo, or other Git-backed working tree without shell

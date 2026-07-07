@@ -1008,6 +1008,23 @@ fn detect_prepare_from_run(
                 medium: TaskDependencyHydrationMedium::PackageDependencies,
                 source: TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
                     cwd: String::from("."),
+                    mode: crate::schema::TaskUvHydrationMode::Sync,
+                    requirements_file: None,
+                    compose: None,
+                }),
+                targets: Vec::new(),
+            }),
+            "python",
+            vec![String::from(".venv")],
+            BTreeMap::new(),
+        )),
+        "uv pip install -r requirements.txt" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
+                    cwd: String::from("."),
+                    mode: crate::schema::TaskUvHydrationMode::PipRequirements,
+                    requirements_file: Some(String::from("requirements.txt")),
                     compose: None,
                 }),
                 targets: Vec::new(),
@@ -2902,6 +2919,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     "Hydrate Python dependencies through uv.",
                     TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
                         cwd: String::from("."),
+                        mode: crate::schema::TaskUvHydrationMode::Sync,
+                        requirements_file: None,
                         compose: None,
                     }),
                     "python",
