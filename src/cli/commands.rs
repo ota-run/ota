@@ -16525,7 +16525,7 @@ fn agent_execution_refusal_finding(refusal: &AgentExecutionRefusal, command: &st
         "requested_task_not_safe" => (
             format!("Agent execution refused: task `{}`", refusal.requested_task),
             format!(
-                "task `{}` is outside the declared agent-safe surface for this contract",
+                "task `{}` is outside the declared agent-safe surface for this contract, so execution was refused before run-path evaluation",
                 refusal.requested_task
             ),
         ),
@@ -16535,7 +16535,7 @@ fn agent_execution_refusal_finding(refusal: &AgentExecutionRefusal, command: &st
                 refusal.requested_task
             ),
             format!(
-                "task `{}` is declared safe, but its reachable execution closure includes `{}` via `{}`",
+                "task `{}` is declared safe, but its reachable execution closure includes `{}` via `{}`, so execution was refused before run-path evaluation",
                 refusal.requested_task, refusal.blocked_task, path
             ),
         ),
@@ -16621,6 +16621,7 @@ fn agent_execution_refusal_detail_lines(
     if let Some(mode) = receipt.backend.as_deref() {
         detail_lines.push(format!("mode: `{mode}`"));
     }
+    detail_lines.push(String::from("cause: `agent_safety_boundary`"));
     detail_lines.push(format!(
         "closure status: `{}`",
         agent_execution_refusal_closure_status(reason)
@@ -58341,7 +58342,13 @@ agent:
             stderr.contains("reason: `requested_task_not_safe`"),
             "{stderr}"
         );
+        assert!(
+            stderr.contains("cause: `agent_safety_boundary`"),
+            "{stderr}"
+        );
         assert!(stderr.contains("closure status: `unsafe`"), "{stderr}");
+        assert!(stderr.contains("refused before run-path"), "{stderr}");
+        assert!(stderr.contains("evaluation"), "{stderr}");
         assert!(stderr.contains("RUN SUMMARY"), "{stderr}");
         assert!(!stderr.contains("Operation failed"), "{stderr}");
         assert!(!stderr.contains("\nContract\n"), "{stderr}");
@@ -58397,6 +58404,10 @@ agent:
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(
             stderr.contains("reachable execution closure includes `setup`"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("refused before run-path evaluation"),
             "{stderr}"
         );
         assert!(stderr.contains("blocked task: `setup`"), "{stderr}");
@@ -58463,6 +58474,12 @@ agent:
             stdout.contains("reason: `requested_task_not_safe`"),
             "{stdout}"
         );
+        assert!(
+            stdout.contains("cause: `agent_safety_boundary`"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("refused before run-path"), "{stdout}");
+        assert!(stdout.contains("evaluation"), "{stdout}");
         assert!(stdout.contains("UP SUMMARY"), "{stdout}");
         assert!(!stdout.contains("Operation failed"), "{stdout}");
         assert!(!stdout.contains("\nContract\n"), "{stdout}");
@@ -84325,7 +84342,7 @@ fn workflow_selection_error(
         let available_instances = workflow
             .instances
             .as_ref()
-            .map(|instances| instances.items.keys().cloned().collect::<Vec<_>>())
+            .map(crate::schema::WorkflowInstanceCatalog::available_instance_names)
             .unwrap_or_default();
         if available_instances.is_empty() {
             return format!(
@@ -84365,7 +84382,7 @@ fn selected_workflow_selector_is_valid(contract: &Contract, workflow_name: &str)
     }
     if selected_instance_name.is_some() {
         return contract
-            .selected_workflow_instance(Some(workflow_name))
+            .resolved_selected_workflow_instance(Some(workflow_name))
             .is_some();
     }
     true
@@ -102112,7 +102129,9 @@ fn contract_adjusted_for_selected_workflow_env_profile(
     contract: &Contract,
     workflow_name: Option<&str>,
 ) -> Option<Contract> {
-    let selected_instance = contract.selected_workflow_instance(workflow_name).cloned();
+    let selected_instance = contract
+        .resolved_selected_workflow_instance(workflow_name)
+        .map(|resolved| resolved.spec);
     let has_workflow_env_or_adapter_inputs = contract
         .selected_workflow(workflow_name)
         .is_some_and(|(_, workflow)| workflow.env.is_some() || !workflow.adapter_inputs.is_empty());
@@ -102769,10 +102788,10 @@ fn selected_workflow_instance_render_env(
     working_dir: &Path,
 ) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
-    let Some(instance) = contract.selected_workflow_instance(workflow_name) else {
+    let Some(instance) = contract.resolved_selected_workflow_instance(workflow_name) else {
         return values;
     };
-    for (name, value) in &instance.env {
+    for (name, value) in &instance.spec.env {
         values.insert(
             name.clone(),
             expand_render_template_env_value(value, working_dir),

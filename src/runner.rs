@@ -6047,8 +6047,8 @@ fn workflow_instance_compose_project_for_task(
 ) -> Option<String> {
     let task = contract.tasks.get(task_name)?;
     let override_project = contract
-        .selected_workflow_instance(workflow_name)
-        .and_then(|instance| instance.tasks.get(task_name))
+        .resolved_selected_workflow_instance(workflow_name)
+        .and_then(|instance| instance.spec.tasks.get(task_name).cloned())
         .and_then(|overlay| overlay.adapter_inputs.effective_compose())
         .and_then(|compose| compose.project_name);
     let base_project = task.compose_adapter_project_name_for_backend(

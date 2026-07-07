@@ -238,21 +238,31 @@ impl Contract {
             .map(str::trim)
             .filter(|name| !name.is_empty());
         match explicit {
-            Some(instance_name) if instances.items.contains_key(instance_name) => {
+            Some(instance_name) if instances.contains_instance_name(instance_name) => {
                 Some(instance_name.to_string())
             }
             Some(_) => None,
             None => {
                 let default_name = instances.default.trim();
-                (!default_name.is_empty() && instances.items.contains_key(default_name))
+                (!default_name.is_empty() && instances.contains_instance_name(default_name))
                     .then(|| default_name.to_string())
                     .or_else(|| {
                         self.workflow(selected_workflow_name)
                             .and_then(|workflow| workflow.instances.as_ref())
-                            .and_then(|items| items.items.keys().next().cloned())
+                            .and_then(|items| items.available_instance_names().into_iter().next())
                     })
             }
         }
+    }
+
+    pub fn resolved_selected_workflow_instance(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Option<ResolvedWorkflowInstance> {
+        let (_, workflow) = self.selected_workflow(workflow_name)?;
+        let instances = workflow.instances.as_ref()?;
+        let instance_name = self.selected_workflow_instance_name(workflow_name)?;
+        instances.resolve_instance(instance_name.as_str())
     }
 
     pub fn selected_workflow_instance(
@@ -263,6 +273,16 @@ impl Contract {
         let instances = workflow.instances.as_ref()?;
         let instance_name = self.selected_workflow_instance_name(workflow_name)?;
         instances.items.get(instance_name.as_str())
+    }
+
+    pub fn selected_workflow_available_instance_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Vec<String> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.instances.as_ref())
+            .map(WorkflowInstanceCatalog::available_instance_names)
+            .unwrap_or_default()
     }
 
     pub fn selected_workflow_instance_prerequisite_selectors(
@@ -684,8 +704,19 @@ pub struct WorkflowTaskRefSpec {
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct WorkflowInstanceCatalog {
     pub default: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub generated: BTreeMap<String, WorkflowGeneratedInstanceSpec>,
     #[serde(flatten)]
     pub items: BTreeMap<String, WorkflowInstanceSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowGeneratedInstanceSpec {
+    pub prefix: String,
+    pub start: u16,
+    pub end: u16,
+    pub template: WorkflowInstanceSpec,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -729,6 +760,8 @@ pub struct WorkflowInstanceSurfaceOverlaySpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_stride: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }
 
@@ -768,6 +801,8 @@ pub struct WorkflowInstanceTaskRuntimePortOverlaySpec {
     pub mode: Option<TaskRuntimePortMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stride: Option<u16>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -797,6 +832,8 @@ pub struct WorkflowInstanceTaskRuntimeHostPortOverlaySpec {
     pub mode: Option<TaskRuntimeHostPortMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stride: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -885,6 +922,236 @@ pub(crate) fn split_workflow_selector(selector: &str) -> (&str, Option<&str>) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorkflowInstance {
+    pub name: String,
+    pub spec: WorkflowInstanceSpec,
+}
+
+impl WorkflowInstanceCatalog {
+    pub fn contains_instance_name(&self, instance_name: &str) -> bool {
+        self.resolve_instance(instance_name).is_some()
+    }
+
+    pub fn available_instance_names(&self) -> Vec<String> {
+        let mut names = self.items.keys().cloned().collect::<Vec<_>>();
+        for generated in self.generated.values() {
+            names.extend(generated.instance_names());
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    pub fn resolve_instance(&self, instance_name: &str) -> Option<ResolvedWorkflowInstance> {
+        if let Some(spec) = self.items.get(instance_name) {
+            return Some(ResolvedWorkflowInstance {
+                name: instance_name.to_string(),
+                spec: spec.clone(),
+            });
+        }
+        for generated in self.generated.values() {
+            if let Some(spec) = generated.resolve_instance(instance_name) {
+                return Some(ResolvedWorkflowInstance {
+                    name: instance_name.to_string(),
+                    spec,
+                });
+            }
+        }
+        None
+    }
+}
+
+impl WorkflowGeneratedInstanceSpec {
+    pub fn instance_names(&self) -> Vec<String> {
+        (self.start..=self.end)
+            .map(|index| format!("{}{}", self.prefix, index))
+            .collect()
+    }
+
+    pub fn resolve_instance(&self, instance_name: &str) -> Option<WorkflowInstanceSpec> {
+        let index = self.parse_index(instance_name)?;
+        Some(resolve_generated_workflow_instance_template(
+            &self.template,
+            instance_name,
+            index,
+        ))
+    }
+
+    fn parse_index(&self, instance_name: &str) -> Option<u16> {
+        let suffix = instance_name.strip_prefix(self.prefix.as_str())?;
+        if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        let index = suffix.parse::<u16>().ok()?;
+        (index >= self.start && index <= self.end).then_some(index)
+    }
+}
+
+fn resolve_generated_workflow_instance_template(
+    template: &WorkflowInstanceSpec,
+    instance_name: &str,
+    instance_index: u16,
+) -> WorkflowInstanceSpec {
+    let mut resolved = template.clone();
+    resolved.description = resolved
+        .description
+        .as_ref()
+        .map(|value| expand_generated_instance_string(value, instance_name, instance_index));
+    resolved.notes = resolved
+        .notes
+        .as_ref()
+        .map(|value| expand_generated_instance_string(value, instance_name, instance_index));
+    if let Some(topology) = resolved.topology.as_mut() {
+        for required in &mut topology.requires_instances {
+            *required = expand_generated_instance_string(required, instance_name, instance_index);
+        }
+    }
+    for value in resolved.env.values_mut() {
+        *value = expand_generated_instance_string(value, instance_name, instance_index);
+    }
+    for task in resolved.tasks.values_mut() {
+        for value in task.env.values_mut() {
+            *value = expand_generated_instance_string(value, instance_name, instance_index);
+        }
+        expand_generated_task_adapter_inputs(
+            &mut task.adapter_inputs,
+            instance_name,
+            instance_index,
+        );
+        if let Some(runtime) = task.runtime.as_mut() {
+            expand_generated_runtime_overlay(runtime, instance_name, instance_index);
+        }
+    }
+    for surface in resolved.surfaces.values_mut() {
+        if let Some(port) = surface.port
+            && let Some(stride) = surface.port_stride
+        {
+            surface.port = port.checked_add(stride.saturating_mul(instance_index));
+        }
+        if let Some(path) = surface.path.as_mut() {
+            *path = expand_generated_instance_string(path, instance_name, instance_index);
+        }
+    }
+    resolved
+}
+
+fn expand_generated_task_adapter_inputs(
+    inputs: &mut TaskAdapterInputsSpec,
+    instance_name: &str,
+    instance_index: u16,
+) {
+    if let Some(compose) = inputs.compose.as_mut() {
+        if let Some(cwd) = compose.cwd.as_mut() {
+            *cwd = expand_generated_instance_string(cwd, instance_name, instance_index);
+        }
+        if let Some(project_name) = compose.project_name.as_mut() {
+            *project_name =
+                expand_generated_instance_string(project_name, instance_name, instance_index);
+        }
+        for file in &mut compose.files {
+            *file = expand_generated_instance_string(file, instance_name, instance_index);
+        }
+        for file in &mut compose.env_files {
+            *file = expand_generated_instance_string(file, instance_name, instance_index);
+        }
+        for profile in &mut compose.profiles {
+            *profile = expand_generated_instance_string(profile, instance_name, instance_index);
+        }
+    }
+    if let Some(bake) = inputs.bake.as_mut() {
+        if let Some(cwd) = bake.cwd.as_mut() {
+            *cwd = expand_generated_instance_string(cwd, instance_name, instance_index);
+        }
+        for file in &mut bake.files {
+            *file = expand_generated_instance_string(file, instance_name, instance_index);
+        }
+    }
+    if let Some(helm) = inputs.helm.as_mut() {
+        if let Some(cwd) = helm.cwd.as_mut() {
+            *cwd = expand_generated_instance_string(cwd, instance_name, instance_index);
+        }
+        if let Some(chart) = helm.chart.as_mut() {
+            *chart = expand_generated_instance_string(chart, instance_name, instance_index);
+        }
+        if let Some(release_name) = helm.release_name.as_mut() {
+            *release_name =
+                expand_generated_instance_string(release_name, instance_name, instance_index);
+        }
+        if let Some(namespace) = helm.namespace.as_mut() {
+            *namespace = expand_generated_instance_string(namespace, instance_name, instance_index);
+        }
+        for file in &mut helm.values_files {
+            *file = expand_generated_instance_string(file, instance_name, instance_index);
+        }
+    }
+}
+
+fn expand_generated_runtime_overlay(
+    runtime: &mut WorkflowInstanceTaskRuntimeOverlaySpec,
+    instance_name: &str,
+    instance_index: u16,
+) {
+    if let Some(binding) = runtime.backend_binding.as_mut() {
+        *binding = expand_generated_instance_string(binding, instance_name, instance_index);
+    }
+    if let Some(readiness) = runtime.readiness.as_mut() {
+        if let Some(listener) = readiness.listener.as_mut() {
+            *listener = expand_generated_instance_string(listener, instance_name, instance_index);
+        }
+        if let Some(path) = readiness.path.as_mut() {
+            *path = expand_generated_instance_string(path, instance_name, instance_index);
+        }
+    }
+    for listener in runtime.listeners.values_mut() {
+        if let Some(bind) = listener.bind.as_mut() {
+            if let Some(address) = bind.address.as_mut() {
+                *address = expand_generated_instance_string(address, instance_name, instance_index);
+            }
+            if let Some(port) = bind.port.as_mut()
+                && let Some(base) = port.value
+                && let Some(stride) = port.stride
+            {
+                port.value = base.checked_add(stride.saturating_mul(instance_index));
+            }
+        }
+        if let Some(project) = listener.project.as_mut()
+            && let Some(host) = project.host.as_mut()
+        {
+            if let Some(address) = host.address.as_mut() {
+                *address = expand_generated_instance_string(address, instance_name, instance_index);
+            }
+            if let Some(port) = host.port.as_mut()
+                && let Some(base) = port.value
+                && let Some(stride) = port.stride
+            {
+                port.value = base.checked_add(stride.saturating_mul(instance_index));
+            }
+            if let Some(path) = host.path.as_mut() {
+                *path = expand_generated_instance_string(path, instance_name, instance_index);
+            }
+        }
+    }
+}
+
+fn expand_generated_instance_string(
+    value: &str,
+    instance_name: &str,
+    instance_index: u16,
+) -> String {
+    value
+        .replace("${OTA_WORKFLOW_INSTANCE}", instance_name)
+        .replace("$OTA_WORKFLOW_INSTANCE", instance_name)
+        .replace(
+            "${OTA_WORKFLOW_INSTANCE_INDEX}",
+            instance_index.to_string().as_str(),
+        )
+        .replace(
+            "$OTA_WORKFLOW_INSTANCE_INDEX",
+            instance_index.to_string().as_str(),
+        )
+}
+
 fn collect_workflow_instance_prerequisites(
     workflow_name: &str,
     instances: &WorkflowInstanceCatalog,
@@ -892,10 +1159,10 @@ fn collect_workflow_instance_prerequisites(
     visited: &mut BTreeSet<String>,
     order: &mut Vec<String>,
 ) {
-    let Some(instance) = instances.items.get(instance_name) else {
+    let Some(instance) = instances.resolve_instance(instance_name) else {
         return;
     };
-    let Some(topology) = instance.topology.as_ref() else {
+    let Some(topology) = instance.spec.topology.as_ref() else {
         return;
     };
     for required in &topology.requires_instances {
@@ -921,8 +1188,11 @@ fn collect_workflow_instance_dependents(
     visited: &mut BTreeSet<String>,
     dependents: &mut Vec<String>,
 ) {
-    for (candidate_name, candidate) in &instances.items {
-        let requires_selected = candidate.topology.as_ref().is_some_and(|topology| {
+    for candidate_name in instances.available_instance_names() {
+        let Some(candidate) = instances.resolve_instance(candidate_name.as_str()) else {
+            continue;
+        };
+        let requires_selected = candidate.spec.topology.as_ref().is_some_and(|topology| {
             topology
                 .requires_instances
                 .iter()
@@ -10630,6 +10900,199 @@ workflows:
         assert_eq!(
             contract.selected_workflow_instance_prerequisite_selectors(Some("app@ws2")),
             vec![String::from("app@ws0"), String::from("app@ws1")]
+        );
+    }
+
+    #[test]
+    fn selected_generated_workflow_instance_resolves_template_overlays() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-generated-instance
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: uvicorn
+      args: [app.main:app]
+    runtime:
+      kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+      surfaces: [ui]
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        env:
+          APP_SOURCE_PATH: .
+      generated:
+        workspaces:
+          prefix: ws
+          start: 1
+          end: 9
+          template:
+            topology:
+              requires_instances: [ws0]
+            env:
+              APP_SOURCE_PATH: ${OTA_HOST_HOME}/workspaces/${OTA_WORKFLOW_INSTANCE}
+            tasks:
+              dev:
+                adapter_inputs:
+                  compose:
+                    project_name: app-${OTA_WORKFLOW_INSTANCE}
+                runtime:
+                  listeners:
+                    ui:http:
+                      bind:
+                        port:
+                          mode: fixed
+                          value: 3000
+                          stride: 10000
+                      project:
+                        host:
+                          port:
+                            mode: fixed
+                            value: 3000
+                            stride: 10000
+            surfaces:
+              ui:
+                port: 3000
+                port_stride: 10000
+"#,
+        )
+        .unwrap();
+
+        let resolved = contract
+            .resolved_selected_workflow_instance(Some("app@ws2"))
+            .expect("generated instance should resolve");
+        assert_eq!(resolved.name, "ws2");
+        assert_eq!(
+            resolved.spec.env.get("APP_SOURCE_PATH").map(String::as_str),
+            Some("${OTA_HOST_HOME}/workspaces/ws2")
+        );
+        assert_eq!(
+            resolved
+                .spec
+                .tasks
+                .get("dev")
+                .and_then(|task| task.adapter_inputs.compose.as_ref())
+                .and_then(|compose| compose.project_name.as_deref()),
+            Some("app-ws2")
+        );
+        assert_eq!(resolved.spec.surfaces["ui"].port, Some(23000));
+        assert_eq!(
+            resolved
+                .spec
+                .tasks
+                .get("dev")
+                .and_then(|task| task.runtime.as_ref())
+                .and_then(|runtime| runtime.listeners.get("ui:http"))
+                .and_then(|listener| listener.bind.as_ref())
+                .and_then(|bind| bind.port.as_ref())
+                .and_then(|port| port.value),
+            Some(23000)
+        );
+    }
+
+    #[test]
+    fn selected_generated_workflow_instance_prerequisites_expand_to_default_instance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-generated-instance
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      generated:
+        workspaces:
+          prefix: ws
+          start: 1
+          end: 3
+          template:
+            topology:
+              requires_instances:
+                - ws0
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_workflow_instance_prerequisite_selectors(Some("app@ws2")),
+            vec![String::from("app@ws0")]
+        );
+    }
+
+    #[test]
+    fn selected_generated_workflow_instance_dependents_expand_from_default_instance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-generated-instance
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      generated:
+        workspaces:
+          prefix: ws
+          start: 1
+          end: 2
+          template:
+            topology:
+              requires_instances:
+                - ws0
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_workflow_instance_dependent_selectors(Some("app@ws0")),
+            vec![String::from("app@ws1"), String::from("app@ws2")]
         );
     }
 

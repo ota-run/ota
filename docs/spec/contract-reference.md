@@ -3648,14 +3648,21 @@ Current behavior:
 - use `workflows.<name>.instances` when one workflow is really a named family of runtime instances such as `ws0`, `ws1`, or `staging` / `prod-preview` rather than a single flat environment
 - `workflows.<name>.instances.default` selects the implicit instance for `ota up --workflow <name>` and other selected-workflow commands
 - select a non-default instance with `ota up --workflow <name>@<instance>`, `ota proof runtime --workflow <name>@<instance>`, or other workflow-selecting commands
+- use `workflows.<name>.instances.generated.<family>` when one workflow owns a bounded repeated instance family such as `ws1..ws8` and the repeated overlays should stay on the existing instance boundary instead of being duplicated across many explicit named items
+- generated instance families are finite and deterministic: each family declares one `prefix`, `start`, `end`, and `template`; ota expands only those concrete selectors and does not invent open-ended instance names or general expression evaluation
 - use `workflows.<name>.instances.<instance>.topology.requires_instances` when one selected instance must bring up another declared instance first, such as `ws1+` depending on `ws0`
 - keep instance truth bounded and explicit: this first-class lane is for instance-specific env overrides, task adapter input overrides, and surface port/path overlays, not arbitrary free-form templating across the whole contract
+- generated instance templates may interpolate `${OTA_WORKFLOW_INSTANCE}` and `${OTA_WORKFLOW_INSTANCE_INDEX}` inside string-valued instance overlay fields such as env values, compose project names, or overlay paths
 - use `workflows.<name>.instances.<instance>.env` when every task on the selected workflow path should inherit one instance-specific env value such as a cloned workspace root
 - use `workflows.<name>.instances.<instance>.tasks.<task>.adapter_inputs` when one selected task path needs instance-specific compose project naming, bake files, or other adapter-owned truth without splitting the workflow into repo-local shell variants
 - use `tasks.<name>.variants` with `variants.<i>.env`, `variants.<i>.env_files`, `variants.<i>.env_bindings`, `variants.<i>.inputs`, `variants.<i>.requirements`, or `variants.<i>.adapter_inputs` when one task keeps the same body but needs OS-scoped process, prerequisite, or adapter overlays such as Linux-only host uid/gid interpolation, service-derived URLs, input defaults/allowed values, platform-specific tool requirements, Compose files, env files, or profiles
 - use `workflows.<name>.instances.<instance>.tasks.<task>.runtime` when one selected task path needs instance-specific service listener publication or readiness selection and the base task already owns explicit `runtime` truth
 - keep workflow-instance runtime specialization on the task runtime boundary: override existing listener bind/project ports or readiness fields there instead of inventing a separate workflow-level listener model
 - workflow-instance task runtime overlays currently merge onto an existing top-level task `runtime`; they do not invent new listeners or replace runtime ownership from scratch
+- generated instance templates may derive repeated port families without shell math: `surfaces.<name>.port_stride`,
+  `tasks.<name>.runtime.listeners.<listener>.bind.port.stride`, and
+  `tasks.<name>.runtime.listeners.<listener>.project.host.port.stride` multiply the generated
+  instance index and add it to the declared base port value
 - use `workflows.<name>.instances.<instance>.surfaces.<surface>` when the selected instance publishes the same surface shape on different host ports or paths and Ota should keep proof, exposure, and command guidance aligned on the selected instance
 - use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup and that step already deserves its own reusable task identity
 - use `prepare.action` when the workflow itself honestly owns one deterministic bootstrap action or bundle and creating a synthetic helper task would only add glue

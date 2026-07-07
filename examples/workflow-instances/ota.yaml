@@ -130,7 +130,7 @@ workflows:
   default: app
   app:
     intent: packaged_runtime
-    description: One shared app runtime family with named selected instances
+    description: One shared app runtime family with one explicit default instance plus generated workspace instances
     env:
       profile: app
     instances:
@@ -139,78 +139,49 @@ workflows:
         description: Bind the live repo as the default app instance
         env:
           APP_CLIENT_PORT: "3001"
-      ws1:
-        description: Bind the first cloned workspace under OTA_HOST_HOME
-        topology:
-          requires_instances:
-            - ws0
-        env:
-          APP_CLIENT_PORT: "13001"
-          APP_SOURCE_PATH: ${OTA_HOST_HOME}/.example/workspaces/ws1
-        tasks:
-          app:up:
-            adapter_inputs:
-              compose:
-                project_name: app-ws1
-            runtime:
-              listeners:
-                ui:http:
-                  bind:
-                    port:
-                      mode: fixed
-                      value: 13000
-                  project:
-                    host:
-                      port:
-                        mode: fixed
-                        value: 13000
-          app:attach:
-            adapter_inputs:
-              compose:
-                project_name: app-ws1
-          app:down:
-            adapter_inputs:
-              compose:
-                project_name: app-ws1
-        surfaces:
-          ui:
-            port: 13000
-      ws2:
-        description: Bind the second cloned workspace under OTA_HOST_HOME after ws1
-        topology:
-          requires_instances:
-            - ws1
-        env:
-          APP_CLIENT_PORT: "23001"
-          APP_SOURCE_PATH: ${OTA_HOST_HOME}/.example/workspaces/ws2
-        tasks:
-          app:up:
-            adapter_inputs:
-              compose:
-                project_name: app-ws2
-            runtime:
-              listeners:
-                ui:http:
-                  bind:
-                    port:
-                      mode: fixed
-                      value: 23000
-                  project:
-                    host:
-                      port:
-                        mode: fixed
-                        value: 23000
-          app:attach:
-            adapter_inputs:
-              compose:
-                project_name: app-ws2
-          app:down:
-            adapter_inputs:
-              compose:
-                project_name: app-ws2
-        surfaces:
-          ui:
-            port: 23000
+      generated:
+        cloned-workspaces:
+          prefix: ws
+          start: 1
+          end: 2
+          template:
+            description: Bind a cloned workspace instance under OTA_HOST_HOME
+            topology:
+              requires_instances:
+                - ws0
+            env:
+              APP_SOURCE_PATH: ${OTA_HOST_HOME}/.example/workspaces/${OTA_WORKFLOW_INSTANCE}
+            tasks:
+              app:up:
+                adapter_inputs:
+                  compose:
+                    project_name: app-${OTA_WORKFLOW_INSTANCE}
+                runtime:
+                  listeners:
+                    ui:http:
+                      bind:
+                        port:
+                          mode: fixed
+                          value: 3000
+                          stride: 10000
+                      project:
+                        host:
+                          port:
+                            mode: fixed
+                            value: 3000
+                            stride: 10000
+              app:attach:
+                adapter_inputs:
+                  compose:
+                    project_name: app-${OTA_WORKFLOW_INSTANCE}
+              app:down:
+                adapter_inputs:
+                  compose:
+                    project_name: app-${OTA_WORKFLOW_INSTANCE}
+            surfaces:
+              ui:
+                port: 3000
+                port_stride: 10000
     run:
       task: app:up
     attach:
@@ -220,6 +191,3 @@ agent:
     - app:down
   protected_paths:
     - docker-compose.yml
-metadata:
-  ota:
-    minimum_version: "1.6.22"

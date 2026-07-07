@@ -15856,15 +15856,58 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "`workflows.{name}.instances.default` must not be empty"
                 )));
             }
-            if instances.items.is_empty() {
+            if instances.items.is_empty() && instances.generated.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "`workflows.{name}.instances` must declare at least one named instance in addition to `default`"
                 )));
-            } else if !instances.items.contains_key(instances.default.trim()) {
+            } else if !instances.contains_instance_name(instances.default.trim()) {
                 errors.push(ValidationError::new(format!(
                     "`workflows.{name}.instances.default` references unknown instance `{}`",
                     instances.default
                 )));
+            }
+            let mut declared_generated_names = BTreeSet::new();
+            for (generated_name, generated) in &instances.generated {
+                if generated_name.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.instances.generated` must not declare an empty generated family name"
+                    )));
+                }
+                if generated.prefix.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.instances.generated.{generated_name}.prefix` must not be empty"
+                    )));
+                }
+                if generated.start > generated.end {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.instances.generated.{generated_name}` must declare `start <= end`"
+                    )));
+                }
+                let generated_count =
+                    usize::from(generated.end.saturating_sub(generated.start)) + 1usize;
+                if generated_count > 256 {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.instances.generated.{generated_name}` must expand to at most 256 instances"
+                    )));
+                }
+                for instance_name in generated.instance_names() {
+                    if instances.items.contains_key(instance_name.as_str())
+                        || !declared_generated_names.insert(instance_name.clone())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.instances.generated.{generated_name}` collides with declared instance `{instance_name}`"
+                        )));
+                    }
+                }
+                validate_workflow_instance_spec(
+                    contract,
+                    name.as_str(),
+                    generated_name.as_str(),
+                    &generated.template,
+                    instances,
+                    true,
+                    errors,
+                );
             }
             for (instance_name, instance) in &instances.items {
                 if instance_name.trim().is_empty() {
@@ -15872,95 +15915,19 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "`workflows.{name}.instances` must not declare an empty instance name"
                     )));
                 }
-                if let Some(topology) = instance.topology.as_ref() {
-                    for required in &topology.requires_instances {
-                        let required_name = required.trim();
-                        if required_name.is_empty() {
-                            errors.push(ValidationError::new(format!(
-                                "`workflows.{name}.instances.{instance_name}.topology.requires_instances` must not include empty instance names"
-                            )));
-                        } else if required_name == instance_name {
-                            errors.push(ValidationError::new(format!(
-                                "`workflows.{name}.instances.{instance_name}.topology.requires_instances` must not reference `{instance_name}` itself"
-                            )));
-                        } else if !instances.items.contains_key(required_name) {
-                            errors.push(ValidationError::new(format!(
-                                "`workflows.{name}.instances.{instance_name}.topology.requires_instances` references unknown instance `{required_name}`"
-                            )));
-                        }
-                    }
-                }
-                for (surface_name, overlay) in &instance.surfaces {
-                    if !contract.surfaces.contains_key(surface_name) {
-                        errors.push(ValidationError::new(format!(
-                            "`workflows.{name}.instances.{instance_name}.surfaces` references unknown surface `{surface_name}`"
-                        )));
-                    }
-                    if overlay.port == Some(0) {
-                        errors.push(ValidationError::new(format!(
-                            "`workflows.{name}.instances.{instance_name}.surfaces.{surface_name}.port` must be between 1 and 65535"
-                        )));
-                    }
-                    if overlay
-                        .path
-                        .as_deref()
-                        .is_some_and(|value| value.trim().is_empty())
-                    {
-                        errors.push(ValidationError::new(format!(
-                            "`workflows.{name}.instances.{instance_name}.surfaces.{surface_name}.path` must not be empty"
-                        )));
-                    }
-                }
-                for (task_name, overlay) in &instance.tasks {
-                    validate_task_reference(
-                        &format!("workflows.{name}.instances.{instance_name}.tasks"),
-                        Some(task_name.as_str()),
-                        &contract.tasks,
-                        errors,
-                    );
-                    validate_workflow_adapter_inputs(
-                        name,
-                        &format!(
-                            "workflows.{name}.instances.{instance_name}.tasks.{task_name}.adapter_inputs"
-                        ),
-                        &overlay.adapter_inputs,
-                        errors,
-                    );
-                    if !overlay.adapter_inputs.is_empty()
-                        && let Some(task) = contract.tasks.get(task_name)
-                    {
-                        let supports =
-                            overlay
-                                .adapter_inputs
-                                .declared_families()
-                                .all(|family_name| {
-                                    ADAPTER_INPUT_FAMILIES
-                                        .iter()
-                                        .copied()
-                                        .find(|family| family.family_name() == family_name)
-                                        .is_none_or(|family| family.task_supports(task))
-                                });
-                        if !supports {
-                            errors.push(ValidationError::new(format!(
-                                "`workflows.{name}.instances.{instance_name}.tasks.{task_name}.adapter_inputs` requires `{task_name}` to support each declared adapter input family"
-                            )));
-                        }
-                    }
-                    if let Some(runtime_overlay) = overlay.runtime.as_ref() {
-                        validate_workflow_instance_task_runtime_overlay(
-                            contract,
-                            name.as_str(),
-                            instance_name.as_str(),
-                            task_name.as_str(),
-                            runtime_overlay,
-                            errors,
-                        );
-                    }
-                }
+                validate_workflow_instance_spec(
+                    contract,
+                    name.as_str(),
+                    instance_name.as_str(),
+                    instance,
+                    instances,
+                    false,
+                    errors,
+                );
             }
             let mut topology_visiting = BTreeSet::new();
             let mut topology_visited = BTreeSet::new();
-            for instance_name in instances.items.keys() {
+            for instance_name in instances.available_instance_names() {
                 validate_workflow_instance_topology_cycle(
                     name.as_str(),
                     instance_name.as_str(),
@@ -17624,12 +17591,12 @@ fn validate_workflow_instance_topology_cycle(
         return;
     }
 
-    if let Some(instance) = instances.items.get(instance_name)
-        && let Some(topology) = instance.topology.as_ref()
+    if let Some(instance) = instances.resolve_instance(instance_name)
+        && let Some(topology) = instance.spec.topology.as_ref()
     {
         for required in &topology.requires_instances {
             let required_name = required.trim();
-            if required_name.is_empty() || !instances.items.contains_key(required_name) {
+            if required_name.is_empty() || !instances.contains_instance_name(required_name) {
                 continue;
             }
             validate_workflow_instance_topology_cycle(
@@ -17647,12 +17614,139 @@ fn validate_workflow_instance_topology_cycle(
     visited.insert(instance_name.to_string());
 }
 
+fn validate_workflow_instance_spec(
+    contract: &crate::schema::Contract,
+    workflow_name: &str,
+    instance_name: &str,
+    instance: &crate::schema::WorkflowInstanceSpec,
+    instances: &crate::schema::WorkflowInstanceCatalog,
+    generated_template: bool,
+    errors: &mut Vec<ValidationError>,
+) {
+    if let Some(topology) = instance.topology.as_ref() {
+        for required in &topology.requires_instances {
+            let required_name = required.trim();
+            if required_name.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{workflow_name}.instances.{instance_name}.topology.requires_instances` must not include empty instance names"
+                )));
+            } else if required_name == instance_name {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{workflow_name}.instances.{instance_name}.topology.requires_instances` must not reference `{instance_name}` itself"
+                )));
+            } else if !instances.contains_instance_name(required_name) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{workflow_name}.instances.{instance_name}.topology.requires_instances` references unknown instance `{required_name}`"
+                )));
+            }
+        }
+    }
+    for (surface_name, overlay) in &instance.surfaces {
+        if !contract.surfaces.contains_key(surface_name) {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{workflow_name}.instances.{instance_name}.surfaces` references unknown surface `{surface_name}`"
+            )));
+        }
+        validate_workflow_instance_surface_overlay(
+            workflow_name,
+            instance_name,
+            surface_name.as_str(),
+            overlay,
+            generated_template,
+            errors,
+        );
+    }
+    for (task_name, overlay) in &instance.tasks {
+        validate_task_reference(
+            &format!("workflows.{workflow_name}.instances.{instance_name}.tasks"),
+            Some(task_name.as_str()),
+            &contract.tasks,
+            errors,
+        );
+        validate_workflow_adapter_inputs(
+            workflow_name,
+            &format!(
+                "workflows.{workflow_name}.instances.{instance_name}.tasks.{task_name}.adapter_inputs"
+            ),
+            &overlay.adapter_inputs,
+            errors,
+        );
+        if !overlay.adapter_inputs.is_empty()
+            && let Some(task) = contract.tasks.get(task_name)
+        {
+            let supports = overlay
+                .adapter_inputs
+                .declared_families()
+                .all(|family_name| {
+                    ADAPTER_INPUT_FAMILIES
+                        .iter()
+                        .copied()
+                        .find(|family| family.family_name() == family_name)
+                        .is_none_or(|family| family.task_supports(task))
+                });
+            if !supports {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{workflow_name}.instances.{instance_name}.tasks.{task_name}.adapter_inputs` requires `{task_name}` to support each declared adapter input family"
+                )));
+            }
+        }
+        if let Some(runtime_overlay) = overlay.runtime.as_ref() {
+            validate_workflow_instance_task_runtime_overlay(
+                contract,
+                workflow_name,
+                instance_name,
+                task_name.as_str(),
+                runtime_overlay,
+                generated_template,
+                errors,
+            );
+        }
+    }
+}
+
+fn validate_workflow_instance_surface_overlay(
+    workflow_name: &str,
+    instance_name: &str,
+    surface_name: &str,
+    overlay: &crate::schema::WorkflowInstanceSurfaceOverlaySpec,
+    generated_template: bool,
+    errors: &mut Vec<ValidationError>,
+) {
+    let field_prefix =
+        format!("workflows.{workflow_name}.instances.{instance_name}.surfaces.{surface_name}");
+    if overlay.port == Some(0) {
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.port` must be between 1 and 65535"
+        )));
+    }
+    if overlay.port_stride.is_some() && overlay.port.is_none() {
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.port_stride` requires `{field_prefix}.port`"
+        )));
+    }
+    if overlay.port_stride.is_some() && !generated_template {
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.port_stride` is only valid inside `workflows.{workflow_name}.instances.generated.*.template`"
+        )));
+    }
+    if overlay
+        .path
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.path` must not be empty"
+        )));
+    }
+}
+
 fn validate_workflow_instance_task_runtime_overlay(
     contract: &crate::schema::Contract,
     workflow_name: &str,
     instance_name: &str,
     task_name: &str,
     overlay: &crate::schema::WorkflowInstanceTaskRuntimeOverlaySpec,
+    generated_template: bool,
     errors: &mut Vec<ValidationError>,
 ) {
     let Some(task) = contract.tasks.get(task_name) else {
@@ -17708,6 +17802,7 @@ fn validate_workflow_instance_task_runtime_overlay(
                 validate_task_runtime_port_overlay(
                     port,
                     &format!("`{field_prefix}.listeners.{listener_name}.bind.port`"),
+                    generated_template,
                     errors,
                 );
             }
@@ -17728,6 +17823,7 @@ fn validate_workflow_instance_task_runtime_overlay(
                 validate_task_runtime_host_port_overlay(
                     port,
                     &format!("`{field_prefix}.listeners.{listener_name}.project.host.port`"),
+                    generated_template,
                     errors,
                 );
             }
@@ -17752,6 +17848,7 @@ fn validate_workflow_instance_task_runtime_overlay(
 fn validate_task_runtime_port_overlay(
     overlay: &crate::schema::WorkflowInstanceTaskRuntimePortOverlaySpec,
     field_path: &str,
+    generated_template: bool,
     errors: &mut Vec<ValidationError>,
 ) {
     if overlay.value == Some(0) {
@@ -17759,16 +17856,37 @@ fn validate_task_runtime_port_overlay(
             "{field_path} must be between 1 and 65535"
         )));
     }
+    if overlay.stride.is_some() && overlay.value.is_none() {
+        errors.push(ValidationError::new(format!(
+            "{field_path}.stride requires {field_path}.value"
+        )));
+    }
+    if overlay.stride.is_some() && !generated_template {
+        errors.push(ValidationError::new(format!(
+            "{field_path}.stride is only valid inside `workflows.<name>.instances.generated.*.template`"
+        )));
+    }
 }
 
 fn validate_task_runtime_host_port_overlay(
     overlay: &crate::schema::WorkflowInstanceTaskRuntimeHostPortOverlaySpec,
     field_path: &str,
+    generated_template: bool,
     errors: &mut Vec<ValidationError>,
 ) {
     if overlay.value == Some(0) {
         errors.push(ValidationError::new(format!(
             "{field_path} must be between 1 and 65535"
+        )));
+    }
+    if overlay.stride.is_some() && overlay.value.is_none() {
+        errors.push(ValidationError::new(format!(
+            "{field_path}.stride requires {field_path}.value"
+        )));
+    }
+    if overlay.stride.is_some() && !generated_template {
+        errors.push(ValidationError::new(format!(
+            "{field_path}.stride is only valid inside `workflows.<name>.instances.generated.*.template`"
         )));
     }
 }
@@ -18311,6 +18429,159 @@ workflows:
             ),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn rejects_generated_instance_stride_overlays_on_explicit_instances() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-runtime-validation
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
+    runtime:
+      kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+      surfaces: [ui]
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        tasks:
+          dev:
+            runtime:
+              listeners:
+                ui:http:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 3000
+                      stride: 10000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("stride should be generated-only");
+        let rendered = errors.to_string();
+        assert!(
+            rendered.contains(
+                "bind.port`.stride is only valid inside `workflows.<name>.instances.generated.*.template`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn validates_generated_workflow_instances_with_bounded_range() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-runtime-validation
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
+    runtime:
+      kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+      surfaces: [ui]
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      generated:
+        workspaces:
+          prefix: ws
+          start: 1
+          end: 4
+          template:
+            topology:
+              requires_instances: [ws0]
+            tasks:
+              dev:
+                runtime:
+                  listeners:
+                    ui:http:
+                      bind:
+                        port:
+                          mode: fixed
+                          value: 3000
+                          stride: 10000
+                      project:
+                        host:
+                          port:
+                            mode: fixed
+                            value: 3000
+                            stride: 10000
+            surfaces:
+              ui:
+                port: 3000
+                port_stride: 10000
+"#,
+        )
+        .unwrap();
+
+        if let Err(errors) = validate_contract(&contract) {
+            panic!("unexpected validation errors: {errors}");
+        }
     }
 
     #[test]

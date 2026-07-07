@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- widened workflow-instance ownership with bounded generated instance families under
+  `workflows.<name>.instances.generated`, so one explicit default instance can now coexist with a
+  finite repeated selector family like `ws1..ws8`; generated templates stay on the existing
+  instance boundary, support `${OTA_WORKFLOW_INSTANCE}` /
+  `${OTA_WORKFLOW_INSTANCE_INDEX}` string interpolation, and can derive repeated surface/runtime
+  host ports with `port_stride` / `stride` instead of duplicating explicit per-instance overlays
 - widened task and workflow discovery output so `ota tasks --use`, `ota tasks --safe --use`,
   and workflow summaries now publish explicit `Humans` and `Agents` commands instead of a single
   ambiguous `Use` line, and task/workflow JSON now carries the same canonical `use` object with
