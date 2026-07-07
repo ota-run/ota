@@ -1516,6 +1516,7 @@ mod tests {
         let task = TaskSpec {
             description: None,
             notes: None,
+            runtime_boundary: None,
             category: None,
             context: None,
             env: BTreeMap::new(),
@@ -1637,6 +1638,7 @@ mod tests {
         let task = TaskSpec {
             description: None,
             notes: None,
+            runtime_boundary: None,
             category: None,
             context: None,
             env: BTreeMap::new(),
@@ -1702,6 +1704,7 @@ mod tests {
         let task = TaskSpec {
             description: None,
             notes: None,
+            runtime_boundary: None,
             category: None,
             context: None,
             env: BTreeMap::new(),
@@ -1762,6 +1765,7 @@ mod tests {
             intent: None,
             description: None,
             notes: None,
+            runtime_boundary: None,
             adapter_inputs: TaskAdapterInputsSpec {
                 overlays: BTreeMap::from([(
                     String::from("compose"),

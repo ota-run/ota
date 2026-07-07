@@ -1903,6 +1903,7 @@ Fields:
 - `execution`: optional mode-aware execution branches for one task intent
 - `when`: optional execution-guard conditions for the selected task node
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
+- `runtime_boundary`: optional canonical runtime sandbox baseline for this task lane
 - `variants`: optional list of conditional task executions
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `depends_on`: optional list of task names
@@ -2269,6 +2270,20 @@ tasks:
 - `modes.<mode>.context`: optional context override for that mode
 - `modes.<mode>.depends_on`: optional task dependency override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
+- `runtime_boundary.filesystem.repo_root_mode`: optional repo-root mount posture for the selected
+  lane (`read_only` or `writable`)
+- `runtime_boundary.filesystem.writable_paths`: optional ordered repo-relative writable carve-outs
+  for the selected lane
+- `runtime_boundary.filesystem.protected_paths`: optional ordered repo-relative protected carve-outs
+  for the selected lane
+- `runtime_boundary.network.default`: optional default outbound posture for the selected lane
+  (`deny` or `allow`)
+- `runtime_boundary.network.outbound_targets`: optional ordered explicit outbound target truth for
+  the selected lane
+  - `kind`: required `host`, `domain`, or `service_alias`
+  - `value`: required literal target value
+  - `destination_shape`: optional `single_purpose_host`, `multi_tenant_host`, `relay_host`, or
+    `send_host`
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
 - `adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` or `podman compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
 - `adapter_inputs.overlays.compose.env_files`: canonical optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` or `podman compose` adapter input truth rather than process dotenv injection
@@ -2321,6 +2336,9 @@ tasks:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `depends_on`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
+- `execution.runtime_boundary` is the repo baseline for that task lane; task-local
+  `runtime_boundary` can narrow or replace it for the selected task instead of leaving sandbox
+  posture split across agent metadata and shell conventions
 - `modes.<mode>.depends_on` replaces the task-level dependency list for that mode; omit it when the task-level `depends_on` already matches the selected execution plane
 - use `modes.<mode>.depends_on` when one task keeps the same identity but needs different preflight on host vs container instead of cloning tasks like `build:host`
 - use `env_files` for task-process dotenv overlays; use `adapter_inputs.overlays.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
@@ -3478,6 +3496,17 @@ Fields:
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
+- `<name>.runtime_boundary`: optional canonical runtime sandbox baseline for the selected workflow
+  path
+  - `filesystem.repo_root_mode`: optional repo-root mount posture (`read_only` or `writable`)
+  - `filesystem.writable_paths`: optional ordered repo-relative writable carve-outs
+  - `filesystem.protected_paths`: optional ordered repo-relative protected carve-outs
+  - `network.default`: optional default outbound posture (`deny` or `allow`)
+  - `network.outbound_targets`: optional ordered explicit outbound target truth
+    - `kind`: required `host`, `domain`, or `service_alias`
+    - `value`: required literal target value
+    - `destination_shape`: optional `single_purpose_host`, `multi_tenant_host`, `relay_host`, or
+      `send_host`
 - `<name>.adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory the
   workflow should project into selected compose task paths when that path does not already declare one
 - `<name>.adapter_inputs.overlays.compose.env_files`: canonical optional ordered repo-relative adapter-owned
@@ -3659,6 +3688,10 @@ Current behavior:
 - use `workflows.<name>.instances.<instance>.tasks.<task>.runtime` when one selected task path needs instance-specific service listener publication or readiness selection and the base task already owns explicit `runtime` truth
 - keep workflow-instance runtime specialization on the task runtime boundary: override existing listener bind/project ports or readiness fields there instead of inventing a separate workflow-level listener model
 - workflow-instance task runtime overlays currently merge onto an existing top-level task `runtime`; they do not invent new listeners or replace runtime ownership from scratch
+- `runtime_boundary` follows the same selected-path precedence ladder: `execution.runtime_boundary`
+  is the repo baseline, `workflows.<name>.runtime_boundary` can specialize the selected workflow
+  path, and `tasks.<name>.runtime_boundary` remains the narrowest selected-lane owner when the
+  workflow resolves through that task
 - generated instance templates may derive repeated port families without shell math: `surfaces.<name>.port_stride`,
   `tasks.<name>.runtime.listeners.<listener>.bind.port.stride`, and
   `tasks.<name>.runtime.listeners.<listener>.project.host.port.stride` multiply the generated

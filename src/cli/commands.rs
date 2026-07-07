@@ -9972,6 +9972,7 @@ fn build_assist_add_task_proposal(
     let mut task = TaskSpec {
         description: description.map(ToOwned::to_owned),
         notes: None,
+        runtime_boundary: None,
         category: None,
         context: None,
         env: BTreeMap::new(),
@@ -13873,7 +13874,9 @@ fn task_harness_capability(
         command: format!("ota run {} --agent", task.name),
         environment_boundary: task_harness_environment_boundary(task),
         preflight: harness_preflight_for_task(task, refusal.as_ref()),
-        sandbox_policy: Some(compiled_codex_local_sandbox_policy(agent, Some(&effects))),
+        sandbox_policy: Some(compiled_codex_local_sandbox_policy_for_task(
+            contract, agent, task.name, &effects,
+        )),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -14008,50 +14011,136 @@ fn workflow_harness_capability(
         command: format!("ota up --workflow {selector} --agent"),
         environment_boundary: workflow_harness_environment_boundary(contract, workflow),
         preflight: harness_preflight_for_workflow(contract, workflow, refusal.as_ref()),
-        sandbox_policy: Some(compiled_codex_local_sandbox_policy(agent, Some(&effects))),
+        sandbox_policy: Some(compiled_codex_local_sandbox_policy_for_workflow(
+            contract,
+            agent,
+            workflow.name,
+            &effects,
+        )),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
     }
 }
 
+#[derive(Debug, Clone)]
+struct EffectiveRuntimeBoundary {
+    filesystem: Option<crate::schema::RuntimeBoundaryFilesystemSpec>,
+    network: Option<crate::schema::RuntimeBoundaryNetworkSpec>,
+    filesystem_source: Option<&'static str>,
+    network_source: Option<&'static str>,
+}
+
+fn compiled_codex_local_sandbox_policy_for_task(
+    contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
+    task_name: &str,
+    effects: &crate::output::TaskEffectsSummary,
+) -> crate::output::HarnessSandboxPolicy {
+    let boundary = effective_runtime_boundary_for_task(contract, task_name);
+    compiled_codex_local_sandbox_policy(agent, Some(effects), Some(&boundary))
+}
+
+fn compiled_codex_local_sandbox_policy_for_workflow(
+    contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
+    workflow_name: &str,
+    effects: &crate::output::TaskEffectsSummary,
+) -> crate::output::HarnessSandboxPolicy {
+    let boundary = effective_runtime_boundary_for_workflow(contract, workflow_name);
+    compiled_codex_local_sandbox_policy(agent, Some(effects), Some(&boundary))
+}
+
 fn compiled_codex_local_sandbox_policy(
     agent: Option<&AgentSummary<'_>>,
     effects: Option<&crate::output::TaskEffectsSummary>,
+    boundary: Option<&EffectiveRuntimeBoundary>,
 ) -> crate::output::HarnessSandboxPolicy {
-    let filesystem = match agent {
-        Some(agent) if !(agent.writable_paths.is_empty() && agent.protected_paths.is_empty()) => {
-            crate::output::HarnessSandboxFilesystemPolicy {
-                state: String::from("compiled"),
-                repo_root_mode: Some(String::from("read_only")),
-                writable_paths: agent.writable_paths.clone(),
-                protected_paths: agent.protected_paths.clone(),
-                source: String::from("agent_boundary_derived"),
+    let filesystem = match boundary.and_then(|entry| entry.filesystem.as_ref()) {
+        Some(filesystem) => crate::output::HarnessSandboxFilesystemPolicy {
+            state: String::from("compiled"),
+            repo_root_mode: filesystem
+                .repo_root_mode
+                .map(crate::schema::RuntimeBoundaryRepoRootMode::as_str)
+                .map(str::to_string),
+            writable_paths: filesystem.writable_paths.clone(),
+            protected_paths: filesystem.protected_paths.clone(),
+            source: boundary
+                .and_then(|entry| entry.filesystem_source)
+                .unwrap_or("runtime_boundary")
+                .to_string(),
+        },
+        None => match agent {
+            Some(agent)
+                if !(agent.writable_paths.is_empty() && agent.protected_paths.is_empty()) =>
+            {
+                crate::output::HarnessSandboxFilesystemPolicy {
+                    state: String::from("compiled"),
+                    repo_root_mode: Some(String::from("read_only")),
+                    writable_paths: agent.writable_paths.clone(),
+                    protected_paths: agent.protected_paths.clone(),
+                    source: String::from("agent_boundary_derived"),
+                }
             }
-        }
-        _ => crate::output::HarnessSandboxFilesystemPolicy {
-            state: String::from("unavailable"),
-            repo_root_mode: None,
-            writable_paths: Vec::new(),
-            protected_paths: Vec::new(),
-            source: String::from("missing_agent_boundary"),
+            _ => crate::output::HarnessSandboxFilesystemPolicy {
+                state: String::from("unavailable"),
+                repo_root_mode: None,
+                writable_paths: Vec::new(),
+                protected_paths: Vec::new(),
+                source: String::from("missing_agent_boundary"),
+            },
         },
     };
 
-    let network = if effects.is_some_and(|entry| entry.network) {
-        crate::output::HarnessSandboxNetworkPolicy {
+    let network = match boundary.and_then(|entry| entry.network.as_ref()) {
+        Some(network) => crate::output::HarnessSandboxNetworkPolicy {
             state: String::from("compiled"),
-            default: String::from("allow"),
-            scope: String::from("broad"),
-            source: String::from("lane_effect_network"),
+            default: network
+                .default
+                .unwrap_or(crate::schema::RuntimeBoundaryNetworkDefault::Deny)
+                .as_str()
+                .to_string(),
+            scope: if network.outbound_targets.is_empty() {
+                String::from("broad")
+            } else {
+                String::from("targeted")
+            },
+            enforcement: String::from("advisory_only"),
+            source: boundary
+                .and_then(|entry| entry.network_source)
+                .unwrap_or("runtime_boundary")
+                .to_string(),
+            outbound_targets: network
+                .outbound_targets
+                .iter()
+                .map(|target| crate::output::HarnessSandboxOutboundTarget {
+                    kind: target.kind.as_str().to_string(),
+                    value: target.value.clone(),
+                    destination_shape: target
+                        .destination_shape
+                        .map(crate::schema::RuntimeBoundaryDestinationShape::as_str)
+                        .map(str::to_string),
+                })
+                .collect(),
+        },
+        None if effects.is_some_and(|entry| entry.network) => {
+            crate::output::HarnessSandboxNetworkPolicy {
+                state: String::from("compiled"),
+                default: String::from("allow"),
+                scope: String::from("broad"),
+                enforcement: String::from("advisory_only"),
+                source: String::from("lane_effect_network"),
+                outbound_targets: Vec::new(),
+            }
         }
-    } else {
-        crate::output::HarnessSandboxNetworkPolicy {
+        None => crate::output::HarnessSandboxNetworkPolicy {
             state: String::from("compiled"),
             default: String::from("deny"),
             scope: String::from("none"),
+            enforcement: String::from("advisory_only"),
             source: String::from("no_network_effect"),
-        }
+            outbound_targets: Vec::new(),
+        },
     };
 
     crate::output::HarnessSandboxPolicy {
@@ -14059,6 +14148,107 @@ fn compiled_codex_local_sandbox_policy(
         filesystem,
         network,
     }
+}
+
+fn effective_runtime_boundary_for_task(
+    contract: &Contract,
+    task_name: &str,
+) -> EffectiveRuntimeBoundary {
+    let mut boundary = EffectiveRuntimeBoundary {
+        filesystem: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.filesystem.clone()),
+        network: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.network.clone()),
+        filesystem_source: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.filesystem.as_ref())
+            .map(|_| "execution.runtime_boundary"),
+        network_source: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.network.as_ref())
+            .map(|_| "execution.runtime_boundary"),
+    };
+    if let Some(task) = contract.tasks.get(task_name)
+        && let Some(runtime_boundary) = task.runtime_boundary.as_ref()
+    {
+        if runtime_boundary.filesystem.is_some() {
+            boundary.filesystem = runtime_boundary.filesystem.clone();
+            boundary.filesystem_source = Some("tasks.<name>.runtime_boundary");
+        }
+        if runtime_boundary.network.is_some() {
+            boundary.network = runtime_boundary.network.clone();
+            boundary.network_source = Some("tasks.<name>.runtime_boundary");
+        }
+    }
+    boundary
+}
+
+fn effective_runtime_boundary_for_workflow(
+    contract: &Contract,
+    workflow_name: &str,
+) -> EffectiveRuntimeBoundary {
+    let mut boundary = EffectiveRuntimeBoundary {
+        filesystem: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.filesystem.clone()),
+        network: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.network.clone()),
+        filesystem_source: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.filesystem.as_ref())
+            .map(|_| "execution.runtime_boundary"),
+        network_source: contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.runtime_boundary.as_ref())
+            .and_then(|entry| entry.network.as_ref())
+            .map(|_| "execution.runtime_boundary"),
+    };
+    if let Some((_, workflow)) = contract.selected_workflow(Some(workflow_name))
+        && let Some(runtime_boundary) = workflow.runtime_boundary.as_ref()
+    {
+        if runtime_boundary.filesystem.is_some() {
+            boundary.filesystem = runtime_boundary.filesystem.clone();
+            boundary.filesystem_source = Some("workflows.<name>.runtime_boundary");
+        }
+        if runtime_boundary.network.is_some() {
+            boundary.network = runtime_boundary.network.clone();
+            boundary.network_source = Some("workflows.<name>.runtime_boundary");
+        }
+    }
+    if let Some(task_name) = selected_up_run_task_name(contract, Some(workflow_name))
+        .or_else(|| selected_up_setup_task_name(contract, Some(workflow_name)))
+        .or_else(|| selected_up_prepare_task_name(contract, Some(workflow_name)))
+        && let Some(task) = contract.tasks.get(task_name)
+        && let Some(runtime_boundary) = task.runtime_boundary.as_ref()
+    {
+        if runtime_boundary.filesystem.is_some() {
+            boundary.filesystem = runtime_boundary.filesystem.clone();
+            boundary.filesystem_source = Some("tasks.<name>.runtime_boundary");
+        }
+        if runtime_boundary.network.is_some() {
+            boundary.network = runtime_boundary.network.clone();
+            boundary.network_source = Some("tasks.<name>.runtime_boundary");
+        }
+    }
+    boundary
 }
 
 fn harness_capability_profile_for_tasks(
@@ -59622,6 +59812,166 @@ agent:
         assert!(
             json["capability_profile"]["refused_workflows"][0]["preflight"]["crossing_required"]
                 .is_null()
+        );
+    }
+
+    #[test]
+    fn tasks_json_runtime_boundary_overrides_sandbox_policy() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  runtime_boundary:
+    filesystem:
+      repo_root_mode: read_only
+      writable_paths:
+        - tmp
+    network:
+      default: deny
+      outbound_targets:
+        - kind: domain
+          value: api.example.com
+          destination_shape: single_purpose_host
+tasks:
+  verify:
+    run: cargo test
+    safe_for_agent: true
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: writable
+        writable_paths:
+          - reports
+        protected_paths:
+          - .github/workflows
+      network:
+        default: allow
+        outbound_targets:
+          - kind: service_alias
+            value: postgres
+            destination_shape: single_purpose_host
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::tasks(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            false,
+            false,
+            false,
+            false,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("tasks json");
+        let sandbox = &json["capability_profile"]["callable_tasks"][0]["sandbox_policy"];
+        assert_eq!(sandbox["filesystem"]["repo_root_mode"], "writable");
+        assert_eq!(
+            sandbox["filesystem"]["source"],
+            "tasks.<name>.runtime_boundary"
+        );
+        assert_eq!(sandbox["filesystem"]["writable_paths"][0], "reports");
+        assert_eq!(
+            sandbox["filesystem"]["protected_paths"][0],
+            ".github/workflows"
+        );
+        assert_eq!(sandbox["network"]["default"], "allow");
+        assert_eq!(sandbox["network"]["scope"], "targeted");
+        assert_eq!(sandbox["network"]["enforcement"], "advisory_only");
+        assert_eq!(
+            sandbox["network"]["source"],
+            "tasks.<name>.runtime_boundary"
+        );
+        assert_eq!(
+            sandbox["network"]["outbound_targets"][0]["kind"],
+            "service_alias"
+        );
+        assert_eq!(
+            sandbox["network"]["outbound_targets"][0]["value"],
+            "postgres"
+        );
+        assert_eq!(
+            sandbox["network"]["outbound_targets"][0]["destination_shape"],
+            "single_purpose_host"
+        );
+    }
+
+    #[test]
+    fn workflows_json_runtime_boundary_overrides_sandbox_policy() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  runtime_boundary:
+    filesystem:
+      repo_root_mode: read_only
+      writable_paths:
+        - tmp
+    network:
+      default: deny
+tasks:
+  verify:
+    run: cargo test
+    safe_for_agent: true
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths:
+          - workflow-cache
+      network:
+        default: allow
+        outbound_targets:
+          - kind: host
+            value: 127.0.0.1
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::workflows(Some(repo.path()), None, &[], OutputFormat::Json, false);
+
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("workflows json");
+        let sandbox = &json["capability_profile"]["callable_workflows"][0]["sandbox_policy"];
+        assert_eq!(sandbox["filesystem"]["repo_root_mode"], "read_only");
+        assert_eq!(
+            sandbox["filesystem"]["source"],
+            "workflows.<name>.runtime_boundary"
+        );
+        assert_eq!(sandbox["filesystem"]["writable_paths"][0], "workflow-cache");
+        assert_eq!(sandbox["network"]["default"], "allow");
+        assert_eq!(sandbox["network"]["scope"], "targeted");
+        assert_eq!(
+            sandbox["network"]["source"],
+            "workflows.<name>.runtime_boundary"
+        );
+        assert_eq!(sandbox["network"]["outbound_targets"][0]["kind"], "host");
+        assert_eq!(
+            sandbox["network"]["outbound_targets"][0]["value"],
+            "127.0.0.1"
         );
     }
 

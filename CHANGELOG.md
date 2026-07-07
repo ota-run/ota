@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added canonical `runtime_boundary` ownership on repo execution, workflow, and task lanes, so
+  contracts can declare compiled filesystem posture plus explicit outbound target truth for
+  harness-facing sandbox export instead of relying only on derived `agent.*_paths` and broad
+  effect-owned network posture
 - widened workflow-instance ownership with bounded generated instance families under
   `workflows.<name>.instances.generated`, so one explicit default instance can now coexist with a
   finite repeated selector family like `ws1..ws8`; generated templates stay on the existing

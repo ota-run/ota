@@ -1853,6 +1853,10 @@ Each task capability entry carries:
 - `filesystem.state: "compiled"` means ota could derive a read-only repo posture plus
   writable/protected carve-outs from declared `agent.writable_paths` and
   `agent.protected_paths`
+- `filesystem.source: "execution.runtime_boundary"`, `"workflows.<name>.runtime_boundary"`, or
+  `"tasks.<name>.runtime_boundary"` means the lane publishes canonical runtime-boundary truth and
+  ota is compiling that selected-path owner directly instead of falling back to derived agent
+  boundary posture
 - `filesystem.state: "unavailable"` means the lane does not yet carry enough declared agent
   boundary truth for ota to claim a trustworthy writable-mount policy
 - `network.default: "deny"` with `scope: "none"` means the lane does not declare network use on
@@ -1860,6 +1864,9 @@ Each task capability entry carries:
 - `network.default: "allow"` with `scope: "broad"` means the lane declares network use, but ota
   is still honestly compiling only the broad effect-owned posture here rather than a host or
   destination allowlist
+- `network.scope: "targeted"` plus `outbound_targets[]` means the selected lane declares explicit
+  runtime-boundary target truth; `enforcement` still stays honest as `advisory_only` in the
+  current shipped slice
 
 Refused task capability entries may also carry additive `blocked_task` and `closure_path` when a
 declared-safe task is refused because its reachable closure leaves the safe surface.
@@ -2031,8 +2038,9 @@ Notes:
   scrape human output or guess workflow closure safety
 - workflow capability entries may also include additive `sandbox_policy` for the first compiled
   runtime target, `codex_local`, using the same semantics as task capability entries: filesystem
-  policy compiles from declared agent boundary truth when present, and network policy currently
-  compiles as either `deny/none` or `allow/broad` from the lane effect surface
+  policy compiles from declared runtime-boundary or derived agent boundary truth when present, and
+  network policy currently compiles as either effect-owned `deny/none` / `allow/broad` or
+  targeted runtime-boundary `outbound_targets[]`
 - workflow capability entries publish `preflight.proof_expected: true` because `ota up` is a
   proof-owning lane: the selected workflow is expected to drive readiness or runtime-proof
   evidence when executed

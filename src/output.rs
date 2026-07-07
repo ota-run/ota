@@ -3056,7 +3056,18 @@ pub struct HarnessSandboxNetworkPolicy {
     pub state: String,
     pub default: String,
     pub scope: String,
+    pub enforcement: String,
     pub source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub outbound_targets: Vec<HarnessSandboxOutboundTarget>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessSandboxOutboundTarget {
+    pub kind: String,
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination_shape: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

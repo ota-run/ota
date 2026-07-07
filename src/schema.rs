@@ -673,6 +673,8 @@ pub struct WorkflowSpec {
     pub description: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_boundary: Option<RuntimeBoundarySpec>,
     #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
     pub adapter_inputs: TaskAdapterInputsSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -896,6 +898,120 @@ pub struct WorkflowReadinessSignalSpec {
 pub enum WorkflowExposeSpec {
     Url(String),
     SurfaceRef { surface: String },
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBoundarySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<RuntimeBoundaryFilesystemSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<RuntimeBoundaryNetworkSpec>,
+}
+
+impl RuntimeBoundarySpec {
+    pub const fn is_empty(&self) -> bool {
+        self.filesystem.is_none() && self.network.is_none()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBoundaryFilesystemSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root_mode: Option<RuntimeBoundaryRepoRootMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writable_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub protected_paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryRepoRootMode {
+    ReadOnly,
+    Writable,
+}
+
+impl RuntimeBoundaryRepoRootMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::Writable => "writable",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBoundaryNetworkSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<RuntimeBoundaryNetworkDefault>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outbound_targets: Vec<RuntimeBoundaryOutboundTargetSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryNetworkDefault {
+    Deny,
+    Allow,
+}
+
+impl RuntimeBoundaryNetworkDefault {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deny => "deny",
+            Self::Allow => "allow",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBoundaryOutboundTargetSpec {
+    pub kind: RuntimeBoundaryOutboundTargetKind,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_shape: Option<RuntimeBoundaryDestinationShape>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryOutboundTargetKind {
+    Host,
+    Domain,
+    ServiceAlias,
+}
+
+impl RuntimeBoundaryOutboundTargetKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::Domain => "domain",
+            Self::ServiceAlias => "service_alias",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryDestinationShape {
+    SinglePurposeHost,
+    MultiTenantHost,
+    RelayHost,
+    SendHost,
+}
+
+impl RuntimeBoundaryDestinationShape {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SinglePurposeHost => "single_purpose_host",
+            Self::MultiTenantHost => "multi_tenant_host",
+            Self::RelayHost => "relay_host",
+            Self::SendHost => "send_host",
+        }
+    }
 }
 
 impl WorkflowExposeSpec {
@@ -1231,6 +1347,7 @@ pub struct Execution {
     pub preferred: Option<Backend>,
     pub supported: Vec<Backend>,
     pub lifecycle: Option<Lifecycle>,
+    pub runtime_boundary: Option<RuntimeBoundarySpec>,
     pub backends: Option<ExecutionBackends>,
     pub default_context: Option<String>,
     pub contexts: BTreeMap<String, ExecutionContext>,
@@ -1253,6 +1370,9 @@ impl Serialize for Execution {
         if self.lifecycle.is_some() {
             field_count += 1;
         }
+        if self.runtime_boundary.is_some() {
+            field_count += 1;
+        }
         if self.backends.is_some() {
             field_count += 1;
         }
@@ -1272,6 +1392,9 @@ impl Serialize for Execution {
         }
         if let Some(lifecycle) = &self.lifecycle {
             state.serialize_field("lifecycle", lifecycle)?;
+        }
+        if let Some(runtime_boundary) = &self.runtime_boundary {
+            state.serialize_field("runtime_boundary", runtime_boundary)?;
         }
         if let Some(backends) = &self.backends {
             state.serialize_field("backends", backends)?;
@@ -1318,6 +1441,8 @@ struct ExecutionWire {
     supported: Vec<Backend>,
     #[serde(default)]
     lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    runtime_boundary: Option<RuntimeBoundarySpec>,
     #[serde(default)]
     backends: Option<ExecutionBackends>,
     #[serde(default)]
@@ -1481,6 +1606,7 @@ impl<'de> Deserialize<'de> for Execution {
             preferred: wire.preferred,
             supported: wire.supported,
             lifecycle: wire.lifecycle,
+            runtime_boundary: wire.runtime_boundary,
             backends: wire.backends,
             default_context: wire.default_context,
             contexts,
@@ -4512,6 +4638,8 @@ pub struct TaskSpec {
     pub description: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_boundary: Option<RuntimeBoundarySpec>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
