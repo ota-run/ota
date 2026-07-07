@@ -3033,6 +3033,33 @@ pub struct HarnessCapabilityProfile {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessSandboxPolicy {
+    pub target: String,
+    pub filesystem: HarnessSandboxFilesystemPolicy,
+    pub network: HarnessSandboxNetworkPolicy,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessSandboxFilesystemPolicy {
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_root_mode: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub writable_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub protected_paths: Vec<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct HarnessSandboxNetworkPolicy {
+    pub state: String,
+    pub default: String,
+    pub scope: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct HarnessLaneCapability {
     pub lane_id: String,
     pub lane_kind: String,
@@ -3041,6 +3068,8 @@ pub struct HarnessLaneCapability {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_boundary: Option<HarnessEnvironmentBoundary>,
     pub preflight: GovernancePreflightEvaluation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<HarnessSandboxPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effects: Option<TaskEffectsSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]

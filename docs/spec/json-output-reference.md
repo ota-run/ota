@@ -1823,8 +1823,22 @@ Each task capability entry carries:
 - the canonical agent invocation in `command`
 - an additive `environment_boundary`
 - canonical `preflight` governance state
+- an additive `sandbox_policy` for the first compiled runtime target, `codex_local`
 - additive closure effect posture in `effects` when the selected task path owns network, write,
   adapter, or external-state behavior
+
+`sandbox_policy` is still intentionally narrow in this first slice:
+
+- `filesystem.state: "compiled"` means ota could derive a read-only repo posture plus
+  writable/protected carve-outs from declared `agent.writable_paths` and
+  `agent.protected_paths`
+- `filesystem.state: "unavailable"` means the lane does not yet carry enough declared agent
+  boundary truth for ota to claim a trustworthy writable-mount policy
+- `network.default: "deny"` with `scope: "none"` means the lane does not declare network use on
+  its effect surface
+- `network.default: "allow"` with `scope: "broad"` means the lane declares network use, but ota
+  is still honestly compiling only the broad effect-owned posture here rather than a host or
+  destination allowlist
 
 Refused task capability entries may also carry additive `blocked_task` and `closure_path` when a
 declared-safe task is refused because its reachable closure leaves the safe surface.
@@ -1977,6 +1991,10 @@ Notes:
   exact workflow lane identity, canonical `ota up --workflow ... --agent` commands, workflow
   environment boundaries, and canonical preflight governance state without requiring a harness to
   scrape human output or guess workflow closure safety
+- workflow capability entries may also include additive `sandbox_policy` for the first compiled
+  runtime target, `codex_local`, using the same semantics as task capability entries: filesystem
+  policy compiles from declared agent boundary truth when present, and network policy currently
+  compiles as either `deny/none` or `allow/broad` from the lane effect surface
 - workflow capability entries publish `preflight.proof_expected: true` because `ota up` is a
   proof-owning lane: the selected workflow is expected to drive readiness or runtime-proof
   evidence when executed

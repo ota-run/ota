@@ -394,6 +394,45 @@
         "primary_task": { "type": "string" }
       }
     },
+    "harnessSandboxFilesystemPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "source"],
+      "properties": {
+        "state": { "type": "string" },
+        "repo_root_mode": { "type": "string" },
+        "writable_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" }
+      }
+    },
+    "harnessSandboxNetworkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "default", "scope", "source"],
+      "properties": {
+        "state": { "type": "string" },
+        "default": { "type": "string" },
+        "scope": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "harnessSandboxPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "filesystem", "network"],
+      "properties": {
+        "target": { "type": "string" },
+        "filesystem": { "$ref": "#/$defs/harnessSandboxFilesystemPolicy" },
+        "network": { "$ref": "#/$defs/harnessSandboxNetworkPolicy" }
+      }
+    },
     "harnessLaneCapability": {
       "type": "object",
       "additionalProperties": false,
@@ -405,6 +444,7 @@
         "command": { "type": "string" },
         "environment_boundary": { "$ref": "#/$defs/harnessEnvironmentBoundary" },
         "preflight": { "$ref": "#/$defs/governancePreflightEvaluation" },
+        "sandbox_policy": { "$ref": "#/$defs/harnessSandboxPolicy" },
         "effects": { "$ref": "#/$defs/taskEffects" },
         "blocked_task": { "type": "string" },
         "closure_path": {

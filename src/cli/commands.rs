@@ -13857,7 +13857,11 @@ fn task_harness_environment_boundary(task: &TaskSummary<'_>) -> Option<HarnessEn
     })
 }
 
-fn task_harness_capability(contract: &Contract, task: &TaskSummary<'_>) -> HarnessLaneCapability {
+fn task_harness_capability(
+    contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
+    task: &TaskSummary<'_>,
+) -> HarnessLaneCapability {
     let refusal =
         agent_execution_refusal_for_task(contract, task.name, ExecutionOverrides::default());
     let effects =
@@ -13869,6 +13873,7 @@ fn task_harness_capability(contract: &Contract, task: &TaskSummary<'_>) -> Harne
         command: format!("ota run {} --agent", task.name),
         environment_boundary: task_harness_environment_boundary(task),
         preflight: harness_preflight_for_task(task, refusal.as_ref()),
+        sandbox_policy: Some(compiled_codex_local_sandbox_policy(agent, Some(&effects))),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
@@ -13990,6 +13995,7 @@ fn harness_preflight_for_workflow(
 
 fn workflow_harness_capability(
     contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
     workflow: &WorkflowSummary<'_>,
 ) -> HarnessLaneCapability {
     let selector = workflow_selector_from_summary(workflow);
@@ -14002,9 +14008,58 @@ fn workflow_harness_capability(
         command: format!("ota up --workflow {selector} --agent"),
         environment_boundary: workflow_harness_environment_boundary(contract, workflow),
         preflight: harness_preflight_for_workflow(contract, workflow, refusal.as_ref()),
+        sandbox_policy: Some(compiled_codex_local_sandbox_policy(agent, Some(&effects))),
         effects: (!effects.is_empty()).then_some(effects),
         blocked_task: refusal.as_ref().map(|entry| entry.blocked_task.clone()),
         closure_path: refusal.map(|entry| entry.path).unwrap_or_default(),
+    }
+}
+
+fn compiled_codex_local_sandbox_policy(
+    agent: Option<&AgentSummary<'_>>,
+    effects: Option<&crate::output::TaskEffectsSummary>,
+) -> crate::output::HarnessSandboxPolicy {
+    let filesystem = match agent {
+        Some(agent)
+            if !(agent.writable_paths.is_empty() && agent.protected_paths.is_empty()) =>
+        {
+            crate::output::HarnessSandboxFilesystemPolicy {
+                state: String::from("compiled"),
+                repo_root_mode: Some(String::from("read_only")),
+                writable_paths: agent.writable_paths.clone(),
+                protected_paths: agent.protected_paths.clone(),
+                source: String::from("agent_boundary_derived"),
+            }
+        }
+        _ => crate::output::HarnessSandboxFilesystemPolicy {
+            state: String::from("unavailable"),
+            repo_root_mode: None,
+            writable_paths: Vec::new(),
+            protected_paths: Vec::new(),
+            source: String::from("missing_agent_boundary"),
+        },
+    };
+
+    let network = if effects.is_some_and(|entry| entry.network) {
+        crate::output::HarnessSandboxNetworkPolicy {
+            state: String::from("compiled"),
+            default: String::from("allow"),
+            scope: String::from("broad"),
+            source: String::from("lane_effect_network"),
+        }
+    } else {
+        crate::output::HarnessSandboxNetworkPolicy {
+            state: String::from("compiled"),
+            default: String::from("deny"),
+            scope: String::from("none"),
+            source: String::from("no_network_effect"),
+        }
+    };
+
+    crate::output::HarnessSandboxPolicy {
+        target: String::from("codex_local"),
+        filesystem,
+        network,
     }
 }
 
@@ -14016,7 +14071,7 @@ fn harness_capability_profile_for_tasks(
     let mut callable_tasks = Vec::new();
     let mut refused_tasks = Vec::new();
     for task in tasks {
-        let capability = task_harness_capability(contract, task);
+        let capability = task_harness_capability(contract, agent, task);
         if capability.preflight.state == "allowed" {
             callable_tasks.push(capability);
         } else {
@@ -14052,7 +14107,7 @@ fn harness_capability_profile_for_workflows(
     let mut callable_workflows = Vec::new();
     let mut refused_workflows = Vec::new();
     for listed in workflows {
-        let capability = workflow_harness_capability(contract, &listed.workflow);
+        let capability = workflow_harness_capability(contract, agent, &listed.workflow);
         if capability.preflight.state == "allowed" {
             callable_workflows.push(capability);
         } else {
@@ -59204,6 +59259,22 @@ agent:
             "allowed"
         );
         assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["sandbox_policy"]["target"],
+            "codex_local"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["sandbox_policy"]["filesystem"]["state"],
+            "compiled"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["sandbox_policy"]["filesystem"]["repo_root_mode"],
+            "read_only"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_tasks"][0]["sandbox_policy"]["network"]["default"],
+            "deny"
+        );
+        assert_eq!(
             json["capability_profile"]["refused_tasks"][0]["lane_id"],
             "task:setup"
         );
@@ -59226,6 +59297,14 @@ agent:
         assert_eq!(
             json["capability_profile"]["refused_tasks"][1]["effects"]["network_kind"],
             "integration_test"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["sandbox_policy"]["network"]["default"],
+            "allow"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["sandbox_policy"]["network"]["scope"],
+            "broad"
         );
         assert_eq!(
             json["capability_profile"]["protected_paths"][0],
@@ -59300,6 +59379,18 @@ agent:
         assert_eq!(
             json["capability_profile"]["callable_workflows"][0]["preflight"]["crossing_classification"],
             "routine"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["sandbox_policy"]["target"],
+            "codex_local"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["sandbox_policy"]["filesystem"]["state"],
+            "unavailable"
+        );
+        assert_eq!(
+            json["capability_profile"]["callable_workflows"][0]["sandbox_policy"]["network"]["default"],
+            "deny"
         );
         assert_eq!(
             json["capability_profile"]["refused_workflows"][0]["lane_id"],

@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- widened harness-facing capability JSON with the first compiled sandbox target,
+  `sandbox_policy.target: "codex_local"`, on `ota tasks --json` and
+  `ota workflows --json`; task and workflow capability entries can now publish
+  derived filesystem compilation state from declared `agent.writable_paths` /
+  `agent.protected_paths` plus the current broad network posture compiled from
+  lane effect truth, without inventing host or destination allowlists that the
+  contract does not yet own
+
 ## 1.6.23
 
 - tightened active-execution ownership around container attachment isolation: shared logical
