@@ -1388,13 +1388,33 @@ workflows:
         json["governance"]["required_verification_lanes"][0]["merge_check_id"],
         "ota.verify.verify"
     );
+    assert_eq!(
+        json["governance"]["required_verification_lanes"][0]["evidence_classes"]["merge_check_id"],
+        "derived"
+    );
     assert_eq!(json["governance"]["merge_gate"]["state"], "projected");
     assert_eq!(json["governance"]["merge_gate"]["blocking"], false);
     assert_eq!(json["governance"]["merge_gate"]["required_lane_count"], 1);
     assert_eq!(json["governance"]["merge_gate"]["drift_lane_count"], 0);
     assert_eq!(
+        json["governance"]["merge_gate"]["evidence_classes"]["state"],
+        "derived"
+    );
+    assert_eq!(
+        json["governance"]["merge_gate"]["decision_basis"][0]["id"],
+        "projection:ota.verify.verify"
+    );
+    assert_eq!(
         json["governance"]["merge_gate"]["lanes"][0]["state"],
         "projected"
+    );
+    assert_eq!(
+        json["governance"]["merge_gate"]["lanes"][0]["evidence_classes"]["state"],
+        "derived"
+    );
+    assert_eq!(
+        json["governance"]["merge_gate"]["lanes"][0]["decision_basis"][0]["id"],
+        "projection:ota.verify.verify"
     );
 }
 

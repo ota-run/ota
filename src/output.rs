@@ -130,6 +130,7 @@ pub struct DoctorRequiredVerificationLane {
     pub lane_kind: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contract_sources: Vec<String>,
+    pub evidence_classes: DoctorRequiredVerificationLaneEvidenceClasses,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -138,6 +139,9 @@ pub struct DoctorMergeGateSummary {
     pub blocking: bool,
     pub required_lane_count: usize,
     pub drift_lane_count: usize,
+    pub evidence_classes: DoctorMergeGateSummaryEvidenceClasses,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<DoctorMergeGateLane>,
 }
@@ -149,10 +153,40 @@ pub struct DoctorMergeGateLane {
     pub lane_kind: String,
     pub state: String,
     pub blocking: bool,
+    pub evidence_classes: DoctorMergeGateLaneEvidenceClasses,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contract_sources: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_sources: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorRequiredVerificationLaneEvidenceClasses {
+    pub merge_check_id: String,
+    pub lane_task: String,
+    pub lane_kind: String,
+    pub contract_sources: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorMergeGateSummaryEvidenceClasses {
+    pub state: String,
+    pub blocking: String,
+    pub required_lane_count: String,
+    pub drift_lane_count: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorMergeGateLaneEvidenceClasses {
+    pub merge_check_id: String,
+    pub lane_task: String,
+    pub lane_kind: String,
+    pub state: String,
+    pub blocking: String,
+    pub contract_sources: String,
+    pub provider_sources: String,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

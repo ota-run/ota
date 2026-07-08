@@ -32,8 +32,10 @@ use crate::detector::{
 };
 use crate::doctor::{Finding, FindingGovernanceMetadata, FindingSeverity};
 use crate::output::{
-    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary, DoctorMergeGateLane,
-    DoctorMergeGateSummary, DoctorRequiredVerificationLane,
+    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary,
+    DoctorMergeGateLane, DoctorMergeGateLaneEvidenceClasses, DoctorMergeGateSummary,
+    DoctorMergeGateSummaryEvidenceClasses, DoctorRequiredVerificationLane,
+    DoctorRequiredVerificationLaneEvidenceClasses, GovernanceDecisionBasisEntry,
 };
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
@@ -675,6 +677,7 @@ pub(crate) fn doctor_required_verification_governance(
             lane_task: lane.task_name,
             lane_kind: lane.lane_kind,
             contract_sources: lane.contract_sources,
+            evidence_classes: required_verification_lane_evidence_classes(),
         })
         .collect::<Vec<_>>();
     if required_verification_lanes.is_empty() {
@@ -701,6 +704,8 @@ pub(crate) fn doctor_required_verification_governance(
                     String::from("projected")
                 },
                 blocking: drift.is_some(),
+                evidence_classes: merge_gate_lane_evidence_classes(),
+                decision_basis: merge_gate_lane_decision_basis(lane, drift),
                 contract_sources: lane.contract_sources.clone(),
                 provider_sources: drift
                     .map(|metadata| metadata.provider_sources.clone())
@@ -721,9 +726,87 @@ pub(crate) fn doctor_required_verification_governance(
             blocking: drift_lane_count > 0,
             required_lane_count: lanes.len(),
             drift_lane_count,
+            evidence_classes: merge_gate_summary_evidence_classes(),
+            decision_basis: merge_gate_summary_decision_basis(&lanes),
             lanes,
         }),
     })
+}
+
+fn required_verification_lane_evidence_classes() -> DoctorRequiredVerificationLaneEvidenceClasses {
+    DoctorRequiredVerificationLaneEvidenceClasses {
+        merge_check_id: String::from("derived"),
+        lane_task: String::from("derived"),
+        lane_kind: String::from("derived"),
+        contract_sources: String::from("derived"),
+    }
+}
+
+fn merge_gate_summary_evidence_classes() -> DoctorMergeGateSummaryEvidenceClasses {
+    DoctorMergeGateSummaryEvidenceClasses {
+        state: String::from("derived"),
+        blocking: String::from("derived"),
+        required_lane_count: String::from("derived"),
+        drift_lane_count: String::from("derived"),
+    }
+}
+
+fn merge_gate_lane_evidence_classes() -> DoctorMergeGateLaneEvidenceClasses {
+    DoctorMergeGateLaneEvidenceClasses {
+        merge_check_id: String::from("derived"),
+        lane_task: String::from("derived"),
+        lane_kind: String::from("derived"),
+        state: String::from("derived"),
+        blocking: String::from("derived"),
+        contract_sources: String::from("derived"),
+        provider_sources: String::from("derived"),
+    }
+}
+
+fn merge_gate_lane_decision_basis(
+    lane: &DoctorRequiredVerificationLane,
+    drift: Option<&FindingGovernanceMetadata>,
+) -> Vec<GovernanceDecisionBasisEntry> {
+    let mut basis = vec![GovernanceDecisionBasisEntry {
+        id: format!("projection:{}", lane.merge_check_id),
+        family: String::from("required_lane"),
+        evidence_class: String::from("derived"),
+        detail: Some(lane.lane_task.clone()),
+    }];
+
+    if drift.is_some() {
+        basis.push(GovernanceDecisionBasisEntry {
+            id: format!("drift:{}", lane.merge_check_id),
+            family: String::from("provider_drift"),
+            evidence_class: String::from("derived"),
+            detail: None,
+        });
+    }
+
+    basis
+}
+
+fn merge_gate_summary_decision_basis(
+    lanes: &[DoctorMergeGateLane],
+) -> Vec<GovernanceDecisionBasisEntry> {
+    let mut basis = Vec::new();
+    for lane in lanes {
+        basis.push(GovernanceDecisionBasisEntry {
+            id: format!("projection:{}", lane.merge_check_id),
+            family: String::from("required_lane"),
+            evidence_class: String::from("derived"),
+            detail: Some(lane.lane_task.clone()),
+        });
+        if lane.blocking {
+            basis.push(GovernanceDecisionBasisEntry {
+                id: format!("drift:{}", lane.merge_check_id),
+                family: String::from("provider_drift"),
+                evidence_class: String::from("derived"),
+                detail: None,
+            });
+        }
+    }
+    basis
 }
 
 pub(crate) fn merge_check_id_for_lane_task(task_name: &str) -> String {
@@ -3392,11 +3475,31 @@ workflows:
             governance.required_verification_lanes[0].merge_check_id,
             "ota.verify.verify"
         );
+        assert_eq!(
+            governance.required_verification_lanes[0]
+                .evidence_classes
+                .merge_check_id,
+            "derived"
+        );
         assert_eq!(merge_gate.state, "projected");
         assert!(!merge_gate.blocking);
         assert_eq!(merge_gate.required_lane_count, 1);
         assert_eq!(merge_gate.drift_lane_count, 0);
+        assert_eq!(merge_gate.evidence_classes.state, "derived");
+        assert_eq!(merge_gate.evidence_classes.blocking, "derived");
+        assert_eq!(merge_gate.decision_basis[0].id, "projection:ota.verify.verify");
+        assert_eq!(merge_gate.decision_basis[0].family, "required_lane");
+        assert_eq!(merge_gate.decision_basis[0].evidence_class, "derived");
         assert_eq!(merge_gate.lanes[0].state, "projected");
+        assert_eq!(merge_gate.lanes[0].evidence_classes.state, "derived");
+        assert_eq!(
+            merge_gate.lanes[0].evidence_classes.provider_sources,
+            "derived"
+        );
+        assert_eq!(
+            merge_gate.lanes[0].decision_basis[0].id,
+            "projection:ota.verify.verify"
+        );
         assert!(merge_gate.lanes[0].provider_sources.is_empty());
     }
 
@@ -3438,9 +3541,21 @@ workflows:
         assert!(merge_gate.blocking);
         assert_eq!(merge_gate.required_lane_count, 1);
         assert_eq!(merge_gate.drift_lane_count, 1);
+        assert_eq!(merge_gate.evidence_classes.drift_lane_count, "derived");
+        assert_eq!(merge_gate.decision_basis[0].id, "projection:ota.verify.verify");
+        assert_eq!(merge_gate.decision_basis[1].id, "drift:ota.verify.verify");
         assert_eq!(merge_gate.lanes[0].merge_check_id, "ota.verify.verify");
         assert_eq!(merge_gate.lanes[0].state, "drift_detected");
         assert!(merge_gate.lanes[0].blocking);
+        assert_eq!(merge_gate.lanes[0].evidence_classes.blocking, "derived");
+        assert_eq!(
+            merge_gate.lanes[0].decision_basis[0].id,
+            "projection:ota.verify.verify"
+        );
+        assert_eq!(
+            merge_gate.lanes[0].decision_basis[1].id,
+            "drift:ota.verify.verify"
+        );
         assert_eq!(
             merge_gate.lanes[0].provider_sources,
             vec![String::from(

@@ -2191,7 +2191,13 @@ Failure:
         "merge_check_id": "ota.verify.verify",
         "lane_task": "verify",
         "lane_kind": "aggregate",
-        "contract_sources": ["workflows.verify.run.task"]
+        "contract_sources": ["workflows.verify.run.task"],
+        "evidence_classes": {
+          "merge_check_id": "derived",
+          "lane_task": "derived",
+          "lane_kind": "derived",
+          "contract_sources": "derived"
+        }
       }
     ],
     "merge_gate": {
@@ -2199,6 +2205,20 @@ Failure:
       "blocking": false,
       "required_lane_count": 1,
       "drift_lane_count": 0,
+      "evidence_classes": {
+        "state": "derived",
+        "blocking": "derived",
+        "required_lane_count": "derived",
+        "drift_lane_count": "derived"
+      },
+      "decision_basis": [
+        {
+          "id": "projection:ota.verify.verify",
+          "family": "required_lane",
+          "evidence_class": "derived",
+          "detail": "verify"
+        }
+      ],
       "lanes": [
         {
           "merge_check_id": "ota.verify.verify",
@@ -2206,6 +2226,23 @@ Failure:
           "lane_kind": "aggregate",
           "state": "projected",
           "blocking": false,
+          "evidence_classes": {
+            "merge_check_id": "derived",
+            "lane_task": "derived",
+            "lane_kind": "derived",
+            "state": "derived",
+            "blocking": "derived",
+            "contract_sources": "derived",
+            "provider_sources": "derived"
+          },
+          "decision_basis": [
+            {
+              "id": "projection:ota.verify.verify",
+              "family": "required_lane",
+              "evidence_class": "derived",
+              "detail": "verify"
+            }
+          ],
           "contract_sources": ["workflows.verify.run.task"],
           "provider_sources": []
         }
@@ -2301,7 +2338,8 @@ when the contract already declares merge-relevant CI verification truth. Ota pro
 from `workflows.*` with `intent: ci_verification` or legacy `ci_validation`, and falls back to
 `agent.verify_after_changes` only when no explicit CI verification workflows are declared. Each
 projected lane carries the same canonical `merge_check_id` identity that CI verification drift
-findings use.
+findings use. `required_verification_lanes[*].evidence_classes` now makes that provenance
+explicit; the current shipped lane identity and source fields are all `derived`.
 `ota doctor --json` may also include additive `governance.merge_gate`, a first machine-readable
 merge-oriented governance verdict built from the same projected lanes and CI drift metadata. This
 surface stays honest:
@@ -2310,8 +2348,18 @@ surface stays honest:
   provider alignment from current recovery alone
 - `state: drift_detected` means one or more projected lanes already have CI drift findings attached
   and should be treated as merge-blocking until the workflow wiring is reconciled
+- `decision_basis[]` now carries the cited merge-gate basis instead of leaving `state` as a pure
+  verdict:
+  - `projection:<merge_check_id>` means the lane is projected from contract-owned CI truth
+  - `drift:<merge_check_id>` means the same canonical lane already has attached CI drift metadata
+- `evidence_classes` now makes the field-level provenance explicit for the authoritative merge
+  verdict itself; the current shipped `state`, `blocking`, and lane-count fields are all
+  `derived`
 - each `lanes[]` entry carries the same canonical `merge_check_id`, lane identity, and any
-  recovered `provider_sources` from CI drift findings
+  recovered `provider_sources` from CI drift findings; per-lane `decision_basis[]` repeats the
+  same cited lane basis at lane scope for downstream consumers that do not want to re-infer lane
+  posture from the summary alone, and per-lane `evidence_classes` now makes the provenance of
+  lane identity, state, blocking, and recovered source fields explicit
 
 Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.

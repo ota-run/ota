@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- tightened field-level provenance on doctor merge-gate governance: projected required lanes,
+  merge-gate summaries, and per-lane merge posture now also publish additive `evidence_classes`
+  so downstream consumers can distinguish authoritative derived merge truth from future asserted
+  or attested fields instead of over-trusting flat JSON
+- widened doctor merge-gate governance with additive `decision_basis[]` on both
+  `governance.merge_gate` and `governance.merge_gate.lanes[]`, so projected-vs-drifted CI merge
+  posture now cites stable lane and drift basis instead of publishing a flatter merge verdict
 - widened machine-readable governance again so post-execution evidence no longer stops at flat
   `state` / `not_run_reason` / `crossing_record_state`: `ota run --dry-run --json`,
   `ota up --json --dry-run`, and executed `ota up --json` now also publish additive
