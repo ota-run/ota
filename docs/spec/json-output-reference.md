@@ -144,6 +144,10 @@ human text output:
   `governance.post_execution.not_run_reason` and `governance.post_execution.crossing_record_state`
   when you need phase-accurate non-run and crossing-evidence posture instead of inferring from
   null fields alone
+- the same `governance.post_execution.decision_basis[]` surface now carries the cited
+  post-execution evidence-state basis when ota can decompose it honestly, such as
+  `not_run:preview_only`, `not_run:preflight_refusal`, `evidence:receipt_present`,
+  `evidence:proof_present`, or `crossing_record:attached`
 - `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, ordered `next` steps, and the matching structured lane: engine/resource failures expose `engine`, `resource_kind`, `resource_name`, and `details`, while active execution cleanup barriers expose `registry_path`, typed `reasons[]`, `active_execution_count`, and `owners[]`; generic repo-state failures still fall back to `summary` plus `error`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - repo-target `ota up --json` may also include additive `governance.crossing` when the selected
@@ -592,6 +596,13 @@ Notes:
   `crossing_boundary_family` when ota can recover them honestly
 - `governance.post_execution.proof_present: true` means the `up` pipeline reached proof/readiness
   evidence emission during execution
+- `governance.post_execution.decision_basis[]` is the additive machine-readable citation set for
+  the current post-execution evidence posture:
+  - non-run basis such as `not_run:preview_only`, `not_run:preflight_blocked`, or
+    `not_run:preflight_refusal`
+  - evidence basis such as `evidence:receipt_present` or `evidence:proof_present`
+  - crossing-record basis such as `crossing_record:attached`,
+    `crossing_record:suppressed_by_refusal`, or `crossing_record:not_required`
 
 Failure:
 
@@ -2617,6 +2628,9 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance.evaluation.preflight.decision_basis[]` publishes the stable cited gate or refusal
   basis behind that preflight posture so CI or harness consumers do not have to infer it from
   human strings
+- `governance.evaluation.post_execution.decision_basis[]` publishes the stable cited evidence or
+  non-run basis behind `post_execution.state`, so consumers can distinguish receipt/proof
+  satisfaction from preview-only, blocked, or refusal-suppressed execution without scraping prose
 - `ota run <task> --dry-run --json --agent` now reflects the enforced runner boundary in
   `governance.evaluation.preflight`: unsafe selected tasks or unsafe reachable closures publish
   `state: "refused"` and return a blocked preview instead of looking runnable in JSON
@@ -3899,7 +3913,8 @@ Optional fields:
   `preflight` keeps boundary/block/refusal semantics distinct from `post_execution`, which reports
   what evidence actually exists after the attempted `up` lane; additive
   `preflight.decision_basis[]` carries the cited safety/refusal/crossing basis for the selected
-  lane
+  lane, while additive `post_execution.decision_basis[]` carries the cited non-run, evidence, and
+  crossing-record basis for the resulting evidence state
 - preview `governance.sandbox_policy` may also be present on `ota up --json --dry-run` when the
   selected workflow path carries compilable runtime-boundary truth; it repeats the same first
   `codex_local` sandbox target shape used by task and workflow discovery so preview consumers can

@@ -168,6 +168,10 @@
                 "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "not_run_reason": { "type": "string" },
                 "crossing_record_state": { "type": "string" },
+                "decision_basis": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
                 "receipt_present": { "type": "boolean" },
                 "proof_present": { "type": "boolean" },
                 "receipt_status": { "type": "string" }
@@ -346,11 +350,15 @@
                       "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                       "not_run_reason": { "type": "string" },
                       "crossing_record_state": { "type": "string" },
+                      "decision_basis": {
+                        "type": "array",
+                        "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                      },
                       "receipt_present": { "type": "boolean" },
-                    "proof_present": { "type": "boolean" },
-                    "receipt_status": { "type": "string" }
-                  }
-                },
+                      "proof_present": { "type": "boolean" },
+                      "receipt_status": { "type": "string" }
+                    }
+                  },
                 "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
               }
             },
@@ -437,6 +445,10 @@
                 "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "not_run_reason": { "type": "string" },
                 "crossing_record_state": { "type": "string" },
+                "decision_basis": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
                 "receipt_present": { "type": "boolean" },
                 "proof_present": { "type": "boolean" },
                 "receipt_status": { "type": "string" }

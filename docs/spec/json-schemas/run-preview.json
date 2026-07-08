@@ -239,6 +239,10 @@
                 "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "not_run_reason": { "type": "string" },
                 "crossing_record_state": { "type": "string" },
+                "decision_basis": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
                 "receipt_present": { "type": "boolean" },
                 "proof_present": { "type": "boolean" },
                 "receipt_status": { "type": "string" }

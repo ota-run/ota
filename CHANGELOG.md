@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- widened machine-readable governance again so post-execution evidence no longer stops at flat
+  `state` / `not_run_reason` / `crossing_record_state`: `ota run --dry-run --json`,
+  `ota up --json --dry-run`, and executed `ota up --json` now also publish additive
+  `governance.evaluation.post_execution.decision_basis[]`, citing the stable non-run, evidence,
+  and crossing-record basis behind the selected evidence posture
 - added canonical `runtime_boundary` ownership on repo execution, workflow, and task lanes, so
   contracts can declare compiled filesystem posture plus explicit outbound target truth for
   harness-facing sandbox export instead of relying only on derived `agent.*_paths` and broad

@@ -42405,22 +42405,26 @@ fn preview_post_execution_evidence(
     refusal: Option<&AgentExecutionRefusal>,
     crossing_required: Option<bool>,
 ) -> crate::output::GovernancePostExecutionEvidence {
+    let not_run_reason = if refusal.is_some() {
+        String::from("preflight_refusal")
+    } else {
+        String::from("preview_only")
+    };
+    let crossing_record_state =
+        crossing_record_state(crossing_required, false, refusal.is_some(), false);
     crate::output::GovernancePostExecutionEvidence {
         state: String::from("not_run"),
         execution_attempted: false,
         refusal_occurred: false,
         refusal_reason_family: None,
         refusal: None,
-        not_run_reason: Some(if refusal.is_some() {
-            String::from("preflight_refusal")
-        } else {
-            String::from("preview_only")
-        }),
-        crossing_record_state: crossing_record_state(
-            crossing_required,
+        not_run_reason: Some(not_run_reason.clone()),
+        crossing_record_state: crossing_record_state.clone(),
+        decision_basis: governance_post_execution_decision_basis(
             false,
-            refusal.is_some(),
             false,
+            Some(not_run_reason.as_str()),
+            crossing_record_state.as_str(),
         ),
         receipt_present: false,
         proof_present: false,
@@ -42446,6 +42450,51 @@ fn crossing_record_state(
         Some(false) => String::from("not_required"),
         None => String::from("not_applicable"),
     }
+}
+
+fn governance_post_execution_decision_basis(
+    receipt_present: bool,
+    proof_present: bool,
+    not_run_reason: Option<&str>,
+    crossing_record_state: &str,
+) -> Vec<crate::output::GovernanceDecisionBasisEntry> {
+    let mut basis = Vec::new();
+
+    if let Some(reason) = not_run_reason {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("not_run:{reason}"),
+            family: String::from("execution_outcome"),
+            evidence_class: String::from("derived"),
+            detail: None,
+        });
+    }
+
+    if receipt_present {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: String::from("evidence:receipt_present"),
+            family: String::from("evidence_gate"),
+            evidence_class: String::from("attested"),
+            detail: None,
+        });
+    }
+
+    if proof_present {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: String::from("evidence:proof_present"),
+            family: String::from("evidence_gate"),
+            evidence_class: String::from("derived"),
+            detail: None,
+        });
+    }
+
+    basis.push(crate::output::GovernanceDecisionBasisEntry {
+        id: format!("crossing_record:{crossing_record_state}"),
+        family: String::from("crossing_evidence"),
+        evidence_class: String::from("derived"),
+        detail: None,
+    });
+
+    basis
 }
 
 fn governance_evaluation_for_up_result(
@@ -42489,6 +42538,17 @@ fn governance_evaluation_for_up_result(
     };
     let proof_expected = true;
     let proof_present = execution_attempted && up_phase_proof_present(phase);
+    let not_run_reason = if execution_attempted {
+        None
+    } else if preflight_state == "refused" {
+        Some(String::from("preflight_refusal"))
+    } else if preflight_state == "blocked" {
+        Some(String::from("preflight_blocked"))
+    } else if phase == "preview" {
+        Some(String::from("preview_only"))
+    } else {
+        None
+    };
 
     let preflight = preflight
         .cloned()
@@ -42509,6 +42569,13 @@ fn governance_evaluation_for_up_result(
         });
     let preflight_crossing_required = preflight.crossing_required;
 
+    let crossing_record_state_value = crossing_record_state(
+        preflight_crossing_required,
+        execution_attempted,
+        preflight_state == "refused",
+        receipt.crossing.is_some(),
+    );
+
     crate::output::GovernanceEvaluation {
         preflight,
         post_execution: crate::output::GovernancePostExecutionEvidence {
@@ -42517,22 +42584,13 @@ fn governance_evaluation_for_up_result(
             refusal_occurred: refusal_reason_family.is_some(),
             refusal_reason_family,
             refusal,
-            not_run_reason: if execution_attempted {
-                None
-            } else if preflight_state == "refused" {
-                Some(String::from("preflight_refusal"))
-            } else if preflight_state == "blocked" {
-                Some(String::from("preflight_blocked"))
-            } else if phase == "preview" {
-                Some(String::from("preview_only"))
-            } else {
-                None
-            },
-            crossing_record_state: crossing_record_state(
-                preflight_crossing_required,
-                execution_attempted,
-                preflight_state == "refused",
-                receipt.crossing.is_some(),
+            not_run_reason: not_run_reason.clone(),
+            crossing_record_state: crossing_record_state_value.clone(),
+            decision_basis: governance_post_execution_decision_basis(
+                true,
+                proof_present,
+                not_run_reason.as_deref(),
+                crossing_record_state_value.as_str(),
             ),
             receipt_present: true,
             proof_present,
@@ -59909,6 +59967,14 @@ agent:
             json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
             "suppressed_by_refusal"
         );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_basis"][0]["id"],
+            "not_run:preflight_refusal"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_basis"][1]["id"],
+            "crossing_record:suppressed_by_refusal"
+        );
     }
 
     #[test]
@@ -66054,7 +66120,7 @@ tasks:
         );
         assert_eq!(
             value["governance"]["preflight"]["decision_basis"][0]["id"],
-            "review_required_declared_unsafe"
+            "declared_safe_closure_unsafe"
         );
         assert_eq!(
             value["governance"]["preflight"]["decision_basis"][1]["id"],
@@ -66257,6 +66323,14 @@ tasks:
             value["governance"]["post_execution"]["crossing_record_state"],
             "attached"
         );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][0]["id"],
+            "evidence:receipt_present"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "crossing_record:attached"
+        );
     }
 
     #[test]
@@ -66340,6 +66414,20 @@ tasks:
                         refusal: None,
                         not_run_reason: Some(String::from("preview_only")),
                         crossing_record_state: String::from("not_applicable"),
+                        decision_basis: vec![
+                            crate::output::GovernanceDecisionBasisEntry {
+                                id: String::from("not_run:preview_only"),
+                                family: String::from("execution_outcome"),
+                                evidence_class: String::from("derived"),
+                                detail: None,
+                            },
+                            crate::output::GovernanceDecisionBasisEntry {
+                                id: String::from("crossing_record:not_applicable"),
+                                family: String::from("crossing_evidence"),
+                                evidence_class: String::from("derived"),
+                                detail: None,
+                            },
+                        ],
                         receipt_present: false,
                         proof_present: false,
                         receipt_status: None,
@@ -66404,9 +66492,35 @@ tasks:
 
         let root = super::up_result_json_value("./ota.yaml", &result);
         assert_eq!(root["preview_status"], "BLOCKED");
+        assert_eq!(root["governance"]["post_execution"]["state"], "not_run");
+        assert_eq!(
+            root["governance"]["post_execution"]["not_run_reason"],
+            "preview_only"
+        );
+        assert_eq!(
+            root["governance"]["post_execution"]["decision_basis"][0]["id"],
+            "not_run:preview_only"
+        );
+        assert_eq!(
+            root["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "crossing_record:not_applicable"
+        );
 
         let member = super::up_member_result_json_value("api", &result);
         assert_eq!(member["preview_status"], "BLOCKED");
+        assert_eq!(member["governance"]["post_execution"]["state"], "not_run");
+        assert_eq!(
+            member["governance"]["post_execution"]["not_run_reason"],
+            "preview_only"
+        );
+        assert_eq!(
+            member["governance"]["post_execution"]["decision_basis"][0]["id"],
+            "not_run:preview_only"
+        );
+        assert_eq!(
+            member["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "crossing_record:not_applicable"
+        );
     }
 
     #[test]

@@ -926,6 +926,8 @@ pub struct GovernancePostExecutionEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_run_reason: Option<String>,
     pub crossing_record_state: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     pub receipt_present: bool,
     pub proof_present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
