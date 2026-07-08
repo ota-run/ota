@@ -121,9 +121,19 @@ evidence, not caller-authored narration. The current shipped slice publishes:
 - `reason_present`
 - optional `reason`
 - `evidence_attachment_state`
+- `evidence_classes`
 
 Current shipped receipts keep `requirement_source` honest as `derived`, because ota is not yet
 projecting contract-declared crossing requirements or grant/approval truth on this lane.
+They now also publish additive `evidence_classes` on the crossing record itself so consumers can
+distinguish caller assertion from runner-derived and runner-attested truth without inferring it
+from field names. The current shipped posture is:
+
+- `reason`: `asserted` when present
+- `reason_present`: `attested`
+- `evidence_attachment_state`: `attested`
+- `principal_attribution_state`: `attested`
+- lane, boundary, classification, requirement source, actor mode, and intent source: `derived`
 The corresponding governance output now also keeps phase semantics explicit for non-run and
 crossing-evidence posture: post-execution governance can publish why execution did not run
 (`preview_only`, `preflight_refusal`, `preflight_blocked`) and whether a crossing record was

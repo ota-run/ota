@@ -845,6 +845,25 @@ pub struct ExecutionBoundaryCrossing {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub evidence_attachment_state: String,
+    pub evidence_classes: ExecutionBoundaryCrossingEvidenceClasses,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionBoundaryCrossingEvidenceClasses {
+    pub id: String,
+    pub created_at: String,
+    pub lane_id: String,
+    pub lane_kind: String,
+    pub boundary_family: String,
+    pub classification: String,
+    pub requirement_source: String,
+    pub actor_mode: String,
+    pub principal_attribution_state: String,
+    pub intent_source: String,
+    pub reason_present: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub evidence_attachment_state: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

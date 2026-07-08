@@ -137,7 +137,9 @@ human text output:
 - `ota up --json`: inspect additive `governance.crossing` and `receipt.crossing` when the
   selected workflow crossed a heavier audited execution boundary and the operator supplied intent
   with `--reason`; the current shipped record keeps `requirement_source: derived` honest instead
-  of pretending contract-declared grant or approval truth
+  of pretending contract-declared grant or approval truth, and `crossing.evidence_classes`
+  distinguishes caller-asserted fields such as `reason` from runner-derived or runner-attested
+  fields
 - `ota run <task> --dry-run --json` and `ota up --json`: inspect additive
   `governance.post_execution.not_run_reason` and `governance.post_execution.crossing_record_state`
   when you need phase-accurate non-run and crossing-evidence posture instead of inferring from
@@ -146,7 +148,7 @@ human text output:
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - repo-target `ota up --json` may also include additive `governance.crossing` when the selected
   workflow execution crossed a heavier audited boundary; this mirrors the same ota-authored
-  record attached to `receipt.crossing`
+  record attached to `receipt.crossing`, including field-level `evidence_classes`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json --progress-json`, `ota workspace up --json --progress-json`, and
   `ota workspace refresh --json --progress-json`: consume newline-delimited progress events from
@@ -2076,6 +2078,13 @@ Notes:
     allowed but crosses a heavier execution boundary such as an unsafe task closure
   - `crossing_boundary_family` names the crossed boundary when ota can recover it honestly
   - refused lanes do not publish crossing posture yet because no crossing is allowed
+- authoritative crossing records in `receipt.crossing` and `governance.crossing` can also publish
+  additive `evidence_classes`:
+  - `asserted` means the caller supplied the value, such as free-text `reason`
+  - `derived` means ota resolved the value from contract truth and decision inputs, such as lane,
+    boundary, or classification
+  - `attested` means ota recorded the field at the decision boundary itself, such as
+    `reason_present`, `principal_attribution_state`, or attachment state
 - refused workflow entries may also carry additive `blocked_task` and `closure_path` when the
   selected workflow reaches a non-safe task in its prepare/setup/run/attach closure
 - each workflow entry includes additive fields only when declared or resolved:
@@ -3796,6 +3805,11 @@ Root monorepo summary output can also include grouped member findings under `mem
 - execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, additive
   `governance`, `findings`, `receipt`, optional `service`/`task`/`exit_code`)
 - contract load/validation failed before the `up` pipeline: returns `ValidateFailure` shape (`ok`, `path`, and either `errors` or `error`)
+
+When an audited crossing actually occurs, `governance.crossing` and `receipt.crossing` carry the
+same ota-authored record. That record now includes additive `evidence_classes` so downstream
+consumers can tell which fields were caller-asserted, ota-derived from the decision inputs, or
+runner-attested at the decision site itself.
 
 ```json
 {

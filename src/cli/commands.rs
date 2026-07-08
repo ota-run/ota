@@ -13726,6 +13726,26 @@ fn crossing_created_at() -> String {
         .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string())
 }
 
+fn crossing_evidence_classes(
+    reason_present: bool,
+) -> crate::output::ExecutionBoundaryCrossingEvidenceClasses {
+    crate::output::ExecutionBoundaryCrossingEvidenceClasses {
+        id: String::from("attested"),
+        created_at: String::from("attested"),
+        lane_id: String::from("derived"),
+        lane_kind: String::from("derived"),
+        boundary_family: String::from("derived"),
+        classification: String::from("derived"),
+        requirement_source: String::from("derived"),
+        actor_mode: String::from("derived"),
+        principal_attribution_state: String::from("attested"),
+        intent_source: String::from("derived"),
+        reason_present: String::from("attested"),
+        reason: reason_present.then(|| String::from("asserted")),
+        evidence_attachment_state: String::from("attested"),
+    }
+}
+
 fn build_task_crossing_record(
     contract: &Contract,
     task_name: &str,
@@ -13765,6 +13785,7 @@ fn build_task_crossing_record(
         reason_present: reason.is_some(),
         reason: reason.map(str::to_string),
         evidence_attachment_state: String::from("receipt_attached"),
+        evidence_classes: crossing_evidence_classes(reason.is_some()),
     })
 }
 
@@ -13808,6 +13829,7 @@ fn build_workflow_crossing_record(
         reason_present: reason.is_some(),
         reason: reason.map(str::to_string),
         evidence_attachment_state: String::from("receipt_attached"),
+        evidence_classes: crossing_evidence_classes(reason.is_some()),
     })
 }
 
@@ -65912,6 +65934,12 @@ tasks:
         assert!(crossing.reason_present);
         assert_eq!(crossing.reason.as_deref(), Some("release requested"));
         assert_eq!(crossing.evidence_attachment_state, "receipt_attached");
+        assert_eq!(crossing.evidence_classes.classification, "derived");
+        assert_eq!(crossing.evidence_classes.reason_present, "attested");
+        assert_eq!(
+            crossing.evidence_classes.reason.as_deref(),
+            Some("asserted")
+        );
     }
 
     #[test]
@@ -65930,6 +65958,21 @@ tasks:
             reason_present: true,
             reason: Some(String::from("need the full verification lane")),
             evidence_attachment_state: String::from("receipt_attached"),
+            evidence_classes: crate::output::ExecutionBoundaryCrossingEvidenceClasses {
+                id: String::from("attested"),
+                created_at: String::from("attested"),
+                lane_id: String::from("derived"),
+                lane_kind: String::from("derived"),
+                boundary_family: String::from("derived"),
+                classification: String::from("derived"),
+                requirement_source: String::from("derived"),
+                actor_mode: String::from("derived"),
+                principal_attribution_state: String::from("attested"),
+                intent_source: String::from("derived"),
+                reason_present: String::from("attested"),
+                reason: Some(String::from("asserted")),
+                evidence_attachment_state: String::from("attested"),
+            },
         };
         let receipt = ExecutionReceipt {
             ok: false,
@@ -66017,10 +66060,18 @@ tasks:
             value["receipt"]["crossing"]["reason"],
             "need the full verification lane"
         );
+        assert_eq!(
+            value["receipt"]["crossing"]["evidence_classes"]["reason"],
+            "asserted"
+        );
         assert_eq!(value["governance"]["crossing"]["id"], "crossing-1");
         assert_eq!(
             value["governance"]["crossing"]["classification"],
             "escalated"
+        );
+        assert_eq!(
+            value["governance"]["crossing"]["evidence_classes"]["reason_present"],
+            "attested"
         );
         assert_eq!(
             value["governance"]["post_execution"]["crossing_record_state"],
