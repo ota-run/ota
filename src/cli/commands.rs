@@ -13674,6 +13674,7 @@ fn harness_preflight_for_task(
         effective_safe_for_agent: Some(task.effective_safe_for_agent),
         unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
         refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        refusal: refusal.map(AgentExecutionRefusal::governance_record),
         crossing_required,
         crossing_classification,
         crossing_boundary_family,
@@ -13991,6 +13992,7 @@ fn harness_preflight_for_workflow(
         effective_safe_for_agent: workflow.effective_safe_for_agent,
         unsafe_closure_tasks: workflow.unsafe_closure_tasks.clone(),
         refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        refusal: refusal.map(AgentExecutionRefusal::governance_record),
         crossing_required,
         crossing_classification,
         crossing_boundary_family,
@@ -16454,6 +16456,27 @@ struct AgentExecutionRefusal {
     reason: &'static str,
 }
 
+impl AgentExecutionRefusal {
+    fn closure_status(&self) -> &'static str {
+        match self.reason {
+            "unsafe_dependency_closure" => "unsafe_dependency_closure",
+            _ => "unsafe",
+        }
+    }
+
+    fn governance_record(&self) -> crate::output::GovernanceRefusalRecord {
+        crate::output::GovernanceRefusalRecord {
+            reason_family: self.reason.to_string(),
+            boundary_family: String::from("agent_safety_boundary"),
+            closure_status: self.closure_status().to_string(),
+            requested_task: self.requested_task.clone(),
+            blocked_task: self.blocked_task.clone(),
+            closure_path: self.path.clone(),
+            evidence_class: String::from("derived"),
+        }
+    }
+}
+
 fn collect_reachable_task_names_for_visibility(
     contract: &Contract,
     root_task_name: &str,
@@ -16801,22 +16824,22 @@ fn repo_agent_execution_refusal_receipt(
         Some(overrides),
     );
     receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];
+    receipt.refusal = Some(refusal.governance_record());
     refresh_execution_receipt_status(&mut receipt);
     receipt
 }
 
 fn receipt_agent_execution_refusal_reason(receipt: &ExecutionReceipt) -> Option<&str> {
     receipt
-        .blocked
-        .iter()
-        .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
-}
-
-fn agent_execution_refusal_closure_status(reason: &str) -> &'static str {
-    match reason {
-        "unsafe_dependency_closure" => "unsafe_dependency_closure",
-        _ => "unsafe",
-    }
+        .refusal
+        .as_ref()
+        .map(|refusal| refusal.reason_family.as_str())
+        .or_else(|| {
+            receipt
+                .blocked
+                .iter()
+                .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
+        })
 }
 
 fn agent_execution_refusal_detail_lines(
@@ -16836,7 +16859,10 @@ fn agent_execution_refusal_detail_lines(
     detail_lines.push(String::from("cause: `agent_safety_boundary`"));
     detail_lines.push(format!(
         "closure status: `{}`",
-        agent_execution_refusal_closure_status(reason)
+        match reason {
+            "unsafe_dependency_closure" => "unsafe_dependency_closure",
+            _ => "unsafe",
+        }
     ));
     if blocked_task != requested_task {
         detail_lines.push(format!("blocked task: `{blocked_task}`"));
@@ -42139,6 +42165,7 @@ fn governance_evaluation_for_task_preview(
             effective_safe_for_agent: Some(task.effective_safe_for_agent),
             unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
             refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            refusal: refusal.map(AgentExecutionRefusal::governance_record),
             crossing_required,
             crossing_classification,
             crossing_boundary_family,
@@ -42219,6 +42246,7 @@ fn governance_evaluation_for_workflow_preview(
             effective_safe_for_agent: safety.effective_safe,
             unsafe_closure_tasks: safety.unsafe_closure_tasks,
             refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            refusal: refusal.map(AgentExecutionRefusal::governance_record),
             crossing_required,
             crossing_classification,
             crossing_boundary_family,
@@ -42245,6 +42273,7 @@ fn preview_post_execution_evidence(
         execution_attempted: false,
         refusal_occurred: false,
         refusal_reason_family: None,
+        refusal: None,
         not_run_reason: Some(if refusal.is_some() {
             String::from("preflight_refusal")
         } else {
@@ -42289,11 +42318,17 @@ fn governance_evaluation_for_up_result(
     phase: &str,
     receipt: &ExecutionReceipt,
 ) -> crate::output::GovernanceEvaluation {
-    let refusal_reason_family = receipt
-        .blocked
-        .iter()
-        .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
-        .map(str::to_string);
+    let refusal = receipt.refusal.clone();
+    let refusal_reason_family = refusal
+        .as_ref()
+        .map(|entry| entry.reason_family.clone())
+        .or_else(|| {
+            receipt
+                .blocked
+                .iter()
+                .find_map(|entry| entry.strip_prefix("agent_execution_refused:"))
+                .map(str::to_string)
+        });
     let execution_attempted = !matches!(phase, "preconditions" | "preview");
     let preflight_state = if refusal_reason_family.is_some() {
         "refused"
@@ -42327,6 +42362,7 @@ fn governance_evaluation_for_up_result(
             effective_safe_for_agent: None,
             unsafe_closure_tasks: Vec::new(),
             refusal_reason_family: refusal_reason_family.clone(),
+            refusal: refusal.clone(),
             crossing_required: None,
             crossing_classification: None,
             crossing_boundary_family: None,
@@ -42342,6 +42378,7 @@ fn governance_evaluation_for_up_result(
             execution_attempted,
             refusal_occurred: refusal_reason_family.is_some(),
             refusal_reason_family,
+            refusal,
             not_run_reason: if execution_attempted {
                 None
             } else if preflight_state == "refused" {
@@ -57348,6 +57385,7 @@ workflows:
             contract_snapshot_ref: Some(String::from(".ota/contracts/sha256-abc.json")),
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: None,
             context: None,
@@ -58435,6 +58473,7 @@ project:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -58793,6 +58832,11 @@ agent:
         assert_eq!(json["governance"]["preflight"]["state"], "refused");
         assert_eq!(
             json["governance"]["preflight"]["refusal_reason_family"],
+            "requested_task_not_safe"
+        );
+        assert_eq!(json["receipt"]["refusal"]["requested_task"], "setup");
+        assert_eq!(
+            json["governance"]["post_execution"]["refusal"]["reason_family"],
             "requested_task_not_safe"
         );
         assert_eq!(json["governance"]["post_execution"]["state"], "refused");
@@ -59684,6 +59728,14 @@ agent:
             "requested_task_not_safe"
         );
         assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["refusal"]["requested_task"],
+            "publish"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["refusal"]["boundary_family"],
+            "agent_safety_boundary"
+        );
+        assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["state"],
             "not_run"
         );
@@ -59792,12 +59844,21 @@ agent:
             "requested_task_not_safe"
         );
         assert_eq!(
+            json["capability_profile"]["refused_tasks"][0]["preflight"]["refusal"]["blocked_task"],
+            "setup"
+        );
+        assert_eq!(
             json["capability_profile"]["refused_tasks"][1]["lane_id"],
             "task:verify"
         );
         assert_eq!(
             json["capability_profile"]["refused_tasks"][1]["preflight"]["refusal_reason_family"],
             "unsafe_dependency_closure"
+        );
+        assert_eq!(
+            json["capability_profile"]["refused_tasks"][1]["preflight"]["refusal"]["closure_path"]
+                [1],
+            "setup"
         );
         assert_eq!(
             json["capability_profile"]["refused_tasks"][1]["blocked_task"],
@@ -64944,6 +65005,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -65033,6 +65095,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: None,
@@ -65236,6 +65299,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65306,6 +65370,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65406,6 +65471,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65528,6 +65594,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65617,6 +65684,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65713,6 +65781,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65770,6 +65839,7 @@ tasks:
                 effective_safe_for_agent: Some(false),
                 unsafe_closure_tasks: vec![String::from("publish")],
                 refusal_reason_family: None,
+                refusal: None,
                 crossing_required: Some(true),
                 crossing_classification: Some(String::from("escalated")),
                 crossing_boundary_family: Some(String::from("unsafe_task")),
@@ -65871,6 +65941,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: Some(crossing.clone()),
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -65922,6 +65993,7 @@ tasks:
                 effective_safe_for_agent: Some(false),
                 unsafe_closure_tasks: vec![String::from("publish")],
                 refusal_reason_family: None,
+                refusal: None,
                 crossing_required: Some(true),
                 crossing_classification: Some(String::from("escalated")),
                 crossing_boundary_family: Some(String::from("unsafe_task")),
@@ -66021,6 +66093,7 @@ tasks:
                         effective_safe_for_agent: None,
                         unsafe_closure_tasks: Vec::new(),
                         refusal_reason_family: None,
+                        refusal: None,
                         crossing_required: None,
                         crossing_classification: None,
                         crossing_boundary_family: None,
@@ -66032,6 +66105,7 @@ tasks:
                         execution_attempted: false,
                         refusal_occurred: false,
                         refusal_reason_family: None,
+                        refusal: None,
                         not_run_reason: Some(String::from("preview_only")),
                         crossing_record_state: String::from("not_applicable"),
                         receipt_present: false,
@@ -66054,6 +66128,7 @@ tasks:
                 contract_snapshot_ref: None,
                 assumption_set_hash: None,
                 crossing: None,
+                refusal: None,
                 workspace: None,
                 backend: None,
                 context: None,
@@ -73730,6 +73805,7 @@ agent:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75183,6 +75259,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -75243,6 +75320,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -75303,6 +75381,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -75380,6 +75459,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),
@@ -75457,6 +75537,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -75575,6 +75656,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -75681,6 +75763,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -75795,6 +75878,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75857,6 +75941,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -79095,6 +79180,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -79179,6 +79265,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -79248,6 +79335,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -79320,6 +79408,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -79386,6 +79475,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -79452,6 +79542,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -79524,6 +79615,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -80352,6 +80444,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -80498,6 +80591,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -80604,6 +80698,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("sandbox:ctx")),
@@ -81213,6 +81308,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -81310,6 +81406,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -81393,6 +81490,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             crossing: None,
+            refusal: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -90618,6 +90716,7 @@ fn run_execution_receipt_with_shared(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         crossing: None,
+        refusal: None,
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         context,
@@ -98560,6 +98659,7 @@ fn repo_execution_receipt_with_overrides(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         crossing: None,
+        refusal: None,
         workspace: None,
         backend: context.backend,
         context: context.context,
@@ -99459,6 +99559,7 @@ fn workspace_up_receipt(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         crossing: None,
+        refusal: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -99553,6 +99654,7 @@ fn workspace_status_receipt(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         crossing: None,
+        refusal: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -99651,6 +99753,7 @@ fn workspace_run_receipt(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         crossing: None,
+        refusal: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -109472,6 +109575,7 @@ fn up_agent_execution_refusal_result(
     );
     let mut receipt = receipt;
     receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];
+    receipt.refusal = Some(refusal.governance_record());
     refresh_execution_receipt_status(&mut receipt);
     let report = DoctorReport {
         ok: false,

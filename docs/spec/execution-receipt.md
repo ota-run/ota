@@ -66,6 +66,7 @@ The receipt includes:
 - `scope`
 - `contract`
 - `crossing`
+- `refusal`
 - `workspace`
 - `backend`
 - `lifecycle`
@@ -128,6 +129,20 @@ crossing-evidence posture: post-execution governance can publish why execution d
 (`preview_only`, `preflight_refusal`, `preflight_blocked`) and whether a crossing record was
 `attached`, `deferred_until_execution`, `suppressed_by_refusal`, `missing_after_execution`,
 `not_required`, or `not_applicable`.
+When agent-mode execution is refused at the decision site, receipts may also include additive
+`refusal`. This record is ota-authored refusal evidence, not a later reconstruction from text
+output. The current shipped slice publishes:
+
+- `reason_family`
+- `boundary_family`
+- `closure_status`
+- `requested_task`
+- `blocked_task`
+- optional `closure_path`
+- `evidence_class`
+
+The compatibility `blocked[]` lane still remains, but machine consumers should prefer
+`receipt.refusal` when it is present.
 When a receipt comes from a selected task-backed execution path, it can also include
 `dependency_steps`; each entry records the executed task step's selected backend, optional
 selected context, optional parent task, and `backend_selection_source` such as `override`,

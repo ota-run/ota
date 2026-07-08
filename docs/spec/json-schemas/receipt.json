@@ -136,6 +136,7 @@
                 "evidence_attachment_state": { "type": "string" }
               }
             },
+            "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
             "context": { "type": "string" },

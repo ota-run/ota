@@ -135,6 +135,7 @@
                   "items": { "type": "string" }
                 },
                 "refusal_reason_family": { "type": "string" },
+                "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
                 "crossing_boundary_family": { "type": "string" },
@@ -160,6 +161,7 @@
                 "execution_attempted": { "type": "boolean" },
                 "refusal_occurred": { "type": "boolean" },
                 "refusal_reason_family": { "type": "string" },
+                "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "not_run_reason": { "type": "string" },
                 "crossing_record_state": { "type": "string" },
                 "receipt_present": { "type": "boolean" },
@@ -307,6 +309,7 @@
                         "items": { "type": "string" }
                       },
                       "refusal_reason_family": { "type": "string" },
+                      "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                       "crossing_required": { "type": "boolean" },
                       "crossing_classification": { "type": "string" },
                       "crossing_boundary_family": { "type": "string" },
@@ -332,6 +335,7 @@
                       "execution_attempted": { "type": "boolean" },
                       "refusal_occurred": { "type": "boolean" },
                       "refusal_reason_family": { "type": "string" },
+                      "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                       "not_run_reason": { "type": "string" },
                       "crossing_record_state": { "type": "string" },
                       "receipt_present": { "type": "boolean" },
@@ -392,6 +396,7 @@
                   "items": { "type": "string" }
                 },
                 "refusal_reason_family": { "type": "string" },
+                "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
                 "crossing_boundary_family": { "type": "string" },
@@ -417,6 +422,7 @@
                 "execution_attempted": { "type": "boolean" },
                 "refusal_occurred": { "type": "boolean" },
                 "refusal_reason_family": { "type": "string" },
+                "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
                 "not_run_reason": { "type": "string" },
                 "crossing_record_state": { "type": "string" },
                 "receipt_present": { "type": "boolean" },

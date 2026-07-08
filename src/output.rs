@@ -481,6 +481,8 @@ pub struct ExecutionReceipt {
     pub assumption_set_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crossing: Option<ExecutionBoundaryCrossing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<GovernanceRefusalRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -598,6 +600,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(crossing) = self.crossing.as_ref() {
             map.serialize_entry("crossing", crossing)?;
+        }
+        if let Some(refusal) = self.refusal.as_ref() {
+            map.serialize_entry("refusal", refusal)?;
         }
         if let Some(workspace) = self.workspace.as_ref() {
             map.serialize_entry("workspace", workspace)?;
@@ -842,6 +847,18 @@ pub struct ExecutionBoundaryCrossing {
     pub evidence_attachment_state: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct GovernanceRefusalRecord {
+    pub reason_family: String,
+    pub boundary_family: String,
+    pub closure_status: String,
+    pub requested_task: String,
+    pub blocked_task: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closure_path: Vec<String>,
+    pub evidence_class: String,
+}
+
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct GovernancePreflightEvaluation {
     pub state: String,
@@ -855,6 +872,8 @@ pub struct GovernancePreflightEvaluation {
     pub unsafe_closure_tasks: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal_reason_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<GovernanceRefusalRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crossing_required: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -872,6 +891,8 @@ pub struct GovernancePostExecutionEvidence {
     pub refusal_occurred: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal_reason_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<GovernanceRefusalRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_run_reason: Option<String>,
     pub crossing_record_state: String,

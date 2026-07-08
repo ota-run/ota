@@ -1745,6 +1745,14 @@ Success:
           "declared_safe_for_agent": false,
           "effective_safe_for_agent": false,
           "refusal_reason_family": "requested_task_not_safe",
+          "refusal": {
+            "reason_family": "requested_task_not_safe",
+            "boundary_family": "agent_safety_boundary",
+            "closure_status": "unsafe",
+            "requested_task": "setup",
+            "blocked_task": "setup",
+            "evidence_class": "derived"
+          },
           "receipt_expected": true,
           "proof_expected": false
         }
@@ -1826,6 +1834,12 @@ Success:
   ]
 }
 ```
+
+When ota can explain a refusal from the execution decision site, governance output now carries the
+legacy `refusal_reason_family` plus additive structured `refusal` truth. That record keeps the
+requested lane, blocked lane, closure posture, boundary family, optional closure path, and the
+evidence class together so machine consumers do not have to reconstruct the refusal from flat
+status fields.
 
 `ota tasks --json` may also include additive top-level `capability_profile`, a derived
 harness-facing agent surface built from the same closure-aware safety and refusal truth that powers

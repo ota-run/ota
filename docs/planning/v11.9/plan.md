@@ -24,11 +24,11 @@
 
 # V11.9 Plan
 
-Status: planned.
+Status: active next slice.
 
 Release target:
 
-- planned slice after `v11.8`
+- active trust-refinement slice after `v11.8`
 
 Source direction:
 

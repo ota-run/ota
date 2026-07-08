@@ -409,8 +409,33 @@
           "items": { "type": "string" }
         },
         "refusal_reason_family": { "type": "string" },
+        "refusal": { "$ref": "#/$defs/governanceRefusalRecord" },
         "receipt_expected": { "type": "boolean" },
         "proof_expected": { "type": "boolean" }
+      }
+    },
+    "governanceRefusalRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason_family",
+        "boundary_family",
+        "closure_status",
+        "requested_task",
+        "blocked_task",
+        "evidence_class"
+      ],
+      "properties": {
+        "reason_family": { "type": "string" },
+        "boundary_family": { "type": "string" },
+        "closure_status": { "type": "string" },
+        "requested_task": { "type": "string" },
+        "blocked_task": { "type": "string" },
+        "closure_path": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_class": { "type": "string" }
       }
     },
     "harnessEnvironmentBoundary": {

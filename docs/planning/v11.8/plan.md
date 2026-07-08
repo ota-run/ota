@@ -24,11 +24,11 @@
 
 # V11.8 Plan
 
-Status: planned.
+Status: complete.
 
 Release target:
 
-- planned slice after `v11.7`
+- completed slice after `v11.7`
 
 Source direction:
 
