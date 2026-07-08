@@ -80,6 +80,8 @@ That means:
 - the archived semantic snapshot is still the contract truth that execution used
 - replay posture is the current trust check against that witness
 - Ota should not promote a stronger claim than the evidence supports
+- if replay reaches unnamed live external state, the result is a fresh derivation, not a hermetic
+  replay
 
 ## Problem statement
 
@@ -211,6 +213,17 @@ This keeps the difference explicit between:
 - "this once passed"
 - "this still re-derives"
 
+First honest replay target:
+
+- start with deterministic local finite-task witnesses only
+- require one concrete first lane where Ota can already name the exercised source identity,
+  contract snapshot identity, lockfile or equivalent dependency pin, and selected runtime identity
+- keep broader workflow, live-network, or non-hermetic external-state replay claims explicitly out
+  of scope for the first implementation cut
+
+The point of the first shipped lane is not breadth. It is one honest replay-verified baseline
+surface Ota can defend end to end.
+
 ### 2. Honest `last_known_good`
 
 Direction:
@@ -285,6 +298,40 @@ The rule should be:
 
 - if replay proves an input moves the trust claim, Ota should either name it explicitly or
   downgrade the trust claim honestly
+
+The promotion order should stay explicit:
+
+1. name dependencies
+2. name runtime
+3. name environment
+4. snapshot the world or abstain from hermetic replay claims
+
+This is the practical replay-hardening order because:
+
+- unpinned dependencies are usually the highest-frequency ambient input class and close cleanly
+  with lockfiles or equivalent dependency identity
+- runtime and machine drift close next through pinned interpreter, base image, or equivalent
+  runtime identity
+- ambient environment drift is often the next residue once dependency and runtime identity are
+  pinned
+- live external state is the least pin-able class and therefore needs snapshotting or an honest
+  downgrade from hermetic replay to fresh derivation
+
+The hermetic boundary should stay explicit:
+
+- if the evaluated path depends on live external state that was not snapshotted or otherwise named
+  as replay input, Ota should not present that path as hermetic replay
+- a replay that reaches the live world is a fresh derivation wearing a replay's clothes
+- the mature operator choices are:
+  - snapshot or vendor the external state
+  - replay against a frozen mirror
+  - or abstain from calling the result replay-verified
+
+This should stay aligned with V11.9:
+
+- V11.9 promotes ambient inputs into cited inputs on the authoritative decision path
+- V11.10 uses that stronger named-input set to decide whether a baseline is hermetic,
+  replay-verified, witness-only, or still partly ambient
 
 ### 6. Operator UX only after evidence is solid
 

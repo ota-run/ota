@@ -549,6 +549,16 @@ The important rule is:
 - do not replace host allowlisting with destination-constrained outbound
 - layer destination-constrained outbound on top only where the selected lane truthfully needs it
 
+Trust note:
+
+- mutable external config, live flag services, or other runtime-visible policy inputs that can move
+  a governance or boundary decision should not stay invisible ambient noise forever
+- when that mutable external input becomes decision-relevant, the mature direction is to surface it
+  as declared or pinned runtime-boundary truth rather than leaving the sandbox compilation story to
+  depend on silent world state
+- this is primarily a V11.9 trust refinement, but it reinforces V11.8's rule that compiled
+  runtime policy should derive from canonical owned inputs instead of ambient mutable reads
+
 ### 3. Filesystem policy shape
 
 Define one portable writable/read-only boundary model.

@@ -85,6 +85,11 @@ The mature rule is:
   instead of collapsing the decision into an undecomposed flat verdict
 - flat or pure verdicts remain acceptable only on lanes Ota cannot yet decompose honestly without
   inventing false precision
+- authoritative governance should distinguish cited decision inputs from ambient reads:
+  - cited inputs are the exact inputs the decision used and can stand behind a trust claim
+  - ambient reads are world state that happened to be visible during evaluation but were not
+    recorded as authoritative decision inputs
+  - replay-grade governance should reuse cited inputs instead of re-reading the world
 
 What this does not mean:
 
@@ -288,7 +293,7 @@ This is the real trust bar.
 If a field like `reason`, `refusal`, `crossing`, `required`, or `allowed` can drift from the
 actual decision path, then the JSON is dressed-up prose.
 
-### 1b. Canonical decision-basis citation model
+### 1a. Canonical decision-basis citation model
 
 Add one explicit machine-readable basis model for decomposed governance paths.
 
@@ -304,6 +309,7 @@ Minimum shape:
 - basis family
 - optional scoped owner or lane reference
 - optional additive human explanation
+- optional cited input reference when the basis depends on a replay-critical external input
 
 Examples of the kinds of citations this should cover:
 
@@ -318,7 +324,7 @@ The product rule is:
 - prose may explain a basis
 - prose must not be the only canonical identity for a basis
 
-### 1a. Decomposition honesty rule
+### 1b. Decomposition honesty rule
 
 Add one explicit product rule for authoritative governance paths:
 
@@ -444,6 +450,26 @@ Replay should answer:
 - given the same inputs, does Ota produce the same governance verdict?
 - given the same inputs, does Ota produce the same blocker or gate decomposition?
 
+The cited-input rule for replay should stay explicit:
+
+- replay reuses the cited decision inputs the authoritative verdict recorded
+- replay does not silently re-read ambient world state and then claim the result is pinned
+- if replay must fall back to ambient reads for a path, that path is weaker and must say so
+- authoritative replay is about "decision from cited inputs", not rerunning an arbitrary external
+  system end to end
+
+The product posture should stay bug-driven:
+
+- when replay exposes one hidden input that moved the verdict, the smallest truthful fix should be
+  to promote that input into cited decision-input truth for the affected path
+- this should feel like ordinary product hardening, not governance overhead layered on top
+- the preferred operator experience is: replay fails, Ota proposes or assists promotion of the
+  missing input class through the canonical record for the affected path, and replay can then go
+  green again in the same session on that same path
+- this slice should not imply silent or unguided auto-promotion of authoritative decision inputs;
+  promotion should stay explicit, reviewable, and grounded in the canonical record that owns the
+  affected truth
+
 This is a stronger trust move than branch-identity checks because it validates outcome and
 decision shape together.
 
@@ -477,8 +503,13 @@ Direction:
 Likely hidden inputs include:
 
 - time
+- `evaluated_at` or equivalent effective decision timestamp
 - environment variables
 - feature flags
+- mutable external config
+- floating model aliases or other non-pinned external decision inputs
+- lookup-table row identity
+- deterministic tie-break identity when order or winner selection matters
 - policy pack identity or version
 - baseline receipt or snapshot identity
 - ruleset identity or version
@@ -491,12 +522,35 @@ The product rule should be:
 - if Ota cannot yet surface the input explicitly, replay for that path should stay weaker and say
   so honestly
 
+Promotion should stay additive and low-friction:
+
+- cited-input promotion should add new fields without forcing brittle migration on existing
+  governance or receipt consumers
+- replay should immediately reuse newly promoted cited inputs through the same canonical record
+  shape instead of requiring a second orchestration surface
+- the product success metric is not only "replay failed honestly"
+- it is also "the hidden-input class became smaller after the fix"
+
+Ota should make hidden-input debt visibly shrink over time:
+
+- newly promoted cited inputs should retire that input class from the ambient/hidden bucket on the
+  affected path
+- governance and replay UX should make that retirement visible instead of only reporting another
+  failure
+
 Replay-critical selector rule:
 
 - if a selector can drift while keeping the same human label, it is not itself a pinned replay
   input
 - authoritative replay must record the immutable resolved identity behind any convenience selector
   before using that input in a trust claim
+
+Model-mediated rule:
+
+- if a governance path ever depends on model output, Ota should treat the model output as a
+  witnessed input artifact, not as a decision function to be replayed
+- replay for that path should reuse the witnessed model output as cited input unless Ota can prove
+  a stronger deterministic decision boundary
 
 ### 8. Mechanism-level hook or branch checks last
 
@@ -581,6 +635,8 @@ V11.9 is complete when:
   decomposition from pinned decision inputs on at least the first high-value governance paths
 - authoritative replay never relies on mutable selectors such as `latest`, `promoted`, or mutable
   policy/ruleset labels as the final replay identity
+- authoritative replay distinguishes cited inputs from ambient reads and downgrades any path that
+  still depends on ambient world state
 - verdict-relevant hidden inputs discovered through replay are either explicit in the decision
   input model or called out as a remaining trust boundary
 - preflight and post-execution governance semantics remain phase-accurate while still exposing
