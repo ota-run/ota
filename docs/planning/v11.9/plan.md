@@ -135,12 +135,27 @@ V11.9 should tighten that honesty boundary:
 - do require decomposition on lanes where Ota already has stable blocker or gate structure and is
   simply failing to publish it
 
+There is also a fourth trust weakness:
+
+4. decomposed decisions without stable machine citations
+- a path publishes blockers or gates
+- but those citations are only prose or weak labels
+- replay and reconciliation then cannot compare the decision basis semantically without string
+  heuristics
+
+V11.9 should tighten that trust boundary too:
+
+- do not treat human-readable blocker or gate text as the canonical basis identity
+- do require a stable machine-readable decision-basis citation set on decomposed authoritative
+  governance lanes
+
 ## Included capabilities
 
 - field-level reconciliation between published governance outcome and the actual decision inputs
   plus result
 - outcome decomposition for governance lanes where Ota already has truthful blocker or gate
   structure
+- stable machine-readable decision-basis citation for decomposed authoritative governance records
 - decision-site governance emission rules
 - mandatory evidence-class typing for authoritative machine-readable governance fields
 - preflight/post-execution consistency checks for governance records
@@ -258,6 +273,7 @@ Direction:
 - publish reconciliation posture as part of the canonical governance record instead of a separate
   auxiliary export
 - reconcile both directions:
+  - cited blocker or gate basis should be stable and machine-readable, not only prose
   - `deny` should cite the blocker set, blocker codes, refusal basis, or closure condition that
     forced the denial
   - `allow` should cite the satisfied gates, checks, closure conditions, or admission basis that
@@ -271,6 +287,36 @@ This is the real trust bar.
 
 If a field like `reason`, `refusal`, `crossing`, `required`, or `allowed` can drift from the
 actual decision path, then the JSON is dressed-up prose.
+
+### 1b. Canonical decision-basis citation model
+
+Add one explicit machine-readable basis model for decomposed governance paths.
+
+Direction:
+
+- authoritative `allow` / `deny` decomposition should cite a stable decision-basis set
+- each cited entry should be semantically comparable across replay and later evaluation
+- the basis model should avoid free-text matching as the canonical identity surface
+
+Minimum shape:
+
+- basis id or code
+- basis family
+- optional scoped owner or lane reference
+- optional additive human explanation
+
+Examples of the kinds of citations this should cover:
+
+- blocker code
+- gate id
+- refusal basis id
+- closure condition id
+- admission basis id
+
+The product rule is:
+
+- prose may explain a basis
+- prose must not be the only canonical identity for a basis
 
 ### 1a. Decomposition honesty rule
 
@@ -385,6 +431,8 @@ Direction:
 - be able to re-run the governance evaluation against the same declared inputs and confirm the same
   verdict plus the same decomposition
 - pin the replay to the actual decision inputs the verdict depended on, not just the contract file
+- require authoritative replay-critical inputs to resolve to immutable identities before the replay
+  can be called pinned
 - start with the strongest governance paths first:
   - refusal
   - crossing-required / not-required
@@ -398,6 +446,24 @@ Replay should answer:
 
 This is a stronger trust move than branch-identity checks because it validates outcome and
 decision shape together.
+
+Pinned must also mean:
+
+- immutable or content-addressed receipt identity where receipt input matters
+- immutable or content-addressed semantic snapshot identity where snapshot input matters
+- immutable policy or ruleset identity when policy or rules move the verdict
+- immutable baseline identity when baseline comparison participates in the decision
+
+The following are not authoritative replay pins on their own:
+
+- `latest`
+- `promoted`
+- drifting branch labels
+- mutable policy aliases
+- mutable ruleset labels
+
+Those may remain operator selectors or convenience handles, but authoritative replay must resolve
+them to immutable identities before using them in a trust claim.
 
 ### 7. Hidden decision-input hardening
 
@@ -424,6 +490,13 @@ The product rule should be:
   decision input for that path
 - if Ota cannot yet surface the input explicitly, replay for that path should stay weaker and say
   so honestly
+
+Replay-critical selector rule:
+
+- if a selector can drift while keeping the same human label, it is not itself a pinned replay
+  input
+- authoritative replay must record the immutable resolved identity behind any convenience selector
+  before using that input in a trust claim
 
 ### 8. Mechanism-level hook or branch checks last
 
@@ -489,6 +562,8 @@ V11.9 is complete when:
   Ota relies on narrower hook/branch identity checks
 - governance lanes that already have stable blocker or gate structure publish that decomposition
   instead of hiding behind undecomposed flat verdicts
+- decomposed governance records cite a stable machine-readable decision-basis set instead of only
+  prose blocker or gate text
 - flat verdicts remain only on lanes Ota cannot yet decompose honestly
 - Ota has an explicit rule that authoritative governance records are emitted from the same
   decision path that made the verdict
@@ -504,6 +579,8 @@ V11.9 is complete when:
   actual decision inputs and result, with narrower hook/branch checks only as additive tripwires
 - authoritative governance replay can confirm the same verdict and the same published blocker/gate
   decomposition from pinned decision inputs on at least the first high-value governance paths
+- authoritative replay never relies on mutable selectors such as `latest`, `promoted`, or mutable
+  policy/ruleset labels as the final replay identity
 - verdict-relevant hidden inputs discovered through replay are either explicit in the decision
   input model or called out as a remaining trust boundary
 - preflight and post-execution governance semantics remain phase-accurate while still exposing

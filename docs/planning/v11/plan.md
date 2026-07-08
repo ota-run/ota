@@ -47,6 +47,7 @@ Source direction:
 - [V11.7 plan](../v11.7/plan.md)
 - [V11.8 plan](../v11.8/plan.md)
 - [V11.9 plan](../v11.9/plan.md)
+- [V11.10 plan](../v11.10/plan.md)
 
 V11 theme:
 
@@ -122,6 +123,10 @@ The active next OSS governance slice is:
 
 - [V11.9: governance truth reconciliation and evidence classes](../v11.9/plan.md)
 
+The next planned trust follow-on after that is:
+
+- [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md)
+
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
 - V11.4 publishes portable governance truth
@@ -138,6 +143,8 @@ The active next trust-refinement move is:
   made them, typed by evidence class, decomposed where Ota already knows truthful blocker or gate
   structure, and checked for post-decision reconciliation instead of drifting into second-read
   assembled JSON
+- V11.10 then strengthens the receipt/baseline trust story so "last known good" means named
+  inputs, exact witness, and replay posture instead of only one historical green outcome
 
 ## Included capabilities
 

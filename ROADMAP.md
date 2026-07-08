@@ -49,6 +49,8 @@ V11.5 is planned.
 V11.6 is planned.
 V11.7 is planned.
 V11.8 is planned.
+V11.9 is active.
+V11.10 is planned.
 
 ## V1 archive
 
@@ -98,6 +100,8 @@ V11.8 is planned.
 - [V11.6 plan](docs/planning/v11.6/plan.md)
 - [V11.7 plan](docs/planning/v11.7/plan.md)
 - [V11.8 plan](docs/planning/v11.8/plan.md)
+- [V11.9 plan](docs/planning/v11.9/plan.md)
+- [V11.10 plan](docs/planning/v11.10/plan.md)
 
 ## Implemented foundation
 
@@ -133,6 +137,10 @@ V11.8 is planned.
 - make V11.8 the sandbox policy compilation slice after V11.7 so contract-owned writable
   boundaries and egress posture can compile into real runtime enforcement targets instead of
   stopping at harness export
+- make V11.9 the governance truth reconciliation slice after V11.8 so emitted machine-readable
+  governance stays faithful to the decision path that produced it
+- make V11.10 the replay-verified baseline trust slice after V11.9 so "last known good" becomes
+  a stronger claim than one historical green witness
 
 ## Archived V2 shape
 
