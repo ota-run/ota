@@ -410,8 +410,23 @@
         },
         "refusal_reason_family": { "type": "string" },
         "refusal": { "$ref": "#/$defs/governanceRefusalRecord" },
+        "decision_basis": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/governanceDecisionBasisEntry" }
+        },
         "receipt_expected": { "type": "boolean" },
         "proof_expected": { "type": "boolean" }
+      }
+    },
+    "governanceDecisionBasisEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "family", "evidence_class"],
+      "properties": {
+        "id": { "type": "string" },
+        "family": { "type": "string" },
+        "evidence_class": { "type": "string" },
+        "detail": { "type": "string" }
       }
     },
     "governanceRefusalRecord": {

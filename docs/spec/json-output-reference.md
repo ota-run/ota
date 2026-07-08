@@ -2078,6 +2078,14 @@ Notes:
     allowed but crosses a heavier execution boundary such as an unsafe task closure
   - `crossing_boundary_family` names the crossed boundary when ota can recover it honestly
   - refused lanes do not publish crossing posture yet because no crossing is allowed
+- `preflight.decision_basis[]` is the additive machine-readable citation set for the current
+  governance outcome:
+  - safety gates such as `agent_safe_closure`, `unsafe_closure`, or
+    `declared_safe_closure_unsafe`
+  - refusal basis such as `refusal:requested_task_not_safe`
+  - crossing gates such as `crossing_not_required:routine` or
+    `crossing_required:unsafe_task:escalated`
+  - each entry carries stable `id`, `family`, and `evidence_class` instead of relying on prose
 - authoritative crossing records in `receipt.crossing` and `governance.crossing` can also publish
   additive `evidence_classes`:
   - `asserted` means the caller supplied the value, such as free-text `reason`
@@ -2606,6 +2614,9 @@ Use this when a human or agent needs the selected run plan before execution:
   `preflight.state` tells consumers whether the selected path is `allowed`, `warning_only`,
   `blocked`, or `refused` before execution, while `post_execution.state` keeps execution evidence
   separate as `not_run`, `refused`, or a satisfied evidence state after execution surfaces exist
+- `governance.evaluation.preflight.decision_basis[]` publishes the stable cited gate or refusal
+  basis behind that preflight posture so CI or harness consumers do not have to infer it from
+  human strings
 - `ota run <task> --dry-run --json --agent` now reflects the enforced runner boundary in
   `governance.evaluation.preflight`: unsafe selected tasks or unsafe reachable closures publish
   `state: "refused"` and return a blocked preview instead of looking runnable in JSON
@@ -3886,7 +3897,9 @@ Optional fields:
 
 - `governance`: the canonical machine-readable governance verdict for the selected `up` path;
   `preflight` keeps boundary/block/refusal semantics distinct from `post_execution`, which reports
-  what evidence actually exists after the attempted `up` lane
+  what evidence actually exists after the attempted `up` lane; additive
+  `preflight.decision_basis[]` carries the cited safety/refusal/crossing basis for the selected
+  lane
 - preview `governance.sandbox_policy` may also be present on `ota up --json --dry-run` when the
   selected workflow path carries compilable runtime-boundary truth; it repeats the same first
   `codex_local` sandbox target shape used by task and workflow discovery so preview consumers can

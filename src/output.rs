@@ -879,6 +879,15 @@ pub struct GovernanceRefusalRecord {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernanceDecisionBasisEntry {
+    pub id: String,
+    pub family: String,
+    pub evidence_class: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct GovernancePreflightEvaluation {
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -899,6 +908,8 @@ pub struct GovernancePreflightEvaluation {
     pub crossing_classification: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crossing_boundary_family: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     pub receipt_expected: bool,
     pub proof_expected: bool,
 }

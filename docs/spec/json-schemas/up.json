@@ -136,6 +136,10 @@
                 },
                 "refusal_reason_family": { "type": "string" },
                 "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
+                "decision_basis": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
                 "crossing_boundary_family": { "type": "string" },
@@ -307,12 +311,16 @@
                       "unsafe_closure_tasks": {
                         "type": "array",
                         "items": { "type": "string" }
-                      },
-                      "refusal_reason_family": { "type": "string" },
-                      "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
-                      "crossing_required": { "type": "boolean" },
-                      "crossing_classification": { "type": "string" },
-                      "crossing_boundary_family": { "type": "string" },
+                    },
+                    "refusal_reason_family": { "type": "string" },
+                    "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
+                    "decision_basis": {
+                      "type": "array",
+                      "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                    },
+                    "crossing_required": { "type": "boolean" },
+                    "crossing_classification": { "type": "string" },
+                    "crossing_boundary_family": { "type": "string" },
                       "receipt_expected": { "type": "boolean" },
                       "proof_expected": { "type": "boolean" }
                     }
@@ -397,6 +405,10 @@
                 },
                 "refusal_reason_family": { "type": "string" },
                 "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
+                "decision_basis": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
                 "crossing_boundary_family": { "type": "string" },
