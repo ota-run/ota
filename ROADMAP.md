@@ -51,6 +51,8 @@ V11.7 is planned.
 V11.8 is planned.
 V11.9 is active.
 V11.10 is planned.
+V11.11 is planned.
+V11.12 is planned.
 
 ## V1 archive
 
@@ -102,6 +104,8 @@ V11.10 is planned.
 - [V11.8 plan](docs/planning/v11.8/plan.md)
 - [V11.9 plan](docs/planning/v11.9/plan.md)
 - [V11.10 plan](docs/planning/v11.10/plan.md)
+- [V11.11 plan](docs/planning/v11.11/plan.md)
+- [V11.12 plan](docs/planning/v11.12/plan.md)
 
 ## Implemented foundation
 
@@ -141,6 +145,10 @@ V11.10 is planned.
   governance stays faithful to the decision path that produced it
 - make V11.10 the replay-verified baseline trust slice after V11.9 so "last known good" becomes
   a stronger claim than one historical green witness
+- make V11.11 the machine-readable proof-boundary slice after V11.10 so honest narrow proof can
+  publish what it covered and what it explicitly did not prove
+- make V11.12 the typed hydration input provenance slice after V11.11 so structured dependency
+  hydration can name source/feed posture when that boundary materially changes trust
 
 ## Archived V2 shape
 

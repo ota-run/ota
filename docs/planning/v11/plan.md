@@ -48,6 +48,8 @@ Source direction:
 - [V11.8 plan](../v11.8/plan.md)
 - [V11.9 plan](../v11.9/plan.md)
 - [V11.10 plan](../v11.10/plan.md)
+- [V11.11 plan](../v11.11/plan.md)
+- [V11.12 plan](../v11.12/plan.md)
 
 V11 theme:
 
@@ -127,6 +129,11 @@ The next planned trust follow-on after that is:
 
 - [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md)
 
+The next planned trust/product follow-ons after that are:
+
+- [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
+- [V11.12: typed hydration input provenance](../v11.12/plan.md)
+
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
 - V11.4 publishes portable governance truth
@@ -145,6 +152,10 @@ The active next trust-refinement move is:
   assembled JSON
 - V11.10 then strengthens the receipt/baseline trust story so "last known good" means named
   inputs, exact witness, and replay posture instead of only one historical green outcome
+- V11.11 then makes narrow proof honest in machine-readable form so proof artifacts can say what
+  they covered and what they explicitly did not prove
+- V11.12 then tightens typed dependency hydration trust where source or feed posture materially
+  changes replayability and execution confidence
 
 ## Included capabilities
 
