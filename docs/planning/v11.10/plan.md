@@ -59,6 +59,9 @@ The product goal is:
 - make the "last known good" idea honest and machine-readable
 - name more of the verdict-relevant input set instead of letting it hide behind one green run on
   one machine on one day
+- classify replay artifacts by whether a clean reading can actually acquit the input class they
+  represent
+- make hermetic replay versus fresh derivation explicit in the canonical replay model itself
 
 ## Canonical product principle
 
@@ -82,6 +85,8 @@ That means:
 - Ota should not promote a stronger claim than the evidence supports
 - if replay reaches unnamed live external state, the result is a fresh derivation, not a hermetic
   replay
+- replay should trust artifacts differently depending on whether a clean state is real proof or
+  only narrowing evidence
 
 ## Problem statement
 
@@ -117,8 +122,10 @@ V11.10 is the slice for making that difference explicit.
 ## Included capabilities
 
 - a first-class replay posture for baseline trust
+- a first-class replay hermeticity model alongside baseline posture
 - a clearer machine-readable definition of `last_known_good`
 - stronger pinned-input identity around replay-sensitive baseline lanes
+- explicit replay artifact trust classes for acquitting, narrowing, and locator evidence
 - replay-aware receipt comparison posture
 - explicit separation between witness evidence and replay verification
 - hidden-input surfacing when replay fails without semantic contract change
@@ -177,14 +184,57 @@ It is also:
 
 V11.10 should use replay failure as hidden-input evidence, not treat it as generic noise.
 
+### 4. Replay artifacts are not equally trust-closing
+
+Some replay artifacts can actually end the search when they are clean.
+
+Examples:
+
+- lockfile diff
+- base image digest or equivalent pinned runtime image identity
+
+Those are acquitting artifacts because a clean reading clears the whole named input class.
+
+Other artifacts are still useful, but a clean reading only narrows the search.
+
+Examples:
+
+- environment snapshots
+- external fixtures or captured world slices
+
+Those are narrowing artifacts because they only prove the named subset held still, not that the
+still-unnamed input did not move.
+
+Logs are useful too, but in a different way:
+
+- they localize the layer
+- they do not acquit the input class
+
+V11.10 should make that trust difference explicit instead of treating every replay artifact as if
+it carried the same closing power.
+
+### 5. Hermeticity is still too implicit in the replay model
+
+The plan already relies on this distinction:
+
+- hermetic replay
+- fresh derivation against still-ambient inputs
+
+But that distinction should not live only in prose.
+
+The canonical replay model should make it explicit in machine-readable form so Ota does not rely
+on readers inferring hermeticity from surrounding narrative.
+
 ## Proposed implementation order
 
 1. define replay posture explicitly
-2. define `last_known_good` against that posture
-3. strengthen pinned-input identity where Ota already has honest access to it
-4. add replay-aware baseline comparison
-5. surface hidden-input suspicion from replay failure
-6. only then widen operator UX further
+2. define replay hermeticity explicitly beside that posture
+3. define `last_known_good` against that combined model
+4. strengthen pinned-input identity where Ota already has honest access to it
+5. add replay-aware baseline comparison
+6. classify replay artifacts by trust-closing power
+7. surface hidden-input suspicion from replay failure
+8. only then widen operator UX further
 
 ## Proposed implementation slices
 
@@ -197,10 +247,16 @@ Direction:
   - `replay_verified`
   - `replay_failed`
   - `replay_unavailable`
+- baseline trust should also publish hermeticity explicitly, for example:
+  - `hermetic`
+  - `partly_ambient`
+  - `ambient_fresh_derivation`
 - this posture should be explicit in machine-readable receipt/baseline comparison output
 - Ota should avoid claiming a stronger trust state than the current evidence supports
 - replay posture should be scoped canonically by the selected lane and execution boundary, not
   treated as one repo-global truth
+- replay artifact trust classes should be derived by Ota from the replay input model and artifact
+  semantics, not hand-labeled by operators or callers
 
 Minimum replay scope should include:
 
@@ -224,7 +280,50 @@ First honest replay target:
 The point of the first shipped lane is not breadth. It is one honest replay-verified baseline
 surface Ota can defend end to end.
 
-### 2. Honest `last_known_good`
+First explicit pressure target:
+
+- a lockfile-pinned local finite verification lane on a repo-local runtime with no live external
+  dependency requirement
+- the strongest nearby repo shape is a lead-quorum-style local Python verification lane once the
+  dependency and runtime identities are fully pinned for replay
+- the important property is not the language. It is:
+  - finite local task
+  - lockfile or equivalent dependency identity
+  - pinned runtime identity
+  - no required live external world in the first honest cut
+
+### 2. Replay artifact trust classes
+
+Direction:
+
+- classify replay-relevant artifacts by whether a clean reading can actually close the case
+- keep the first trust classes explicit:
+  - `acquitting`
+  - `narrowing`
+  - `locator`
+- use those classes to guide both machine-readable replay output and operator-facing replay order
+
+The first honest interpretation should be:
+
+- acquitting artifact:
+  - clean means the named input class is genuinely cleared
+- narrowing artifact:
+  - clean means only the named subset held still
+  - the still-unnamed residue may still be the cause
+- locator artifact:
+  - useful to point at the layer
+  - not enough to conclude
+
+This keeps replay from over-trusting artifacts whose clean state is only as wide as the naming
+discipline behind them.
+
+The first honest ownership rule should stay explicit too:
+
+- these trust classes are replay-engine-derived
+- they come from the canonical replay input model plus artifact semantics
+- they are not caller-supplied labels and not contract-authored opinions
+
+### 3. Honest `last_known_good`
 
 Direction:
 
@@ -243,7 +342,7 @@ Direction:
 This means a baseline that was green once but no longer replays should not still masquerade as
 fully known-good.
 
-### 3. Stronger pinned-input identity
+### 4. Stronger pinned-input identity
 
 Direction:
 
@@ -263,7 +362,7 @@ Direction:
 
 This is the input side of replay trust.
 
-### 4. Replay-aware comparison
+### 5. Replay-aware comparison
 
 Direction:
 
@@ -280,7 +379,7 @@ Direction:
 
 This keeps replay from being misread as just another diff view.
 
-### 5. Hidden-input hardening from replay failure
+### 6. Hidden-input hardening from replay failure
 
 Direction:
 
@@ -298,6 +397,14 @@ The rule should be:
 
 - if replay proves an input moves the trust claim, Ota should either name it explicitly or
   downgrade the trust claim honestly
+
+The artifact-trust rule should stay explicit too:
+
+- trust acquitting artifacts to close their named class
+- trust narrowing artifacts only to narrow
+- trust locator artifacts only to point
+- when a narrowing artifact looks clean and the replay still fails, treat that as evidence that a
+  still-unnamed input class remains in play
 
 The promotion order should stay explicit:
 
@@ -317,6 +424,18 @@ This is the practical replay-hardening order because:
 - live external state is the least pin-able class and therefore needs snapshotting or an honest
   downgrade from hermetic replay to fresh derivation
 
+The operator ordering should follow that trust order:
+
+1. check acquitting artifacts first
+   - lockfile diff
+   - pinned runtime or image digest
+2. use narrowing artifacts second
+   - env snapshot
+   - external fixture snapshot
+3. use logs as locator evidence throughout
+   - enough to point at the layer
+   - never enough to close the case
+
 The hermetic boundary should stay explicit:
 
 - if the evaluated path depends on live external state that was not snapshotted or otherwise named
@@ -333,7 +452,7 @@ This should stay aligned with V11.9:
 - V11.10 uses that stronger named-input set to decide whether a baseline is hermetic,
   replay-verified, witness-only, or still partly ambient
 
-### 6. Operator UX only after evidence is solid
+### 7. Operator UX only after evidence is solid
 
 Direction:
 
@@ -349,6 +468,12 @@ V11.10 is complete when:
 - Ota can distinguish a past witness from a replay-verified baseline in machine-readable output
 - replay posture is explicitly scoped by selected lane and execution boundary on the first honest
   paths instead of overclaiming repo-global truth
+- hermetic replay versus fresh derivation is explicit in the canonical replay model instead of
+  living only in narrative explanation
+- replay artifact trust classes are explicit enough that acquitting, narrowing, and locator
+  evidence are not treated as equivalent trust closers
+- replay artifact trust classes are replay-engine-derived from the canonical replay input model and
+  artifact semantics instead of hand-labeled by callers
 - `last_known_good` is defined in terms of exact witness plus replay posture, not only "latest
   green"
 - `last_known_good` keeps source identity and contract snapshot identity as separate pinned inputs

@@ -57,6 +57,8 @@ The product goal is:
 - make hydration source provenance explicit where it materially changes trust or replayability
 - let Ota name the difference between a pinned dependency graph and a moving source posture
 - start narrow, then widen ecosystem by ecosystem only where the trust boundary is real
+- keep hydration provenance owned by the structured hydration lane itself instead of drifting into
+  parallel metadata
 
 ## Canonical product principle
 
@@ -75,6 +77,12 @@ It is:
 - against this declared feed or source posture
 - with this online/offline trust boundary
 - under this replayability claim
+
+The first honest ownership rule is:
+
+- hydration source or feed provenance lives on the existing structured hydration source
+- receipts and output surfaces report the resolved provenance of that same canonical shape
+- Ota should not create a second parallel provenance surface beside the hydration-owned contract
 
 ## Problem statement
 
@@ -108,6 +116,7 @@ V11.12 is the slice for making that distinction first-class where it matters.
 - ecosystem-specific provenance widening instead of one forced universal source model
 - online/offline posture where it materially affects replay or trust
 - machine-readable hydration-source identity on the canonical structured hydration surface
+- one canonical ownership point for contract truth and one derived ownership point for output truth
 
 ## Non-goals
 
@@ -146,13 +155,23 @@ The mature move is:
 - define typed hydration input provenance as the product concept
 - widen it ecosystem by ecosystem where real repo pressure proves the source boundary matters
 
+### 4. Hydration provenance ownership is still under-specified
+
+The key design choice is not optional:
+
+- contract truth should live on the structured hydration source itself
+- machine output should report the provenance resolved from that same source-owned truth
+- Ota should not split this into one contract lane plus a separate shared provenance blob with
+  independent semantics
+
 ## Proposed implementation order
 
 1. define typed hydration input provenance as the canonical concept
-2. choose one first real ecosystem target
-3. add source/feed posture only for that target
-4. pressure-test on a real repo where the source boundary actually matters
-5. only then widen to the next ecosystem
+2. define the canonical ownership point on the structured hydration source
+3. choose one first real ecosystem target
+4. add source/feed posture only for that target
+5. pressure-test on a real repo where the source boundary actually matters
+6. only then widen to the next ecosystem
 
 ## Proposed implementation slices
 
@@ -161,8 +180,17 @@ The mature move is:
 Direction:
 
 - keep the existing typed hydration source as the primary lane owner
-- add a narrower provenance layer for source/feed posture where it materially changes trust
+- add a narrower provenance layer for source/feed posture on that existing hydration-owned source
+  where it materially changes trust
 - ensure this model stays separate from replay baseline identity and proof boundary identity
+
+The first honest shape should be:
+
+- contract truth:
+  - hydration source owns declared source/feed posture
+- output truth:
+  - receipt or execution JSON publishes the resolved provenance of that declared hydration source
+- no parallel repo-global provenance object for the same hydration lane
 
 ### 2. First ecosystem target
 
@@ -185,6 +213,9 @@ Direction:
   - online/offline mode when it materially changes the trust claim
 - keep future ecosystem shapes free to differ where the real trust boundary differs
 
+The first implementation should attach those typed fields to the existing structured hydration
+source for the selected ecosystem, not to a separate metadata-only output branch.
+
 ### 4. Replay and trust alignment
 
 Direction:
@@ -200,7 +231,8 @@ V11.12 is complete when:
 
 - Ota can express typed hydration input provenance for at least one real ecosystem where the
   source/feed materially affects trust
-- that provenance is machine-readable on the structured hydration surface
+- that provenance lives on the structured hydration surface as the canonical contract-owned truth
+- machine-readable output reports the resolved provenance of that same structured hydration truth
 - a real pressure repo can move from hidden source posture to declared source posture without
   dropping back to shell glue
 - the model stays ecosystem-honest instead of forcing one fake universal source taxonomy

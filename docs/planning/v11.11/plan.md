@@ -58,6 +58,8 @@ The product goal is:
 - publish what it did not cover
 - classify the proof boundary honestly
 - let downstream humans, CI systems, and agents consume that boundary without reading a blog post
+- keep `not_proved` relative to declared proof scope instead of letting it drift into free-floating
+  exclusion prose
 
 ## Canonical product principle
 
@@ -75,6 +77,14 @@ It is:
 - this exact execution boundary was covered
 - these exact proof obligations were satisfied
 - these adjacent obligations were intentionally not proved here
+
+`not_proved` should be relative, not free-floating.
+
+The first honest rule is:
+
+- `scope` says what this proof covered
+- `not_proved` says which adjacent declared proof families remain outside that scope
+- `not_proved` is not repo-global commentary and is not a second independent taxonomy beside scope
 
 ## Problem statement
 
@@ -102,6 +112,7 @@ Without that, today's honest narrow proof can become tomorrow's silent overclaim
 - honest proof classification for narrow versus broader proof posture
 - proof scope attached to the canonical contract/proof surfaces, not only human commentary
 - phase-aligned JSON output so proof coverage and not-proved scope are inspectable by automation
+- one named first JSON carrier for the first honest implementation cut
 
 ## Non-goals
 
@@ -140,13 +151,24 @@ V11.11 should publish that shape directly.
 Ota already pushes operators toward truthful narrowing, but the machine-readable artifact needs to
 carry the same truth so CI, agents, and later replay/refusal layers do not have to infer it.
 
+### 4. `not_proved` is still under-anchored
+
+If `not_proved` is emitted without an explicit anchor, it can degrade into vague exclusion prose.
+
+The first honest boundary is:
+
+- `not_proved` entries are scoped relative to the declared proof scope
+- they should describe adjacent declared proof families outside the selected proof boundary
+- they should not act as repo-global completion commentary
+
 ## Proposed implementation order
 
 1. define the first honest proof-scope model
-2. define the corresponding not-proved model
-3. attach both to the canonical proof/receipt JSON surfaces
-4. pressure-test on repos that intentionally carry narrow proof
-5. only then widen the taxonomy if real repos need it
+2. define the corresponding relative not-proved model
+3. choose one first JSON carrier for the first honest cut
+4. attach both to that carrier first
+5. pressure-test on repos that intentionally carry narrow proof
+6. only then widen the taxonomy or replicate across other artifacts
 
 ## Proposed implementation slices
 
@@ -168,12 +190,23 @@ Direction:
 Direction:
 
 - publish adjacent exclusions as explicit not-proved boundary, not only implicit absence
+- keep `not_proved` relative to the declared proof scope and adjacent declared proof families,
+  not as free-floating repo commentary
 - keep the first shape narrow and machine-readable, for example:
   - `functional_runtime_not_proved`
   - `database_path_not_proved`
   - `external_network_path_not_proved`
   - `broader_repo_completion_not_proved`
 - prefer explicit reason families over prose-only notes where Ota can already classify honestly
+
+The first honest interpretation should be:
+
+- if scope is `task` or `workflow`, `not_proved` can describe adjacent runtime or broader
+  completion families that remain outside the exercised lane
+- if scope is `runtime_path`, `not_proved` can describe adjacent integration or broader repo
+  completion families outside that runtime boundary
+- if Ota cannot anchor an exclusion relative to declared scope and adjacent proof families, it
+  should omit it rather than invent loose taxonomy prose
 
 ### 3. Proof classification without overclaim
 
@@ -188,11 +221,22 @@ Direction:
 - keep this classification derived from the actual exercised lane and published not-proved
   boundary, not from operator aspiration
 
-### 4. Canonical output placement
+### 4. First carrier before broader propagation
 
 Direction:
 
-- attach proof-scope and not-proved boundary to the canonical proof/receipt JSON surfaces
+- pick one first JSON carrier for the first implementation cut
+- the strongest first carrier is `ota up --json` because it already concentrates readiness,
+  execution, proof, and workflow-facing boundary truth on one operator surface
+- treat receipt archive JSON and other proof/receipt carriers as later derivations from the same
+  canonical shape instead of widening all artifact surfaces at once
+
+### 5. Canonical output placement
+
+Direction:
+
+- attach proof-scope and not-proved boundary to the first chosen carrier, then derive outward
+  from there
 - keep the human-readable summary aligned with the same fields instead of inventing a second
   narrative-only explanation
 - ensure future docs and engineering notes can point to the artifact directly
@@ -203,7 +247,9 @@ V11.11 is complete when:
 
 - Ota can publish the covered proof boundary and adjacent not-proved boundary for at least one
   real narrow-proof repo lane
-- that boundary is machine-readable on the canonical proof/receipt surface
+- `not_proved` is explicitly relative to declared scope and adjacent proof families instead of
+  free-floating exclusion prose
+- that boundary is machine-readable on the first chosen JSON carrier
 - the classification does not overclaim beyond what the exercised lane actually proved
 - engineering notes no longer need to carry the only truthful statement of proof scope
 
