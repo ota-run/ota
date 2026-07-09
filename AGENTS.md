@@ -38,6 +38,29 @@ Agents must optimize for correctness, trust, determinism, and adoption usefulnes
 
 The authoritative machine-readable agent contract for this repository lives in [`ota.yaml`](ota.yaml). This file is human-facing guidance that must stay aligned with that contract and must not override it.
 
+## Agent Continuity And Product Propagation
+
+Before substantive Ota work, read [`docs/ai/current-state.md`](docs/ai/current-state.md). It is the
+single live handoff for the active branch, current plan slice, verified state, and next proof gate.
+Do not create parallel `context`, `decisions`, or handoff files for the same information.
+
+For every Ota product change, explicitly assess connected first-party surfaces before declaring the
+work complete:
+
+- core docs/specs, JSON reference, tests, and `CHANGELOG.md` for user-visible behavior
+- `ota-run/examples` when authors need a copy-ready contract shape
+- `ota-run/skills` when authoring, review, pressure, or agent guidance changes
+- `ota-site` when public reference, onboarding, or product claims change
+
+Update each surface that is affected. If one is not affected, state that decision in the handoff or
+completion summary; do not silently assume core code alone is enough.
+
+Pressure testing is product discovery as well as proof. Follow the canonical Ota skill's
+`references/pressure-testing-protocol.md` from `/Users/bobai/Workspace/Ota.run/skills` when it is
+available locally. Every pressure repo must prove the advertised task, workflow, runtime, mode,
+matrix, and bootstrap surfaces, and must separately identify repo issues from genuine Ota platform
+gaps.
+
 ---
 
 ## Core Product Context
