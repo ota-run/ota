@@ -28,9 +28,9 @@
 
 - tightened merge-facing governance with the same narrow mechanism tripwire: `ota doctor --json`
   merge-gate summaries and per-lane records now publish additive `decision_inputs[]` with stable
-  `decision_owner:<stable-id>` identity plus cited merge inputs, so downstream consumers can link
-  the doctor-side merge verdict back to one canonical decision owner without inventing a second
-  merge governance model
+  `decision_owner:<stable-id>` identity plus cited merge inputs, and now reconcile that emitted
+  verdict through `replay`, so downstream consumers can link and re-check the doctor-side merge
+  verdict without inventing a second merge governance model
 - tightened V11.9 governance replay with a narrow mechanism tripwire: the canonical
   `governance.evaluation.*.decision_inputs[]` lane now carries additive
   `decision_owner:<stable-id>` cited inputs for preflight and post-execution records, and replay

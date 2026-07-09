@@ -36,7 +36,7 @@ use crate::output::{
     DoctorMergeGateLaneEvidenceClasses, DoctorMergeGateSummary,
     DoctorMergeGateSummaryEvidenceClasses, DoctorRequiredVerificationLane,
     DoctorRequiredVerificationLaneEvidenceClasses, GovernanceDecisionBasisEntry,
-    GovernanceDecisionInputEntry,
+    GovernanceDecisionInputEntry, GovernanceReplayResult,
 };
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
@@ -695,7 +695,7 @@ pub(crate) fn doctor_required_verification_governance(
         .iter()
         .map(|lane| {
             let drift = drift_by_merge_check_id.get(&lane.merge_check_id);
-            DoctorMergeGateLane {
+            let mut merge_lane = DoctorMergeGateLane {
                 merge_check_id: lane.merge_check_id.clone(),
                 lane_task: lane.lane_task.clone(),
                 lane_kind: lane.lane_kind.clone(),
@@ -708,16 +708,22 @@ pub(crate) fn doctor_required_verification_governance(
                 evidence_classes: merge_gate_lane_evidence_classes(),
                 decision_basis: merge_gate_lane_decision_basis(lane, drift),
                 decision_inputs: merge_gate_lane_decision_inputs(lane, drift),
+                replay: GovernanceReplayResult {
+                    status: String::new(),
+                    mismatches: Vec::new(),
+                },
                 contract_sources: lane.contract_sources.clone(),
                 provider_sources: drift
                     .map(|metadata| metadata.provider_sources.clone())
                     .unwrap_or_default(),
-            }
+            };
+            merge_lane.replay = reconcile_merge_gate_lane_replay(&merge_lane);
+            merge_lane
         })
         .collect::<Vec<_>>();
     let drift_lane_count = lanes.iter().filter(|lane| lane.blocking).count();
 
-    Some(DoctorGovernanceSummary {
+    let mut summary = DoctorGovernanceSummary {
         required_verification_lanes,
         merge_gate: Some(DoctorMergeGateSummary {
             state: if drift_lane_count > 0 {
@@ -731,9 +737,19 @@ pub(crate) fn doctor_required_verification_governance(
             evidence_classes: merge_gate_summary_evidence_classes(),
             decision_basis: merge_gate_summary_decision_basis(&lanes),
             decision_inputs: merge_gate_summary_decision_inputs(&lanes),
+            replay: GovernanceReplayResult {
+                status: String::new(),
+                mismatches: Vec::new(),
+            },
             lanes,
         }),
-    })
+    };
+
+    if let Some(merge_gate) = summary.merge_gate.as_mut() {
+        merge_gate.replay = reconcile_merge_gate_summary_replay(merge_gate);
+    }
+
+    Some(summary)
 }
 
 fn required_verification_lane_evidence_classes() -> DoctorRequiredVerificationLaneEvidenceClasses {
@@ -752,6 +768,7 @@ fn merge_gate_summary_evidence_classes() -> DoctorMergeGateSummaryEvidenceClasse
         required_lane_count: String::from("derived"),
         drift_lane_count: String::from("derived"),
         decision_inputs: String::from("derived"),
+        replay: String::from("derived"),
     }
 }
 
@@ -763,8 +780,92 @@ fn merge_gate_lane_evidence_classes() -> DoctorMergeGateLaneEvidenceClasses {
         state: String::from("derived"),
         blocking: String::from("derived"),
         decision_inputs: String::from("derived"),
+        replay: String::from("derived"),
         contract_sources: String::from("derived"),
         provider_sources: String::from("derived"),
+    }
+}
+
+#[derive(Default)]
+struct MergeGateLaneReplayInputs {
+    merge_check_id: Option<String>,
+    drift_detected: Option<bool>,
+    decision_owner: Option<String>,
+}
+
+#[derive(Default)]
+struct MergeGateSummaryReplayInputs {
+    required_lane_count: Option<usize>,
+    drift_lane_count: Option<usize>,
+    decision_owner: Option<String>,
+}
+
+fn parse_merge_gate_bool_input(value: &str, prefix: &str) -> Option<bool> {
+    value.strip_prefix(prefix)?.parse().ok()
+}
+
+fn parse_merge_gate_count_input(value: &str, prefix: &str) -> Option<usize> {
+    value.strip_prefix(prefix)?.parse().ok()
+}
+
+fn parse_merge_gate_lane_replay_inputs(
+    inputs: &[GovernanceDecisionInputEntry],
+) -> MergeGateLaneReplayInputs {
+    let mut parsed = MergeGateLaneReplayInputs::default();
+    for entry in inputs {
+        if let Some(value) = entry.id.strip_prefix("merge_check_id:") {
+            parsed.merge_check_id = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = parse_merge_gate_bool_input(&entry.id, "drift_detected:") {
+            parsed.drift_detected = Some(value);
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("decision_owner:") {
+            parsed.decision_owner = Some(value.to_string());
+        }
+    }
+    parsed
+}
+
+fn parse_merge_gate_summary_replay_inputs(
+    inputs: &[GovernanceDecisionInputEntry],
+) -> MergeGateSummaryReplayInputs {
+    let mut parsed = MergeGateSummaryReplayInputs::default();
+    for entry in inputs {
+        if let Some(value) = parse_merge_gate_count_input(&entry.id, "required_lane_count:") {
+            parsed.required_lane_count = Some(value);
+            continue;
+        }
+        if let Some(value) = parse_merge_gate_count_input(&entry.id, "drift_lane_count:") {
+            parsed.drift_lane_count = Some(value);
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("decision_owner:") {
+            parsed.decision_owner = Some(value.to_string());
+        }
+    }
+    parsed
+}
+
+fn governance_replay_status(mismatches: Vec<String>) -> GovernanceReplayResult {
+    GovernanceReplayResult {
+        status: if mismatches.is_empty() {
+            String::from("satisfied")
+        } else {
+            String::from("mismatch")
+        },
+        mismatches,
+    }
+}
+
+fn governance_replay_unavailable(missing_inputs: Vec<&'static str>) -> GovernanceReplayResult {
+    GovernanceReplayResult {
+        status: String::from("unavailable"),
+        mismatches: missing_inputs
+            .into_iter()
+            .map(|input| format!("missing_input:{input}"))
+            .collect(),
     }
 }
 
@@ -872,6 +973,126 @@ fn merge_gate_summary_decision_inputs(
             detail: None,
         },
     ]
+}
+
+fn reconcile_merge_gate_lane_replay(lane: &DoctorMergeGateLane) -> GovernanceReplayResult {
+    let parsed = parse_merge_gate_lane_replay_inputs(&lane.decision_inputs);
+    let mut missing = Vec::new();
+    if parsed.merge_check_id.is_none() {
+        missing.push("merge_check_id");
+    }
+    if parsed.drift_detected.is_none() {
+        missing.push("drift_detected");
+    }
+    if parsed.decision_owner.is_none() {
+        missing.push("decision_owner");
+    }
+    if !missing.is_empty() {
+        return governance_replay_unavailable(missing);
+    }
+
+    let drift_detected = parsed.drift_detected.unwrap_or(false);
+    let expected_state = if drift_detected {
+        "drift_detected"
+    } else {
+        "projected"
+    };
+    let expected_basis_ids = if drift_detected {
+        vec![
+            format!("projection:{}", lane.merge_check_id),
+            format!("drift:{}", lane.merge_check_id),
+        ]
+    } else {
+        vec![format!("projection:{}", lane.merge_check_id)]
+    };
+
+    let mut mismatches = Vec::new();
+    if parsed.merge_check_id.as_deref() != Some(lane.merge_check_id.as_str()) {
+        mismatches.push(String::from("merge_check_id"));
+    }
+    if lane.state != expected_state {
+        mismatches.push(format!("state:{}!={expected_state}", lane.state));
+    }
+    if lane.blocking != drift_detected {
+        mismatches.push(String::from("blocking"));
+    }
+    if parsed.decision_owner.as_deref() != Some("doctor_merge_gate_lane") {
+        mismatches.push(String::from("decision_owner"));
+    }
+    let current_basis_ids = lane
+        .decision_basis
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    let expected_basis_ids = expected_basis_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if current_basis_ids != expected_basis_ids {
+        mismatches.push(String::from("decision_basis"));
+    }
+
+    governance_replay_status(mismatches)
+}
+
+fn reconcile_merge_gate_summary_replay(summary: &DoctorMergeGateSummary) -> GovernanceReplayResult {
+    let parsed = parse_merge_gate_summary_replay_inputs(&summary.decision_inputs);
+    let mut missing = Vec::new();
+    if parsed.required_lane_count.is_none() {
+        missing.push("required_lane_count");
+    }
+    if parsed.drift_lane_count.is_none() {
+        missing.push("drift_lane_count");
+    }
+    if parsed.decision_owner.is_none() {
+        missing.push("decision_owner");
+    }
+    if !missing.is_empty() {
+        return governance_replay_unavailable(missing);
+    }
+
+    let expected_required_lane_count = parsed.required_lane_count.unwrap_or(0);
+    let expected_drift_lane_count = parsed.drift_lane_count.unwrap_or(0);
+    let expected_state = if expected_drift_lane_count > 0 {
+        "drift_detected"
+    } else {
+        "projected"
+    };
+    let expected_basis_ids = merge_gate_summary_decision_basis(&summary.lanes)
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+
+    let mut mismatches = Vec::new();
+    if summary.required_lane_count != expected_required_lane_count {
+        mismatches.push(String::from("required_lane_count"));
+    }
+    if summary.drift_lane_count != expected_drift_lane_count {
+        mismatches.push(String::from("drift_lane_count"));
+    }
+    if summary.state != expected_state {
+        mismatches.push(format!("state:{}!={expected_state}", summary.state));
+    }
+    if summary.blocking != (expected_drift_lane_count > 0) {
+        mismatches.push(String::from("blocking"));
+    }
+    if parsed.decision_owner.as_deref() != Some("doctor_merge_gate_summary") {
+        mismatches.push(String::from("decision_owner"));
+    }
+    let current_basis_ids = summary
+        .decision_basis
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    let expected_basis_ids = expected_basis_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if current_basis_ids != expected_basis_ids {
+        mismatches.push(String::from("decision_basis"));
+    }
+
+    governance_replay_status(mismatches)
 }
 
 pub(crate) fn merge_check_id_for_lane_task(task_name: &str) -> String {
@@ -3552,14 +3773,18 @@ workflows:
         assert_eq!(merge_gate.drift_lane_count, 0);
         assert_eq!(merge_gate.evidence_classes.state, "derived");
         assert_eq!(merge_gate.evidence_classes.blocking, "derived");
+        assert_eq!(merge_gate.evidence_classes.replay, "derived");
         assert_eq!(
             merge_gate.decision_basis[0].id,
             "projection:ota.verify.verify"
         );
+        assert_eq!(merge_gate.replay.status, "satisfied");
         assert_eq!(merge_gate.decision_basis[0].family, "required_lane");
         assert_eq!(merge_gate.decision_basis[0].evidence_class, "derived");
         assert_eq!(merge_gate.lanes[0].state, "projected");
         assert_eq!(merge_gate.lanes[0].evidence_classes.state, "derived");
+        assert_eq!(merge_gate.lanes[0].evidence_classes.replay, "derived");
+        assert_eq!(merge_gate.lanes[0].replay.status, "satisfied");
         assert_eq!(
             merge_gate.lanes[0].evidence_classes.provider_sources,
             "derived"
@@ -3610,6 +3835,7 @@ workflows:
         assert_eq!(merge_gate.required_lane_count, 1);
         assert_eq!(merge_gate.drift_lane_count, 1);
         assert_eq!(merge_gate.evidence_classes.drift_lane_count, "derived");
+        assert_eq!(merge_gate.replay.status, "satisfied");
         assert_eq!(
             merge_gate.decision_basis[0].id,
             "projection:ota.verify.verify"
@@ -3619,6 +3845,7 @@ workflows:
         assert_eq!(merge_gate.lanes[0].state, "drift_detected");
         assert!(merge_gate.lanes[0].blocking);
         assert_eq!(merge_gate.lanes[0].evidence_classes.blocking, "derived");
+        assert_eq!(merge_gate.lanes[0].replay.status, "satisfied");
         assert_eq!(
             merge_gate.lanes[0].decision_basis[0].id,
             "projection:ota.verify.verify"

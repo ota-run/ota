@@ -2210,7 +2210,8 @@ Failure:
         "blocking": "derived",
         "required_lane_count": "derived",
         "drift_lane_count": "derived",
-        "decision_inputs": "derived"
+        "decision_inputs": "derived",
+        "replay": "derived"
       },
       "decision_basis": [
         {
@@ -2240,6 +2241,9 @@ Failure:
           "replay_class": "witnessed"
         }
       ],
+      "replay": {
+        "status": "satisfied"
+      },
       "lanes": [
         {
           "merge_check_id": "ota.verify.verify",
@@ -2254,6 +2258,7 @@ Failure:
             "state": "derived",
             "blocking": "derived",
             "decision_inputs": "derived",
+            "replay": "derived",
             "contract_sources": "derived",
             "provider_sources": "derived"
           },
@@ -2285,6 +2290,9 @@ Failure:
               "replay_class": "witnessed"
             }
           ],
+          "replay": {
+            "status": "satisfied"
+          },
           "contract_sources": ["workflows.verify.run.task"],
           "provider_sources": []
         }
@@ -2401,6 +2409,9 @@ surface stays honest:
   `decision_owner:<stable-id>` mechanism identity on both the summary and per-lane records, so
   downstream consumers can link the projected merge verdict back to one canonical doctor-side
   decision owner without inventing a second merge model
+- both the summary and each lane also carry `replay`, which reconciles the emitted merge-facing
+  verdict back to those cited decision inputs and reports `satisfied`, `mismatch`, or
+  `unavailable` without inventing a second merge-only command surface
 - each `lanes[]` entry carries the same canonical `merge_check_id`, lane identity, and any
   recovered `provider_sources` from CI drift findings; per-lane `decision_basis[]` repeats the
   same cited lane basis at lane scope for downstream consumers that do not want to re-infer lane

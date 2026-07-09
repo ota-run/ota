@@ -1405,12 +1405,20 @@ workflows:
         "derived"
     );
     assert_eq!(
+        json["governance"]["merge_gate"]["evidence_classes"]["replay"],
+        "derived"
+    );
+    assert_eq!(
         json["governance"]["merge_gate"]["decision_basis"][0]["id"],
         "projection:ota.verify.verify"
     );
     assert_eq!(
         json["governance"]["merge_gate"]["decision_inputs"][0]["id"],
         "decision_owner:doctor_merge_gate_summary"
+    );
+    assert_eq!(
+        json["governance"]["merge_gate"]["replay"]["status"],
+        "satisfied"
     );
     assert_eq!(
         json["governance"]["merge_gate"]["lanes"][0]["state"],
@@ -1425,12 +1433,20 @@ workflows:
         "derived"
     );
     assert_eq!(
+        json["governance"]["merge_gate"]["lanes"][0]["evidence_classes"]["replay"],
+        "derived"
+    );
+    assert_eq!(
         json["governance"]["merge_gate"]["lanes"][0]["decision_basis"][0]["id"],
         "projection:ota.verify.verify"
     );
     assert_eq!(
         json["governance"]["merge_gate"]["lanes"][0]["decision_inputs"][0]["id"],
         "decision_owner:doctor_merge_gate_lane"
+    );
+    assert_eq!(
+        json["governance"]["merge_gate"]["lanes"][0]["replay"]["status"],
+        "satisfied"
     );
 }
 
