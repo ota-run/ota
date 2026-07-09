@@ -1823,6 +1823,7 @@ pub(crate) fn infer_ci_verification_task_line(line: &str) -> Option<(String, Str
         "pnpm" | "yarn" => infer_node_ci_verification_task(first, &tokens, trimmed),
         "bun" => infer_bun_ci_verification_task(&tokens, trimmed),
         "node" => infer_node_script_ci_verification_task(&tokens, trimmed),
+        "dotnet" => infer_dotnet_ci_verification_task(&tokens, trimmed),
         "ruff" => infer_ruff_ci_verification_task(&tokens, trimmed),
         "task" | "just" => {
             let task_name = tokens.get(1)?;
@@ -1895,6 +1896,14 @@ fn infer_bun_ci_verification_task(tokens: &[&str], original: &str) -> Option<(St
                 None
             }
         }
+        _ => None,
+    }
+}
+
+fn infer_dotnet_ci_verification_task(tokens: &[&str], original: &str) -> Option<(String, String)> {
+    match tokens.get(1).copied() {
+        Some("build") => Some((String::from("build"), original.to_string())),
+        Some("test") => Some((String::from("test"), original.to_string())),
         _ => None,
     }
 }

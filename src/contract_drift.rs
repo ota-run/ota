@@ -623,6 +623,13 @@ fn compact_display_path(path: &Path) -> String {
 fn should_surface_external_source_governance_drift(change: &DetectComparisonChange) -> bool {
     change.status == "update"
         && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MANUAL)
+        && change
+            .existing
+            .as_deref()
+            .zip(Some(change.detected.as_str()))
+            .is_none_or(|(existing, detected)| {
+                ci_verification_command_families_compatible(existing, detected)
+            })
         && change.source.as_deref().is_some_and(|source| {
             matches_governed_external_source(
                 change.source_class.as_deref(),
@@ -1177,7 +1184,13 @@ fn collect_ci_verification_governance_changes(
     if lane_names.is_empty() {
         return Vec::new();
     }
-    let recovered_signals = recover_ci_verification_task_signals(existing, signals);
+    let task_command_truth_by_field = ci_verification_task_command_truth_by_field(existing);
+    let recovered_signals = recover_ci_verification_task_signals(existing, signals)
+        .into_iter()
+        .filter(|signal| {
+            is_comparable_ci_verification_signal(existing, signal, &task_command_truth_by_field)
+        })
+        .collect::<Vec<_>>();
     let ci_tasks = recovered_signals
         .iter()
         .filter(|signal| {
@@ -1276,7 +1289,15 @@ fn collect_ci_verification_aggregate_changes(
     if lane_names.is_empty() {
         return Vec::new();
     }
-    let workflow_candidates = collect_ci_verification_workflow_task_sequences(existing, signals);
+    let task_command_truth_by_field = ci_verification_task_command_truth_by_field(existing);
+    let comparable_signals = recover_ci_verification_task_signals(existing, signals)
+        .into_iter()
+        .filter(|signal| {
+            is_comparable_ci_verification_signal(existing, signal, &task_command_truth_by_field)
+        })
+        .collect::<Vec<_>>();
+    let workflow_candidates =
+        collect_ci_verification_workflow_task_sequences(existing, &comparable_signals);
     if workflow_candidates.is_empty() {
         return Vec::new();
     }
@@ -1712,6 +1733,7 @@ fn recover_ci_verification_task_signals(
     let mut command_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
     let mut pytest_target_index = BTreeMap::<String, Vec<VerificationCommandCandidate>>::new();
     let mut task_field_index = BTreeMap::<String, String>::new();
+    let mut task_command_truth_by_field = BTreeMap::<String, String>::new();
     let mut verification_tasks_by_family = BTreeMap::<String, usize>::new();
     for (task_name, task) in &existing.tasks {
         let Some(field) = task_command_truth_field(task_name, task) else {
@@ -1727,6 +1749,7 @@ fn recover_ci_verification_task_signals(
         let Some(command) = existing_task_detectable_command_truth(task) else {
             continue;
         };
+        task_command_truth_by_field.insert(field.clone(), command.clone());
         let Some(command_key) = canonicalize_ci_verification_command(&command) else {
             if let Some(pytest_target) = ci_pytest_target(&command) {
                 pytest_target_index.entry(pytest_target).or_default().push(
@@ -1764,7 +1787,11 @@ fn recover_ci_verification_task_signals(
                 let qualified_task_name = qualify_ci_verification_task_name(task_name, qualifier);
                 if let Some(existing_field) = task_field_index.get(&qualified_task_name) {
                     let mut recovered = signal.clone();
-                    recovered.field = existing_field.clone();
+                    recovered.field = compatible_recovered_ci_signal_field(
+                        existing_field,
+                        &signal.command,
+                        &task_command_truth_by_field,
+                    );
                     return recovered;
                 }
 
@@ -1774,7 +1801,11 @@ fn recover_ci_verification_task_signals(
                     qualifier,
                 ) {
                     let mut recovered = signal.clone();
-                    recovered.field = fuzzy_field;
+                    recovered.field = compatible_recovered_ci_signal_field(
+                        &fuzzy_field,
+                        &signal.command,
+                        &task_command_truth_by_field,
+                    );
                     return recovered;
                 }
 
@@ -1795,7 +1826,11 @@ fn recover_ci_verification_task_signals(
                 && existing_field != &signal.field
             {
                 let mut recovered = signal.clone();
-                recovered.field = existing_field.clone();
+                recovered.field = compatible_recovered_ci_signal_field(
+                    existing_field,
+                    &signal.command,
+                    &task_command_truth_by_field,
+                );
                 return recovered;
             }
 
@@ -1811,7 +1846,13 @@ fn recover_ci_verification_task_signals(
                             .any(|candidate| candidate.field == signal.field)
                     })
                 {
-                    return signal.clone();
+                    let mut recovered = signal.clone();
+                    recovered.field = compatible_recovered_ci_signal_field(
+                        &signal.field,
+                        &signal.command,
+                        &task_command_truth_by_field,
+                    );
+                    return recovered;
                 }
             }
 
@@ -1826,7 +1867,11 @@ fn recover_ci_verification_task_signals(
                     };
                     if let Some(matched_field) = matched_field {
                         let mut recovered = signal.clone();
-                        recovered.field = matched_field;
+                        recovered.field = compatible_recovered_ci_signal_field(
+                            &matched_field,
+                            &signal.command,
+                            &task_command_truth_by_field,
+                        );
                         return recovered;
                     }
                 }
@@ -1843,7 +1888,11 @@ fn recover_ci_verification_task_signals(
                     };
                     if let Some(matched_field) = matched_field {
                         let mut recovered = signal.clone();
-                        recovered.field = matched_field;
+                        recovered.field = compatible_recovered_ci_signal_field(
+                            &matched_field,
+                            &signal.command,
+                            &task_command_truth_by_field,
+                        );
                         return recovered;
                     }
                 }
@@ -1869,10 +1918,92 @@ fn recover_ci_verification_task_signals(
             };
 
             let mut recovered = signal.clone();
-            recovered.field = matched_field;
+            recovered.field = compatible_recovered_ci_signal_field(
+                &matched_field,
+                &signal.command,
+                &task_command_truth_by_field,
+            );
             recovered
         })
         .collect()
+}
+
+fn ci_verification_task_command_truth_by_field(existing: &Contract) -> BTreeMap<String, String> {
+    existing
+        .tasks
+        .iter()
+        .filter_map(|(task_name, task)| {
+            let field = task_command_truth_field(task_name, task)?;
+            if !is_verification_task_truth_field(&field) {
+                return None;
+            }
+            let command = existing_task_detectable_command_truth(task)?;
+            Some((field, command))
+        })
+        .collect()
+}
+
+fn is_comparable_ci_verification_signal(
+    existing: &Contract,
+    signal: &CiVerificationTaskSignal,
+    task_command_truth_by_field: &BTreeMap<String, String>,
+) -> bool {
+    if !signal.exact_command {
+        if signal.field.is_empty() {
+            return false;
+        }
+        if let Some(existing_command) = task_command_truth_by_field.get(&signal.field) {
+            return ci_verification_command_families_compatible(existing_command, &signal.command);
+        }
+        if verification_task_name_from_field(&signal.field)
+            .is_some_and(|task_name| signal.command.trim() == task_name)
+        {
+            return true;
+        }
+    }
+
+    if let Some(existing_command) = task_command_truth_by_field.get(&signal.field) {
+        return ci_verification_command_families_compatible(existing_command, &signal.command);
+    }
+
+    let Some(command_key) = canonicalize_ci_verification_command(&signal.command) else {
+        return true;
+    };
+    let Some(command_family) = ci_verification_command_family_key(&command_key) else {
+        return true;
+    };
+
+    existing.tasks.iter().any(|(task_name, task)| {
+        let Some(field) = task_command_truth_field(task_name, task) else {
+            return false;
+        };
+        if !is_verification_task_truth_field(&field) {
+            return false;
+        }
+        let Some(existing_command) = existing_task_detectable_command_truth(task) else {
+            return false;
+        };
+        ci_verification_command_family_key(&existing_command)
+            .is_some_and(|existing_family| existing_family == command_family)
+            && ci_verification_command_families_compatible(
+                existing_command.as_str(),
+                &signal.command,
+            )
+    })
+}
+
+fn compatible_recovered_ci_signal_field(
+    field: &str,
+    detected_command: &str,
+    task_command_truth_by_field: &BTreeMap<String, String>,
+) -> String {
+    task_command_truth_by_field
+        .get(field)
+        .filter(|existing_command| {
+            ci_verification_command_families_compatible(existing_command, detected_command)
+        })
+        .map(|_| field.to_string())
+        .unwrap_or_default()
 }
 
 fn match_fuzzy_qualified_ci_verifier_task_field(
@@ -1933,6 +2064,91 @@ fn equivalent_ci_verification_commands(existing: &str, detected: &str) -> bool {
         || canonicalize_ci_verification_command(existing)
             .zip(canonicalize_ci_verification_command(detected))
             .is_some_and(|(left, right)| left == right)
+}
+
+fn ci_verification_command_families_compatible(existing: &str, detected: &str) -> bool {
+    let Some(existing_family) = ci_verification_command_family_key(existing) else {
+        return true;
+    };
+    let Some(detected_family) = ci_verification_command_family_key(detected) else {
+        return true;
+    };
+    if existing_family != detected_family {
+        return false;
+    }
+    ci_verification_command_scopes_compatible(existing, detected, &existing_family)
+}
+
+fn ci_verification_command_family_key(command: &str) -> Option<String> {
+    let normalized = canonicalize_ci_verification_command(command)?;
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    let executable = *tokens.first()?;
+    let family = match executable {
+        "dotnet" | "cargo" | "go" | "gradle" | "mvn" | "bundle" | "yarn" | "pnpm" | "npm" => {
+            let subcommand = tokens
+                .iter()
+                .skip(1)
+                .find(|token| !token.starts_with('-'))
+                .copied()
+                .unwrap_or_default();
+            format!("{executable}:{subcommand}")
+        }
+        _ => executable.to_string(),
+    };
+    Some(family)
+}
+
+fn ci_verification_command_scopes_compatible(existing: &str, detected: &str, family: &str) -> bool {
+    if !family.starts_with("dotnet:") {
+        return true;
+    }
+    match (
+        ci_verification_dotnet_scope_key(existing),
+        ci_verification_dotnet_scope_key(detected),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => true,
+    }
+}
+
+fn ci_verification_dotnet_scope_key(command: &str) -> Option<String> {
+    if let Some((_, cwd)) = command.rsplit_once(" in `")
+        && let Some(cwd) = cwd.strip_suffix('`')
+    {
+        return Some(normalize_ci_scope_key(cwd));
+    }
+
+    let normalized = strip_ci_command_presentation_suffix(command.trim()).trim();
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.first().copied() != Some("dotnet") {
+        return None;
+    }
+
+    let mut index = 1usize;
+    while index < tokens.len() {
+        let token = tokens[index];
+        if token == "--project" {
+            return tokens
+                .get(index + 1)
+                .map(|value| normalize_ci_scope_key(value));
+        }
+        if token.ends_with(".csproj") || token.ends_with(".sln") {
+            return Some(normalize_ci_scope_key(token));
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn normalize_ci_scope_key(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('`')
+        .trim_start_matches("./")
+        .trim_start_matches(".\\")
+        .replace('\\', "/")
 }
 
 fn canonicalize_ci_verification_command(command: &str) -> Option<String> {
@@ -3987,5 +4203,131 @@ workflows:
         let source = best_removed_ci_verification_source("build", &signals).expect("source");
 
         assert_eq!(source, ".github/workflows/check.yml");
+    }
+
+    #[test]
+    fn narrow_dotnet_slice_ignores_family_mismatched_node_build_drift() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  build:
+    command:
+      exe: dotnet
+      args:
+        - build
+        - --no-restore
+      cwd: test/Abstractions
+  test:
+    command:
+      exe: dotnet
+      args:
+        - test
+        - --no-restore
+      cwd: test/Abstractions
+  verify:
+    aggregate:
+      tasks:
+        - build
+        - test
+"#,
+        )
+        .unwrap();
+
+        let external_change = DetectComparisonChange {
+            field: String::from("tasks.build.command"),
+            status: "update",
+            existing: Some(String::from(
+                "dotnet build --no-restore in `test/Abstractions`",
+            )),
+            detected: String::from("yarn build"),
+            owner_kind: Some(String::from(DETECT_OWNER_KIND_MANUAL)),
+            ownership: None,
+            provenance: None,
+            provenance_key: None,
+            source: Some(String::from("package.json#scripts.build")),
+            source_class: Some(String::from("task_command")),
+            confidence: Some(Confidence::High),
+        };
+        assert!(!should_surface_external_source_governance_drift(
+            &external_change
+        ));
+
+        let ci_signals = vec![CiVerificationTaskSignal {
+            field: String::from("tasks.build.command"),
+            command: String::from("yarn build"),
+            source: String::from(
+                ".github/workflows/assets_validation.yml#jobs.test-npm-build.steps[2].run",
+            ),
+            exact_command: true,
+            qualifier: None,
+        }];
+
+        let governance_changes = collect_ci_verification_governance_changes(&contract, &ci_signals);
+        assert!(governance_changes.is_empty());
+
+        let aggregate_changes = collect_ci_verification_aggregate_changes(&contract, &ci_signals);
+        assert!(aggregate_changes.is_empty());
+    }
+
+    #[test]
+    fn narrow_dotnet_slice_ignores_broader_dotnet_workflow_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  build:
+    command:
+      exe: dotnet
+      args:
+        - build
+        - --no-restore
+      cwd: test/Abstractions
+  test:
+    command:
+      exe: dotnet
+      args:
+        - test
+        - --no-restore
+      cwd: test/Abstractions
+  verify:
+    aggregate:
+      tasks:
+        - build
+        - test
+"#,
+        )
+        .unwrap();
+
+        let ci_signals = vec![
+            CiVerificationTaskSignal {
+                field: String::from("tasks.build.command"),
+                command: String::from("dotnet build -c Release"),
+                source: String::from(".github/workflows/preview_ci.yml#jobs.test.steps[0].run"),
+                exact_command: true,
+                qualifier: None,
+            },
+            CiVerificationTaskSignal {
+                field: String::from("tasks.test.command"),
+                command: String::from(
+                    "dotnet test --project ./test/OrchardCore.Tests/OrchardCore.Tests.csproj -c Release --no-build",
+                ),
+                source: String::from(".github/workflows/preview_ci.yml#jobs.test.steps[1].run"),
+                exact_command: true,
+                qualifier: None,
+            },
+        ];
+
+        let governance_changes = collect_ci_verification_governance_changes(&contract, &ci_signals);
+        assert!(governance_changes.is_empty());
+
+        let aggregate_changes = collect_ci_verification_aggregate_changes(&contract, &ci_signals);
+        assert!(aggregate_changes.is_empty());
     }
 }

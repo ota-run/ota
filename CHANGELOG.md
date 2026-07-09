@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- tightened CI verification drift for narrow contract slices: workflow verification recovery now
+  rejects incompatible command-family and scope evidence before surfacing governance or aggregate
+  drift, and GitHub Actions `.NET` verifier inference now recognizes `dotnet build` / `dotnet
+  test` directly so narrow `.NET` repo lanes do not get overruled by broader Node, docs-only, or
+  mismatched-project workflow signals
 - widened first-class `.NET` hydration truth with additive source provenance: `prepare.source.kind:
   dotnet_restore` now accepts optional `config_file` and repeated `sources[]`, the runner and
   command preview project those exact restore inputs, and `ota up --json` now carries structured
