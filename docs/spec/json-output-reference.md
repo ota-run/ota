@@ -2412,6 +2412,9 @@ surface stays honest:
 - both the summary and each lane also carry `replay`, which reconciles the emitted merge-facing
   verdict back to those cited decision inputs and reports `satisfied`, `mismatch`, or
   `unavailable` without inventing a second merge-only command surface
+- that replay lane now also checks the trust-sensitive cited-input classes on merge governance, so
+  inputs like `decision_owner`, `merge_check_id`, or drift observations cannot silently downgrade
+  from their expected `pinned` / `witnessed` posture without flipping replay to `mismatch`
 - each `lanes[]` entry carries the same canonical `merge_check_id`, lane identity, and any
   recovered `provider_sources` from CI drift findings; per-lane `decision_basis[]` repeats the
   same cited lane basis at lane scope for downstream consumers that do not want to re-infer lane

@@ -31,6 +31,9 @@
   `decision_owner:<stable-id>` identity plus cited merge inputs, and now reconcile that emitted
   verdict through `replay`, so downstream consumers can link and re-check the doctor-side merge
   verdict without inventing a second merge governance model
+- hardened that same merge-facing replay lane so cited-input class drift now counts there too:
+  merge-gate replay now rejects records when canonical merge inputs are emitted with weaker
+  `pinned` / `witnessed` posture than the trust model expects
 - tightened V11.9 governance replay with a narrow mechanism tripwire: the canonical
   `governance.evaluation.*.decision_inputs[]` lane now carries additive
   `decision_owner:<stable-id>` cited inputs for preflight and post-execution records, and replay

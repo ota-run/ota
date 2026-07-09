@@ -1019,6 +1019,30 @@ fn reconcile_merge_gate_lane_replay(lane: &DoctorMergeGateLane) -> GovernanceRep
     if parsed.decision_owner.as_deref() != Some("doctor_merge_gate_lane") {
         mismatches.push(String::from("decision_owner"));
     }
+    if lane
+        .decision_inputs
+        .iter()
+        .find(|entry| entry.id.starts_with("decision_owner:"))
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:decision_owner"));
+    }
+    if lane
+        .decision_inputs
+        .iter()
+        .find(|entry| entry.id.starts_with("merge_check_id:"))
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:merge_check_id"));
+    }
+    if lane
+        .decision_inputs
+        .iter()
+        .find(|entry| entry.id.starts_with("drift_detected:"))
+        .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:drift_detected"));
+    }
     let current_basis_ids = lane
         .decision_basis
         .iter()
@@ -1078,6 +1102,30 @@ fn reconcile_merge_gate_summary_replay(summary: &DoctorMergeGateSummary) -> Gove
     }
     if parsed.decision_owner.as_deref() != Some("doctor_merge_gate_summary") {
         mismatches.push(String::from("decision_owner"));
+    }
+    if summary
+        .decision_inputs
+        .iter()
+        .find(|entry| entry.id.starts_with("decision_owner:"))
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:decision_owner"));
+    }
+    if summary
+        .decision_inputs
+        .iter()
+        .find(|entry| entry.id.starts_with("required_lane_count:"))
+        .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:required_lane_count"));
+    }
+    if summary
+        .decision_inputs
+        .iter()
+        .find(|entry| entry.id.starts_with("drift_lane_count:"))
+        .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:drift_lane_count"));
     }
     let current_basis_ids = summary
         .decision_basis
@@ -3859,6 +3907,61 @@ workflows:
             vec![String::from(
                 ".github/workflows/ci.yml#jobs.verify.steps[0].run"
             )]
+        );
+    }
+
+    #[test]
+    fn merge_gate_replay_detects_lane_input_class_mismatch() {
+        let lane = DoctorMergeGateLane {
+            merge_check_id: String::from("ota.verify.verify"),
+            lane_task: String::from("verify"),
+            lane_kind: String::from("aggregate"),
+            state: String::from("projected"),
+            blocking: false,
+            evidence_classes: merge_gate_lane_evidence_classes(),
+            decision_basis: vec![GovernanceDecisionBasisEntry {
+                id: String::from("projection:ota.verify.verify"),
+                family: String::from("required_lane"),
+                evidence_class: String::from("derived"),
+                detail: Some(String::from("verify")),
+            }],
+            decision_inputs: vec![
+                GovernanceDecisionInputEntry {
+                    id: String::from("decision_owner:doctor_merge_gate_lane"),
+                    family: String::from("decision_owner"),
+                    evidence_class: String::from("derived"),
+                    replay_class: String::from("pinned"),
+                    detail: None,
+                },
+                GovernanceDecisionInputEntry {
+                    id: String::from("merge_check_id:ota.verify.verify"),
+                    family: String::from("merge_lane"),
+                    evidence_class: String::from("derived"),
+                    replay_class: String::from("witnessed"),
+                    detail: None,
+                },
+                GovernanceDecisionInputEntry {
+                    id: String::from("drift_detected:false"),
+                    family: String::from("provider_drift"),
+                    evidence_class: String::from("derived"),
+                    replay_class: String::from("witnessed"),
+                    detail: None,
+                },
+            ],
+            replay: GovernanceReplayResult {
+                status: String::new(),
+                mismatches: Vec::new(),
+            },
+            contract_sources: vec![String::from("workflows.verify.run.task")],
+            provider_sources: Vec::new(),
+        };
+
+        let replay = reconcile_merge_gate_lane_replay(&lane);
+        assert_eq!(replay.status, "mismatch");
+        assert!(
+            replay
+                .mismatches
+                .contains(&String::from("decision_input_class:merge_check_id"))
         );
     }
 
