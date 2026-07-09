@@ -13696,6 +13696,7 @@ fn harness_preflight_for_task(
             &format!("task:{}", task.name),
             "task",
             "agent",
+            "task_agent_capability_preflight",
             None,
             Some(task.safe_for_agent),
             Some(task.effective_safe_for_agent),
@@ -13832,6 +13833,7 @@ fn governance_preflight_decision_inputs(
     lane_id: &str,
     lane_kind: &str,
     actor_mode: &str,
+    decision_owner: &str,
     doctor_verdict: Option<DoctorVerdict>,
     declared_safe_for_agent: Option<bool>,
     effective_safe_for_agent: Option<bool>,
@@ -13851,6 +13853,13 @@ fn governance_preflight_decision_inputs(
         crate::output::GovernanceDecisionInputEntry {
             id: format!("actor_mode:{actor_mode}"),
             family: String::from("actor_mode"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        },
+        crate::output::GovernanceDecisionInputEntry {
+            id: format!("decision_owner:{decision_owner}"),
+            family: String::from("decision_owner"),
             evidence_class: String::from("derived"),
             replay_class: String::from("pinned"),
             detail: None,
@@ -14311,6 +14320,7 @@ fn harness_preflight_for_workflow(
             &format!("workflow:{}", workflow_selector_from_summary(workflow)),
             "workflow",
             "agent",
+            "workflow_agent_capability_preflight",
             None,
             workflow.declared_safe_for_agent,
             workflow.effective_safe_for_agent,
@@ -42522,6 +42532,7 @@ fn governance_evaluation_for_task_preview(
                 &format!("task:{}", task.name),
                 "task",
                 actor_mode_label(agent),
+                "task_governance_preflight",
                 Some(summary.verdict),
                 Some(task.safe_for_agent),
                 Some(task.effective_safe_for_agent),
@@ -42646,6 +42657,7 @@ fn governance_evaluation_for_workflow_preview(
                 &format!("workflow:{}", workflow_name.unwrap_or("default")),
                 "workflow",
                 actor_mode_label(agent),
+                "workflow_governance_preflight",
                 Some(summary.verdict),
                 safety.declared_safe,
                 safety.effective_safe,
@@ -42709,6 +42721,7 @@ fn governance_post_execution_decision_inputs(
     proof_present: bool,
     not_run_reason: Option<&str>,
     crossing_record_state: &str,
+    decision_owner: &str,
 ) -> Vec<crate::output::GovernanceDecisionInputEntry> {
     let mut inputs = vec![crate::output::GovernanceDecisionInputEntry {
         id: format!("execution_attempted:{execution_attempted}"),
@@ -42780,6 +42793,14 @@ fn governance_post_execution_decision_inputs(
         detail: None,
     });
 
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("decision_owner:{decision_owner}"),
+        family: String::from("decision_owner"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("pinned"),
+        detail: None,
+    });
+
     inputs
 }
 
@@ -42788,6 +42809,7 @@ struct PreflightReplayInputs {
     lane_id: Option<String>,
     lane_kind: Option<String>,
     actor_mode: Option<String>,
+    decision_owner: Option<String>,
     doctor_verdict: Option<DoctorVerdict>,
     declared_safe_for_agent: Option<bool>,
     effective_safe_for_agent: Option<bool>,
@@ -42807,6 +42829,7 @@ struct PostExecutionReplayInputs {
     proof_present: Option<bool>,
     not_run_reason: Option<String>,
     crossing_record_state: Option<String>,
+    decision_owner: Option<String>,
 }
 
 fn parse_bool_input(value: &str, prefix: &str) -> Option<bool> {
@@ -42829,6 +42852,10 @@ fn parse_preflight_replay_inputs(
         }
         if let Some(value) = entry.id.strip_prefix("actor_mode:") {
             parsed.actor_mode = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("decision_owner:") {
+            parsed.decision_owner = Some(value.to_string());
             continue;
         }
         if let Some(value) = entry.id.strip_prefix("doctor_verdict:") {
@@ -42928,9 +42955,38 @@ fn parse_post_execution_replay_inputs(
         }
         if let Some(value) = entry.id.strip_prefix("crossing_record_state:") {
             parsed.crossing_record_state = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("decision_owner:") {
+            parsed.decision_owner = Some(value.to_string());
         }
     }
     parsed
+}
+
+fn expected_preflight_decision_owner(
+    lane_kind: &str,
+    doctor_verdict: Option<DoctorVerdict>,
+) -> &'static str {
+    if doctor_verdict.is_some() {
+        match lane_kind {
+            "workflow" => "workflow_governance_preflight",
+            _ => "task_governance_preflight",
+        }
+    } else {
+        match lane_kind {
+            "workflow" => "workflow_agent_capability_preflight",
+            _ => "task_agent_capability_preflight",
+        }
+    }
+}
+
+fn expected_post_execution_decision_owner(receipt_present: bool) -> &'static str {
+    if receipt_present {
+        "up_result_governance_post_execution"
+    } else {
+        "preview_post_execution_evidence"
+    }
 }
 
 fn governance_replay_status(mismatches: Vec<String>) -> crate::output::GovernanceReplayResult {
@@ -42967,6 +43023,9 @@ fn reconcile_preflight_replay(
     if parsed.actor_mode.is_none() {
         missing.push("actor_mode");
     }
+    if parsed.decision_owner.is_none() {
+        missing.push("decision_owner");
+    }
     if parsed.receipt_expected.is_none() {
         missing.push("receipt_expected");
     }
@@ -42979,6 +43038,8 @@ fn reconcile_preflight_replay(
 
     let actor_mode = parsed.actor_mode.as_deref().unwrap_or("human");
     let lane_kind = parsed.lane_kind.as_deref().unwrap_or("task");
+    let expected_decision_owner =
+        expected_preflight_decision_owner(lane_kind, parsed.doctor_verdict);
     let synthetic_summary = DoctorSummary {
         verdict: parsed.doctor_verdict.unwrap_or(DoctorVerdict::Ready),
         agent_verdict: parsed.doctor_verdict.unwrap_or(DoctorVerdict::Ready),
@@ -43039,6 +43100,9 @@ fn reconcile_preflight_replay(
     if evaluation.proof_expected != parsed.proof_expected.unwrap_or(false) {
         mismatches.push(String::from("proof_expected"));
     }
+    if parsed.decision_owner.as_deref() != Some(expected_decision_owner) {
+        mismatches.push(String::from("decision_owner"));
+    }
     let current_basis_ids = evaluation
         .decision_basis
         .iter()
@@ -43075,14 +43139,19 @@ fn reconcile_post_execution_replay(
     if parsed.crossing_record_state.is_none() {
         missing.push("crossing_record_state");
     }
+    if parsed.decision_owner.is_none() {
+        missing.push("decision_owner");
+    }
     if !missing.is_empty() {
         return governance_replay_unavailable(missing);
     }
 
     let execution_attempted = parsed.execution_attempted.unwrap_or(false);
+    let receipt_present = parsed.receipt_present.unwrap_or(false);
     let proof_expected = parsed.proof_expected.unwrap_or(false);
     let proof_present = parsed.proof_present.unwrap_or(false);
     let refusal_reason_family = parsed.refusal_reason_family.as_deref();
+    let expected_decision_owner = expected_post_execution_decision_owner(receipt_present);
     let expected_state = if refusal_reason_family.is_some() {
         "refused"
     } else if execution_attempted && proof_expected && !proof_present {
@@ -43094,7 +43163,7 @@ fn reconcile_post_execution_replay(
     };
     let expected_basis = governance_post_execution_decision_basis(
         refusal_reason_family,
-        parsed.receipt_present.unwrap_or(false),
+        receipt_present,
         parsed.receipt_status.as_deref(),
         proof_expected,
         proof_present,
@@ -43121,7 +43190,7 @@ fn reconcile_post_execution_replay(
     if evidence.crossing_record_state != parsed.crossing_record_state.unwrap_or_default() {
         mismatches.push(String::from("crossing_record_state"));
     }
-    if evidence.receipt_present != parsed.receipt_present.unwrap_or(false) {
+    if evidence.receipt_present != receipt_present {
         mismatches.push(String::from("receipt_present"));
     }
     if evidence.proof_present != proof_present {
@@ -43129,6 +43198,9 @@ fn reconcile_post_execution_replay(
     }
     if evidence.receipt_status != parsed.receipt_status {
         mismatches.push(String::from("receipt_status"));
+    }
+    if parsed.decision_owner.as_deref() != Some(expected_decision_owner) {
+        mismatches.push(String::from("decision_owner"));
     }
     let current_basis_ids = evidence
         .decision_basis
@@ -43191,6 +43263,7 @@ fn preview_post_execution_evidence(
             false,
             Some(not_run_reason.as_str()),
             crossing_record_state.as_str(),
+            "preview_post_execution_evidence",
         ),
         replay: crate::output::GovernanceReplayResult {
             status: String::new(),
@@ -43435,6 +43508,7 @@ fn governance_evaluation_for_up_result(
                 proof_present,
                 not_run_reason.as_deref(),
                 crossing_record_state_value.as_str(),
+                "up_result_governance_post_execution",
             ),
             replay: crate::output::GovernanceReplayResult {
                 status: String::new(),
@@ -60814,6 +60888,10 @@ agent:
             "actor_mode:agent"
         );
         assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["decision_inputs"][2]["id"],
+            "decision_owner:task_governance_preflight"
+        );
+        assert_eq!(
             json["governance"]["evaluation"]["preflight"]["evidence_classes"]["decision_inputs"],
             "derived"
         );
@@ -60856,6 +60934,10 @@ agent:
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["id"],
             "receipt_present:false"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][6]["id"],
+            "decision_owner:preview_post_execution_evidence"
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["evidence_classes"]["decision_inputs"],

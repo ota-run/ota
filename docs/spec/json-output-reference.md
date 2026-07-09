@@ -2647,6 +2647,12 @@ filesystem or outbound boundary posture.
             "replay_class": "pinned"
           },
           {
+            "id": "decision_owner:task_governance_preflight",
+            "family": "decision_owner",
+            "evidence_class": "derived",
+            "replay_class": "pinned"
+          },
+          {
             "id": "declared_safe_for_agent:false",
             "family": "safety_declaration",
             "evidence_class": "derived",
@@ -2736,6 +2742,12 @@ filesystem or outbound boundary posture.
             "family": "crossing_observation",
             "evidence_class": "derived",
             "replay_class": "witnessed"
+          },
+          {
+            "id": "decision_owner:preview_post_execution_evidence",
+            "family": "decision_owner",
+            "evidence_class": "derived",
+            "replay_class": "pinned"
           }
         ],
         "replay": {
@@ -2809,6 +2821,10 @@ Use this when a human or agent needs the selected run plan before execution:
   posture depended on; `replay_class: "pinned"` means the input should be reusable for
   authoritative replay without silently re-reading ambient state, while `replay_class:
   "witnessed"` means the input came from observed execution evidence rather than a pinned selector
+- the first shipped mechanism-tripwire on that same surface is
+  `decision_owner:<stable-id>` with family `decision_owner` and `replay_class: "pinned"`, so the
+  emitted governance record can still link back to the stable decision owner without inventing a
+  second governance model
 - `governance.evaluation.preflight.replay.status` publishes whether ota can re-derive that
   preflight verdict from the cited inputs it just emitted: `satisfied`, `mismatch`, or
   `unavailable`
@@ -2821,6 +2837,9 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance.evaluation.post_execution.decision_inputs[]` publishes the replay-grade cited
   execution and evidence inputs behind that post-execution verdict, again distinguishing reusable
   pinned selectors from witnessed observations
+- post-execution uses the same additive `decision_owner:<stable-id>` cited input so preview-only
+  evidence and up-result evidence can publish a narrow mechanism identity on the same canonical
+  record
 - `governance.evaluation.post_execution.replay.status` does the same for the post-execution
   evidence verdict, so consumers can tell whether the emitted outcome still reconciles to the
   cited decision inputs instead of trusting a flatter claim

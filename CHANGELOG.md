@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- tightened V11.9 governance replay with a narrow mechanism tripwire: the canonical
+  `governance.evaluation.*.decision_inputs[]` lane now carries additive
+  `decision_owner:<stable-id>` cited inputs for preflight and post-execution records, and replay
+  reconciliation verifies that stable decision-owner identity on the same canonical governance
+  surface instead of leaving hook/branch linkage as prose-only trust
 - turned cited governance inputs into an actual replay lane: task preview, workflow preview, and
   `ota up --json` governance records now publish additive `preflight.replay` /
   `post_execution.replay` status, cite the extra replay-critical inputs they really depend on
