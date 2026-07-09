@@ -140,6 +140,10 @@
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
                 },
+                "decision_inputs": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
+                },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
@@ -174,6 +178,10 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "decision_inputs": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                 },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
@@ -328,6 +336,10 @@
                         "type": "array",
                         "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
                       },
+                      "decision_inputs": {
+                        "type": "array",
+                        "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
+                      },
                       "evidence_classes": {
                         "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                       },
@@ -362,6 +374,10 @@
                       "decision_basis": {
                         "type": "array",
                         "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                      },
+                      "decision_inputs": {
+                        "type": "array",
+                        "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                       },
                       "evidence_classes": {
                         "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
@@ -429,6 +445,10 @@
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
                 },
+                "decision_inputs": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
+                },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
@@ -463,6 +483,10 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "decision_inputs": {
+                  "type": "array",
+                  "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                 },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"

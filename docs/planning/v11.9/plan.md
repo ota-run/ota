@@ -311,6 +311,23 @@ Minimum shape:
 - optional additive human explanation
 - optional cited input reference when the basis depends on a replay-critical external input
 
+For the cited decision-input lane itself, the first shipped additive shape should be:
+
+- `decision_inputs[]`
+  - stable input id
+  - input family
+  - evidence class
+  - replay class
+  - optional additive detail
+
+Replay class should stay narrow and honest:
+
+- `pinned`
+  - reusable immutable or selector-resolved input suitable for authoritative replay
+- `witnessed`
+  - observed execution/evidence input reused as a witnessed artifact, not re-fetched ambient world
+    state
+
 Examples of the kinds of citations this should cover:
 
 - blocker code
@@ -449,6 +466,20 @@ Replay should answer:
 
 - given the same inputs, does Ota produce the same governance verdict?
 - given the same inputs, does Ota produce the same blocker or gate decomposition?
+
+First honest replay target:
+
+- selected task/workflow governance evaluation on local preview and `up` lanes where Ota already
+  owns:
+  - lane identity
+  - actor mode
+  - closure safety posture
+  - receipt attachment presence/status
+  - proof expectation/presence
+  - crossing-record posture
+
+That is the right first bar because it is already localized, additive, and free of ambient network
+state on the canonical local path.
 
 The cited-input rule for replay should stay explicit:
 

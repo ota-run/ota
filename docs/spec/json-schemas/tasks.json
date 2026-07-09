@@ -414,6 +414,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/governanceDecisionBasisEntry" }
         },
+        "decision_inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/governanceDecisionInputEntry" }
+        },
         "evidence_classes": {
           "$ref": "#/$defs/governancePreflightEvidenceClasses"
         },
@@ -436,6 +440,7 @@
         "crossing_required": { "type": "string" },
         "crossing_classification": { "type": "string" },
         "crossing_boundary_family": { "type": "string" },
+        "decision_inputs": { "type": "string" },
         "receipt_expected": { "type": "string" },
         "proof_expected": { "type": "string" }
       }
@@ -459,6 +464,7 @@
         "refusal": { "type": "string" },
         "not_run_reason": { "type": "string" },
         "crossing_record_state": { "type": "string" },
+        "decision_inputs": { "type": "string" },
         "receipt_present": { "type": "string" },
         "proof_present": { "type": "string" },
         "receipt_status": { "type": "string" }
@@ -472,6 +478,18 @@
         "id": { "type": "string" },
         "family": { "type": "string" },
         "evidence_class": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    },
+    "governanceDecisionInputEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "family", "evidence_class", "replay_class"],
+      "properties": {
+        "id": { "type": "string" },
+        "family": { "type": "string" },
+        "evidence_class": { "type": "string" },
+        "replay_class": { "enum": ["pinned", "witnessed"] },
         "detail": { "type": "string" }
       }
     },

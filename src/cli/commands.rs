@@ -13692,6 +13692,15 @@ fn harness_preflight_for_task(
         crossing_classification,
         crossing_boundary_family,
         decision_basis,
+        decision_inputs: governance_preflight_decision_inputs(
+            &format!("task:{}", task.name),
+            "task",
+            "agent",
+            Some(task.safe_for_agent),
+            Some(task.effective_safe_for_agent),
+            &task.unsafe_closure_tasks,
+            refusal,
+        ),
         evidence_classes: governance_preflight_evidence_classes(
             review_required,
             Some(task.safe_for_agent),
@@ -13810,6 +13819,78 @@ fn governance_preflight_decision_basis(
     basis
 }
 
+fn governance_preflight_decision_inputs(
+    lane_id: &str,
+    lane_kind: &str,
+    actor_mode: &str,
+    declared_safe_for_agent: Option<bool>,
+    effective_safe_for_agent: Option<bool>,
+    unsafe_closure_tasks: &[String],
+    refusal: Option<&AgentExecutionRefusal>,
+) -> Vec<crate::output::GovernanceDecisionInputEntry> {
+    let mut inputs = vec![
+        crate::output::GovernanceDecisionInputEntry {
+            id: lane_id.to_string(),
+            family: String::from("lane"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: Some(format!("kind={lane_kind}")),
+        },
+        crate::output::GovernanceDecisionInputEntry {
+            id: format!("actor_mode:{actor_mode}"),
+            family: String::from("actor_mode"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        },
+    ];
+
+    if let Some(declared_safe) = declared_safe_for_agent {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("declared_safe_for_agent:{declared_safe}"),
+            family: String::from("safety_declaration"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        });
+    }
+
+    if let Some(effective_safe) = effective_safe_for_agent {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("effective_safe_for_agent:{effective_safe}"),
+            family: String::from("effective_safety"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        });
+    }
+
+    if !unsafe_closure_tasks.is_empty() {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: String::from("unsafe_closure_tasks"),
+            family: String::from("closure_inputs"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: Some(unsafe_closure_tasks.join(",")),
+        });
+    }
+
+    if let Some(refusal) = refusal {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("refusal_input:{}", refusal.reason),
+            family: String::from("refusal_input"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: Some(format!(
+                "requested_task={} blocked_task={}",
+                refusal.requested_task, refusal.blocked_task
+            )),
+        });
+    }
+
+    inputs
+}
+
 fn governance_preflight_evidence_classes(
     review_required: Option<bool>,
     declared_safe_for_agent: Option<bool>,
@@ -13832,6 +13913,7 @@ fn governance_preflight_evidence_classes(
         crossing_required: crossing_required.map(|_| String::from("derived")),
         crossing_classification: crossing_classification.map(|_| String::from("derived")),
         crossing_boundary_family: crossing_boundary_family.map(|_| String::from("derived")),
+        decision_inputs: String::from("derived"),
         receipt_expected: String::from("derived"),
         proof_expected: String::from("derived"),
     }
@@ -14159,6 +14241,15 @@ fn harness_preflight_for_workflow(
         crossing_classification,
         crossing_boundary_family,
         decision_basis,
+        decision_inputs: governance_preflight_decision_inputs(
+            &format!("workflow:{}", workflow_selector_from_summary(workflow)),
+            "workflow",
+            "agent",
+            workflow.declared_safe_for_agent,
+            workflow.effective_safe_for_agent,
+            &workflow.unsafe_closure_tasks,
+            refusal,
+        ),
         evidence_classes: governance_preflight_evidence_classes(
             review_required,
             workflow.declared_safe_for_agent,
@@ -42357,6 +42448,15 @@ fn governance_evaluation_for_task_preview(
             crossing_classification,
             crossing_boundary_family,
             decision_basis,
+            decision_inputs: governance_preflight_decision_inputs(
+                &format!("task:{}", task.name),
+                "task",
+                actor_mode_label(agent),
+                Some(task.safe_for_agent),
+                Some(task.effective_safe_for_agent),
+                &task.unsafe_closure_tasks,
+                refusal,
+            ),
             evidence_classes: governance_preflight_evidence_classes(
                 review_required,
                 Some(task.safe_for_agent),
@@ -42463,6 +42563,15 @@ fn governance_evaluation_for_workflow_preview(
             crossing_classification,
             crossing_boundary_family,
             decision_basis,
+            decision_inputs: governance_preflight_decision_inputs(
+                &format!("workflow:{}", workflow_name.unwrap_or("default")),
+                "workflow",
+                actor_mode_label(agent),
+                safety.declared_safe,
+                safety.effective_safe,
+                &safety.unsafe_closure_tasks,
+                refusal,
+            ),
             evidence_classes: governance_preflight_evidence_classes(
                 review_required,
                 safety.declared_safe,
@@ -42502,10 +42611,83 @@ fn governance_post_execution_evidence_classes(
         refusal: refusal_present.then(|| String::from("attested")),
         not_run_reason: not_run_reason.map(|_| String::from("derived")),
         crossing_record_state: String::from("derived"),
+        decision_inputs: String::from("derived"),
         receipt_present: String::from("attested"),
         proof_present: String::from("derived"),
         receipt_status: receipt_status.map(|_| String::from("attested")),
     }
+}
+
+fn governance_post_execution_decision_inputs(
+    execution_attempted: bool,
+    receipt_present: bool,
+    receipt_status: Option<&str>,
+    proof_expected: bool,
+    proof_present: bool,
+    not_run_reason: Option<&str>,
+    crossing_record_state: &str,
+) -> Vec<crate::output::GovernanceDecisionInputEntry> {
+    let mut inputs = vec![crate::output::GovernanceDecisionInputEntry {
+        id: format!("execution_attempted:{execution_attempted}"),
+        family: String::from("execution_observation"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("witnessed"),
+        detail: None,
+    }];
+
+    if let Some(reason) = not_run_reason {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("not_run_reason:{reason}"),
+            family: String::from("execution_observation"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        });
+    }
+
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("receipt_present:{receipt_present}"),
+        family: String::from("receipt_observation"),
+        evidence_class: String::from("attested"),
+        replay_class: String::from("witnessed"),
+        detail: None,
+    });
+
+    if let Some(status) = receipt_status {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("receipt_status:{status}"),
+            family: String::from("receipt_observation"),
+            evidence_class: String::from("attested"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        });
+    }
+
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("proof_expected:{proof_expected}"),
+        family: String::from("proof_expectation"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("pinned"),
+        detail: None,
+    });
+
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("proof_present:{proof_present}"),
+        family: String::from("proof_observation"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("witnessed"),
+        detail: None,
+    });
+
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("crossing_record_state:{crossing_record_state}"),
+        family: String::from("crossing_observation"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("witnessed"),
+        detail: None,
+    });
+
+    inputs
 }
 
 fn preview_post_execution_evidence(
@@ -42528,6 +42710,18 @@ fn preview_post_execution_evidence(
         not_run_reason: Some(not_run_reason.clone()),
         crossing_record_state: crossing_record_state.clone(),
         decision_basis: governance_post_execution_decision_basis(
+            None,
+            false,
+            None,
+            false,
+            false,
+            Some(not_run_reason.as_str()),
+            crossing_record_state.as_str(),
+        ),
+        decision_inputs: governance_post_execution_decision_inputs(
+            false,
+            false,
+            None,
             false,
             false,
             Some(not_run_reason.as_str()),
@@ -42566,12 +42760,24 @@ fn crossing_record_state(
 }
 
 fn governance_post_execution_decision_basis(
+    refusal_reason_family: Option<&str>,
     receipt_present: bool,
+    receipt_status: Option<&str>,
+    proof_expected: bool,
     proof_present: bool,
     not_run_reason: Option<&str>,
     crossing_record_state: &str,
 ) -> Vec<crate::output::GovernanceDecisionBasisEntry> {
     let mut basis = Vec::new();
+
+    if let Some(reason_family) = refusal_reason_family {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("refusal:{reason_family}"),
+            family: String::from("refusal_basis"),
+            evidence_class: String::from("derived"),
+            detail: None,
+        });
+    }
 
     if let Some(reason) = not_run_reason {
         basis.push(crate::output::GovernanceDecisionBasisEntry {
@@ -42591,9 +42797,32 @@ fn governance_post_execution_decision_basis(
         });
     }
 
-    if proof_present {
+    if let Some(status) = receipt_status {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: format!("receipt_status:{status}"),
+            family: String::from("receipt_evidence"),
+            evidence_class: String::from("attested"),
+            detail: None,
+        });
+    }
+
+    if proof_expected && proof_present {
         basis.push(crate::output::GovernanceDecisionBasisEntry {
             id: String::from("evidence:proof_present"),
+            family: String::from("evidence_gate"),
+            evidence_class: String::from("derived"),
+            detail: None,
+        });
+    } else if proof_expected {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: String::from("evidence:proof_missing"),
+            family: String::from("evidence_gate"),
+            evidence_class: String::from("derived"),
+            detail: None,
+        });
+    } else {
+        basis.push(crate::output::GovernanceDecisionBasisEntry {
+            id: String::from("evidence:proof_not_required"),
             family: String::from("evidence_gate"),
             evidence_class: String::from("derived"),
             detail: None,
@@ -42642,15 +42871,17 @@ fn governance_evaluation_for_up_result(
     } else {
         "warning_only"
     };
+    let proof_expected = true;
+    let proof_present = execution_attempted && up_phase_proof_present(phase);
     let post_execution_state = if refusal_reason_family.is_some() {
         "refused"
+    } else if execution_attempted && proof_expected && !proof_present {
+        "evidence_missing"
     } else if execution_attempted {
         "evidence_satisfied"
     } else {
         "not_run"
     };
-    let proof_expected = true;
-    let proof_present = execution_attempted && up_phase_proof_present(phase);
     let not_run_reason = if execution_attempted {
         None
     } else if preflight_state == "refused" {
@@ -42677,6 +42908,7 @@ fn governance_evaluation_for_up_result(
             crossing_classification: None,
             crossing_boundary_family: None,
             decision_basis: Vec::new(),
+            decision_inputs: Vec::new(),
             evidence_classes: governance_preflight_evidence_classes(
                 None,
                 None,
@@ -42713,7 +42945,19 @@ fn governance_evaluation_for_up_result(
             not_run_reason: not_run_reason.clone(),
             crossing_record_state: crossing_record_state_value.clone(),
             decision_basis: governance_post_execution_decision_basis(
+                preflight_refusal_reason_family.as_deref(),
                 true,
+                receipt.status.as_deref(),
+                proof_expected,
+                proof_present,
+                not_run_reason.as_deref(),
+                crossing_record_state_value.as_str(),
+            ),
+            decision_inputs: governance_post_execution_decision_inputs(
+                execution_attempted,
+                true,
+                receipt.status.as_deref(),
+                proof_expected,
                 proof_present,
                 not_run_reason.as_deref(),
                 crossing_record_state_value.as_str(),
@@ -60084,6 +60328,18 @@ agent:
             "refusal:requested_task_not_safe"
         );
         assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["decision_inputs"][0]["id"],
+            "task:publish"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["decision_inputs"][1]["id"],
+            "actor_mode:agent"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["evidence_classes"]["decision_inputs"],
+            "derived"
+        );
+        assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["state"],
             "not_run"
         );
@@ -60096,16 +60352,36 @@ agent:
             "preflight_refusal"
         );
         assert_eq!(
-            json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
-            "suppressed_by_refusal"
+            json["governance"]["evaluation"]["post_execution"]["decision_basis"][1]["id"],
+            "evidence:proof_not_required"
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_basis"][0]["id"],
             "not_run:preflight_refusal"
         );
         assert_eq!(
-            json["governance"]["evaluation"]["post_execution"]["decision_basis"][1]["id"],
+            json["governance"]["evaluation"]["post_execution"]["decision_basis"][2]["id"],
             "crossing_record:suppressed_by_refusal"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][0]["id"],
+            "execution_attempted:false"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][1]["id"],
+            "not_run_reason:preflight_refusal"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["id"],
+            "receipt_present:false"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["evidence_classes"]["decision_inputs"],
+            "derived"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
+            "suppressed_by_refusal"
         );
     }
 
@@ -66221,6 +66497,22 @@ tasks:
                         detail: None,
                     },
                 ],
+                decision_inputs: vec![
+                    crate::output::GovernanceDecisionInputEntry {
+                        id: String::from("workflow:default"),
+                        family: String::from("lane"),
+                        evidence_class: String::from("derived"),
+                        replay_class: String::from("pinned"),
+                        detail: Some(String::from("kind=workflow")),
+                    },
+                    crate::output::GovernanceDecisionInputEntry {
+                        id: String::from("actor_mode:human"),
+                        family: String::from("actor_mode"),
+                        evidence_class: String::from("derived"),
+                        replay_class: String::from("pinned"),
+                        detail: None,
+                    },
+                ],
                 evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
                     state: String::from("derived"),
                     review_required: Some(String::from("derived")),
@@ -66232,6 +66524,7 @@ tasks:
                     crossing_required: Some(String::from("derived")),
                     crossing_classification: Some(String::from("derived")),
                     crossing_boundary_family: Some(String::from("derived")),
+                    decision_inputs: String::from("derived"),
                     receipt_expected: String::from("derived"),
                     proof_expected: String::from("derived"),
                 },
@@ -66281,12 +66574,40 @@ tasks:
             "crossing_required:unsafe_task:escalated"
         );
         assert_eq!(
+            value["governance"]["preflight"]["decision_inputs"][0]["id"],
+            "workflow:default"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["state"],
+            "evidence_missing"
+        );
+        assert_eq!(
             value["governance"]["post_execution"]["crossing_record_state"],
             "missing_after_execution"
         );
         assert_eq!(
             value["governance"]["post_execution"]["evidence_classes"]["receipt_present"],
             "attested"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][0]["id"],
+            "evidence:receipt_present"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "evidence:proof_missing"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][2]["id"],
+            "crossing_record:missing_after_execution"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_inputs"][0]["id"],
+            "execution_attempted:true"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_inputs"][1]["id"],
+            "receipt_present:true"
         );
     }
 
@@ -66444,6 +66765,7 @@ tasks:
                         detail: None,
                     },
                 ],
+                decision_inputs: Vec::new(),
                 evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
                     state: String::from("derived"),
                     review_required: Some(String::from("derived")),
@@ -66455,6 +66777,7 @@ tasks:
                     crossing_required: Some(String::from("derived")),
                     crossing_classification: Some(String::from("derived")),
                     crossing_boundary_family: Some(String::from("derived")),
+                    decision_inputs: String::from("derived"),
                     receipt_expected: String::from("derived"),
                     proof_expected: String::from("derived"),
                 },
@@ -66505,6 +66828,14 @@ tasks:
         );
         assert_eq!(
             value["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "receipt_status:FAILED"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][2]["id"],
+            "evidence:proof_missing"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["decision_basis"][3]["id"],
             "crossing_record:attached"
         );
         assert_eq!(
@@ -66583,6 +66914,7 @@ tasks:
                         crossing_classification: None,
                         crossing_boundary_family: None,
                         decision_basis: Vec::new(),
+                        decision_inputs: Vec::new(),
                         evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
                             state: String::from("derived"),
                             review_required: None,
@@ -66594,6 +66926,7 @@ tasks:
                             crossing_required: None,
                             crossing_classification: None,
                             crossing_boundary_family: None,
+                            decision_inputs: String::from("derived"),
                             receipt_expected: String::from("derived"),
                             proof_expected: String::from("derived"),
                         },
@@ -66616,12 +66949,19 @@ tasks:
                                 detail: None,
                             },
                             crate::output::GovernanceDecisionBasisEntry {
+                                id: String::from("evidence:proof_not_required"),
+                                family: String::from("evidence_gate"),
+                                evidence_class: String::from("derived"),
+                                detail: None,
+                            },
+                            crate::output::GovernanceDecisionBasisEntry {
                                 id: String::from("crossing_record:not_applicable"),
                                 family: String::from("crossing_evidence"),
                                 evidence_class: String::from("derived"),
                                 detail: None,
                             },
                         ],
+                        decision_inputs: Vec::new(),
                         evidence_classes: crate::output::GovernancePostExecutionEvidenceClasses {
                             state: String::from("derived"),
                             execution_attempted: String::from("derived"),
@@ -66630,6 +66970,7 @@ tasks:
                             refusal: None,
                             not_run_reason: Some(String::from("derived")),
                             crossing_record_state: String::from("derived"),
+                            decision_inputs: String::from("derived"),
                             receipt_present: String::from("attested"),
                             proof_present: String::from("derived"),
                             receipt_status: None,
@@ -66717,6 +67058,10 @@ tasks:
         );
         assert_eq!(
             root["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "evidence:proof_not_required"
+        );
+        assert_eq!(
+            root["governance"]["post_execution"]["decision_basis"][2]["id"],
             "crossing_record:not_applicable"
         );
 
@@ -66733,6 +67078,10 @@ tasks:
         );
         assert_eq!(
             member["governance"]["post_execution"]["decision_basis"][1]["id"],
+            "evidence:proof_not_required"
+        );
+        assert_eq!(
+            member["governance"]["post_execution"]["decision_basis"][2]["id"],
             "crossing_record:not_applicable"
         );
     }
