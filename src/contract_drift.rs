@@ -32,8 +32,8 @@ use crate::detector::{
 };
 use crate::doctor::{Finding, FindingGovernanceMetadata, FindingSeverity};
 use crate::output::{
-    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary,
-    DoctorMergeGateLane, DoctorMergeGateLaneEvidenceClasses, DoctorMergeGateSummary,
+    DetectComparisonChange, DetectComparisonRemoval, DoctorGovernanceSummary, DoctorMergeGateLane,
+    DoctorMergeGateLaneEvidenceClasses, DoctorMergeGateSummary,
     DoctorMergeGateSummaryEvidenceClasses, DoctorRequiredVerificationLane,
     DoctorRequiredVerificationLaneEvidenceClasses, GovernanceDecisionBasisEntry,
 };
@@ -3487,7 +3487,10 @@ workflows:
         assert_eq!(merge_gate.drift_lane_count, 0);
         assert_eq!(merge_gate.evidence_classes.state, "derived");
         assert_eq!(merge_gate.evidence_classes.blocking, "derived");
-        assert_eq!(merge_gate.decision_basis[0].id, "projection:ota.verify.verify");
+        assert_eq!(
+            merge_gate.decision_basis[0].id,
+            "projection:ota.verify.verify"
+        );
         assert_eq!(merge_gate.decision_basis[0].family, "required_lane");
         assert_eq!(merge_gate.decision_basis[0].evidence_class, "derived");
         assert_eq!(merge_gate.lanes[0].state, "projected");
@@ -3542,7 +3545,10 @@ workflows:
         assert_eq!(merge_gate.required_lane_count, 1);
         assert_eq!(merge_gate.drift_lane_count, 1);
         assert_eq!(merge_gate.evidence_classes.drift_lane_count, "derived");
-        assert_eq!(merge_gate.decision_basis[0].id, "projection:ota.verify.verify");
+        assert_eq!(
+            merge_gate.decision_basis[0].id,
+            "projection:ota.verify.verify"
+        );
         assert_eq!(merge_gate.decision_basis[1].id, "drift:ota.verify.verify");
         assert_eq!(merge_gate.lanes[0].merge_check_id, "ota.verify.verify");
         assert_eq!(merge_gate.lanes[0].state, "drift_detected");

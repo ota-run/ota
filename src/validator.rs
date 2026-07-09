@@ -29117,9 +29117,11 @@ tasks:
 
         let errors =
             validate_contract(&contract).expect_err("relay host should require destination truth");
-        assert!(errors
-            .to_string()
-            .contains("must declare the narrower effective destination truth"));
+        assert!(
+            errors
+                .to_string()
+                .contains("must declare the narrower effective destination truth")
+        );
     }
 
     #[test]
