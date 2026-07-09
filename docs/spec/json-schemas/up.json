@@ -122,7 +122,7 @@
             "preflight": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["state", "receipt_expected", "proof_expected"],
+              "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
@@ -139,6 +139,9 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "evidence_classes": {
+                  "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
@@ -171,6 +174,9 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "evidence_classes": {
+                  "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                 },
                 "receipt_present": { "type": "boolean" },
                 "proof_present": { "type": "boolean" },
@@ -304,7 +310,7 @@
                   "preflight": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["state", "receipt_expected", "proof_expected"],
+                    "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
                     "properties": {
                       "state": {
                         "enum": ["allowed", "refused", "blocked", "warning_only"]
@@ -318,13 +324,16 @@
                     },
                     "refusal_reason_family": { "type": "string" },
                     "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
-                    "decision_basis": {
-                      "type": "array",
-                      "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
-                    },
-                    "crossing_required": { "type": "boolean" },
-                    "crossing_classification": { "type": "string" },
-                    "crossing_boundary_family": { "type": "string" },
+                      "decision_basis": {
+                        "type": "array",
+                        "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                      },
+                      "evidence_classes": {
+                        "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
+                      },
+                      "crossing_required": { "type": "boolean" },
+                      "crossing_classification": { "type": "string" },
+                      "crossing_boundary_family": { "type": "string" },
                       "receipt_expected": { "type": "boolean" },
                       "proof_expected": { "type": "boolean" }
                     }
@@ -353,6 +362,9 @@
                       "decision_basis": {
                         "type": "array",
                         "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                      },
+                      "evidence_classes": {
+                        "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                       },
                       "receipt_present": { "type": "boolean" },
                       "proof_present": { "type": "boolean" },
@@ -399,7 +411,7 @@
             "preflight": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["state", "receipt_expected", "proof_expected"],
+              "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
@@ -416,6 +428,9 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "evidence_classes": {
+                  "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
@@ -448,6 +463,9 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "evidence_classes": {
+                  "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                 },
                 "receipt_present": { "type": "boolean" },
                 "proof_present": { "type": "boolean" },

@@ -193,7 +193,7 @@
             "preflight": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["state", "receipt_expected", "proof_expected"],
+              "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
@@ -210,6 +210,9 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "evidence_classes": {
+                  "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
                 "crossing_required": { "type": "boolean" },
                 "crossing_classification": { "type": "string" },
@@ -242,6 +245,9 @@
                 "decision_basis": {
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionBasisEntry" }
+                },
+                "evidence_classes": {
+                  "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                 },
                 "receipt_present": { "type": "boolean" },
                 "proof_present": { "type": "boolean" },

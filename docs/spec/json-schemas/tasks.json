@@ -398,7 +398,7 @@
     "governancePreflightEvaluation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "receipt_expected", "proof_expected"],
+      "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
       "properties": {
         "state": { "type": "string" },
         "review_required": { "type": "boolean" },
@@ -414,8 +414,54 @@
           "type": "array",
           "items": { "$ref": "#/$defs/governanceDecisionBasisEntry" }
         },
+        "evidence_classes": {
+          "$ref": "#/$defs/governancePreflightEvidenceClasses"
+        },
         "receipt_expected": { "type": "boolean" },
         "proof_expected": { "type": "boolean" }
+      }
+    },
+    "governancePreflightEvidenceClasses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "receipt_expected", "proof_expected"],
+      "properties": {
+        "state": { "type": "string" },
+        "review_required": { "type": "string" },
+        "declared_safe_for_agent": { "type": "string" },
+        "effective_safe_for_agent": { "type": "string" },
+        "unsafe_closure_tasks": { "type": "string" },
+        "refusal_reason_family": { "type": "string" },
+        "refusal": { "type": "string" },
+        "crossing_required": { "type": "string" },
+        "crossing_classification": { "type": "string" },
+        "crossing_boundary_family": { "type": "string" },
+        "receipt_expected": { "type": "string" },
+        "proof_expected": { "type": "string" }
+      }
+    },
+    "governancePostExecutionEvidenceClasses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "execution_attempted",
+        "refusal_occurred",
+        "crossing_record_state",
+        "receipt_present",
+        "proof_present"
+      ],
+      "properties": {
+        "state": { "type": "string" },
+        "execution_attempted": { "type": "string" },
+        "refusal_occurred": { "type": "string" },
+        "refusal_reason_family": { "type": "string" },
+        "refusal": { "type": "string" },
+        "not_run_reason": { "type": "string" },
+        "crossing_record_state": { "type": "string" },
+        "receipt_present": { "type": "string" },
+        "proof_present": { "type": "string" },
+        "receipt_status": { "type": "string" }
       }
     },
     "governanceDecisionBasisEntry": {

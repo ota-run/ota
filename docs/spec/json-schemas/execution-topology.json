@@ -11,20 +11,40 @@
         "name": { "type": "string" },
         "context": { "type": "string" },
         "default_mode": { "enum": ["native", "container", "remote"] },
+        "use": { "$ref": "./tasks.json#/$defs/laneUseSummary" },
         "description": { "type": "string" },
         "notes": { "type": "string" },
         "category": { "type": "string" },
         "env": { "type": "object", "additionalProperties": { "type": "string" } },
         "env_files": { "type": "array", "items": { "type": "string" } },
+        "adapter_inputs": { "$ref": "./tasks.json#/$defs/taskAdapterInputs" },
         "inputs": { "type": "object", "additionalProperties": true },
         "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts"] },
         "run": { "type": "string" },
         "script": { "type": "string" },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["exe"],
+          "properties": {
+            "exe": { "type": "string" },
+            "args": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "cwd": { "type": "string" }
+          }
+        },
+        "compose": { "$ref": "./tasks.json#/$defs/taskComposeExecution" },
         "launch": { "$ref": "./tasks.json#/$defs/taskLaunch" },
         "action": { "$ref": "./tasks.json#/$defs/taskAction" },
+        "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" },
+        "aggregate": { "$ref": "./tasks.json#/$defs/taskAggregate" },
+        "effects": { "$ref": "./tasks.json#/$defs/taskEffects" },
         "selected_variant_os": { "type": "string" },
         "depends_on": { "type": "array", "items": { "type": "string" } },
         "requires_services": { "type": "array", "items": { "type": "string" } },
+        "when_checks": { "type": "array", "items": { "type": "string" } },
         "after_success": { "type": "array", "items": { "type": "string" } },
         "after_failure": { "type": "array", "items": { "type": "string" } },
         "after_always": { "type": "array", "items": { "type": "string" } },
@@ -59,12 +79,29 @@
             "properties": {
               "mode": { "enum": ["native", "container", "remote"] },
               "context": { "type": "string" },
+              "depends_on": { "type": "array", "items": { "type": "string" } },
               "env_files": { "type": "array", "items": { "type": "string" } },
+              "adapter_inputs": { "$ref": "./tasks.json#/$defs/taskAdapterInputs" },
               "lifecycle": { "enum": ["persistent", "ephemeral"] },
               "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
+              "command": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["exe"],
+                "properties": {
+                  "exe": { "type": "string" },
+                  "args": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "cwd": { "type": "string" }
+                }
+              },
+              "compose": { "$ref": "./tasks.json#/$defs/taskComposeExecution" },
               "launch": { "$ref": "./tasks.json#/$defs/taskLaunch" },
+              "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" },
               "has_runtime": { "type": "boolean" }
             }
           }

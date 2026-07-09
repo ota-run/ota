@@ -922,6 +922,31 @@ pub struct GovernanceDecisionBasisEntry {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernancePreflightEvidenceClasses {
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_required: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_safe_for_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_safe_for_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsafe_closure_tasks: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal_reason_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_required: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_boundary_family: Option<String>,
+    pub receipt_expected: String,
+    pub proof_expected: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct GovernancePreflightEvaluation {
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -944,8 +969,27 @@ pub struct GovernancePreflightEvaluation {
     pub crossing_boundary_family: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
+    pub evidence_classes: GovernancePreflightEvidenceClasses,
     pub receipt_expected: bool,
     pub proof_expected: bool,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernancePostExecutionEvidenceClasses {
+    pub state: String,
+    pub execution_attempted: String,
+    pub refusal_occurred: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal_reason_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_run_reason: Option<String>,
+    pub crossing_record_state: String,
+    pub receipt_present: String,
+    pub proof_present: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -962,6 +1006,7 @@ pub struct GovernancePostExecutionEvidence {
     pub crossing_record_state: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
+    pub evidence_classes: GovernancePostExecutionEvidenceClasses,
     pub receipt_present: bool,
     pub proof_present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

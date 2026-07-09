@@ -13672,22 +13672,37 @@ fn harness_preflight_for_task(
         crossing_classification.as_deref(),
         crossing_boundary_family.as_deref(),
     );
+    let review_required = Some(!task.effective_safe_for_agent);
+    let refusal_reason_family = refusal.map(|entry| entry.reason);
+    let crossing_classification_for_evidence = crossing_classification.clone();
+    let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
     crate::output::GovernancePreflightEvaluation {
         state: if refusal.is_some() {
             String::from("refused")
         } else {
             String::from("allowed")
         },
-        review_required: Some(!task.effective_safe_for_agent),
+        review_required,
         declared_safe_for_agent: Some(task.safe_for_agent),
         effective_safe_for_agent: Some(task.effective_safe_for_agent),
         unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
-        refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        refusal_reason_family: refusal_reason_family.map(str::to_string),
         refusal: refusal.map(AgentExecutionRefusal::governance_record),
         crossing_required,
         crossing_classification,
         crossing_boundary_family,
         decision_basis,
+        evidence_classes: governance_preflight_evidence_classes(
+            review_required,
+            Some(task.safe_for_agent),
+            Some(task.effective_safe_for_agent),
+            &task.unsafe_closure_tasks,
+            refusal_reason_family,
+            refusal.is_some(),
+            crossing_required,
+            crossing_classification_for_evidence.as_deref(),
+            crossing_boundary_family_for_evidence.as_deref(),
+        ),
         receipt_expected: true,
         proof_expected: false,
     }
@@ -13793,6 +13808,33 @@ fn governance_preflight_decision_basis(
     }
 
     basis
+}
+
+fn governance_preflight_evidence_classes(
+    review_required: Option<bool>,
+    declared_safe_for_agent: Option<bool>,
+    effective_safe_for_agent: Option<bool>,
+    unsafe_closure_tasks: &[String],
+    refusal_reason_family: Option<&str>,
+    refusal_present: bool,
+    crossing_required: Option<bool>,
+    crossing_classification: Option<&str>,
+    crossing_boundary_family: Option<&str>,
+) -> crate::output::GovernancePreflightEvidenceClasses {
+    crate::output::GovernancePreflightEvidenceClasses {
+        state: String::from("derived"),
+        review_required: review_required.map(|_| String::from("derived")),
+        declared_safe_for_agent: declared_safe_for_agent.map(|_| String::from("derived")),
+        effective_safe_for_agent: effective_safe_for_agent.map(|_| String::from("derived")),
+        unsafe_closure_tasks: (!unsafe_closure_tasks.is_empty()).then(|| String::from("derived")),
+        refusal_reason_family: refusal_reason_family.map(|_| String::from("derived")),
+        refusal: refusal_present.then(|| String::from("attested")),
+        crossing_required: crossing_required.map(|_| String::from("derived")),
+        crossing_classification: crossing_classification.map(|_| String::from("derived")),
+        crossing_boundary_family: crossing_boundary_family.map(|_| String::from("derived")),
+        receipt_expected: String::from("derived"),
+        proof_expected: String::from("derived"),
+    }
 }
 
 fn actor_mode_label(agent: bool) -> &'static str {
@@ -14097,22 +14139,37 @@ fn harness_preflight_for_workflow(
         crossing_classification.as_deref(),
         crossing_boundary_family.as_deref(),
     );
+    let review_required = workflow.effective_safe_for_agent.map(std::ops::Not::not);
+    let refusal_reason_family = refusal.map(|entry| entry.reason);
+    let crossing_classification_for_evidence = crossing_classification.clone();
+    let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
     crate::output::GovernancePreflightEvaluation {
         state: if refusal.is_some() {
             String::from("refused")
         } else {
             String::from("allowed")
         },
-        review_required: workflow.effective_safe_for_agent.map(std::ops::Not::not),
+        review_required,
         declared_safe_for_agent: workflow.declared_safe_for_agent,
         effective_safe_for_agent: workflow.effective_safe_for_agent,
         unsafe_closure_tasks: workflow.unsafe_closure_tasks.clone(),
-        refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+        refusal_reason_family: refusal_reason_family.map(str::to_string),
         refusal: refusal.map(AgentExecutionRefusal::governance_record),
         crossing_required,
         crossing_classification,
         crossing_boundary_family,
         decision_basis,
+        evidence_classes: governance_preflight_evidence_classes(
+            review_required,
+            workflow.declared_safe_for_agent,
+            workflow.effective_safe_for_agent,
+            &workflow.unsafe_closure_tasks,
+            refusal_reason_family,
+            refusal.is_some(),
+            crossing_required,
+            crossing_classification_for_evidence.as_deref(),
+            crossing_boundary_family_for_evidence.as_deref(),
+        ),
         receipt_expected: true,
         proof_expected: up_lane_proof_expected(
             contract,
@@ -42277,6 +42334,10 @@ fn governance_evaluation_for_task_preview(
         crossing_classification.as_deref(),
         crossing_boundary_family.as_deref(),
     );
+    let review_required = Some(!task.effective_safe_for_agent);
+    let refusal_reason_family = refusal.map(|entry| entry.reason);
+    let crossing_classification_for_evidence = crossing_classification.clone();
+    let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
     crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(
@@ -42286,16 +42347,27 @@ fn governance_evaluation_for_task_preview(
                 refusal,
             )
             .to_string(),
-            review_required: Some(!task.effective_safe_for_agent),
+            review_required,
             declared_safe_for_agent: Some(task.safe_for_agent),
             effective_safe_for_agent: Some(task.effective_safe_for_agent),
             unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
-            refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            refusal_reason_family: refusal_reason_family.map(str::to_string),
             refusal: refusal.map(AgentExecutionRefusal::governance_record),
             crossing_required,
             crossing_classification,
             crossing_boundary_family,
             decision_basis,
+            evidence_classes: governance_preflight_evidence_classes(
+                review_required,
+                Some(task.safe_for_agent),
+                Some(task.effective_safe_for_agent),
+                &task.unsafe_closure_tasks,
+                refusal_reason_family,
+                refusal.is_some(),
+                crossing_required,
+                crossing_classification_for_evidence.as_deref(),
+                crossing_boundary_family_for_evidence.as_deref(),
+            ),
             receipt_expected: true,
             proof_expected: false,
         },
@@ -42373,20 +42445,35 @@ fn governance_evaluation_for_workflow_preview(
         crossing_classification.as_deref(),
         crossing_boundary_family.as_deref(),
     );
+    let review_required = safety.effective_safe.map(std::ops::Not::not);
+    let refusal_reason_family = refusal.map(|entry| entry.reason);
+    let crossing_classification_for_evidence = crossing_classification.clone();
+    let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
     crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
                 .to_string(),
-            review_required: safety.effective_safe.map(std::ops::Not::not),
+            review_required,
             declared_safe_for_agent: safety.declared_safe,
             effective_safe_for_agent: safety.effective_safe,
             unsafe_closure_tasks: safety.unsafe_closure_tasks.clone(),
-            refusal_reason_family: refusal.map(|entry| entry.reason.to_string()),
+            refusal_reason_family: refusal_reason_family.map(str::to_string),
             refusal: refusal.map(AgentExecutionRefusal::governance_record),
             crossing_required,
             crossing_classification,
             crossing_boundary_family,
             decision_basis,
+            evidence_classes: governance_preflight_evidence_classes(
+                review_required,
+                safety.declared_safe,
+                safety.effective_safe,
+                &safety.unsafe_closure_tasks,
+                refusal_reason_family,
+                refusal.is_some(),
+                crossing_required,
+                crossing_classification_for_evidence.as_deref(),
+                crossing_boundary_family_for_evidence.as_deref(),
+            ),
             receipt_expected: true,
             proof_expected: up_lane_proof_expected(
                 contract,
@@ -42398,6 +42485,26 @@ fn governance_evaluation_for_workflow_preview(
         post_execution: preview_post_execution_evidence(refusal, crossing_required),
         sandbox_policy,
         crossing: None,
+    }
+}
+
+fn governance_post_execution_evidence_classes(
+    refusal_reason_family: Option<&str>,
+    refusal_present: bool,
+    not_run_reason: Option<&str>,
+    receipt_status: Option<&str>,
+) -> crate::output::GovernancePostExecutionEvidenceClasses {
+    crate::output::GovernancePostExecutionEvidenceClasses {
+        state: String::from("derived"),
+        execution_attempted: String::from("derived"),
+        refusal_occurred: String::from("derived"),
+        refusal_reason_family: refusal_reason_family.map(|_| String::from("derived")),
+        refusal: refusal_present.then(|| String::from("attested")),
+        not_run_reason: not_run_reason.map(|_| String::from("derived")),
+        crossing_record_state: String::from("derived"),
+        receipt_present: String::from("attested"),
+        proof_present: String::from("derived"),
+        receipt_status: receipt_status.map(|_| String::from("attested")),
     }
 }
 
@@ -42425,6 +42532,12 @@ fn preview_post_execution_evidence(
             false,
             Some(not_run_reason.as_str()),
             crossing_record_state.as_str(),
+        ),
+        evidence_classes: governance_post_execution_evidence_classes(
+            None,
+            false,
+            Some(not_run_reason.as_str()),
+            None,
         ),
         receipt_present: false,
         proof_present: false,
@@ -42564,10 +42677,23 @@ fn governance_evaluation_for_up_result(
             crossing_classification: None,
             crossing_boundary_family: None,
             decision_basis: Vec::new(),
+            evidence_classes: governance_preflight_evidence_classes(
+                None,
+                None,
+                None,
+                &[],
+                refusal_reason_family.as_deref(),
+                refusal.is_some(),
+                None,
+                None,
+                None,
+            ),
             receipt_expected: true,
             proof_expected,
         });
     let preflight_crossing_required = preflight.crossing_required;
+    let preflight_refusal_reason_family = preflight.refusal_reason_family.clone();
+    let preflight_refusal_present = preflight.refusal.is_some();
 
     let crossing_record_state_value = crossing_record_state(
         preflight_crossing_required,
@@ -42591,6 +42717,12 @@ fn governance_evaluation_for_up_result(
                 proof_present,
                 not_run_reason.as_deref(),
                 crossing_record_state_value.as_str(),
+            ),
+            evidence_classes: governance_post_execution_evidence_classes(
+                preflight_refusal_reason_family.as_deref(),
+                preflight_refusal_present,
+                not_run_reason.as_deref(),
+                receipt.status.as_deref(),
             ),
             receipt_present: true,
             proof_present,
@@ -66089,6 +66221,20 @@ tasks:
                         detail: None,
                     },
                 ],
+                evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
+                    state: String::from("derived"),
+                    review_required: Some(String::from("derived")),
+                    declared_safe_for_agent: Some(String::from("derived")),
+                    effective_safe_for_agent: Some(String::from("derived")),
+                    unsafe_closure_tasks: Some(String::from("derived")),
+                    refusal_reason_family: None,
+                    refusal: None,
+                    crossing_required: Some(String::from("derived")),
+                    crossing_classification: Some(String::from("derived")),
+                    crossing_boundary_family: Some(String::from("derived")),
+                    receipt_expected: String::from("derived"),
+                    proof_expected: String::from("derived"),
+                },
                 receipt_expected: true,
                 proof_expected: true,
             }),
@@ -66105,6 +66251,14 @@ tasks:
         let value = super::up_result_json_value("./ota.yaml", &result);
 
         assert_eq!(value["governance"]["preflight"]["state"], "warning_only");
+        assert_eq!(
+            value["governance"]["preflight"]["evidence_classes"]["state"],
+            "derived"
+        );
+        assert_eq!(
+            value["governance"]["preflight"]["evidence_classes"]["crossing_required"],
+            "derived"
+        );
         assert_eq!(value["governance"]["preflight"]["crossing_required"], true);
         assert_eq!(
             value["governance"]["preflight"]["crossing_classification"],
@@ -66129,6 +66283,10 @@ tasks:
         assert_eq!(
             value["governance"]["post_execution"]["crossing_record_state"],
             "missing_after_execution"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["evidence_classes"]["receipt_present"],
+            "attested"
         );
     }
 
@@ -66286,6 +66444,20 @@ tasks:
                         detail: None,
                     },
                 ],
+                evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
+                    state: String::from("derived"),
+                    review_required: Some(String::from("derived")),
+                    declared_safe_for_agent: Some(String::from("derived")),
+                    effective_safe_for_agent: Some(String::from("derived")),
+                    unsafe_closure_tasks: Some(String::from("derived")),
+                    refusal_reason_family: None,
+                    refusal: None,
+                    crossing_required: Some(String::from("derived")),
+                    crossing_classification: Some(String::from("derived")),
+                    crossing_boundary_family: Some(String::from("derived")),
+                    receipt_expected: String::from("derived"),
+                    proof_expected: String::from("derived"),
+                },
                 receipt_expected: true,
                 proof_expected: true,
             }),
@@ -66320,6 +66492,10 @@ tasks:
             "attested"
         );
         assert_eq!(
+            value["governance"]["preflight"]["evidence_classes"]["review_required"],
+            "derived"
+        );
+        assert_eq!(
             value["governance"]["post_execution"]["crossing_record_state"],
             "attached"
         );
@@ -66330,6 +66506,10 @@ tasks:
         assert_eq!(
             value["governance"]["post_execution"]["decision_basis"][1]["id"],
             "crossing_record:attached"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["evidence_classes"]["receipt_status"],
+            "attested"
         );
     }
 
@@ -66403,6 +66583,20 @@ tasks:
                         crossing_classification: None,
                         crossing_boundary_family: None,
                         decision_basis: Vec::new(),
+                        evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
+                            state: String::from("derived"),
+                            review_required: None,
+                            declared_safe_for_agent: None,
+                            effective_safe_for_agent: None,
+                            unsafe_closure_tasks: None,
+                            refusal_reason_family: None,
+                            refusal: None,
+                            crossing_required: None,
+                            crossing_classification: None,
+                            crossing_boundary_family: None,
+                            receipt_expected: String::from("derived"),
+                            proof_expected: String::from("derived"),
+                        },
                         receipt_expected: true,
                         proof_expected: true,
                     },
@@ -66428,6 +66622,18 @@ tasks:
                                 detail: None,
                             },
                         ],
+                        evidence_classes: crate::output::GovernancePostExecutionEvidenceClasses {
+                            state: String::from("derived"),
+                            execution_attempted: String::from("derived"),
+                            refusal_occurred: String::from("derived"),
+                            refusal_reason_family: None,
+                            refusal: None,
+                            not_run_reason: Some(String::from("derived")),
+                            crossing_record_state: String::from("derived"),
+                            receipt_present: String::from("attested"),
+                            proof_present: String::from("derived"),
+                            receipt_status: None,
+                        },
                         receipt_present: false,
                         proof_present: false,
                         receipt_status: None,
@@ -66494,8 +66700,16 @@ tasks:
         assert_eq!(root["preview_status"], "BLOCKED");
         assert_eq!(root["governance"]["post_execution"]["state"], "not_run");
         assert_eq!(
+            root["governance"]["preflight"]["evidence_classes"]["receipt_expected"],
+            "derived"
+        );
+        assert_eq!(
             root["governance"]["post_execution"]["not_run_reason"],
             "preview_only"
+        );
+        assert_eq!(
+            root["governance"]["post_execution"]["evidence_classes"]["not_run_reason"],
+            "derived"
         );
         assert_eq!(
             root["governance"]["post_execution"]["decision_basis"][0]["id"],

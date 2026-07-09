@@ -2632,6 +2632,17 @@ filesystem or outbound boundary posture.
         "crossing_required": true,
         "crossing_classification": "escalated",
         "crossing_boundary_family": "unsafe_task",
+        "evidence_classes": {
+          "state": "derived",
+          "review_required": "derived",
+          "declared_safe_for_agent": "derived",
+          "effective_safe_for_agent": "derived",
+          "crossing_required": "derived",
+          "crossing_classification": "derived",
+          "crossing_boundary_family": "derived",
+          "receipt_expected": "derived",
+          "proof_expected": "derived"
+        },
         "receipt_expected": true,
         "proof_expected": false
       },
@@ -2639,6 +2650,14 @@ filesystem or outbound boundary posture.
         "state": "not_run",
         "execution_attempted": false,
         "refusal_occurred": false,
+        "evidence_classes": {
+          "state": "derived",
+          "execution_attempted": "derived",
+          "refusal_occurred": "derived",
+          "crossing_record_state": "derived",
+          "receipt_present": "attested",
+          "proof_present": "derived"
+        },
         "receipt_present": false,
         "proof_present": false
       }
@@ -2676,9 +2695,15 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance.evaluation.preflight.decision_basis[]` publishes the stable cited gate or refusal
   basis behind that preflight posture so CI or harness consumers do not have to infer it from
   human strings
+- `governance.evaluation.preflight.evidence_classes` publishes field-level provenance for the
+  authoritative preflight verdict, distinguishing ota-derived boundary truth from runner-attested
+  attachment state
 - `governance.evaluation.post_execution.decision_basis[]` publishes the stable cited evidence or
   non-run basis behind `post_execution.state`, so consumers can distinguish receipt/proof
   satisfaction from preview-only, blocked, or refusal-suppressed execution without scraping prose
+- `governance.evaluation.post_execution.evidence_classes` does the same for the post-execution
+  evidence record, so downstream consumers can tell which fields are derived versus boundary-
+  attested
 - `ota run <task> --dry-run --json --agent` now reflects the enforced runner boundary in
   `governance.evaluation.preflight`: unsafe selected tasks or unsafe reachable closures publish
   `state: "refused"` and return a blocked preview instead of looking runnable in JSON
@@ -3895,6 +3920,13 @@ runner-attested at the decision site itself.
       "state": "allowed",
       "crossing_required": false,
       "crossing_classification": "routine",
+      "evidence_classes": {
+        "state": "derived",
+        "crossing_required": "derived",
+        "crossing_classification": "derived",
+        "receipt_expected": "derived",
+        "proof_expected": "derived"
+      },
       "receipt_expected": true,
       "proof_expected": true
     },
@@ -3902,6 +3934,15 @@ runner-attested at the decision site itself.
       "state": "evidence_satisfied",
       "execution_attempted": true,
       "refusal_occurred": false,
+      "evidence_classes": {
+        "state": "derived",
+        "execution_attempted": "derived",
+        "refusal_occurred": "derived",
+        "crossing_record_state": "derived",
+        "receipt_present": "attested",
+        "proof_present": "derived",
+        "receipt_status": "attested"
+      },
       "receipt_present": true,
       "proof_present": true,
       "receipt_status": "ready"
@@ -3963,6 +4004,9 @@ Optional fields:
   `preflight.decision_basis[]` carries the cited safety/refusal/crossing basis for the selected
   lane, while additive `post_execution.decision_basis[]` carries the cited non-run, evidence, and
   crossing-record basis for the resulting evidence state
+- additive `preflight.evidence_classes` and `post_execution.evidence_classes` publish field-level
+  provenance on those authoritative governance records, so consumers can distinguish ota-derived
+  decision truth from boundary-attested receipt attachment truth
 - preview `governance.sandbox_policy` may also be present on `ota up --json --dry-run` when the
   selected workflow path carries compilable runtime-boundary truth; it repeats the same first
   `codex_local` sandbox target shape used by task and workflow discovery so preview consumers can
