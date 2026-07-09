@@ -41,6 +41,12 @@ V11.12 theme:
 
 - typed hydration input provenance
 
+Priority:
+
+- this follows `v11.11`; proof-boundary truth lands first
+- hydration source/feed posture is the second trust move, after Ota can already publish what a
+  proof did and did not cover machine-readably
+
 This slice tightens dependency hydration truth where the trust boundary is shaped not only by the
 verb (`restore`, `install`, `sync`) but also by the selected source or feed posture that the
 hydration lane reaches at run time.
@@ -59,6 +65,8 @@ The product goal is:
 - start narrow, then widen ecosystem by ecosystem only where the trust boundary is real
 - keep hydration provenance owned by the structured hydration lane itself instead of drifting into
   parallel metadata
+- strengthen replay and dependency-trust claims only after proof-boundary truth is already
+  machine-readable and hard to over-read
 
 ## Canonical product principle
 
@@ -83,6 +91,10 @@ The first honest ownership rule is:
 - hydration source or feed provenance lives on the existing structured hydration source
 - receipts and output surfaces report the resolved provenance of that same canonical shape
 - Ota should not create a second parallel provenance surface beside the hydration-owned contract
+- declared source posture and resolved source posture must stay distinct
+- if runtime, host, or ambient config widens, overrides, or diverges from the declared feed
+  posture, Ota should publish that divergence explicitly instead of silently rewriting contract
+  truth
 
 ## Problem statement
 
@@ -117,6 +129,7 @@ V11.12 is the slice for making that distinction first-class where it matters.
 - online/offline posture where it materially affects replay or trust
 - machine-readable hydration-source identity on the canonical structured hydration surface
 - one canonical ownership point for contract truth and one derived ownership point for output truth
+- one named first machine-readable output carrier for the first honest implementation cut
 
 ## Non-goals
 
@@ -166,12 +179,13 @@ The key design choice is not optional:
 
 ## Proposed implementation order
 
-1. define typed hydration input provenance as the canonical concept
-2. define the canonical ownership point on the structured hydration source
-3. choose one first real ecosystem target
-4. add source/feed posture only for that target
-5. pressure-test on a real repo where the source boundary actually matters
-6. only then widen to the next ecosystem
+1. land `v11.11` proof-boundary truth first
+2. define typed hydration input provenance as the canonical concept
+3. define the canonical ownership point on the structured hydration source
+4. choose one first real ecosystem target
+5. add source/feed posture only for that target
+6. pressure-test on a real repo where the source boundary actually matters
+7. only then widen to the next ecosystem
 
 ## Proposed implementation slices
 
@@ -189,8 +203,17 @@ The first honest shape should be:
 - contract truth:
   - hydration source owns declared source/feed posture
 - output truth:
-  - receipt or execution JSON publishes the resolved provenance of that declared hydration source
+  - `ota up --json` is the first canonical carrier and publishes the resolved provenance of that
+    declared hydration source
 - no parallel repo-global provenance object for the same hydration lane
+
+The first honest declared-versus-resolved rule is:
+
+- declared source/feed posture remains the contract-owned truth on the structured hydration source
+- resolved source/feed posture is emitted on the first output carrier as execution-time evidence
+- if the resolved posture differs from the declared posture because host, runtime, or ambient
+  config widened or overrode it, Ota should publish the mismatch explicitly instead of collapsing
+  both into one field
 
 ### 2. First ecosystem target
 
@@ -216,14 +239,34 @@ Direction:
 The first implementation should attach those typed fields to the existing structured hydration
 source for the selected ecosystem, not to a separate metadata-only output branch.
 
+For `.NET restore`, that means:
+
+- declared feed/source posture belongs on the structured restore source
+- resolved feed/source posture is emitted on `ota up --json`
+- divergence between declared and resolved source posture is first-class trust output, not hidden
+  runtime trivia
+
 ### 4. Replay and trust alignment
 
 Direction:
 
 - hydration input provenance should strengthen replay honesty, not replace it
+- proof boundary stays the first trust boundary; hydration provenance refines the input side of
+  that already-bounded claim
 - when source posture is still live and moving, Ota should be able to say so plainly
 - when the source posture is pinned tightly enough for stronger replay claims, Ota should publish
   that stronger input truth explicitly
+
+### 5. First carrier before broader propagation
+
+Direction:
+
+- pick one first machine-readable carrier before widening hydration provenance across receipts or
+  replay-specific output
+- the strongest first carrier is `ota up --json` because it already concentrates readiness,
+  hydration, and execution-boundary truth on one operator surface
+- treat receipt JSON and later replay-facing output as derived carriers from that same canonical
+  hydration provenance model
 
 ## Acceptance bar
 
@@ -236,6 +279,8 @@ V11.12 is complete when:
 - a real pressure repo can move from hidden source posture to declared source posture without
   dropping back to shell glue
 - the model stays ecosystem-honest instead of forcing one fake universal source taxonomy
+- the slice remains clearly secondary to `v11.11`, refining hydration trust after proof-boundary
+  truth is already consumer-visible
 
 ## Pressure-test target
 

@@ -42,6 +42,12 @@ V11.11 theme:
 
 - machine-readable proof boundaries and not-proved scope
 
+Priority:
+
+- implement this before hydration source/feed posture widening
+- proof-boundary truth is the first trust move because silent proof over-read is worse than a loud
+  restore or feed failure
+
 This slice makes Ota's narrowing posture travel with the artifact instead of living only in
 engineering notes, blog posts, or human interpretation.
 
@@ -60,6 +66,8 @@ The product goal is:
 - let downstream humans, CI systems, and agents consume that boundary without reading a blog post
 - keep `not_proved` relative to declared proof scope instead of letting it drift into free-floating
   exclusion prose
+- make the proof boundary structured enough that downstream consumers cannot silently over-read a
+  green narrow proof as broader repo truth
 
 ## Canonical product principle
 
@@ -85,6 +93,15 @@ The first honest rule is:
 - `scope` says what this proof covered
 - `not_proved` says which adjacent declared proof families remain outside that scope
 - `not_proved` is not repo-global commentary and is not a second independent taxonomy beside scope
+
+The first honest ownership rule is:
+
+- adjacent declared proof families come from canonical contract-owned lane truth, not runner
+  heuristics
+- for the first cut, Ota derives them from the selected task/workflow/runtime path and its
+  declared neighboring proof families on that same contract-owned lane
+- if Ota cannot recover adjacent proof-family truth from the selected contract lane and its
+  declared proof obligations, it should omit `not_proved` entries rather than inventing them
 
 ## Problem statement
 
@@ -160,6 +177,8 @@ The first honest boundary is:
 - `not_proved` entries are scoped relative to the declared proof scope
 - they should describe adjacent declared proof families outside the selected proof boundary
 - they should not act as repo-global completion commentary
+- those adjacent families must be recovered from contract-owned proof truth on the selected lane,
+  not inferred ad hoc from runtime happenstance
 
 ## Proposed implementation order
 
@@ -169,6 +188,7 @@ The first honest boundary is:
 4. attach both to that carrier first
 5. pressure-test on repos that intentionally carry narrow proof
 6. only then widen the taxonomy or replicate across other artifacts
+7. only after that move to hydration source/feed posture in `v11.12`
 
 ## Proposed implementation slices
 
@@ -192,6 +212,8 @@ Direction:
 - publish adjacent exclusions as explicit not-proved boundary, not only implicit absence
 - keep `not_proved` relative to the declared proof scope and adjacent declared proof families,
   not as free-floating repo commentary
+- derive adjacent proof-family truth from the selected contract-owned lane and its declared proof
+  obligations instead of from runner-side guesswork
 - keep the first shape narrow and machine-readable, for example:
   - `functional_runtime_not_proved`
   - `database_path_not_proved`
@@ -205,6 +227,8 @@ The first honest interpretation should be:
   completion families that remain outside the exercised lane
 - if scope is `runtime_path`, `not_proved` can describe adjacent integration or broader repo
   completion families outside that runtime boundary
+- the relative comparison anchor is the selected contract-owned proof lane plus its adjacent
+  declared proof families, not repo-global completion state
 - if Ota cannot anchor an exclusion relative to declared scope and adjacent proof families, it
   should omit it rather than invent loose taxonomy prose
 
@@ -252,6 +276,8 @@ V11.11 is complete when:
 - that boundary is machine-readable on the first chosen JSON carrier
 - the classification does not overclaim beyond what the exercised lane actually proved
 - engineering notes no longer need to carry the only truthful statement of proof scope
+- downstream consumers can distinguish a green narrow proof from a broader runtime or repo proof
+  without relying on narrative prose
 
 ## Pressure-test target
 
