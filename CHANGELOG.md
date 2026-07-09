@@ -42,6 +42,9 @@
   (such as doctor verdict or evidence expectations), and mark `satisfied`, `mismatch`, or
   `unavailable` directly on the canonical machine-readable governance surface instead of leaving
   `decision_inputs[]` as a passive list
+- hardened that same replay lane so cited-input class drift now counts too: replay now rejects
+  governance records when canonical decision inputs that should stay `pinned`, `witnessed`, or
+  trust-sensitive `attested` are emitted with weaker classes
 - tightened field-level provenance on doctor merge-gate governance: projected required lanes,
   merge-gate summaries, and per-lane merge posture now also publish additive `evidence_classes`
   so downstream consumers can distinguish authoritative derived merge truth from future asserted

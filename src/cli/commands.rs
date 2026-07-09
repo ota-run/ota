@@ -42836,6 +42836,13 @@ fn parse_bool_input(value: &str, prefix: &str) -> Option<bool> {
     value.strip_prefix(prefix)?.parse().ok()
 }
 
+fn find_decision_input_entry<'a>(
+    inputs: &'a [crate::output::GovernanceDecisionInputEntry],
+    predicate: impl Fn(&crate::output::GovernanceDecisionInputEntry) -> bool,
+) -> Option<&'a crate::output::GovernanceDecisionInputEntry> {
+    inputs.iter().find(|entry| predicate(entry))
+}
+
 fn parse_preflight_replay_inputs(
     inputs: &[crate::output::GovernanceDecisionInputEntry],
 ) -> PreflightReplayInputs {
@@ -43103,6 +43110,81 @@ fn reconcile_preflight_replay(
     if parsed.decision_owner.as_deref() != Some(expected_decision_owner) {
         mismatches.push(String::from("decision_owner"));
     }
+    if find_decision_input_entry(&evaluation.decision_inputs, |entry| entry.family == "lane")
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:lane"));
+    }
+    if find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+        entry.id.starts_with("actor_mode:")
+    })
+    .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:actor_mode"));
+    }
+    if find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+        entry.id.starts_with("decision_owner:")
+    })
+    .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:decision_owner"));
+    }
+    if parsed.doctor_verdict.is_some()
+        && find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+            entry.id.starts_with("doctor_verdict:")
+        })
+        .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:doctor_verdict"));
+    }
+    if parsed.declared_safe_for_agent.is_some()
+        && find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+            entry.id.starts_with("declared_safe_for_agent:")
+        })
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:declared_safe_for_agent"));
+    }
+    if parsed.effective_safe_for_agent.is_some()
+        && find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+            entry.id.starts_with("effective_safe_for_agent:")
+        })
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from(
+            "decision_input_class:effective_safe_for_agent",
+        ));
+    }
+    if !parsed.unsafe_closure_tasks.is_empty()
+        && find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+            entry.id == "unsafe_closure_tasks"
+        })
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:unsafe_closure_tasks"));
+    }
+    if parsed.refusal.is_some()
+        && find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+            entry.id.starts_with("refusal_input:")
+        })
+        .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:refusal_input"));
+    }
+    if find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+        entry.id.starts_with("receipt_expected:")
+    })
+    .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:receipt_expected"));
+    }
+    if find_decision_input_entry(&evaluation.decision_inputs, |entry| {
+        entry.id.starts_with("proof_expected:")
+    })
+    .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:proof_expected"));
+    }
     let current_basis_ids = evaluation
         .decision_basis
         .iter()
@@ -43201,6 +43283,74 @@ fn reconcile_post_execution_replay(
     }
     if parsed.decision_owner.as_deref() != Some(expected_decision_owner) {
         mismatches.push(String::from("decision_owner"));
+    }
+    if find_decision_input_entry(&evidence.decision_inputs, |entry| {
+        entry.id.starts_with("execution_attempted:")
+    })
+    .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:execution_attempted"));
+    }
+    if refusal_reason_family.is_some()
+        && find_decision_input_entry(&evidence.decision_inputs, |entry| {
+            entry.id.starts_with("refusal_reason_family:")
+        })
+        .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:refusal_reason_family"));
+    }
+    if parsed.not_run_reason.is_some()
+        && find_decision_input_entry(&evidence.decision_inputs, |entry| {
+            entry.id.starts_with("not_run_reason:")
+        })
+        .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:not_run_reason"));
+    }
+    if find_decision_input_entry(&evidence.decision_inputs, |entry| {
+        entry.id.starts_with("receipt_present:")
+    })
+    .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "attested")
+    {
+        mismatches.push(String::from("decision_input_class:receipt_present"));
+    }
+    if parsed.receipt_status.is_some()
+        && find_decision_input_entry(&evidence.decision_inputs, |entry| {
+            entry.id.starts_with("receipt_status:")
+        })
+        .is_some_and(|entry| {
+            entry.replay_class != "witnessed" || entry.evidence_class != "attested"
+        })
+    {
+        mismatches.push(String::from("decision_input_class:receipt_status"));
+    }
+    if find_decision_input_entry(&evidence.decision_inputs, |entry| {
+        entry.id.starts_with("proof_expected:")
+    })
+    .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:proof_expected"));
+    }
+    if find_decision_input_entry(&evidence.decision_inputs, |entry| {
+        entry.id.starts_with("proof_present:")
+    })
+    .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:proof_present"));
+    }
+    if find_decision_input_entry(&evidence.decision_inputs, |entry| {
+        entry.id.starts_with("crossing_record_state:")
+    })
+    .is_some_and(|entry| entry.replay_class != "witnessed" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:crossing_record_state"));
+    }
+    if find_decision_input_entry(&evidence.decision_inputs, |entry| {
+        entry.id.starts_with("decision_owner:")
+    })
+    .is_some_and(|entry| entry.replay_class != "pinned" || entry.evidence_class != "derived")
+    {
+        mismatches.push(String::from("decision_input_class:decision_owner"));
     }
     let current_basis_ids = evidence
         .decision_basis
@@ -60892,6 +61042,18 @@ agent:
             "decision_owner:task_governance_preflight"
         );
         assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["decision_inputs"][0]["replay_class"],
+            "pinned"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["decision_inputs"][1]["replay_class"],
+            "pinned"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["decision_inputs"][2]["replay_class"],
+            "pinned"
+        );
+        assert_eq!(
             json["governance"]["evaluation"]["preflight"]["evidence_classes"]["decision_inputs"],
             "derived"
         );
@@ -60936,6 +61098,14 @@ agent:
             "receipt_present:false"
         );
         assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["evidence_class"],
+            "attested"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["replay_class"],
+            "witnessed"
+        );
+        assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_inputs"][6]["id"],
             "decision_owner:preview_post_execution_evidence"
         );
@@ -60950,6 +61120,119 @@ agent:
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
             "suppressed_by_refusal"
+        );
+    }
+
+    #[test]
+    fn governance_replay_detects_preflight_input_class_mismatch() {
+        let evaluation =
+            super::finalize_governance_evaluation(crate::output::GovernanceEvaluation {
+                preflight: crate::output::GovernancePreflightEvaluation {
+                    state: String::from("refused"),
+                    review_required: Some(true),
+                    declared_safe_for_agent: Some(false),
+                    effective_safe_for_agent: Some(false),
+                    unsafe_closure_tasks: Vec::new(),
+                    refusal_reason_family: Some(String::from("requested_task_not_safe")),
+                    refusal: Some(crate::output::GovernanceRefusalRecord {
+                        reason_family: String::from("requested_task_not_safe"),
+                        boundary_family: String::from("agent_safety_boundary"),
+                        closure_status: String::from("single_task"),
+                        requested_task: String::from("publish"),
+                        blocked_task: String::from("publish"),
+                        closure_path: vec![String::from("publish")],
+                        evidence_class: String::from("attested"),
+                    }),
+                    crossing_required: None,
+                    crossing_classification: None,
+                    crossing_boundary_family: None,
+                    decision_basis: vec![crate::output::GovernanceDecisionBasisEntry {
+                        id: String::from("refusal:requested_task_not_safe"),
+                        family: String::from("refusal_basis"),
+                        evidence_class: String::from("derived"),
+                        detail: Some(String::from("requested_task=publish blocked_task=publish")),
+                    }],
+                    decision_inputs: vec![
+                        crate::output::GovernanceDecisionInputEntry {
+                            id: String::from("task:publish"),
+                            family: String::from("lane"),
+                            evidence_class: String::from("derived"),
+                            replay_class: String::from("witnessed"),
+                            detail: Some(String::from("kind=task")),
+                        },
+                        crate::output::GovernanceDecisionInputEntry {
+                            id: String::from("actor_mode:agent"),
+                            family: String::from("actor_mode"),
+                            evidence_class: String::from("derived"),
+                            replay_class: String::from("pinned"),
+                            detail: None,
+                        },
+                        crate::output::GovernanceDecisionInputEntry {
+                            id: String::from("decision_owner:task_governance_preflight"),
+                            family: String::from("decision_owner"),
+                            evidence_class: String::from("derived"),
+                            replay_class: String::from("pinned"),
+                            detail: None,
+                        },
+                        crate::output::GovernanceDecisionInputEntry {
+                            id: String::from("refusal_input:requested_task_not_safe"),
+                            family: String::from("refusal_input"),
+                            evidence_class: String::from("derived"),
+                            replay_class: String::from("pinned"),
+                            detail: Some(String::from(
+                                "requested_task=publish blocked_task=publish",
+                            )),
+                        },
+                        crate::output::GovernanceDecisionInputEntry {
+                            id: String::from("receipt_expected:true"),
+                            family: String::from("evidence_expectation"),
+                            evidence_class: String::from("derived"),
+                            replay_class: String::from("pinned"),
+                            detail: None,
+                        },
+                        crate::output::GovernanceDecisionInputEntry {
+                            id: String::from("proof_expected:false"),
+                            family: String::from("evidence_expectation"),
+                            evidence_class: String::from("derived"),
+                            replay_class: String::from("pinned"),
+                            detail: None,
+                        },
+                    ],
+                    replay: crate::output::GovernanceReplayResult {
+                        status: String::new(),
+                        mismatches: Vec::new(),
+                    },
+                    evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
+                        state: String::from("derived"),
+                        review_required: Some(String::from("derived")),
+                        declared_safe_for_agent: Some(String::from("derived")),
+                        effective_safe_for_agent: Some(String::from("derived")),
+                        unsafe_closure_tasks: None,
+                        refusal_reason_family: Some(String::from("derived")),
+                        refusal: Some(String::from("attested")),
+                        crossing_required: None,
+                        crossing_classification: None,
+                        crossing_boundary_family: None,
+                        decision_inputs: String::from("derived"),
+                        replay: String::from("derived"),
+                        receipt_expected: String::from("derived"),
+                        proof_expected: String::from("derived"),
+                    },
+                    receipt_expected: true,
+                    proof_expected: false,
+                },
+                post_execution: super::preview_post_execution_evidence(None, None),
+                sandbox_policy: None,
+                crossing: None,
+            });
+
+        assert_eq!(evaluation.preflight.replay.status, "mismatch");
+        assert!(
+            evaluation
+                .preflight
+                .replay
+                .mismatches
+                .contains(&String::from("decision_input_class:lane"))
         );
     }
 

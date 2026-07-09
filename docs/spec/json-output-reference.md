@@ -2885,6 +2885,9 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance.evaluation.preflight.replay.status` publishes whether ota can re-derive that
   preflight verdict from the cited inputs it just emitted: `satisfied`, `mismatch`, or
   `unavailable`
+- replay now also checks the trust-sensitive cited-input classes on that same canonical surface,
+  so a selector that should be `pinned` or receipt evidence that should be `attested` cannot
+  silently degrade into weaker machine truth without flipping replay to `mismatch`
 - `governance.evaluation.preflight.evidence_classes` publishes field-level provenance for the
   authoritative preflight verdict, distinguishing ota-derived boundary truth from runner-attested
   attachment state
