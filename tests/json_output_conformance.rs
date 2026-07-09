@@ -304,11 +304,37 @@ tasks:
   setup:
     context: host
     run: echo setup-ready
+    effects:
+      network: true
+      external_state:
+        - remote_api
+  live:
+    context: host
+    run: echo live-ready
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - remote_api
+  unrelated:
+    context: host
+    run: echo unrelated-ready
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - unrelated_api
 workflows:
   default: app
   app:
     setup:
       task: setup
+  live:
+    run:
+      task: live
+  unrelated:
+    run:
+      task: unrelated
 "#,
     );
 
@@ -335,8 +361,18 @@ workflows:
     );
     assert_eq!(
         json["not_proved"][1]["kind"],
+        "external_network_path_not_proved"
+    );
+    assert_eq!(
+        json["not_proved"][1]["declared_by_workflows"],
+        serde_json::json!(["live"])
+    );
+    assert_eq!(json["not_proved"][1]["source"], "contract_lane");
+    assert_eq!(
+        json["not_proved"][2]["kind"],
         "broader_repo_completion_not_proved"
     );
+    assert_eq!(json["not_proved"][2]["source"], "proof_scope");
     let up_log = fixture
         .path()
         .join(".ota")

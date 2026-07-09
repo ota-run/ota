@@ -24,7 +24,7 @@
 
 # V11.11 Plan
 
-Status: planned follow-on trust slice.
+Status: complete.
 
 Release target:
 
@@ -250,10 +250,11 @@ Direction:
 Direction:
 
 - pick one first JSON carrier for the first implementation cut
-- the strongest first carrier is `ota up --json` because it already concentrates readiness,
-  execution, proof, and workflow-facing boundary truth on one operator surface
-- treat receipt archive JSON and other proof/receipt carriers as later derivations from the same
-  canonical shape instead of widening all artifact surfaces at once
+- the strongest first carrier is `ota proof runtime --json` because it is the dedicated
+  runtime-proof artifact and already owns the selected proof lane, phase, artifacts, and cleanup
+  boundary without mixing proof coverage into broader readiness/execution output
+- treat `ota up --json`, receipt archive JSON, and other proof/receipt carriers as later
+  derivations from the same canonical shape instead of widening all artifact surfaces at once
 
 ### 5. Canonical output placement
 

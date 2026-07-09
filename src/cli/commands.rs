@@ -160,15 +160,16 @@ use crate::runner::{
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
-    ServiceReadinessSpec, TaskDependencyHydrationSourceSpec, TaskPrepareSpec, TaskRuntimeBindSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec,
-    TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
-    TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
-    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
-    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
-    parse_memory_size_bytes, parse_readiness_duration_spec, split_workflow_selector,
+    ServiceReadinessSpec, TaskDependencyHydrationSourceSpec, TaskNetworkEffectKind,
+    TaskPrepareSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
+    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
+    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
+    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec, split_workflow_selector,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -55215,7 +55216,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55269,7 +55271,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55332,7 +55335,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55478,7 +55482,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55540,7 +55545,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55602,7 +55608,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55661,7 +55668,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -55723,7 +55731,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -56002,7 +56011,8 @@ workflows:
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
-                    source: String::from("contract_lane"),
+                    source: String::from("proof_scope"),
+                    declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
@@ -95264,14 +95274,68 @@ fn proof_runtime_not_proved(
             kind: String::from("functional_runtime_not_proved"),
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
+            declared_by_workflows: Vec::new(),
+        });
+    }
+    let selected_workflow_name = workflow_summary.as_ref().map(|summary| summary.name);
+    let selected_external_state = selected_workflow_name
+        .map(|name| proof_runtime_workflow_external_state(contract, name))
+        .unwrap_or_default();
+    let external_network_workflows = contract
+        .workflows
+        .as_ref()
+        .filter(|_| !selected_external_state.is_empty())
+        .map(|workflows| {
+            workflows
+                .items
+                .keys()
+                .filter(|name| Some(name.as_str()) != selected_workflow_name)
+                .filter(|name| {
+                    contract
+                        .selected_workflow_task_closure_names(Some(name.as_str()))
+                        .into_iter()
+                        .filter_map(|task_name| contract.tasks.get(task_name.as_str()))
+                        .any(|task| {
+                            task.effects.effective_network_kind()
+                                == Some(TaskNetworkEffectKind::IntegrationTest)
+                                && task
+                                    .effects
+                                    .external_state
+                                    .iter()
+                                    .any(|state| selected_external_state.contains(state))
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !external_network_workflows.is_empty() {
+        entries.push(crate::output::ProofRuntimeNotProved {
+            kind: String::from("external_network_path_not_proved"),
+            relative_to: String::from("runtime_path"),
+            source: String::from("contract_lane"),
+            declared_by_workflows: external_network_workflows,
         });
     }
     entries.push(crate::output::ProofRuntimeNotProved {
         kind: String::from("broader_repo_completion_not_proved"),
         relative_to: String::from("runtime_path"),
-        source: String::from("contract_lane"),
+        source: String::from("proof_scope"),
+        declared_by_workflows: Vec::new(),
     });
     entries
+}
+
+fn proof_runtime_workflow_external_state(
+    contract: &Contract,
+    workflow_name: &str,
+) -> BTreeSet<String> {
+    contract
+        .selected_workflow_task_closure_names(Some(workflow_name))
+        .into_iter()
+        .filter_map(|task_name| contract.tasks.get(task_name.as_str()))
+        .flat_map(|task| task.effects.external_state.iter().cloned())
+        .collect()
 }
 
 fn proof_runtime_doctor_artifact_json(

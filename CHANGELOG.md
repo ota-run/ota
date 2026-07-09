@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Tightened runtime-proof boundaries: `ota proof runtime --json` now identifies adjacent declared
+  external integration workflows as `external_network_path_not_proved`, while keeping generic
+  broader-repo exclusion explicitly derived from the selected proof scope.
+
 - tightened CI verification drift for narrow contract slices: workflow verification recovery now
   rejects incompatible command-family and scope evidence before surfacing governance or aggregate
   drift, and GitHub Actions `.NET` verifier inference now recognizes `dotnet build` / `dotnet

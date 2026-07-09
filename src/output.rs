@@ -2734,6 +2734,8 @@ pub struct ProofRuntimeNotProved {
     pub kind: String,
     pub relative_to: String,
     pub source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declared_by_workflows: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
