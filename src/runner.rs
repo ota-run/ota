@@ -3374,9 +3374,18 @@ fn dependency_hydration_command_specs(
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
+            let mut args = vec![String::from("restore")];
+            if let Some(config_file) = source.config_file.as_deref() {
+                args.push(String::from("--configfile"));
+                args.push(config_file.trim().to_string());
+            }
+            for selected_source in &source.sources {
+                args.push(String::from("--source"));
+                args.push(selected_source.trim().to_string());
+            }
             vec![crate::schema::TaskCommandSpec {
                 exe: String::from("dotnet"),
-                args: vec![String::from("restore")],
+                args,
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
             }]
@@ -10660,10 +10669,27 @@ fn prepare_task_shell_command(
                     shell_quote_command_word(source.cwd.trim(), quote_style)
                 )),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
-                    Ok(format!(
+                    let mut command = format!(
                         "cd {} && dotnet restore",
                         shell_quote_command_word(source.cwd.trim(), quote_style)
-                    ))
+                    );
+                    if let Some(config_file) = source.config_file.as_deref() {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word("--configfile", quote_style));
+                        command.push(' ');
+                        command
+                            .push_str(&shell_quote_command_word(config_file.trim(), quote_style));
+                    }
+                    for selected_source in &source.sources {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word("--source", quote_style));
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word(
+                            selected_source.trim(),
+                            quote_style,
+                        ));
+                    }
+                    Ok(format!("{command}"))
                 }
             }?;
             Ok(base_command)
@@ -61047,6 +61073,10 @@ tasks:
       source:
         kind: dotnet_restore
         cwd: app
+        config_file: NuGet.Config
+        sources:
+          - https://api.nuget.org/v3/index.json
+          - https://packages.example.internal/v3/index.json
     requirements:
       toolchains:
         - dotnet
@@ -61093,6 +61123,16 @@ tasks:
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let logged = fs::read_to_string(log_path).unwrap();
         assert!(logged.contains("restore"), "{logged}");
+        assert!(logged.contains("--configfile"), "{logged}");
+        assert!(logged.contains("NuGet.Config"), "{logged}");
+        assert!(
+            logged.contains("https://api.nuget.org/v3/index.json"),
+            "{logged}"
+        );
+        assert!(
+            logged.contains("https://packages.example.internal/v3/index.json"),
+            "{logged}"
+        );
         assert!(
             logged.contains(
                 fixture

@@ -571,7 +571,7 @@ pub struct ExecutionReceipt {
     pub workloads: BTreeMap<String, ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub policy: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty", skip_deserializing)]
     pub dependency_steps: Vec<RunPreviewDependencyStep>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<ExecutionReceiptStep>,
@@ -843,7 +843,7 @@ pub struct PreviewStageAction {
     pub action: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct RunPreviewDependencyStep {
     pub task: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -852,6 +852,8 @@ pub struct RunPreviewDependencyStep {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     pub backend_selection_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<WorkspaceTaskPrepareSummary>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -4478,10 +4480,14 @@ pub struct TaskPrepareSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub browsers: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_hydration_provenance: Option<TaskHydrationProvenanceSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_hydration_provenance: Option<TaskHydrationProvenanceSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSummary<'a>>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct WorkspaceTaskPrepareSummary {
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -4525,10 +4531,32 @@ pub struct WorkspaceTaskPrepareSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub browsers: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_hydration_provenance: Option<WorkspaceTaskHydrationProvenanceSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_hydration_provenance: Option<WorkspaceTaskHydrationProvenanceSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<WorkspaceTaskComposeInvocationSummary>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct TaskHydrationProvenanceSummary<'a> {
+    pub source_posture: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<&'a str>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct WorkspaceTaskHydrationProvenanceSummary {
+    pub source_posture: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct WorkspaceTaskComposeInvocationSummary {
     pub kind: &'static str,
     pub engine: &'static str,
@@ -4938,6 +4966,8 @@ pub fn summarize_task_prepare(
             with_deps: false,
             targets: Vec::new(),
             browsers: Vec::new(),
+            declared_hydration_provenance: None,
+            resolved_hydration_provenance: None,
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
@@ -5046,6 +5076,8 @@ fn summarize_tool_bootstrap_prepare_spec(
             .iter()
             .map(|browser| browser.label())
             .collect(),
+        declared_hydration_provenance: None,
+        resolved_hydration_provenance: None,
         compose: None,
     }
 }
@@ -5053,6 +5085,8 @@ fn summarize_tool_bootstrap_prepare_spec(
 fn summarize_dependency_hydration_prepare_spec(
     spec: &crate::schema::TaskDependencyHydrationPrepareSpec,
 ) -> TaskPrepareSummary<'_> {
+    let mut declared_hydration_provenance = None;
+    let mut resolved_hydration_provenance = None;
     let (
         source_kind,
         cwd,
@@ -5285,6 +5319,15 @@ fn summarize_dependency_hydration_prepare_spec(
             summarize_task_compose_invocation(source.compose.as_ref()),
         ),
     };
+    if let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) = &spec.source {
+        let provenance = TaskHydrationProvenanceSummary {
+            source_posture: source.source_posture(),
+            config_file: source.config_file.as_deref(),
+            sources: source.sources.iter().map(String::as_str).collect(),
+        };
+        declared_hydration_provenance = Some(provenance.clone());
+        resolved_hydration_provenance = Some(provenance);
+    }
     TaskPrepareSummary {
         kind: "dependency_hydration",
         steps: Vec::new(),
@@ -5312,6 +5355,8 @@ fn summarize_dependency_hydration_prepare_spec(
         with_deps: false,
         targets: spec.targets.iter().map(String::as_str).collect(),
         browsers: Vec::new(),
+        declared_hydration_provenance,
+        resolved_hydration_provenance,
         compose,
     }
 }
@@ -5339,6 +5384,8 @@ fn empty_task_prepare_summary(kind: &'static str) -> TaskPrepareSummary<'static>
         with_deps: false,
         targets: Vec::new(),
         browsers: Vec::new(),
+        declared_hydration_provenance: None,
+        resolved_hydration_provenance: None,
         compose: None,
     }
 }
@@ -5373,6 +5420,8 @@ pub fn summarize_task_prepare_owned(
             with_deps: false,
             targets: Vec::new(),
             browsers: Vec::new(),
+            declared_hydration_provenance: None,
+            resolved_hydration_provenance: None,
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
@@ -5421,6 +5470,8 @@ pub fn summarize_task_prepare_owned(
                     .iter()
                     .map(|browser| browser.label())
                     .collect(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             })
         }
@@ -5662,6 +5713,19 @@ pub fn summarize_task_prepare_owned(
                     summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
             };
+            let mut declared_hydration_provenance = None;
+            let mut resolved_hydration_provenance = None;
+            if let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) =
+                &spec.source
+            {
+                let provenance = WorkspaceTaskHydrationProvenanceSummary {
+                    source_posture: source.source_posture(),
+                    config_file: source.config_file.clone(),
+                    sources: source.sources.clone(),
+                };
+                declared_hydration_provenance = Some(provenance.clone());
+                resolved_hydration_provenance = Some(provenance);
+            }
             Some(WorkspaceTaskPrepareSummary {
                 kind: "dependency_hydration",
                 steps: Vec::new(),
@@ -5691,6 +5755,8 @@ pub fn summarize_task_prepare_owned(
                 with_deps: false,
                 targets: spec.targets.clone(),
                 browsers: Vec::new(),
+                declared_hydration_provenance,
+                resolved_hydration_provenance,
                 compose,
             })
         }
@@ -5767,7 +5833,74 @@ fn empty_workspace_task_prepare_summary(kind: &'static str) -> WorkspaceTaskPrep
         with_deps: false,
         targets: Vec::new(),
         browsers: Vec::new(),
+        declared_hydration_provenance: None,
+        resolved_hydration_provenance: None,
         compose: None,
+    }
+}
+
+pub fn workspace_prepare_summary_from_task_prepare_summary(
+    summary: TaskPrepareSummary<'_>,
+) -> WorkspaceTaskPrepareSummary {
+    WorkspaceTaskPrepareSummary {
+        kind: summary.kind,
+        steps: summary
+            .steps
+            .into_iter()
+            .map(workspace_prepare_summary_from_task_prepare_summary)
+            .collect(),
+        medium: summary.medium,
+        source_kind: summary.source_kind,
+        cwd: summary.cwd.map(str::to_string),
+        file: summary.file.map(str::to_string),
+        files: summary.files.into_iter().map(str::to_string).collect(),
+        env_files: summary.env_files.into_iter().map(str::to_string).collect(),
+        manager: summary.manager,
+        filter: summary.filter.map(str::to_string),
+        mode: summary.mode,
+        group_mode: summary.group_mode,
+        groups: summary.groups.into_iter().map(str::to_string).collect(),
+        frozen_lockfile: summary.frozen_lockfile,
+        inline_builds: summary.inline_builds,
+        force: summary.force,
+        no_root: summary.no_root,
+        skip_tests: summary.skip_tests,
+        with_deps: summary.with_deps,
+        targets: summary.targets.into_iter().map(str::to_string).collect(),
+        browsers: summary.browsers,
+        declared_hydration_provenance: summary.declared_hydration_provenance.map(|value| {
+            WorkspaceTaskHydrationProvenanceSummary {
+                source_posture: value.source_posture,
+                config_file: value.config_file.map(str::to_string),
+                sources: value.sources.into_iter().map(str::to_string).collect(),
+            }
+        }),
+        resolved_hydration_provenance: summary.resolved_hydration_provenance.map(|value| {
+            WorkspaceTaskHydrationProvenanceSummary {
+                source_posture: value.source_posture,
+                config_file: value.config_file.map(str::to_string),
+                sources: value.sources.into_iter().map(str::to_string).collect(),
+            }
+        }),
+        compose: summary
+            .compose
+            .map(|compose| WorkspaceTaskComposeInvocationSummary {
+                kind: compose.kind,
+                engine: compose.engine,
+                service: compose.service.map(str::to_string),
+                services: compose.services.into_iter().map(str::to_string).collect(),
+                workdir: compose.workdir.map(str::to_string),
+                rm: compose.rm,
+                build: compose.build,
+                service_ports: compose.service_ports,
+                detach: compose.detach,
+                force_recreate: compose.force_recreate,
+                force: compose.force,
+                follow: compose.follow,
+                remove_volumes: compose.remove_volumes,
+                timeout_seconds: compose.timeout_seconds,
+                tty: compose.tty,
+            }),
     }
 }
 

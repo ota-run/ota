@@ -7638,12 +7638,35 @@ impl TaskCargoHydrationSourceSpec {
 pub struct TaskDotnetRestoreHydrationSourceSpec {
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskDotnetRestoreHydrationSourceSpec {
     pub fn command_preview(&self) -> String {
-        String::from("dotnet restore")
+        let mut parts = vec![String::from("dotnet"), String::from("restore")];
+        if let Some(config_file) = self.config_file.as_deref() {
+            parts.push(String::from("--configfile"));
+            parts.push(config_file.trim().to_string());
+        }
+        for source in &self.sources {
+            parts.push(String::from("--source"));
+            parts.push(source.trim().to_string());
+        }
+        parts.join(" ")
+    }
+
+    pub const fn source_posture(&self) -> &'static str {
+        if !self.sources.is_empty() {
+            "explicit_sources"
+        } else if self.config_file.is_some() {
+            "config_file"
+        } else {
+            "ambient_default"
+        }
     }
 }
 

@@ -90,6 +90,26 @@
           "additionalProperties": false,
           "required": ["actions"],
           "properties": {
+            "dependency_chain": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "dependency_steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["task", "backend", "backend_selection_source"],
+                "properties": {
+                  "task": { "type": "string" },
+                  "parent": { "type": "string" },
+                  "backend": { "type": "string" },
+                  "context": { "type": "string" },
+                  "backend_selection_source": { "type": "string" },
+                  "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" }
+                }
+              }
+            },
             "actions": {
               "type": "array",
               "items": { "type": "string" }
@@ -288,6 +308,26 @@
                 "additionalProperties": false,
                 "required": ["actions"],
                 "properties": {
+                  "dependency_chain": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "dependency_steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["task", "backend", "backend_selection_source"],
+                      "properties": {
+                        "task": { "type": "string" },
+                        "parent": { "type": "string" },
+                        "backend": { "type": "string" },
+                        "context": { "type": "string" },
+                        "backend_selection_source": { "type": "string" },
+                        "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" }
+                      }
+                    }
+                  },
                   "actions": {
                     "type": "array",
                     "items": { "type": "string" }

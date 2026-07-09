@@ -335,11 +335,32 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "declared_hydration_provenance": {
+          "$ref": "#/$defs/taskHydrationProvenance"
+        },
+        "resolved_hydration_provenance": {
+          "$ref": "#/$defs/taskHydrationProvenance"
+        },
         "frozen_lockfile": { "type": "boolean" },
         "inline_builds": { "type": "boolean" },
         "force": { "type": "boolean" },
         "no_root": { "type": "boolean" },
         "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "taskHydrationProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_posture"],
+      "properties": {
+        "source_posture": {
+          "enum": ["ambient_default", "config_file", "explicit_sources"]
+        },
+        "config_file": { "type": "string" },
+        "sources": {
           "type": "array",
           "items": { "type": "string" }
         }

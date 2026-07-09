@@ -1491,6 +1491,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "dotnet_restore" },
             "cwd": { "type": "string" },
+            "config_file": { "type": "string" },
+            "sources": { "$ref": "#/$defs/stringArray" },
             "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },

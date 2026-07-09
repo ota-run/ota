@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- widened first-class `.NET` hydration truth with additive source provenance: `prepare.source.kind:
+  dotnet_restore` now accepts optional `config_file` and repeated `sources[]`, the runner and
+  command preview project those exact restore inputs, and `ota up --json` now carries structured
+  `plan.dependency_steps[].prepare.{declared_hydration_provenance,resolved_hydration_provenance}`
+  so setup-only dependency lanes expose replay-relevant restore source posture on the canonical
+  machine-readable carrier instead of leaving feed selection implicit
 - tightened merge-facing governance with the same narrow mechanism tripwire: `ota doctor --json`
   merge-gate summaries and per-lane records now publish additive `decision_inputs[]` with stable
   `decision_owner:<stable-id>` identity plus cited merge inputs, and now reconcile that emitted

@@ -228,8 +228,21 @@ execution:
         image: rust:1.94-bookworm
 tasks:
   setup:
-    context: host
-    run: echo ready
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
+        config_file: NuGet.Config
+        sources:
+          - https://api.nuget.org/v3/index.json
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      network: true
+      network_kind: dependency_hydration
 "#,
     );
 
@@ -1134,6 +1147,19 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("up.json", &json);
+    assert_eq!(
+        json["plan"]["dependency_steps"][0]["prepare"]["declared_hydration_provenance"]["source_posture"],
+        "explicit_sources"
+    );
+    assert_eq!(
+        json["plan"]["dependency_steps"][0]["prepare"]["declared_hydration_provenance"]["config_file"],
+        "NuGet.Config"
+    );
+    assert_eq!(
+        json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"]["sources"]
+            [0],
+        "https://api.nuget.org/v3/index.json"
+    );
 }
 
 #[test]

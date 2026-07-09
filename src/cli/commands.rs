@@ -18249,6 +18249,11 @@ fn build_run_preview_plan(
             backend: format_backend(effective_execution.backend).to_string(),
             context: requested_context,
             backend_selection_source: requested_backend_source.to_string(),
+            prepare: contract
+                .tasks
+                .get(task_name)
+                .and_then(|task| crate::output::summarize_task_prepare(task.prepare.as_ref()))
+                .map(crate::output::workspace_prepare_summary_from_task_prepare_summary),
         });
 
     if overrides.skip_deps {
@@ -18263,7 +18268,7 @@ fn build_run_preview_plan(
         crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
     {
         plan.dependency_chain = task_plan.tasks.clone();
-        plan.dependency_steps = planned_dependency_steps_from_run_plan(task_plan);
+        plan.dependency_steps = planned_dependency_steps_from_run_plan(contract, task_plan);
     } else {
         plan.dependency_chain.push(task_name.to_string());
     }
@@ -18453,12 +18458,18 @@ fn preview_stage_family_for_task_kind(kind: &str) -> &'static str {
 }
 
 fn planned_dependency_steps_from_run_plan(
+    contract: &Contract,
     task_plan: crate::runner::RunPlan,
 ) -> Vec<crate::output::RunPreviewDependencyStep> {
     task_plan
         .steps
         .into_iter()
         .map(|step| crate::output::RunPreviewDependencyStep {
+            prepare: contract
+                .tasks
+                .get(step.task.as_str())
+                .and_then(|task| crate::output::summarize_task_prepare(task.prepare.as_ref()))
+                .map(crate::output::workspace_prepare_summary_from_task_prepare_summary),
             task: step.task,
             parent: step.parent,
             backend: format_backend(step.backend).to_string(),
@@ -18480,7 +18491,7 @@ fn planned_dependency_steps_for_task(
         return Vec::new();
     };
     crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
-        .map(planned_dependency_steps_from_run_plan)
+        .map(|task_plan| planned_dependency_steps_from_run_plan(contract, task_plan))
         .unwrap_or_default()
 }
 
@@ -56909,6 +56920,8 @@ tasks:
                         with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
+                        declared_hydration_provenance: None,
+                        resolved_hydration_provenance: None,
                         compose: None,
                     },
                     crate::output::TaskPrepareSummary {
@@ -56933,6 +56946,8 @@ tasks:
                         with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
+                        declared_hydration_provenance: None,
+                        resolved_hydration_provenance: None,
                         compose: None,
                     },
                 ],
@@ -56955,6 +56970,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57042,6 +57059,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57107,6 +57126,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57194,6 +57215,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57272,6 +57295,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57352,6 +57377,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: Some(crate::output::TaskComposeInvocationSummary {
                     kind: "run",
                     engine: "docker",
@@ -57448,6 +57475,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: Some(crate::output::TaskComposeInvocationSummary {
                     kind: "run",
                     engine: "docker",
@@ -57545,6 +57574,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57625,6 +57656,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: vec!["chromium"],
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57705,6 +57738,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -57785,6 +57820,8 @@ tasks:
                 with_deps: true,
                 targets: Vec::new(),
                 browsers: vec!["chromium"],
+                declared_hydration_provenance: None,
+                resolved_hydration_provenance: None,
                 compose: None,
             }),
             aggregate: None,
@@ -58515,6 +58552,8 @@ workflows:
                         with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
+                        declared_hydration_provenance: None,
+                        resolved_hydration_provenance: None,
                         compose: None,
                     }),
                     aggregate: None,
@@ -103772,6 +103811,15 @@ fn append_up_preview_service_actions_for_workflow(
                 "verify",
                 format!("activate workflow task `{run_task}`"),
             );
+        }
+    }
+    if plan.dependency_steps.is_empty() {
+        let preview_task = selected_up_setup_task_name(contract, workflow_name)
+            .or_else(|| selected_up_prepare_task_name(contract, workflow_name));
+        if let Some(task_name) = preview_task {
+            plan.dependency_chain = vec![task_name.to_string()];
+            plan.dependency_steps =
+                planned_dependency_steps_for_task(contract, Some(task_name), Some(overrides));
         }
     }
     if matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)

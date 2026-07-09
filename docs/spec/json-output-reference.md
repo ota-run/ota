@@ -2950,6 +2950,10 @@ Use this when a human or agent needs the selected run plan before execution:
   selected backend, selected context, parent task, and whether the backend came from `override`,
   `task default mode`, `task context`, `mode context`, `mode branch support`, `default context`,
   `contract preferred`, `default`, or `inherited parent backend`
+- when a dependency step is a structured setup lane, `plan.dependency_steps[].prepare` carries the
+  same machine-readable prepare summary used by task/workflow discovery, including additive
+  `declared_hydration_provenance` and `resolved_hydration_provenance` for hydration-owned source
+  posture such as `.NET restore` `config_file` and explicit `sources[]`
 - `plan.requirement_lines`, `plan.actions`, and `plan.notes` show what ota would check, activate,
   provision, or run
 - exit `0` means the preview is actionable; exit `1` means the preview is blocked by contract,
@@ -4353,6 +4357,11 @@ Optional fields:
   `codex_local` sandbox target shape used by task and workflow discovery so preview consumers can
   recover writable-path and outbound-target posture directly from the selected `up` lane
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
+- `plan.dependency_steps[]`: additive selected setup/dependency-plane preview for the chosen `up`
+  path; when a planned step is a structured hydration lane, `prepare.declared_hydration_provenance`
+  and `prepare.resolved_hydration_provenance` publish the selected source posture, optional
+  `config_file`, and explicit `sources[]` on the same canonical carrier instead of leaving feed or
+  source selection implicit
 - `receipt.dependency_steps`: additive executed dependency-plane provenance for task-backed phases,
   using the same `task` / `backend` / optional `context` / optional `parent_task` /
   `backend_selection_source` shape as preview `plan.dependency_steps[]`

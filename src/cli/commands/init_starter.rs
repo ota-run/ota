@@ -1073,6 +1073,8 @@ fn detect_prepare_from_run(
                 source: TaskDependencyHydrationSourceSpec::DotnetRestore(
                     TaskDotnetRestoreHydrationSourceSpec {
                         cwd: String::from("."),
+                        config_file: None,
+                        sources: Vec::new(),
                         compose: None,
                     },
                 ),
@@ -3089,6 +3091,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     TaskDependencyHydrationSourceSpec::DotnetRestore(
                         TaskDotnetRestoreHydrationSourceSpec {
                             cwd: String::from("."),
+                            config_file: None,
+                            sources: Vec::new(),
                             compose: None,
                         },
                     ),

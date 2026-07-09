@@ -2102,6 +2102,8 @@ Task-effect rules:
     - `prepare.source.cwd`: required repo-relative working directory for the `cargo fetch` invocation
     - `prepare.source.kind: dotnet_restore`
     - `prepare.source.cwd`: required repo-relative working directory for the `dotnet restore` invocation
+    - `prepare.source.config_file`: optional repo-relative NuGet config passed as `dotnet restore --configfile <path>`
+    - `prepare.source.sources`: optional explicit restore feeds passed as repeated `dotnet restore --source <url>` arguments
 
 `prepare` rules:
 
@@ -2154,7 +2156,10 @@ Task-effect rules:
 - `prepare.source.kind: maven` currently executes the narrow canonical Maven hydration lane: `./mvnw -q dependency:resolve` or `./mvnw -q dependency:go-offline` when wrapper-owned, otherwise `mvn -q dependency:resolve` or `mvn -q dependency:go-offline`
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`
-- `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane: `dotnet restore`
+- `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane:
+  - `dotnet restore`
+  - optional `--configfile <path>` when `prepare.source.config_file` is declared
+  - optional repeated `--source <url>` when `prepare.source.sources[]` is declared
 - `prepare.kind: tool_bootstrap` currently executes two narrow canonical tool-bootstrap lanes:
   - Python lane: `<exe> -m pip install --disable-pip-version-check -q uv`
   - Poetry lane for `prepare.tool: playwright_browsers`:
