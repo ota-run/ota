@@ -144,6 +144,7 @@
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                 },
+                "replay": { "$ref": "./tasks.json#/$defs/governanceReplayResult" },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
@@ -183,6 +184,7 @@
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                 },
+                "replay": { "$ref": "./tasks.json#/$defs/governanceReplayResult" },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                 },
@@ -340,6 +342,7 @@
                         "type": "array",
                         "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                       },
+                      "replay": { "$ref": "./tasks.json#/$defs/governanceReplayResult" },
                       "evidence_classes": {
                         "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                       },
@@ -379,6 +382,7 @@
                         "type": "array",
                         "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                       },
+                      "replay": { "$ref": "./tasks.json#/$defs/governanceReplayResult" },
                       "evidence_classes": {
                         "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                       },
@@ -449,6 +453,7 @@
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                 },
+                "replay": { "$ref": "./tasks.json#/$defs/governanceReplayResult" },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePreflightEvidenceClasses"
                 },
@@ -488,6 +493,7 @@
                   "type": "array",
                   "items": { "$ref": "./tasks.json#/$defs/governanceDecisionInputEntry" }
                 },
+                "replay": { "$ref": "./tasks.json#/$defs/governanceReplayResult" },
                 "evidence_classes": {
                   "$ref": "./tasks.json#/$defs/governancePostExecutionEvidenceClasses"
                 },

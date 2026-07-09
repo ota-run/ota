@@ -932,6 +932,13 @@ pub struct GovernanceDecisionInputEntry {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GovernanceReplayResult {
+    pub status: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mismatches: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct GovernancePreflightEvidenceClasses {
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -953,6 +960,7 @@ pub struct GovernancePreflightEvidenceClasses {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crossing_boundary_family: Option<String>,
     pub decision_inputs: String,
+    pub replay: String,
     pub receipt_expected: String,
     pub proof_expected: String,
 }
@@ -982,6 +990,7 @@ pub struct GovernancePreflightEvaluation {
     pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub decision_inputs: Vec<GovernanceDecisionInputEntry>,
+    pub replay: GovernanceReplayResult,
     pub evidence_classes: GovernancePreflightEvidenceClasses,
     pub receipt_expected: bool,
     pub proof_expected: bool,
@@ -1000,6 +1009,7 @@ pub struct GovernancePostExecutionEvidenceClasses {
     pub not_run_reason: Option<String>,
     pub crossing_record_state: String,
     pub decision_inputs: String,
+    pub replay: String,
     pub receipt_present: String,
     pub proof_present: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1022,6 +1032,7 @@ pub struct GovernancePostExecutionEvidence {
     pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub decision_inputs: Vec<GovernanceDecisionInputEntry>,
+    pub replay: GovernanceReplayResult,
     pub evidence_classes: GovernancePostExecutionEvidenceClasses,
     pub receipt_present: bool,
     pub proof_present: bool,

@@ -467,6 +467,15 @@ Replay should answer:
 - given the same inputs, does Ota produce the same governance verdict?
 - given the same inputs, does Ota produce the same blocker or gate decomposition?
 
+The first honest shipped replay surface should stay additive inside the canonical governance
+records themselves:
+
+- `preflight.replay.status`
+- `post_execution.replay.status`
+
+with `satisfied`, `mismatch`, or `unavailable` emitted from the same localized decision owner that
+already emitted the cited inputs and authoritative verdict.
+
 First honest replay target:
 
 - selected task/workflow governance evaluation on local preview and `up` lanes where Ota already

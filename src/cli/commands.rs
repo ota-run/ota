@@ -13676,7 +13676,7 @@ fn harness_preflight_for_task(
     let refusal_reason_family = refusal.map(|entry| entry.reason);
     let crossing_classification_for_evidence = crossing_classification.clone();
     let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
-    crate::output::GovernancePreflightEvaluation {
+    let mut evaluation = crate::output::GovernancePreflightEvaluation {
         state: if refusal.is_some() {
             String::from("refused")
         } else {
@@ -13696,11 +13696,18 @@ fn harness_preflight_for_task(
             &format!("task:{}", task.name),
             "task",
             "agent",
+            None,
             Some(task.safe_for_agent),
             Some(task.effective_safe_for_agent),
             &task.unsafe_closure_tasks,
             refusal,
+            true,
+            false,
         ),
+        replay: crate::output::GovernanceReplayResult {
+            status: String::new(),
+            mismatches: Vec::new(),
+        },
         evidence_classes: governance_preflight_evidence_classes(
             review_required,
             Some(task.safe_for_agent),
@@ -13714,7 +13721,9 @@ fn harness_preflight_for_task(
         ),
         receipt_expected: true,
         proof_expected: false,
-    }
+    };
+    evaluation.replay = reconcile_preflight_replay(&evaluation);
+    evaluation
 }
 
 fn crossing_preflight_posture(
@@ -13823,10 +13832,13 @@ fn governance_preflight_decision_inputs(
     lane_id: &str,
     lane_kind: &str,
     actor_mode: &str,
+    doctor_verdict: Option<DoctorVerdict>,
     declared_safe_for_agent: Option<bool>,
     effective_safe_for_agent: Option<bool>,
     unsafe_closure_tasks: &[String],
     refusal: Option<&AgentExecutionRefusal>,
+    receipt_expected: bool,
+    proof_expected: bool,
 ) -> Vec<crate::output::GovernanceDecisionInputEntry> {
     let mut inputs = vec![
         crate::output::GovernanceDecisionInputEntry {
@@ -13844,6 +13856,16 @@ fn governance_preflight_decision_inputs(
             detail: None,
         },
     ];
+
+    if let Some(verdict) = doctor_verdict {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("doctor_verdict:{}", doctor_verdict_label(verdict)),
+            family: String::from("readiness_gate"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        });
+    }
 
     if let Some(declared_safe) = declared_safe_for_agent {
         inputs.push(crate::output::GovernanceDecisionInputEntry {
@@ -13888,6 +13910,22 @@ fn governance_preflight_decision_inputs(
         });
     }
 
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("receipt_expected:{receipt_expected}"),
+        family: String::from("evidence_expectation"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("pinned"),
+        detail: None,
+    });
+
+    inputs.push(crate::output::GovernanceDecisionInputEntry {
+        id: format!("proof_expected:{proof_expected}"),
+        family: String::from("evidence_expectation"),
+        evidence_class: String::from("derived"),
+        replay_class: String::from("pinned"),
+        detail: None,
+    });
+
     inputs
 }
 
@@ -13914,8 +13952,30 @@ fn governance_preflight_evidence_classes(
         crossing_classification: crossing_classification.map(|_| String::from("derived")),
         crossing_boundary_family: crossing_boundary_family.map(|_| String::from("derived")),
         decision_inputs: String::from("derived"),
+        replay: String::from("derived"),
         receipt_expected: String::from("derived"),
         proof_expected: String::from("derived"),
+    }
+}
+
+fn doctor_verdict_label(verdict: DoctorVerdict) -> &'static str {
+    match verdict {
+        DoctorVerdict::Ready => "ready",
+        DoctorVerdict::Risky => "risky",
+        DoctorVerdict::NotReady => "not_ready",
+        DoctorVerdict::PolicyBlocked => "policy_blocked",
+        DoctorVerdict::AgentBlocked => "agent_blocked",
+    }
+}
+
+fn parse_doctor_verdict_label(value: &str) -> Option<DoctorVerdict> {
+    match value {
+        "ready" => Some(DoctorVerdict::Ready),
+        "risky" => Some(DoctorVerdict::Risky),
+        "not_ready" => Some(DoctorVerdict::NotReady),
+        "policy_blocked" => Some(DoctorVerdict::PolicyBlocked),
+        "agent_blocked" => Some(DoctorVerdict::AgentBlocked),
+        _ => None,
     }
 }
 
@@ -14225,7 +14285,13 @@ fn harness_preflight_for_workflow(
     let refusal_reason_family = refusal.map(|entry| entry.reason);
     let crossing_classification_for_evidence = crossing_classification.clone();
     let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
-    crate::output::GovernancePreflightEvaluation {
+    let proof_expected = up_lane_proof_expected(
+        contract,
+        Some(workflow.name),
+        ExecutionOverrides::default(),
+        UpRunBehaviorPreference::Auto,
+    );
+    let mut evaluation = crate::output::GovernancePreflightEvaluation {
         state: if refusal.is_some() {
             String::from("refused")
         } else {
@@ -14245,11 +14311,18 @@ fn harness_preflight_for_workflow(
             &format!("workflow:{}", workflow_selector_from_summary(workflow)),
             "workflow",
             "agent",
+            None,
             workflow.declared_safe_for_agent,
             workflow.effective_safe_for_agent,
             &workflow.unsafe_closure_tasks,
             refusal,
+            true,
+            proof_expected,
         ),
+        replay: crate::output::GovernanceReplayResult {
+            status: String::new(),
+            mismatches: Vec::new(),
+        },
         evidence_classes: governance_preflight_evidence_classes(
             review_required,
             workflow.declared_safe_for_agent,
@@ -14262,13 +14335,10 @@ fn harness_preflight_for_workflow(
             crossing_boundary_family_for_evidence.as_deref(),
         ),
         receipt_expected: true,
-        proof_expected: up_lane_proof_expected(
-            contract,
-            Some(workflow.name),
-            ExecutionOverrides::default(),
-            UpRunBehaviorPreference::Auto,
-        ),
-    }
+        proof_expected,
+    };
+    evaluation.replay = reconcile_preflight_replay(&evaluation);
+    evaluation
 }
 
 fn workflow_harness_capability(
@@ -42429,7 +42499,7 @@ fn governance_evaluation_for_task_preview(
     let refusal_reason_family = refusal.map(|entry| entry.reason);
     let crossing_classification_for_evidence = crossing_classification.clone();
     let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
-    crate::output::GovernanceEvaluation {
+    finalize_governance_evaluation(crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(
                 summary,
@@ -42452,11 +42522,18 @@ fn governance_evaluation_for_task_preview(
                 &format!("task:{}", task.name),
                 "task",
                 actor_mode_label(agent),
+                Some(summary.verdict),
                 Some(task.safe_for_agent),
                 Some(task.effective_safe_for_agent),
                 &task.unsafe_closure_tasks,
                 refusal,
+                true,
+                false,
             ),
+            replay: crate::output::GovernanceReplayResult {
+                status: String::new(),
+                mismatches: Vec::new(),
+            },
             evidence_classes: governance_preflight_evidence_classes(
                 review_required,
                 Some(task.safe_for_agent),
@@ -42474,7 +42551,7 @@ fn governance_evaluation_for_task_preview(
         post_execution: preview_post_execution_evidence(refusal, crossing_required),
         sandbox_policy: None,
         crossing: None,
-    }
+    })
 }
 
 fn selected_up_workflow_effective_safety(
@@ -42549,7 +42626,9 @@ fn governance_evaluation_for_workflow_preview(
     let refusal_reason_family = refusal.map(|entry| entry.reason);
     let crossing_classification_for_evidence = crossing_classification.clone();
     let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
-    crate::output::GovernanceEvaluation {
+    let proof_expected =
+        up_lane_proof_expected(contract, workflow_name, overrides, run_behavior_preference);
+    finalize_governance_evaluation(crate::output::GovernanceEvaluation {
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
                 .to_string(),
@@ -42567,11 +42646,18 @@ fn governance_evaluation_for_workflow_preview(
                 &format!("workflow:{}", workflow_name.unwrap_or("default")),
                 "workflow",
                 actor_mode_label(agent),
+                Some(summary.verdict),
                 safety.declared_safe,
                 safety.effective_safe,
                 &safety.unsafe_closure_tasks,
                 refusal,
+                true,
+                proof_expected,
             ),
+            replay: crate::output::GovernanceReplayResult {
+                status: String::new(),
+                mismatches: Vec::new(),
+            },
             evidence_classes: governance_preflight_evidence_classes(
                 review_required,
                 safety.declared_safe,
@@ -42584,17 +42670,12 @@ fn governance_evaluation_for_workflow_preview(
                 crossing_boundary_family_for_evidence.as_deref(),
             ),
             receipt_expected: true,
-            proof_expected: up_lane_proof_expected(
-                contract,
-                workflow_name,
-                overrides,
-                run_behavior_preference,
-            ),
+            proof_expected,
         },
         post_execution: preview_post_execution_evidence(refusal, crossing_required),
         sandbox_policy,
         crossing: None,
-    }
+    })
 }
 
 fn governance_post_execution_evidence_classes(
@@ -42612,6 +42693,7 @@ fn governance_post_execution_evidence_classes(
         not_run_reason: not_run_reason.map(|_| String::from("derived")),
         crossing_record_state: String::from("derived"),
         decision_inputs: String::from("derived"),
+        replay: String::from("derived"),
         receipt_present: String::from("attested"),
         proof_present: String::from("derived"),
         receipt_status: receipt_status.map(|_| String::from("attested")),
@@ -42620,6 +42702,7 @@ fn governance_post_execution_evidence_classes(
 
 fn governance_post_execution_decision_inputs(
     execution_attempted: bool,
+    refusal_reason_family: Option<&str>,
     receipt_present: bool,
     receipt_status: Option<&str>,
     proof_expected: bool,
@@ -42634,6 +42717,16 @@ fn governance_post_execution_decision_inputs(
         replay_class: String::from("witnessed"),
         detail: None,
     }];
+
+    if let Some(reason_family) = refusal_reason_family {
+        inputs.push(crate::output::GovernanceDecisionInputEntry {
+            id: format!("refusal_reason_family:{reason_family}"),
+            family: String::from("refusal_observation"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        });
+    }
 
     if let Some(reason) = not_run_reason {
         inputs.push(crate::output::GovernanceDecisionInputEntry {
@@ -42690,6 +42783,377 @@ fn governance_post_execution_decision_inputs(
     inputs
 }
 
+#[derive(Default)]
+struct PreflightReplayInputs {
+    lane_id: Option<String>,
+    lane_kind: Option<String>,
+    actor_mode: Option<String>,
+    doctor_verdict: Option<DoctorVerdict>,
+    declared_safe_for_agent: Option<bool>,
+    effective_safe_for_agent: Option<bool>,
+    unsafe_closure_tasks: Vec<String>,
+    refusal: Option<AgentExecutionRefusal>,
+    receipt_expected: Option<bool>,
+    proof_expected: Option<bool>,
+}
+
+#[derive(Default)]
+struct PostExecutionReplayInputs {
+    execution_attempted: Option<bool>,
+    refusal_reason_family: Option<String>,
+    receipt_present: Option<bool>,
+    receipt_status: Option<String>,
+    proof_expected: Option<bool>,
+    proof_present: Option<bool>,
+    not_run_reason: Option<String>,
+    crossing_record_state: Option<String>,
+}
+
+fn parse_bool_input(value: &str, prefix: &str) -> Option<bool> {
+    value.strip_prefix(prefix)?.parse().ok()
+}
+
+fn parse_preflight_replay_inputs(
+    inputs: &[crate::output::GovernanceDecisionInputEntry],
+) -> PreflightReplayInputs {
+    let mut parsed = PreflightReplayInputs::default();
+    for entry in inputs {
+        if entry.family == "lane" {
+            parsed.lane_id = Some(entry.id.clone());
+            parsed.lane_kind = entry
+                .detail
+                .as_deref()
+                .and_then(|detail| detail.strip_prefix("kind="))
+                .map(str::to_string);
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("actor_mode:") {
+            parsed.actor_mode = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("doctor_verdict:") {
+            parsed.doctor_verdict = parse_doctor_verdict_label(value);
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "declared_safe_for_agent:") {
+            parsed.declared_safe_for_agent = Some(value);
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "effective_safe_for_agent:") {
+            parsed.effective_safe_for_agent = Some(value);
+            continue;
+        }
+        if entry.id == "unsafe_closure_tasks" {
+            parsed.unsafe_closure_tasks = entry
+                .detail
+                .as_deref()
+                .map(|detail| {
+                    detail
+                        .split(',')
+                        .filter(|part| !part.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            continue;
+        }
+        if let Some(reason) = entry.id.strip_prefix("refusal_input:") {
+            let (requested_task, blocked_task) = entry
+                .detail
+                .as_deref()
+                .and_then(|detail| {
+                    let requested_task = detail
+                        .split_whitespace()
+                        .find_map(|part| part.strip_prefix("requested_task="))?;
+                    let blocked_task = detail
+                        .split_whitespace()
+                        .find_map(|part| part.strip_prefix("blocked_task="))?;
+                    Some((requested_task.to_string(), blocked_task.to_string()))
+                })
+                .unwrap_or_else(|| (String::new(), String::new()));
+            parsed.refusal = Some(AgentExecutionRefusal {
+                requested_task,
+                blocked_task,
+                path: Vec::new(),
+                reason: match reason {
+                    "unsafe_dependency_closure" => "unsafe_dependency_closure",
+                    _ => "requested_task_not_safe",
+                },
+            });
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "receipt_expected:") {
+            parsed.receipt_expected = Some(value);
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "proof_expected:") {
+            parsed.proof_expected = Some(value);
+        }
+    }
+    parsed
+}
+
+fn parse_post_execution_replay_inputs(
+    inputs: &[crate::output::GovernanceDecisionInputEntry],
+) -> PostExecutionReplayInputs {
+    let mut parsed = PostExecutionReplayInputs::default();
+    for entry in inputs {
+        if let Some(value) = parse_bool_input(&entry.id, "execution_attempted:") {
+            parsed.execution_attempted = Some(value);
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("refusal_reason_family:") {
+            parsed.refusal_reason_family = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("not_run_reason:") {
+            parsed.not_run_reason = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "receipt_present:") {
+            parsed.receipt_present = Some(value);
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("receipt_status:") {
+            parsed.receipt_status = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "proof_expected:") {
+            parsed.proof_expected = Some(value);
+            continue;
+        }
+        if let Some(value) = parse_bool_input(&entry.id, "proof_present:") {
+            parsed.proof_present = Some(value);
+            continue;
+        }
+        if let Some(value) = entry.id.strip_prefix("crossing_record_state:") {
+            parsed.crossing_record_state = Some(value.to_string());
+        }
+    }
+    parsed
+}
+
+fn governance_replay_status(mismatches: Vec<String>) -> crate::output::GovernanceReplayResult {
+    crate::output::GovernanceReplayResult {
+        status: if mismatches.is_empty() {
+            String::from("satisfied")
+        } else {
+            String::from("mismatch")
+        },
+        mismatches,
+    }
+}
+
+fn governance_replay_unavailable(
+    missing_inputs: Vec<&'static str>,
+) -> crate::output::GovernanceReplayResult {
+    crate::output::GovernanceReplayResult {
+        status: String::from("unavailable"),
+        mismatches: missing_inputs
+            .into_iter()
+            .map(|input| format!("missing_input:{input}"))
+            .collect(),
+    }
+}
+
+fn reconcile_preflight_replay(
+    evaluation: &crate::output::GovernancePreflightEvaluation,
+) -> crate::output::GovernanceReplayResult {
+    let parsed = parse_preflight_replay_inputs(&evaluation.decision_inputs);
+    let mut missing = Vec::new();
+    if parsed.lane_kind.is_none() {
+        missing.push("lane_kind");
+    }
+    if parsed.actor_mode.is_none() {
+        missing.push("actor_mode");
+    }
+    if parsed.receipt_expected.is_none() {
+        missing.push("receipt_expected");
+    }
+    if parsed.proof_expected.is_none() {
+        missing.push("proof_expected");
+    }
+    if !missing.is_empty() {
+        return governance_replay_unavailable(missing);
+    }
+
+    let actor_mode = parsed.actor_mode.as_deref().unwrap_or("human");
+    let lane_kind = parsed.lane_kind.as_deref().unwrap_or("task");
+    let synthetic_summary = DoctorSummary {
+        verdict: parsed.doctor_verdict.unwrap_or(DoctorVerdict::Ready),
+        agent_verdict: parsed.doctor_verdict.unwrap_or(DoctorVerdict::Ready),
+        error_count: 0,
+        warn_count: 0,
+        info_count: 0,
+        primary_blocker: None,
+    };
+    let expected_state = if parsed.doctor_verdict.is_some() {
+        governance_preflight_state(
+            &synthetic_summary,
+            parsed.effective_safe_for_agent,
+            actor_mode == "agent",
+            parsed.refusal.as_ref(),
+        )
+        .to_string()
+    } else if parsed.refusal.is_some() {
+        String::from("refused")
+    } else {
+        String::from("allowed")
+    };
+    let (expected_crossing_required, expected_crossing_classification, expected_crossing_boundary) =
+        crossing_preflight_posture(
+            parsed.effective_safe_for_agent,
+            parsed.refusal.as_ref(),
+            &parsed.unsafe_closure_tasks,
+            lane_kind,
+        );
+    let expected_basis = governance_preflight_decision_basis(
+        parsed.declared_safe_for_agent,
+        parsed.effective_safe_for_agent,
+        parsed.refusal.as_ref(),
+        &parsed.unsafe_closure_tasks,
+        expected_crossing_required,
+        expected_crossing_classification.as_deref(),
+        expected_crossing_boundary.as_deref(),
+    );
+
+    let mut mismatches = Vec::new();
+    if evaluation.state != expected_state {
+        mismatches.push(format!("state:{}!={}", evaluation.state, expected_state));
+    }
+    if evaluation.review_required != parsed.effective_safe_for_agent.map(std::ops::Not::not) {
+        mismatches.push(String::from("review_required"));
+    }
+    if evaluation.crossing_required != expected_crossing_required {
+        mismatches.push(String::from("crossing_required"));
+    }
+    if evaluation.crossing_classification != expected_crossing_classification {
+        mismatches.push(String::from("crossing_classification"));
+    }
+    if evaluation.crossing_boundary_family != expected_crossing_boundary {
+        mismatches.push(String::from("crossing_boundary_family"));
+    }
+    if evaluation.receipt_expected != parsed.receipt_expected.unwrap_or(true) {
+        mismatches.push(String::from("receipt_expected"));
+    }
+    if evaluation.proof_expected != parsed.proof_expected.unwrap_or(false) {
+        mismatches.push(String::from("proof_expected"));
+    }
+    let current_basis_ids = evaluation
+        .decision_basis
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    let expected_basis_ids = expected_basis
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    if current_basis_ids != expected_basis_ids {
+        mismatches.push(String::from("decision_basis"));
+    }
+
+    governance_replay_status(mismatches)
+}
+
+fn reconcile_post_execution_replay(
+    evidence: &crate::output::GovernancePostExecutionEvidence,
+) -> crate::output::GovernanceReplayResult {
+    let parsed = parse_post_execution_replay_inputs(&evidence.decision_inputs);
+    let mut missing = Vec::new();
+    if parsed.execution_attempted.is_none() {
+        missing.push("execution_attempted");
+    }
+    if parsed.receipt_present.is_none() {
+        missing.push("receipt_present");
+    }
+    if parsed.proof_expected.is_none() {
+        missing.push("proof_expected");
+    }
+    if parsed.proof_present.is_none() {
+        missing.push("proof_present");
+    }
+    if parsed.crossing_record_state.is_none() {
+        missing.push("crossing_record_state");
+    }
+    if !missing.is_empty() {
+        return governance_replay_unavailable(missing);
+    }
+
+    let execution_attempted = parsed.execution_attempted.unwrap_or(false);
+    let proof_expected = parsed.proof_expected.unwrap_or(false);
+    let proof_present = parsed.proof_present.unwrap_or(false);
+    let refusal_reason_family = parsed.refusal_reason_family.as_deref();
+    let expected_state = if refusal_reason_family.is_some() {
+        "refused"
+    } else if execution_attempted && proof_expected && !proof_present {
+        "evidence_missing"
+    } else if execution_attempted {
+        "evidence_satisfied"
+    } else {
+        "not_run"
+    };
+    let expected_basis = governance_post_execution_decision_basis(
+        refusal_reason_family,
+        parsed.receipt_present.unwrap_or(false),
+        parsed.receipt_status.as_deref(),
+        proof_expected,
+        proof_present,
+        parsed.not_run_reason.as_deref(),
+        parsed
+            .crossing_record_state
+            .as_deref()
+            .unwrap_or("not_applicable"),
+    );
+
+    let mut mismatches = Vec::new();
+    if evidence.state != expected_state {
+        mismatches.push(format!("state:{}!={expected_state}", evidence.state));
+    }
+    if evidence.execution_attempted != execution_attempted {
+        mismatches.push(String::from("execution_attempted"));
+    }
+    if evidence.refusal_reason_family.as_deref() != refusal_reason_family {
+        mismatches.push(String::from("refusal_reason_family"));
+    }
+    if evidence.not_run_reason != parsed.not_run_reason {
+        mismatches.push(String::from("not_run_reason"));
+    }
+    if evidence.crossing_record_state != parsed.crossing_record_state.unwrap_or_default() {
+        mismatches.push(String::from("crossing_record_state"));
+    }
+    if evidence.receipt_present != parsed.receipt_present.unwrap_or(false) {
+        mismatches.push(String::from("receipt_present"));
+    }
+    if evidence.proof_present != proof_present {
+        mismatches.push(String::from("proof_present"));
+    }
+    if evidence.receipt_status != parsed.receipt_status {
+        mismatches.push(String::from("receipt_status"));
+    }
+    let current_basis_ids = evidence
+        .decision_basis
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    let expected_basis_ids = expected_basis
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    if current_basis_ids != expected_basis_ids {
+        mismatches.push(String::from("decision_basis"));
+    }
+
+    governance_replay_status(mismatches)
+}
+
+fn finalize_governance_evaluation(
+    mut evaluation: crate::output::GovernanceEvaluation,
+) -> crate::output::GovernanceEvaluation {
+    evaluation.preflight.replay = reconcile_preflight_replay(&evaluation.preflight);
+    evaluation.post_execution.replay = reconcile_post_execution_replay(&evaluation.post_execution);
+    evaluation
+}
+
 fn preview_post_execution_evidence(
     refusal: Option<&AgentExecutionRefusal>,
     crossing_required: Option<bool>,
@@ -42720,6 +43184,7 @@ fn preview_post_execution_evidence(
         ),
         decision_inputs: governance_post_execution_decision_inputs(
             false,
+            None,
             false,
             None,
             false,
@@ -42727,6 +43192,10 @@ fn preview_post_execution_evidence(
             Some(not_run_reason.as_str()),
             crossing_record_state.as_str(),
         ),
+        replay: crate::output::GovernanceReplayResult {
+            status: String::new(),
+            mismatches: Vec::new(),
+        },
         evidence_classes: governance_post_execution_evidence_classes(
             None,
             false,
@@ -42909,6 +43378,10 @@ fn governance_evaluation_for_up_result(
             crossing_boundary_family: None,
             decision_basis: Vec::new(),
             decision_inputs: Vec::new(),
+            replay: crate::output::GovernanceReplayResult {
+                status: String::new(),
+                mismatches: Vec::new(),
+            },
             evidence_classes: governance_preflight_evidence_classes(
                 None,
                 None,
@@ -42934,7 +43407,7 @@ fn governance_evaluation_for_up_result(
         receipt.crossing.is_some(),
     );
 
-    crate::output::GovernanceEvaluation {
+    finalize_governance_evaluation(crate::output::GovernanceEvaluation {
         preflight,
         post_execution: crate::output::GovernancePostExecutionEvidence {
             state: post_execution_state.to_string(),
@@ -42955,6 +43428,7 @@ fn governance_evaluation_for_up_result(
             ),
             decision_inputs: governance_post_execution_decision_inputs(
                 execution_attempted,
+                preflight_refusal_reason_family.as_deref(),
                 true,
                 receipt.status.as_deref(),
                 proof_expected,
@@ -42962,6 +43436,10 @@ fn governance_evaluation_for_up_result(
                 not_run_reason.as_deref(),
                 crossing_record_state_value.as_str(),
             ),
+            replay: crate::output::GovernanceReplayResult {
+                status: String::new(),
+                mismatches: Vec::new(),
+            },
             evidence_classes: governance_post_execution_evidence_classes(
                 preflight_refusal_reason_family.as_deref(),
                 preflight_refusal_present,
@@ -42974,7 +43452,7 @@ fn governance_evaluation_for_up_result(
         },
         sandbox_policy: None,
         crossing: receipt.crossing.clone(),
-    }
+    })
 }
 
 fn up_result_preflight_evaluation(
@@ -60340,6 +60818,10 @@ agent:
             "derived"
         );
         assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["replay"]["status"],
+            "satisfied"
+        );
+        assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["state"],
             "not_run"
         );
@@ -60378,6 +60860,10 @@ agent:
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["evidence_classes"]["decision_inputs"],
             "derived"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["replay"]["status"],
+            "satisfied"
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
@@ -66513,6 +66999,10 @@ tasks:
                         detail: None,
                     },
                 ],
+                replay: crate::output::GovernanceReplayResult {
+                    status: String::from("unavailable"),
+                    mismatches: vec![String::from("missing_input:lane_kind")],
+                },
                 evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
                     state: String::from("derived"),
                     review_required: Some(String::from("derived")),
@@ -66525,6 +67015,7 @@ tasks:
                     crossing_classification: Some(String::from("derived")),
                     crossing_boundary_family: Some(String::from("derived")),
                     decision_inputs: String::from("derived"),
+                    replay: String::from("derived"),
                     receipt_expected: String::from("derived"),
                     proof_expected: String::from("derived"),
                 },
@@ -66578,6 +67069,10 @@ tasks:
             "workflow:default"
         );
         assert_eq!(
+            value["governance"]["preflight"]["replay"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
             value["governance"]["post_execution"]["state"],
             "evidence_missing"
         );
@@ -66608,6 +67103,10 @@ tasks:
         assert_eq!(
             value["governance"]["post_execution"]["decision_inputs"][1]["id"],
             "receipt_present:true"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["replay"]["status"],
+            "satisfied"
         );
     }
 
@@ -66766,6 +67265,10 @@ tasks:
                     },
                 ],
                 decision_inputs: Vec::new(),
+                replay: crate::output::GovernanceReplayResult {
+                    status: String::from("unavailable"),
+                    mismatches: vec![String::from("missing_input:lane_kind")],
+                },
                 evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
                     state: String::from("derived"),
                     review_required: Some(String::from("derived")),
@@ -66778,6 +67281,7 @@ tasks:
                     crossing_classification: Some(String::from("derived")),
                     crossing_boundary_family: Some(String::from("derived")),
                     decision_inputs: String::from("derived"),
+                    replay: String::from("derived"),
                     receipt_expected: String::from("derived"),
                     proof_expected: String::from("derived"),
                 },
@@ -66841,6 +67345,14 @@ tasks:
         assert_eq!(
             value["governance"]["post_execution"]["evidence_classes"]["receipt_status"],
             "attested"
+        );
+        assert_eq!(
+            value["governance"]["preflight"]["replay"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            value["governance"]["post_execution"]["replay"]["status"],
+            "satisfied"
         );
     }
 
@@ -66915,6 +67427,10 @@ tasks:
                         crossing_boundary_family: None,
                         decision_basis: Vec::new(),
                         decision_inputs: Vec::new(),
+                        replay: crate::output::GovernanceReplayResult {
+                            status: String::from("unavailable"),
+                            mismatches: vec![String::from("missing_input:lane_kind")],
+                        },
                         evidence_classes: crate::output::GovernancePreflightEvidenceClasses {
                             state: String::from("derived"),
                             review_required: None,
@@ -66927,6 +67443,7 @@ tasks:
                             crossing_classification: None,
                             crossing_boundary_family: None,
                             decision_inputs: String::from("derived"),
+                            replay: String::from("derived"),
                             receipt_expected: String::from("derived"),
                             proof_expected: String::from("derived"),
                         },
@@ -66962,6 +67479,10 @@ tasks:
                             },
                         ],
                         decision_inputs: Vec::new(),
+                        replay: crate::output::GovernanceReplayResult {
+                            status: String::from("unavailable"),
+                            mismatches: vec![String::from("missing_input:execution_attempted")],
+                        },
                         evidence_classes: crate::output::GovernancePostExecutionEvidenceClasses {
                             state: String::from("derived"),
                             execution_attempted: String::from("derived"),
@@ -66971,6 +67492,7 @@ tasks:
                             not_run_reason: Some(String::from("derived")),
                             crossing_record_state: String::from("derived"),
                             decision_inputs: String::from("derived"),
+                            replay: String::from("derived"),
                             receipt_present: String::from("attested"),
                             proof_present: String::from("derived"),
                             receipt_status: None,
@@ -67064,6 +67586,14 @@ tasks:
             root["governance"]["post_execution"]["decision_basis"][2]["id"],
             "crossing_record:not_applicable"
         );
+        assert_eq!(
+            root["governance"]["preflight"]["replay"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            root["governance"]["post_execution"]["replay"]["status"],
+            "unavailable"
+        );
 
         let member = super::up_member_result_json_value("api", &result);
         assert_eq!(member["preview_status"], "BLOCKED");
@@ -67083,6 +67613,14 @@ tasks:
         assert_eq!(
             member["governance"]["post_execution"]["decision_basis"][2]["id"],
             "crossing_record:not_applicable"
+        );
+        assert_eq!(
+            member["governance"]["preflight"]["replay"]["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            member["governance"]["post_execution"]["replay"]["status"],
+            "unavailable"
         );
     }
 

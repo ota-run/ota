@@ -707,6 +707,14 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
         governance["sandbox_policy"]["$ref"],
         serde_json::json!("./tasks.json#/$defs/harnessSandboxPolicy")
     );
+    assert_eq!(
+        governance["evaluation"]["properties"]["preflight"]["properties"]["replay"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/governanceReplayResult")
+    );
+    assert_eq!(
+        governance["evaluation"]["properties"]["post_execution"]["properties"]["replay"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/governanceReplayResult")
+    );
     assert!(env_summary.get("source_issue_count").is_some());
     assert!(plan.get("dependency_chain").is_some());
     assert!(plan.get("requirement_lines").is_some());
@@ -1099,6 +1107,27 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(history.get("invalid_archives").is_some());
     assert!(failure.get("errors").is_some());
     assert!(failure.get("error").is_some());
+}
+
+#[test]
+fn task_schema_includes_governance_replay_surface() {
+    let schema = load_schema("docs/spec/json-schemas/tasks.json");
+    let replay = &schema["$defs"]["governanceReplayResult"]["properties"];
+    let preflight = &schema["$defs"]["governancePreflightEvaluation"]["properties"];
+    let preflight_classes = &schema["$defs"]["governancePreflightEvidenceClasses"]["properties"];
+    let post_classes = &schema["$defs"]["governancePostExecutionEvidenceClasses"]["properties"];
+
+    assert!(replay.get("status").is_some());
+    assert!(replay.get("mismatches").is_some());
+    assert_eq!(
+        preflight["replay"]["$ref"],
+        serde_json::json!("#/$defs/governanceReplayResult")
+    );
+    assert_eq!(
+        preflight_classes["replay"]["type"],
+        serde_json::json!("string")
+    );
+    assert_eq!(post_classes["replay"]["type"], serde_json::json!("string"));
 }
 
 #[test]

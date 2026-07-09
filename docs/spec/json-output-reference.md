@@ -2657,8 +2657,29 @@ filesystem or outbound boundary posture.
             "family": "effective_safety",
             "evidence_class": "derived",
             "replay_class": "pinned"
+          },
+          {
+            "id": "doctor_verdict:risky",
+            "family": "readiness_gate",
+            "evidence_class": "derived",
+            "replay_class": "witnessed"
+          },
+          {
+            "id": "receipt_expected:true",
+            "family": "evidence_expectation",
+            "evidence_class": "derived",
+            "replay_class": "pinned"
+          },
+          {
+            "id": "proof_expected:false",
+            "family": "evidence_expectation",
+            "evidence_class": "derived",
+            "replay_class": "pinned"
           }
         ],
+        "replay": {
+          "status": "satisfied"
+        },
         "evidence_classes": {
           "state": "derived",
           "review_required": "derived",
@@ -2668,6 +2689,7 @@ filesystem or outbound boundary posture.
           "crossing_classification": "derived",
           "crossing_boundary_family": "derived",
           "decision_inputs": "derived",
+          "replay": "derived",
           "receipt_expected": "derived",
           "proof_expected": "derived"
         },
@@ -2716,6 +2738,9 @@ filesystem or outbound boundary posture.
             "replay_class": "witnessed"
           }
         ],
+        "replay": {
+          "status": "satisfied"
+        },
         "decision_basis": [
           {
             "id": "not_run:preview_only",
@@ -2739,6 +2764,7 @@ filesystem or outbound boundary posture.
           "refusal_occurred": "derived",
           "crossing_record_state": "derived",
           "decision_inputs": "derived",
+          "replay": "derived",
           "receipt_present": "attested",
           "proof_present": "derived"
         },
@@ -2783,6 +2809,9 @@ Use this when a human or agent needs the selected run plan before execution:
   posture depended on; `replay_class: "pinned"` means the input should be reusable for
   authoritative replay without silently re-reading ambient state, while `replay_class:
   "witnessed"` means the input came from observed execution evidence rather than a pinned selector
+- `governance.evaluation.preflight.replay.status` publishes whether ota can re-derive that
+  preflight verdict from the cited inputs it just emitted: `satisfied`, `mismatch`, or
+  `unavailable`
 - `governance.evaluation.preflight.evidence_classes` publishes field-level provenance for the
   authoritative preflight verdict, distinguishing ota-derived boundary truth from runner-attested
   attachment state
@@ -2792,6 +2821,9 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance.evaluation.post_execution.decision_inputs[]` publishes the replay-grade cited
   execution and evidence inputs behind that post-execution verdict, again distinguishing reusable
   pinned selectors from witnessed observations
+- `governance.evaluation.post_execution.replay.status` does the same for the post-execution
+  evidence verdict, so consumers can tell whether the emitted outcome still reconciles to the
+  cited decision inputs instead of trusting a flatter claim
 - `governance.evaluation.post_execution.evidence_classes` does the same for the post-execution
   evidence record, so downstream consumers can tell which fields are derived versus boundary-
   attested
@@ -4028,13 +4060,35 @@ runner-attested at the decision site itself.
           "family": "actor_mode",
           "evidence_class": "derived",
           "replay_class": "pinned"
+        },
+        {
+          "id": "doctor_verdict:ready",
+          "family": "readiness_gate",
+          "evidence_class": "derived",
+          "replay_class": "witnessed"
+        },
+        {
+          "id": "receipt_expected:true",
+          "family": "evidence_expectation",
+          "evidence_class": "derived",
+          "replay_class": "pinned"
+        },
+        {
+          "id": "proof_expected:true",
+          "family": "evidence_expectation",
+          "evidence_class": "derived",
+          "replay_class": "pinned"
         }
       ],
+      "replay": {
+        "status": "satisfied"
+      },
       "evidence_classes": {
         "state": "derived",
         "crossing_required": "derived",
         "crossing_classification": "derived",
         "decision_inputs": "derived",
+        "replay": "derived",
         "receipt_expected": "derived",
         "proof_expected": "derived"
       },
@@ -4059,16 +4113,16 @@ runner-attested at the decision site itself.
           "replay_class": "witnessed"
         },
         {
-          "id": "receipt_status:ready",
-          "family": "receipt_observation",
-          "evidence_class": "attested",
-          "replay_class": "witnessed"
-        },
-        {
           "id": "proof_expected:true",
           "family": "proof_expectation",
           "evidence_class": "derived",
           "replay_class": "pinned"
+        },
+        {
+          "id": "receipt_status:ready",
+          "family": "receipt_observation",
+          "evidence_class": "attested",
+          "replay_class": "witnessed"
         },
         {
           "id": "proof_present:false",
@@ -4083,6 +4137,9 @@ runner-attested at the decision site itself.
           "replay_class": "witnessed"
         }
       ],
+      "replay": {
+        "status": "satisfied"
+      },
       "decision_basis": [
         {
           "id": "evidence:receipt_present",
@@ -4109,11 +4166,12 @@ runner-attested at the decision site itself.
         "state": "derived",
         "execution_attempted": "derived",
         "refusal_occurred": "derived",
-        "crossing_record_state": "derived",
-        "decision_inputs": "derived",
-        "receipt_present": "attested",
-        "proof_present": "derived",
-        "receipt_status": "attested"
+          "crossing_record_state": "derived",
+          "decision_inputs": "derived",
+          "replay": "derived",
+          "receipt_present": "attested",
+          "proof_present": "derived",
+          "receipt_status": "attested"
       },
       "receipt_present": true,
       "proof_present": false,
@@ -4180,6 +4238,8 @@ Optional fields:
   replay-grade cited inputs behind those authoritative governance records; `replay_class:
   "pinned"` marks reusable pinned selectors, while `replay_class: "witnessed"` marks observed
   execution or evidence inputs
+- additive `preflight.replay.status` and `post_execution.replay.status` publish whether ota can
+  re-derive those emitted governance verdicts from the cited inputs it just recorded
 - additive `preflight.evidence_classes` and `post_execution.evidence_classes` publish field-level
   provenance on those authoritative governance records, so consumers can distinguish ota-derived
   decision truth from boundary-attested receipt attachment truth

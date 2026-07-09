@@ -418,6 +418,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/governanceDecisionInputEntry" }
         },
+        "replay": { "$ref": "#/$defs/governanceReplayResult" },
         "evidence_classes": {
           "$ref": "#/$defs/governancePreflightEvidenceClasses"
         },
@@ -441,6 +442,7 @@
         "crossing_classification": { "type": "string" },
         "crossing_boundary_family": { "type": "string" },
         "decision_inputs": { "type": "string" },
+        "replay": { "type": "string" },
         "receipt_expected": { "type": "string" },
         "proof_expected": { "type": "string" }
       }
@@ -465,9 +467,22 @@
         "not_run_reason": { "type": "string" },
         "crossing_record_state": { "type": "string" },
         "decision_inputs": { "type": "string" },
+        "replay": { "type": "string" },
         "receipt_present": { "type": "string" },
         "proof_present": { "type": "string" },
         "receipt_status": { "type": "string" }
+      }
+    },
+    "governanceReplayResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["satisfied", "mismatch", "unavailable"] },
+        "mismatches": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
     },
     "governanceDecisionBasisEntry": {
