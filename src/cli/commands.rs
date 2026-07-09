@@ -2644,6 +2644,16 @@ pub fn proof_runtime(
                         &target.contract_path,
                         effective_workflow_selector.as_deref(),
                     );
+                let proof_scope = proof_runtime_scope(
+                    &target.contract,
+                    &target.contract_path,
+                    effective_workflow_selector.as_deref(),
+                );
+                let not_proved = proof_runtime_not_proved(
+                    &target.contract,
+                    &target.contract_path,
+                    effective_workflow_selector.as_deref(),
+                );
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -2674,6 +2684,8 @@ pub fn proof_runtime(
                             workflow: effective_workflow_selector.as_deref(),
                             phase: json_phase,
                             stage_family: "proof",
+                            proof_scope,
+                            not_proved,
                             summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
                                 topology: &topology_artifact_display,
@@ -55182,6 +55194,18 @@ workflows:
                 workflow: Some("docker-build"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("docker-build")),
+                    task: Some(String::from("build")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55224,6 +55248,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "readiness",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55275,6 +55311,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55409,6 +55457,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55459,6 +55519,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55509,6 +55581,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55556,6 +55640,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55606,6 +55702,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "run",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -55873,6 +55981,18 @@ workflows:
                 workflow: Some("app"),
                 phase: "cleanup",
                 stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("run")),
+                    intent: None,
+                },
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                }],
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -95053,6 +95173,66 @@ fn proof_runtime_doctor_report(
         workflow_name,
         overrides,
     )
+}
+
+fn proof_runtime_scope(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> crate::output::ProofRuntimeScope {
+    let workflow_summary =
+        resolve_selected_workflow_summary(contract, contract_path, workflow_name)
+            .ok()
+            .flatten();
+    let selected_task = workflow_summary
+        .as_ref()
+        .and_then(|summary| {
+            summary
+                .run_task
+                .or(summary.setup_task)
+                .or(summary.prepare_task)
+        })
+        .map(str::to_string);
+    crate::output::ProofRuntimeScope {
+        kind: String::from("runtime_path"),
+        proof_class: String::from("slice_proof"),
+        workflow: workflow_summary
+            .as_ref()
+            .map(|summary| summary.name.to_string()),
+        task: selected_task,
+        intent: workflow_summary
+            .as_ref()
+            .and_then(|summary| summary.intent.map(str::to_string)),
+    }
+}
+
+fn proof_runtime_not_proved(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> Vec<crate::output::ProofRuntimeNotProved> {
+    let workflow_summary =
+        resolve_selected_workflow_summary(contract, contract_path, workflow_name)
+            .ok()
+            .flatten();
+    let used_setup_fallback = workflow_summary
+        .as_ref()
+        .is_some_and(|summary| summary.run_task.is_none() && summary.setup_task.is_some());
+
+    let mut entries = Vec::new();
+    if used_setup_fallback {
+        entries.push(crate::output::ProofRuntimeNotProved {
+            kind: String::from("functional_runtime_not_proved"),
+            relative_to: String::from("runtime_path"),
+            source: String::from("contract_lane"),
+        });
+    }
+    entries.push(crate::output::ProofRuntimeNotProved {
+        kind: String::from("broader_repo_completion_not_proved"),
+        relative_to: String::from("runtime_path"),
+        source: String::from("contract_lane"),
+    });
+    entries
 }
 
 fn proof_runtime_doctor_artifact_json(

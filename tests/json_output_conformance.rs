@@ -312,6 +312,18 @@ workflows:
     );
     assert_matches_schema("proof-runtime.json", &json);
     assert_eq!(json["phase"], "readiness");
+    assert_eq!(json["proof_scope"]["kind"], "runtime_path");
+    assert_eq!(json["proof_scope"]["proof_class"], "slice_proof");
+    assert_eq!(json["proof_scope"]["workflow"], "app");
+    assert_eq!(json["proof_scope"]["task"], "setup");
+    assert_eq!(
+        json["not_proved"][0]["kind"],
+        "functional_runtime_not_proved"
+    );
+    assert_eq!(
+        json["not_proved"][1]["kind"],
+        "broader_repo_completion_not_proved"
+    );
     let up_log = fixture
         .path()
         .join(".ota")
@@ -377,6 +389,11 @@ workflows:
     assert_matches_schema("proof-runtime.json", &json);
     assert_eq!(json["ok"], false);
     assert_eq!(json["failure_class"], "precondition_blocked");
+    assert_eq!(json["proof_scope"]["kind"], "runtime_path");
+    assert_eq!(
+        json["not_proved"][0]["kind"],
+        "functional_runtime_not_proved"
+    );
 }
 
 #[test]

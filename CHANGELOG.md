@@ -34,6 +34,9 @@
 - hardened that same merge-facing replay lane so cited-input class drift now counts there too:
   merge-gate replay now rejects records when canonical merge inputs are emitted with weaker
   `pinned` / `witnessed` posture than the trust model expects
+- added the first machine-readable proof-boundary carrier to `ota proof runtime --json`:
+  runtime proof now emits canonical `proof_scope` and anchored `not_proved[]` entries so narrow
+  proof posture travels with the artifact instead of living only in prose
 - tightened V11.9 governance replay with a narrow mechanism tripwire: the canonical
   `governance.evaluation.*.decision_inputs[]` lane now carries additive
   `decision_owner:<stable-id>` cited inputs for preflight and post-execution records, and replay

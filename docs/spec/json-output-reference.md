@@ -817,6 +817,12 @@ Notes:
   `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`
 - `stage_family` is always `proof`, so CI and agents can classify this wrapper without inferring
   from proof phase names
+- `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
+  covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
+- `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
+  Ota only emits exclusions it can anchor from the selected contract lane, such as
+  `functional_runtime_not_proved` when proof fell back to a setup-only lane and
+  `broader_repo_completion_not_proved` for repo-global completion outside this runtime slice
 - `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as
   `proof_runtime_json`, `proof_topology`, `proof_doctor`, and `proof_up_log`
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
@@ -881,6 +887,20 @@ Success:
   "workflow": "app",
   "phase": "readiness",
   "stage_family": "proof",
+  "proof_scope": {
+    "kind": "runtime_path",
+    "proof_class": "slice_proof",
+    "workflow": "app",
+    "task": "serve",
+    "intent": "packaged_runtime"
+  },
+  "not_proved": [
+    {
+      "kind": "broader_repo_completion_not_proved",
+      "relative_to": "runtime_path",
+      "source": "contract_lane"
+    }
+  ],
   "summary": {
     "verdict": "ready",
     "agent_verdict": "ready",

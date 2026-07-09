@@ -2715,6 +2715,25 @@ pub struct ProofRuntimeLikelyCauseEvidence {
     pub observed_target: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeScope {
+    pub kind: String,
+    pub proof_class: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeNotProved {
+    pub kind: String,
+    pub relative_to: String,
+    pub source: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ProofRuntimeStatus<'a> {
     pub ok: bool,
@@ -2724,6 +2743,9 @@ pub struct ProofRuntimeStatus<'a> {
     pub workflow: Option<&'a str>,
     pub phase: &'a str,
     pub stage_family: &'a str,
+    pub proof_scope: ProofRuntimeScope,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_proved: Vec<ProofRuntimeNotProved>,
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<ProofRuntimeArtifacts<'a>>,

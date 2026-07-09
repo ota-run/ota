@@ -6,7 +6,15 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "mode", "phase", "stage_family", "summary"],
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "phase",
+        "stage_family",
+        "proof_scope",
+        "summary"
+      ],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
@@ -14,6 +22,11 @@
         "workflow": { "type": "string" },
         "phase": { "type": "string" },
         "stage_family": { "const": "proof" },
+        "proof_scope": { "$ref": "#/$defs/proofScope" },
+        "not_proved": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/proofNotProved" }
+        },
         "summary": { "$ref": "./doctor.json#/properties/summary" },
         "artifact_routing": {
           "type": "array",
@@ -64,6 +77,46 @@
     }
   ],
   "$defs": {
+    "proofScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "proof_class"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["runtime_path"]
+        },
+        "proof_class": {
+          "type": "string",
+          "enum": ["slice_proof"]
+        },
+        "workflow": { "type": ["string", "null"] },
+        "task": { "type": ["string", "null"] },
+        "intent": { "type": ["string", "null"] }
+      }
+    },
+    "proofNotProved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "relative_to", "source"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "functional_runtime_not_proved",
+            "broader_repo_completion_not_proved"
+          ]
+        },
+        "relative_to": {
+          "type": "string",
+          "enum": ["runtime_path"]
+        },
+        "source": {
+          "type": "string",
+          "enum": ["contract_lane"]
+        }
+      }
+    },
     "cleanupFailure": {
       "type": "object",
       "additionalProperties": false,
