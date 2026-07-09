@@ -2209,7 +2209,8 @@ Failure:
         "state": "derived",
         "blocking": "derived",
         "required_lane_count": "derived",
-        "drift_lane_count": "derived"
+        "drift_lane_count": "derived",
+        "decision_inputs": "derived"
       },
       "decision_basis": [
         {
@@ -2217,6 +2218,26 @@ Failure:
           "family": "required_lane",
           "evidence_class": "derived",
           "detail": "verify"
+        }
+      ],
+      "decision_inputs": [
+        {
+          "id": "decision_owner:doctor_merge_gate_summary",
+          "family": "decision_owner",
+          "evidence_class": "derived",
+          "replay_class": "pinned"
+        },
+        {
+          "id": "required_lane_count:1",
+          "family": "merge_gate",
+          "evidence_class": "derived",
+          "replay_class": "witnessed"
+        },
+        {
+          "id": "drift_lane_count:0",
+          "family": "merge_gate",
+          "evidence_class": "derived",
+          "replay_class": "witnessed"
         }
       ],
       "lanes": [
@@ -2232,6 +2253,7 @@ Failure:
             "lane_kind": "derived",
             "state": "derived",
             "blocking": "derived",
+            "decision_inputs": "derived",
             "contract_sources": "derived",
             "provider_sources": "derived"
           },
@@ -2241,6 +2263,26 @@ Failure:
               "family": "required_lane",
               "evidence_class": "derived",
               "detail": "verify"
+            }
+          ],
+          "decision_inputs": [
+            {
+              "id": "decision_owner:doctor_merge_gate_lane",
+              "family": "decision_owner",
+              "evidence_class": "derived",
+              "replay_class": "pinned"
+            },
+            {
+              "id": "merge_check_id:ota.verify.verify",
+              "family": "merge_lane",
+              "evidence_class": "derived",
+              "replay_class": "pinned"
+            },
+            {
+              "id": "drift_detected:false",
+              "family": "provider_drift",
+              "evidence_class": "derived",
+              "replay_class": "witnessed"
             }
           ],
           "contract_sources": ["workflows.verify.run.task"],
@@ -2355,6 +2397,10 @@ surface stays honest:
 - `evidence_classes` now makes the field-level provenance explicit for the authoritative merge
   verdict itself; the current shipped `state`, `blocking`, and lane-count fields are all
   `derived`
+- merge-facing governance now also carries additive `decision_inputs[]` with stable
+  `decision_owner:<stable-id>` mechanism identity on both the summary and per-lane records, so
+  downstream consumers can link the projected merge verdict back to one canonical doctor-side
+  decision owner without inventing a second merge model
 - each `lanes[]` entry carries the same canonical `merge_check_id`, lane identity, and any
   recovered `provider_sources` from CI drift findings; per-lane `decision_basis[]` repeats the
   same cited lane basis at lane scope for downstream consumers that do not want to re-infer lane

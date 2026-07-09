@@ -36,6 +36,7 @@ use crate::output::{
     DoctorMergeGateLaneEvidenceClasses, DoctorMergeGateSummary,
     DoctorMergeGateSummaryEvidenceClasses, DoctorRequiredVerificationLane,
     DoctorRequiredVerificationLaneEvidenceClasses, GovernanceDecisionBasisEntry,
+    GovernanceDecisionInputEntry,
 };
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
@@ -706,6 +707,7 @@ pub(crate) fn doctor_required_verification_governance(
                 blocking: drift.is_some(),
                 evidence_classes: merge_gate_lane_evidence_classes(),
                 decision_basis: merge_gate_lane_decision_basis(lane, drift),
+                decision_inputs: merge_gate_lane_decision_inputs(lane, drift),
                 contract_sources: lane.contract_sources.clone(),
                 provider_sources: drift
                     .map(|metadata| metadata.provider_sources.clone())
@@ -728,6 +730,7 @@ pub(crate) fn doctor_required_verification_governance(
             drift_lane_count,
             evidence_classes: merge_gate_summary_evidence_classes(),
             decision_basis: merge_gate_summary_decision_basis(&lanes),
+            decision_inputs: merge_gate_summary_decision_inputs(&lanes),
             lanes,
         }),
     })
@@ -748,6 +751,7 @@ fn merge_gate_summary_evidence_classes() -> DoctorMergeGateSummaryEvidenceClasse
         blocking: String::from("derived"),
         required_lane_count: String::from("derived"),
         drift_lane_count: String::from("derived"),
+        decision_inputs: String::from("derived"),
     }
 }
 
@@ -758,9 +762,39 @@ fn merge_gate_lane_evidence_classes() -> DoctorMergeGateLaneEvidenceClasses {
         lane_kind: String::from("derived"),
         state: String::from("derived"),
         blocking: String::from("derived"),
+        decision_inputs: String::from("derived"),
         contract_sources: String::from("derived"),
         provider_sources: String::from("derived"),
     }
+}
+
+fn merge_gate_lane_decision_inputs(
+    lane: &DoctorRequiredVerificationLane,
+    drift: Option<&FindingGovernanceMetadata>,
+) -> Vec<GovernanceDecisionInputEntry> {
+    vec![
+        GovernanceDecisionInputEntry {
+            id: String::from("decision_owner:doctor_merge_gate_lane"),
+            family: String::from("decision_owner"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        },
+        GovernanceDecisionInputEntry {
+            id: format!("merge_check_id:{}", lane.merge_check_id),
+            family: String::from("merge_lane"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        },
+        GovernanceDecisionInputEntry {
+            id: format!("drift_detected:{}", drift.is_some()),
+            family: String::from("provider_drift"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        },
+    ]
 }
 
 fn merge_gate_lane_decision_basis(
@@ -807,6 +841,37 @@ fn merge_gate_summary_decision_basis(
         }
     }
     basis
+}
+
+fn merge_gate_summary_decision_inputs(
+    lanes: &[DoctorMergeGateLane],
+) -> Vec<GovernanceDecisionInputEntry> {
+    vec![
+        GovernanceDecisionInputEntry {
+            id: String::from("decision_owner:doctor_merge_gate_summary"),
+            family: String::from("decision_owner"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("pinned"),
+            detail: None,
+        },
+        GovernanceDecisionInputEntry {
+            id: format!("required_lane_count:{}", lanes.len()),
+            family: String::from("merge_gate"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        },
+        GovernanceDecisionInputEntry {
+            id: format!(
+                "drift_lane_count:{}",
+                lanes.iter().filter(|lane| lane.blocking).count()
+            ),
+            family: String::from("merge_gate"),
+            evidence_class: String::from("derived"),
+            replay_class: String::from("witnessed"),
+            detail: None,
+        },
+    ]
 }
 
 pub(crate) fn merge_check_id_for_lane_task(task_name: &str) -> String {

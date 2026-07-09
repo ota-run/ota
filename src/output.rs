@@ -143,6 +143,8 @@ pub struct DoctorMergeGateSummary {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_inputs: Vec<GovernanceDecisionInputEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<DoctorMergeGateLane>,
 }
 
@@ -156,6 +158,8 @@ pub struct DoctorMergeGateLane {
     pub evidence_classes: DoctorMergeGateLaneEvidenceClasses,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decision_basis: Vec<GovernanceDecisionBasisEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_inputs: Vec<GovernanceDecisionInputEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contract_sources: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -176,6 +180,7 @@ pub struct DoctorMergeGateSummaryEvidenceClasses {
     pub blocking: String,
     pub required_lane_count: String,
     pub drift_lane_count: String,
+    pub decision_inputs: String,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -185,6 +190,7 @@ pub struct DoctorMergeGateLaneEvidenceClasses {
     pub lane_kind: String,
     pub state: String,
     pub blocking: String,
+    pub decision_inputs: String,
     pub contract_sources: String,
     pub provider_sources: String,
 }
