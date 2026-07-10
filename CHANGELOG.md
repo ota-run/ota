@@ -26,8 +26,9 @@
 
 ## Unreleased
 
-- added receipt-authored immutable dependency input identity for typed lockfile-strict pnpm
-  hydration: selected task and workflow receipts now capture `pnpm-lock.yaml` as an
+- added receipt-authored immutable dependency input identity for typed lockfile-strict Node
+  hydration: selected task and workflow receipts now capture `pnpm-lock.yaml` for frozen pnpm and
+  `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci` as an
   `evaluated_inputs[]` SHA-256 record at authoring time, and receipt comparison reports a matching
   or changed lockfile as runner-derived `acquitting` evidence only for the named
   `declared_dependency_resolution` input class

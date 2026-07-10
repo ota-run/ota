@@ -25,7 +25,7 @@
 # V11.10 Plan
 
 Status: active implementation slice. The first receipt-authoring cut captures declared
-lockfile-strict pnpm dependency identity; broader replay posture remains planned.
+lockfile-strict pnpm and npm dependency identity; broader replay posture remains planned.
 
 Release target:
 

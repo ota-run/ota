@@ -36,9 +36,8 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
 - active planning slice: `V11.10` replay artifact trust
-- immediate proof gate: finish review and commit the first receipt-authored pnpm lockfile identity
-  cut, then pressure a changed archived-versus-current lockfile comparison without reading the
-  current filesystem as if it were historical evidence
+- immediate proof gate: define the first selected-runtime identity capture on a truly pinned finite
+  lane; do not claim Lead Quorum is replay-ready until its dependency and Python inputs are pinned
 
 ## Recent Completed Slice
 
@@ -59,11 +58,15 @@ durable agent workflow belongs in the canonical Ota skill.
 - V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching
   semantic contract snapshots. It is `acquitting` for `contract_truth` only; lockfile/runtime
   artifact capture remains the next implementation cut.
-- The in-progress V11.10 cut captures a declared lockfile-strict pnpm `pnpm-lock.yaml` SHA-256 in
-  `receipt.evaluated_inputs[]` at receipt authoring time, carries it through archived baseline and
-  current receipt diff, and labels only a matching `declared_dependency_resolution` identity as
-  `acquitting`. Directus proved the matching archived/current path with the source-built binary;
-  its local Node-version diagnosis remains a separate repo/runtime finding.
+- The in-progress V11.10 cut captures declared lockfile-strict Node identity in
+  `receipt.evaluated_inputs[]` at receipt authoring time: `pnpm-lock.yaml` for frozen pnpm and
+  `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`. It carries this through
+  archived baseline and current receipt diff and labels only matching
+  `declared_dependency_resolution` identity as `acquitting`. Directus and ota-site proved matching
+  archived/current paths with the source-built binary; unrelated runtime findings remain separate.
+- Lead Quorum is not yet the first hermetic replay target: its typed `uv pip_requirements` lane
+  and Python range are real current repo truth, but not the pinned dependency/runtime pair V11.10
+  needs. Treat that as a repo contract/replay-readiness gap, not a reason to weaken Ota evidence.
 
 ## Handoff To The Next Chat
 
@@ -77,10 +80,9 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-Continue V11.10 by pressure-testing a changed archived-versus-current receipt identity on a
-deterministic lockfile-strict pnpm lane. Do not infer lockfile identity from a later filesystem
-read. Follow the pressure-testing protocol exactly and record whether the repo exposes a contract
-issue, implementation issue, or Ota platform gap.
+Continue V11.10 by selecting one truly pinned finite task lane for runtime identity capture. Do
+not infer any identity from a later filesystem read. Follow the pressure-testing protocol exactly
+and record whether the repo exposes a contract issue, implementation issue, or Ota platform gap.
 
 ## Working Rules
 

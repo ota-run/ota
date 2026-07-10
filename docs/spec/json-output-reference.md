@@ -4638,10 +4638,10 @@ The nested `receipt` object can also include:
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file
 - `evaluated_inputs[]` with immutable execution inputs captured while Ota authored the receipt.
-  The first shipped record is a declared `pnpm-lock.yaml` identity for a selected typed,
-  lockfile-strict pnpm hydration path. This records the receipt-time input identity; it never
-  re-reads the filesystem later and does not claim anything about undeclared dependencies,
-  ambient environment, runtime, or external-world inputs.
+  The first shipped records are declared Node lockfile identities: `pnpm-lock.yaml` for frozen
+  pnpm and `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`. This records
+  the receipt-time input identity; it never re-reads the filesystem later and does not claim
+  anything about undeclared dependencies, ambient environment, runtime, or external-world inputs.
 - `backend`
 - `workflow_env_artifacts` when the selected or effective workflow owns one rendered env artifact;
   each entry reports `path`, `kind`, `profile`, `includes`, `exists`, and the consuming
@@ -4914,7 +4914,7 @@ Current receipt diff JSON fields:
   first shipped record is `semantic_contract_snapshot`, which is `acquitting` only for the named
   `contract_truth` class when its identities match, never for dependency, environment, runtime,
   or external-world inputs that the receipts did not capture. A matching captured
-  `pnpm-lock.yaml` is likewise `acquitting` only for `declared_dependency_resolution`.
+  typed Node lockfile is likewise `acquitting` only for `declared_dependency_resolution`.
 - `summary.comparison.correlation` with an explicit advisory verdict:
   - `likely_related` when ota can correlate newly introduced blocker findings to specific semantic contract changes
   - `possibly_related` when ota cannot recover a strong direct match but the newly introduced blocker and contract drift still overlap in the same broad contract family

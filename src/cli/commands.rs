@@ -37116,6 +37116,57 @@ tasks:
             super::contract_snapshot_hash(lockfile.as_bytes())
         );
     }
+
+    #[test]
+    fn receipt_captures_declared_npm_ci_shrinkwrap_identity() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let package_lock = "{\"lockfileVersion\": 3}\n";
+        let shrinkwrap = "{\"lockfileVersion\": 3, \"name\": \"authoritative\"}\n";
+        fs::write(repo.path().join("package-lock.json"), package_lock).expect("write package lock");
+        fs::write(repo.path().join("npm-shrinkwrap.json"), shrinkwrap).expect("write shrinkwrap");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-npm-lockfile
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    command:
+      exe: npm
+      args: [ci]
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs =
+            super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "npm-shrinkwrap.json");
+        assert_eq!(
+            inputs[0].identity,
+            super::contract_snapshot_hash(shrinkwrap.as_bytes())
+        );
+
+        fs::remove_file(repo.path().join("npm-shrinkwrap.json")).expect("remove shrinkwrap");
+        let inputs =
+            super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "package-lock.json");
+        assert_eq!(
+            inputs[0].identity,
+            super::contract_snapshot_hash(package_lock.as_bytes())
+        );
+    }
 }
 
 fn receipt_diff_correlation(
@@ -93048,14 +93099,34 @@ fn collect_receipt_hydration_source_inputs(
     let TaskDependencyHydrationSourceSpec::NodePackageManager(source) = source else {
         return;
     };
-    if source.manager != TaskNodePackageManagerKind::Pnpm || !source.frozen_lockfile {
-        return;
-    }
     let cwd = source.cwd.trim();
+    let lockfile_name = match source.manager {
+        TaskNodePackageManagerKind::Pnpm if source.frozen_lockfile => "pnpm-lock.yaml",
+        // npm ci is the lockfile-strict npm lane. npm gives shrinkwrap precedence when both
+        // files exist, so capture the input it will actually resolve from.
+        TaskNodePackageManagerKind::Npm
+            if matches!(
+                source.mode,
+                crate::schema::TaskNodePackageManagerHydrationMode::Ci
+            ) =>
+        {
+            let base = if cwd.is_empty() || cwd == "." {
+                root.to_path_buf()
+            } else {
+                root.join(cwd)
+            };
+            if base.join("npm-shrinkwrap.json").is_file() {
+                "npm-shrinkwrap.json"
+            } else {
+                "package-lock.json"
+            }
+        }
+        _ => return,
+    };
     let relative_path = if cwd.is_empty() || cwd == "." {
-        PathBuf::from("pnpm-lock.yaml")
+        PathBuf::from(lockfile_name)
     } else {
-        PathBuf::from(cwd).join("pnpm-lock.yaml")
+        PathBuf::from(cwd).join(lockfile_name)
     };
     let lockfile_path = root.join(&relative_path);
     let Ok(bytes) = fs::read(lockfile_path) else {
