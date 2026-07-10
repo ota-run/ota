@@ -4637,11 +4637,14 @@ The nested `receipt` object can also include:
 - `assumption_set_hash` with the canonical extracted assumption-set identity used for this
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file
-- `evaluated_inputs[]` with immutable execution inputs captured while Ota authored the receipt.
+- `evaluated_inputs[]` with execution inputs captured while Ota authored the receipt.
   The first shipped records are declared Node lockfile identities: `pnpm-lock.yaml` for frozen
   pnpm and `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`. This records
   the receipt-time input identity; it never re-reads the filesystem later and does not claim
   anything about undeclared dependencies, ambient environment, runtime, or external-world inputs.
+- the same selected Node hydration lane can also record `runtime:node` with the contract-local
+  `node --version` observed while authoring the receipt. This is intentionally a runtime-version
+  observation, not an executable or image digest.
 - `backend`
 - `workflow_env_artifacts` when the selected or effective workflow owns one rendered env artifact;
   each entry reports `path`, `kind`, `profile`, `includes`, `exists`, and the consuming
@@ -4915,6 +4918,9 @@ Current receipt diff JSON fields:
   `contract_truth` class when its identities match, never for dependency, environment, runtime,
   or external-world inputs that the receipts did not capture. A matching captured
   typed Node lockfile is likewise `acquitting` only for `declared_dependency_resolution`.
+  A matching `runtime:node` record is `narrowing` for `selected_runtime_version`: it rules out a
+  reported Node version change, but does not prove binary, image, host, environment, or external
+  state identity.
 - `summary.comparison.correlation` with an explicit advisory verdict:
   - `likely_related` when ota can correlate newly introduced blocker findings to specific semantic contract changes
   - `possibly_related` when ota cannot recover a strong direct match but the newly introduced blocker and contract drift still overlap in the same broad contract family

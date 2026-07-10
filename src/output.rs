@@ -594,13 +594,22 @@ pub struct ExecutionReceipt {
     pub next: Option<String>,
 }
 
-/// A declared execution input captured at receipt-authoring time.
+/// An execution input captured at receipt-authoring time.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptEvaluatedInput {
     pub id: String,
     pub kind: String,
-    pub input_class: String,
+    pub input_class: ReplayInputClass,
     pub identity: String,
+}
+
+/// Canonical replay input families shared by receipt capture and comparison evidence.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayInputClass {
+    ContractTruth,
+    DeclaredDependencyResolution,
+    SelectedRuntimeVersion,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -2276,7 +2285,7 @@ pub struct ReceiptDiffComparison {
 pub struct ReceiptDiffArtifactTrust {
     pub id: String,
     pub kind: String,
-    pub input_classes: Vec<String>,
+    pub input_classes: Vec<ReplayInputClass>,
     pub trust_role: ReceiptDiffArtifactTrustRole,
     pub baseline_identity: String,
     pub current_identity: String,

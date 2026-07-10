@@ -112,8 +112,13 @@
                 "properties": {
                   "id": { "type": "string" },
                   "kind": { "type": "string" },
-                  "input_class": { "type": "string" },
-                  "identity": { "type": "string", "pattern": "^sha256:" }
+                  "input_class": {
+                    "enum": [
+                      "declared_dependency_resolution",
+                      "selected_runtime_version"
+                    ]
+                  },
+                  "identity": { "type": "string" }
                 }
               }
             },
@@ -253,7 +258,13 @@
                       },
                       "toolchains": {
                         "type": "array",
-                        "items": { "type": "string" }
+                        "items": {
+                          "enum": [
+                            "contract_truth",
+                            "declared_dependency_resolution",
+                            "selected_runtime_version"
+                          ]
+                        }
                       },
                       "env": {
                         "type": "array",

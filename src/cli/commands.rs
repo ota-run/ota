@@ -60,7 +60,8 @@ use crate::detector::{
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingIdentity, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
     OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
-    command_available, command_version, diagnose_checks_only_for_workflow, diagnose_contract,
+    command_available, command_version, command_version_in_working_dir,
+    diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode_for_task_with_overrides,
@@ -103,9 +104,9 @@ use crate::output::{
     ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess,
     ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
     ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
-    ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, RunPreviewPlan,
-    RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
+    ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass,
+    RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
     ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
     ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
     WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
@@ -37023,7 +37024,7 @@ tasks:
         );
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].id, "semantic_contract_snapshot");
-        assert_eq!(matched[0].input_classes, ["contract_truth"]);
+        assert_eq!(matched[0].input_classes, [ReplayInputClass::ContractTruth]);
         assert_eq!(
             serde_json::to_value(&matched[0]).unwrap()["trust_role"],
             "acquitting"
@@ -37053,7 +37054,7 @@ tasks:
         let baseline = crate::output::ExecutionReceiptEvaluatedInput {
             id: String::from("pnpm-lock.yaml"),
             kind: String::from("lockfile"),
-            input_class: String::from("declared_dependency_resolution"),
+            input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: String::from("sha256:baseline"),
         };
         let mut current = baseline.clone();
@@ -37061,7 +37062,10 @@ tasks:
             super::receipt_diff_artifact_trust(None, None, &[baseline.clone()], &[current.clone()]);
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].id, "pnpm-lock.yaml");
-        assert_eq!(matched[0].input_classes, ["declared_dependency_resolution"]);
+        assert_eq!(
+            matched[0].input_classes,
+            [ReplayInputClass::DeclaredDependencyResolution]
+        );
         assert_eq!(
             serde_json::to_value(&matched[0]).unwrap()["comparison"],
             "matched"
@@ -37071,6 +37075,28 @@ tasks:
         let changed = super::receipt_diff_artifact_trust(None, None, &[baseline], &[current]);
         assert_eq!(
             serde_json::to_value(&changed[0]).unwrap()["comparison"],
+            "changed"
+        );
+
+        let runtime = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("runtime:node"),
+            kind: String::from("runtime_version"),
+            input_class: ReplayInputClass::SelectedRuntimeVersion,
+            identity: String::from("v24.1.0"),
+        };
+        let runtime_trust =
+            super::receipt_diff_artifact_trust(None, None, &[runtime.clone()], &[runtime.clone()]);
+        assert_eq!(runtime_trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&runtime_trust[0]).unwrap()["trust_role"],
+            "narrowing"
+        );
+        let mut changed_runtime = runtime.clone();
+        changed_runtime.identity = String::from("v24.2.0");
+        let runtime_change =
+            super::receipt_diff_artifact_trust(None, None, &[runtime], &[changed_runtime]);
+        assert_eq!(
+            serde_json::to_value(&runtime_change[0]).unwrap()["comparison"],
             "changed"
         );
     }
@@ -37107,12 +37133,17 @@ tasks:
 
         let inputs =
             super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
-        assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0].id, "pnpm-lock.yaml");
-        assert_eq!(inputs[0].kind, "lockfile");
-        assert_eq!(inputs[0].input_class, "declared_dependency_resolution");
+        let input = inputs
+            .iter()
+            .find(|input| input.id == "pnpm-lock.yaml")
+            .expect("captured pnpm lockfile");
+        assert_eq!(input.kind, "lockfile");
         assert_eq!(
-            inputs[0].identity,
+            input.input_class,
+            ReplayInputClass::DeclaredDependencyResolution
+        );
+        assert_eq!(
+            input.identity,
             super::contract_snapshot_hash(lockfile.as_bytes())
         );
     }
@@ -37150,20 +37181,24 @@ tasks:
 
         let inputs =
             super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
-        assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0].id, "npm-shrinkwrap.json");
+        let input = inputs
+            .iter()
+            .find(|input| input.id == "npm-shrinkwrap.json")
+            .expect("captured npm shrinkwrap");
         assert_eq!(
-            inputs[0].identity,
+            input.identity,
             super::contract_snapshot_hash(shrinkwrap.as_bytes())
         );
 
         fs::remove_file(repo.path().join("npm-shrinkwrap.json")).expect("remove shrinkwrap");
         let inputs =
             super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
-        assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0].id, "package-lock.json");
+        let input = inputs
+            .iter()
+            .find(|input| input.id == "package-lock.json")
+            .expect("captured package lock");
         assert_eq!(
-            inputs[0].identity,
+            input.identity,
             super::contract_snapshot_hash(package_lock.as_bytes())
         );
     }
@@ -37384,7 +37419,7 @@ fn receipt_diff_artifact_trust(
         artifacts.push(ReceiptDiffArtifactTrust {
             id: String::from("semantic_contract_snapshot"),
             kind: String::from("semantic_contract_snapshot"),
-            input_classes: vec![String::from("contract_truth")],
+            input_classes: vec![ReplayInputClass::ContractTruth],
             trust_role: ReceiptDiffArtifactTrustRole::Acquitting,
             baseline_identity: baseline_identity.to_string(),
             current_identity: current_identity.to_string(),
@@ -37403,16 +37438,21 @@ fn receipt_diff_artifact_trust(
         }) else {
             continue;
         };
-        // A lockfile can acquit only the declared dependency-resolution input class. Other
-        // evaluated inputs will receive their own trust semantics as Ota captures them.
-        if baseline.input_class != "declared_dependency_resolution" {
-            continue;
-        }
+        let trust_role = match baseline.input_class {
+            // A matching lockfile clears only the named dependency-resolution class.
+            ReplayInputClass::DeclaredDependencyResolution => {
+                ReceiptDiffArtifactTrustRole::Acquitting
+            }
+            // A command-reported version is useful but not a binary or image digest. It narrows
+            // runtime-version drift without claiming the full runtime artifact is identical.
+            ReplayInputClass::SelectedRuntimeVersion => ReceiptDiffArtifactTrustRole::Narrowing,
+            _ => continue,
+        };
         artifacts.push(ReceiptDiffArtifactTrust {
             id: baseline.id.clone(),
             kind: baseline.kind.clone(),
-            input_classes: vec![baseline.input_class.clone()],
-            trust_role: ReceiptDiffArtifactTrustRole::Acquitting,
+            input_classes: vec![baseline.input_class],
+            trust_role,
             baseline_identity: baseline.identity.clone(),
             current_identity: current.identity.clone(),
             comparison: if baseline.identity == current.identity {
@@ -93138,10 +93178,21 @@ fn collect_receipt_hydration_source_inputs(
         ExecutionReceiptEvaluatedInput {
             id,
             kind: String::from("lockfile"),
-            input_class: String::from("declared_dependency_resolution"),
+            input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: contract_snapshot_hash(&bytes),
         },
     );
+    if let Some(version) = command_version_in_working_dir("node", root) {
+        inputs.insert(
+            String::from("runtime:node"),
+            ExecutionReceiptEvaluatedInput {
+                id: String::from("runtime:node"),
+                kind: String::from("runtime_version"),
+                input_class: ReplayInputClass::SelectedRuntimeVersion,
+                identity: version,
+            },
+        );
+    }
 }
 
 fn run_execution_receipt_with_shared(

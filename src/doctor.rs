@@ -12300,6 +12300,11 @@ pub(crate) fn command_version(name: &str) -> Option<String> {
     command_version_probe(name).version()
 }
 
+/// Probe through the same contract-local command resolution used by doctor.
+pub(crate) fn command_version_in_working_dir(name: &str, working_dir: &Path) -> Option<String> {
+    command_version_probe_in_working_dir(name, working_dir).version()
+}
+
 pub(crate) fn command_available(name: &str) -> bool {
     resolve_command_path(name).is_some()
 }

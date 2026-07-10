@@ -36,8 +36,8 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
 - active planning slice: `V11.10` replay artifact trust
-- immediate proof gate: define the first selected-runtime identity capture on a truly pinned finite
-  lane; do not claim Lead Quorum is replay-ready until its dependency and Python inputs are pinned
+- immediate proof gate: pressure the new Node runtime-version observation alongside a typed
+  lockfile receipt, then design the separate immutable executable/image-digest lane
 
 ## Recent Completed Slice
 
@@ -67,6 +67,9 @@ durable agent workflow belongs in the canonical Ota skill.
 - Lead Quorum is not yet the first hermetic replay target: its typed `uv pip_requirements` lane
   and Python range are real current repo truth, but not the pinned dependency/runtime pair V11.10
   needs. Treat that as a repo contract/replay-readiness gap, not a reason to weaken Ota evidence.
+- The in-progress next cut captures `runtime:node` through contract-local `node --version` on the
+  same typed lockfile-strict Node hydration path. It is deliberately `narrowing` for
+  `selected_runtime_version`, not an executable/image-digest acquittal.
 
 ## Handoff To The Next Chat
 
@@ -80,9 +83,10 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-Continue V11.10 by selecting one truly pinned finite task lane for runtime identity capture. Do
-not infer any identity from a later filesystem read. Follow the pressure-testing protocol exactly
-and record whether the repo exposes a contract issue, implementation issue, or Ota platform gap.
+Continue V11.10 by pressure-testing Node runtime-version evidence, then design the immutable
+executable/image-digest carrier separately. Do not infer any identity from a later filesystem
+read. Follow the pressure-testing protocol exactly and record whether the repo exposes a contract
+issue, implementation issue, or Ota platform gap.
 
 ## Working Rules
 

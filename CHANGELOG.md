@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added receipt-authored selected Node runtime-version evidence for the same typed lockfile-strict
+  hydration lanes: receipt comparison now reports a matching `node --version` as runner-derived
+  `narrowing` evidence for `selected_runtime_version`, never as a binary/image digest or broader
+  runtime acquittal
+
 - added receipt-authored immutable dependency input identity for typed lockfile-strict Node
   hydration: selected task and workflow receipts now capture `pnpm-lock.yaml` for frozen pnpm and
   `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci` as an

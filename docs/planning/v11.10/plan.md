@@ -339,6 +339,15 @@ First canonical artifact record:
 - do not emit a trust role just because documentation mentions an artifact type; omit it until Ota
   has truthful captured identity and semantics for that artifact on the evaluated path
 
+The first typed replay input taxonomy is runner-owned and closed:
+
+- `contract_truth`
+- `declared_dependency_resolution`
+- `selected_runtime_version`
+
+`selected_runtime_version` is intentionally `narrowing` when it comes from a command version
+probe. It becomes `acquitting` only when Ota captures an immutable executable or image digest.
+
 The first honest interpretation should be:
 
 - acquitting artifact:
