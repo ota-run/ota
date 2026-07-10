@@ -336,7 +336,7 @@ This keeps task identity stable:
 
 ### `execution.contexts.<name>.attachments.isolated_paths`
 
-Container contexts can keep platform-sensitive dependency trees isolated from the host tree by declaring workspace-relative paths that Ota should back with engine-managed named volumes.
+Container contexts can keep platform-sensitive dependency trees isolated from the host tree by declaring workspace-relative paths that Ota should back with engine-managed named volumes. For .NET containers, use `.nuget/packages` when a restore lane must share its resolved package cache with later `--no-restore` build or test tasks.
 
 ```yaml
 execution:

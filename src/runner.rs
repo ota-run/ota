@@ -2422,6 +2422,12 @@ fn derived_attachment_env_for_isolation_paths(
                     format!("-Dmaven.repo.local={ota_workspace}/.m2/repository"),
                 );
             }
+            ".nuget/packages" => {
+                derived.insert(
+                    String::from("NUGET_PACKAGES"),
+                    format!("{ota_workspace}/.nuget/packages"),
+                );
+            }
             ".npm" => {
                 derived.insert(
                     String::from("NPM_CONFIG_CACHE"),
@@ -9528,7 +9534,7 @@ fn execute_task_command(
             host_port_override,
             mode,
         ),
-        (_, PreparedTaskExecution::Shell { command, .. }) => match backend {
+        (_, PreparedTaskExecution::Shell { command, cwd }) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
                 preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
                 preflight_native_runtime_listener_binds(task_name, runtime)?;
@@ -9560,6 +9566,7 @@ fn execute_task_command(
                 let shared_backend_name = shared_local_backend
                     .as_ref()
                     .map(|shared| shared.name.as_str());
+                let container_command = container_command_with_cwd(command, cwd.as_deref());
                 let effective_publications = effective_execution_publications(
                     *lifecycle,
                     shared_local_backend.as_ref(),
@@ -9571,8 +9578,8 @@ fn execute_task_command(
                     runtime,
                     context_name.as_deref(),
                     shared_backend_name,
-                    command,
-                    effective_working_dir.as_path(),
+                    &container_command,
+                    working_dir,
                     env_overrides,
                     path_export,
                     secret_env_names,
@@ -9605,8 +9612,8 @@ fn execute_task_command(
                         runtime,
                         context_name.as_deref(),
                         shared_backend_name,
-                        command,
-                        effective_working_dir.as_path(),
+                        &container_command,
+                        working_dir,
                         env_overrides,
                         path_export,
                         secret_env_names,
@@ -22369,6 +22376,19 @@ fn parse_socket_port(value: &str) -> Option<u16> {
     port.trim().parse::<u16>().ok()
 }
 
+fn container_command_with_cwd(command: &str, cwd: Option<&str>) -> String {
+    let Some(cwd) = cwd
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty() && *cwd != ".")
+    else {
+        return command.to_string();
+    };
+    format!(
+        "cd {} && {command}",
+        shell_quote_command_word(cwd, ShellQuoteStyle::Posix)
+    )
+}
+
 fn execute_container_task_command(
     contract: Option<&Contract>,
     task_name: &str,
@@ -31661,6 +31681,69 @@ tasks:
         assert_eq!(
             env.get("MAVEN_OPTS").map(String::as_str),
             Some("-Dmaven.repo.local=/workspace/.m2/repository")
+        );
+    }
+
+    #[test]
+    fn effective_task_env_for_backend_derives_nuget_package_cache_for_container() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: mcr.microsoft.com/dotnet/sdk:10.0.103
+      attachments:
+        isolated_paths:
+          - .nuget/packages
+tasks:
+  setup:
+    context: app
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      writes:
+        - obj
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("setup").unwrap(),
+            &ResolvedExecutionBackend::Container {
+                context_name: Some(String::from("app")),
+                shared_local_backend: None,
+                image: String::from("mcr.microsoft.com/dotnet/sdk:10.0.103"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Ephemeral,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: vec![String::from(".nuget/packages")],
+            },
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(
+            env.get("NUGET_PACKAGES").map(String::as_str),
+            Some("/workspace/.nuget/packages")
         );
     }
 
@@ -56394,6 +56477,59 @@ tasks:
             super::BackendFulfillmentStrategy::DeferredEphemeralContainer
         );
         assert!(plan.provisioning_target.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_command_with_cwd_keeps_workspace_root_and_projects_process_directory() {
+        assert_eq!(
+            super::container_command_with_cwd("dotnet build", Some("sdk/core/Azure.Core/src")),
+            "cd 'sdk/core/Azure.Core/src' && dotnet build"
+        );
+        assert_eq!(
+            super::container_command_with_cwd("dotnet build", Some(".")),
+            "dotnet build"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_command_cwd_keeps_ownership_state_at_contract_root() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: container-cwd-state
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  build:
+    context: app
+    command:
+      exe: echo
+      args: [build]
+      cwd: app
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).expect("create task cwd");
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "build")
+            .expect("container command should execute");
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert!(fixture.dir.path().join(".ota/state/ownership-id").is_file());
+        assert!(
+            !fixture.dir.path().join("app/.ota").exists(),
+            "task cwd must not receive Ota ownership state"
+        );
     }
 
     #[cfg(unix)]

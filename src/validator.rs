@@ -13773,6 +13773,7 @@ fn task_body_appears_to_mutate_managed_isolated_path(body: &str, isolated_path: 
 fn attachment_path_expectation(path: &str) -> Option<(&'static str, &'static str, &'static str)> {
     match path {
         ".m2" => Some(("Maven", "MAVEN_OPTS", "/workspace/.m2")),
+        ".nuget/packages" => Some(("NuGet", "NUGET_PACKAGES", "/workspace/.nuget/packages")),
         ".npm" => Some(("npm", "NPM_CONFIG_CACHE", "/workspace/.npm")),
         ".pnpm-store" => Some(("pnpm", "PNPM_STORE_DIR", "/workspace/.pnpm-store")),
         ".gradle" => Some(("Gradle", "GRADLE_USER_HOME", "/workspace/.gradle")),

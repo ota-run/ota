@@ -33,6 +33,12 @@
   publishes `resolution: unavailable` with an honest error instead of repeating declared config as
   resolved truth
 
+- fixed ephemeral container-backed .NET hydration across task boundaries: contexts that declare
+  `attachments.isolated_paths: [.nuget/packages]` now receive one Ota-managed package-cache volume
+  plus `NUGET_PACKAGES=/workspace/.nuget/packages`, so typed `dotnet restore` can truthfully feed
+  later `dotnet build --no-restore` and `dotnet test --no-restore` tasks without repo-local cache
+  glue
+
 - Tightened runtime-proof boundaries: `ota proof runtime --json` now identifies adjacent declared
   external integration workflows as `external_network_path_not_proved`, while keeping generic
   broader-repo exclusion explicitly derived from the selected proof scope.

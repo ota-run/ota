@@ -76,6 +76,25 @@ fn run_ota_failure_stdout_json(args: &[&str], cwd: &Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("command should emit valid stdout JSON")
 }
 
+fn run_ota_json_output(args: &[&str], cwd: &Path) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("ota command should run");
+
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|stdout_error| {
+        serde_json::from_slice(&output.stderr).unwrap_or_else(|stderr_error| {
+            panic!(
+                "ota command should emit JSON\nstatus: {}\nstdout JSON error: {stdout_error}\nstderr JSON error: {stderr_error}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            )
+        })
+    })
+}
+
 fn run_ota_success_text(args: &[&str], cwd: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(args)
@@ -1208,7 +1227,7 @@ workflows:
     )
     .expect("write NuGet config");
 
-    let json = run_ota_failure_stdout_json(
+    let json = run_ota_json_output(
         &[
             "up",
             "--json",
@@ -1283,7 +1302,7 @@ workflows:
       task: setup
 "#,
     );
-    let json = run_ota_failure_stdout_json(
+    let json = run_ota_json_output(
         &[
             "up",
             "--json",
@@ -1345,7 +1364,7 @@ workflows:
 "#,
     );
 
-    let json = run_ota_failure_stdout_json(
+    let json = run_ota_json_output(
         &[
             "up",
             "--json",
@@ -1412,7 +1431,7 @@ workflows:
 "#,
     );
 
-    let json = run_ota_failure_stdout_json(
+    let json = run_ota_json_output(
         &[
             "up",
             "--json",
