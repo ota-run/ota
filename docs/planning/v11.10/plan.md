@@ -125,7 +125,7 @@ V11.10 is the slice for making that difference explicit.
 - a first-class replay hermeticity model alongside baseline posture
 - a clearer machine-readable definition of `last_known_good`
 - stronger pinned-input identity around replay-sensitive baseline lanes
-- explicit replay artifact trust classes for acquitting, narrowing, and locator evidence
+- explicit replay artifact trust classes for acquitting, narrowing, and pointer-only evidence
 - replay-aware receipt comparison posture
 - explicit separation between witness evidence and replay verification
 - hidden-input surfacing when replay fails without semantic contract change
@@ -300,8 +300,43 @@ Direction:
 - keep the first trust classes explicit:
   - `acquitting`
   - `narrowing`
-  - `locator`
+  - `pointer_only`
 - use those classes to guide both machine-readable replay output and operator-facing replay order
+
+First canonical artifact record:
+
+- attach trust roles only to artifacts Ota actually captured or resolved on the evaluated path
+- publish the first record under the canonical receipt/baseline comparison replay output, rather
+  than creating a second replay report or adding labels to prose-only diagnostics
+- keep the record runner-derived and additive. The first implemented record is the already
+  archived semantic contract snapshot, because it has immutable identity on both sides of a
+  receipt comparison:
+
+  ```json
+  {
+    "id": "semantic_contract_snapshot",
+    "kind": "semantic_contract_snapshot",
+    "input_classes": ["contract_truth"],
+    "trust_role": "acquitting",
+    "baseline_identity": "sha256:<baseline>",
+    "current_identity": "sha256:<current>",
+    "comparison": "matched"
+  }
+  ```
+
+- later lockfile and runtime-digest records may use the same carrier only after receipts capture
+  their immutable evaluated identities; do not fabricate them from current filesystem state
+
+- `input_classes[]` is mandatory because an acquitting artifact clears only the class it names;
+  a matching lockfile does not acquit ambient environment or live external-state drift
+- `input_classes[]` reuses the canonical V11.9 cited decision-input family taxonomy; replay must
+  not introduce a parallel local vocabulary. When a replay artifact needs a class V11.9 does not
+  yet own, extend the canonical cited-input taxonomy there first and then consume that identity in
+  replay output
+- `identity` must be immutable or content-addressed for an `acquitting` role; mutable aliases,
+  status labels, and operator notes cannot carry that role
+- do not emit a trust role just because documentation mentions an artifact type; omit it until Ota
+  has truthful captured identity and semantics for that artifact on the evaluated path
 
 The first honest interpretation should be:
 
@@ -310,7 +345,7 @@ The first honest interpretation should be:
 - narrowing artifact:
   - clean means only the named subset held still
   - the still-unnamed residue may still be the cause
-- locator artifact:
+- pointer-only artifact:
   - useful to point at the layer
   - not enough to conclude
 
@@ -322,6 +357,10 @@ The first honest ownership rule should stay explicit too:
 - these trust classes are replay-engine-derived
 - they come from the canonical replay input model plus artifact semantics
 - they are not caller-supplied labels and not contract-authored opinions
+- artifact `input_classes[]` are canonical V11.9 decision-input family identities, not
+  replay-specific strings or operator-supplied categories
+- the first carrier is receipt-to-baseline replay comparison output; later command summaries may
+  derive from that same record but must not invent an independent taxonomy
 
 ### 3. Honest `last_known_good`
 
@@ -402,7 +441,7 @@ The artifact-trust rule should stay explicit too:
 
 - trust acquitting artifacts to close their named class
 - trust narrowing artifacts only to narrow
-- trust locator artifacts only to point
+- trust pointer-only artifacts only to point
 - when a narrowing artifact looks clean and the replay still fails, treat that as evidence that a
   still-unnamed input class remains in play
 
@@ -432,7 +471,7 @@ The operator ordering should follow that trust order:
 2. use narrowing artifacts second
    - env snapshot
    - external fixture snapshot
-3. use logs as locator evidence throughout
+3. use logs as pointer-only evidence throughout
    - enough to point at the layer
    - never enough to close the case
 
@@ -470,10 +509,16 @@ V11.10 is complete when:
   paths instead of overclaiming repo-global truth
 - hermetic replay versus fresh derivation is explicit in the canonical replay model instead of
   living only in narrative explanation
-- replay artifact trust classes are explicit enough that acquitting, narrowing, and locator
+- replay artifact trust classes are explicit enough that acquitting, narrowing, and pointer-only
   evidence are not treated as equivalent trust closers
 - replay artifact trust classes are replay-engine-derived from the canonical replay input model and
   artifact semantics instead of hand-labeled by callers
+- every emitted artifact trust role names the input class it can clear or narrow, and acquitting
+  roles require immutable or content-addressed artifact identity
+- replay artifact input classes reuse the V11.9 cited decision-input taxonomy rather than
+  introducing a replay-local vocabulary
+- receipt-to-baseline replay comparison is the first canonical artifact-trust carrier; later
+  operator surfaces derive from that record instead of publishing parallel labels
 - `last_known_good` is defined in terms of exact witness plus replay posture, not only "latest
   green"
 - `last_known_good` keeps source identity and contract snapshot identity as separate pinned inputs
@@ -499,3 +544,10 @@ What can later build on top of it is:
 - richer baseline promotion policy
 - enterprise retention, audit, or approval overlays that can rely on explicit replay posture
   instead of treating all green baselines as equal
+
+## Acknowledgment
+
+The initial artifact-trust distinction was sharpened through discovery feedback from
+[Vinicius Pereira](https://github.com/vinimabreu): a clean lockfile or image digest can acquit a
+named class, while clean environment snapshots and fixtures can only narrow the search. When this
+surface ships, acknowledge that contribution in the release changelog and public replay reference.

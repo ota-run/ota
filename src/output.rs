@@ -2249,7 +2249,37 @@ pub struct ReceiptDiffComparison {
     pub readiness_change: ReceiptDiffReadinessChange,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_snapshot_changed: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_trust: Vec<ReceiptDiffArtifactTrust>,
     pub correlation: ReceiptDiffCorrelation,
+}
+
+/// Trust posture for a comparison artifact that was actually captured by both receipts.
+/// `acquitting` applies only to the named input class, never to the entire execution outcome.
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffArtifactTrust {
+    pub id: String,
+    pub kind: String,
+    pub input_classes: Vec<String>,
+    pub trust_role: ReceiptDiffArtifactTrustRole,
+    pub baseline_identity: String,
+    pub current_identity: String,
+    pub comparison: ReceiptDiffArtifactComparison,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptDiffArtifactTrustRole {
+    Acquitting,
+    Narrowing,
+    PointerOnly,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptDiffArtifactComparison {
+    Matched,
+    Changed,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -2741,6 +2771,9 @@ pub struct ProofRuntimeNotProved {
 #[derive(Debug, Serialize)]
 pub struct ProofRuntimeStatus<'a> {
     pub ok: bool,
+    /// Terminal evaluation of the selected proof carrier. This is deliberately separate from
+    /// `ok` so consumers cannot collapse a qualified proof into an unbounded pass.
+    pub proof_verdict: &'a str,
     pub path: &'a str,
     pub mode: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]

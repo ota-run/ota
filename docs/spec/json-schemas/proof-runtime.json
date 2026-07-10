@@ -8,6 +8,7 @@
       "additionalProperties": false,
       "required": [
         "ok",
+        "proof_verdict",
         "path",
         "mode",
         "phase",
@@ -17,6 +18,10 @@
       ],
       "properties": {
         "ok": { "type": "boolean" },
+        "proof_verdict": {
+          "type": "string",
+          "enum": ["passed", "passed_with_unproven_boundaries", "failed"]
+        },
         "path": { "type": "string" },
         "mode": { "const": "runtime-proof" },
         "workflow": { "type": "string" },

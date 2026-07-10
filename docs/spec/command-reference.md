@@ -230,7 +230,6 @@ ota validate --member api [PATH]
 ```
 
 Current behavior:
-
 - resolves `ota.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - when `--member` is set, loads the root contract, merges the declared member override, and validates the merged contract
 - when a root contract declares `workspace.type: monorepo`, `ota validate` also validates each declared merged member contract
@@ -273,6 +272,9 @@ ota tasks --unsafe --use [PATH]
 
 Current behavior:
 
+- runtime-proof output publishes a terminal `proof_verdict`: `passed`,
+  `passed_with_unproven_boundaries`, or `failed`; use it with `proof_scope` and `not_proved` so a
+  narrow green proof is not misread as broader repo completion
 - validates the contract first
 - when a root contract declares `workspace.type: monorepo`, plain `ota tasks` lists root tasks and grouped summaries for each declared member
 - when `--member` is set, lists tasks from the merged member contract

@@ -24,7 +24,7 @@
 
 # V11.11 Plan
 
-Status: complete.
+Status: active refinement after the completed foundation.
 
 Release target:
 
@@ -130,6 +130,8 @@ Without that, today's honest narrow proof can become tomorrow's silent overclaim
 - proof scope attached to the canonical contract/proof surfaces, not only human commentary
 - phase-aligned JSON output so proof coverage and not-proved scope are inspectable by automation
 - one named first JSON carrier for the first honest implementation cut
+- a non-collapsible qualified proof verdict so a green narrow proof cannot be read as repo-global
+  completion by consumers that only inspect the top-level status
 
 ## Non-goals
 
@@ -232,6 +234,20 @@ The first honest interpretation should be:
 - if Ota cannot anchor an exclusion relative to declared scope and adjacent proof families, it
   should omit it rather than invent loose taxonomy prose
 
+The refinement should publish the sharpest contract-derived boundary first:
+
+- boundaries with a direct declared workflow, task, service, or external-state citation outrank
+  generic scope remainder
+- explicit skipped lanes outrank generic scope remainder, but do not automatically outrank a more
+  specific dependency or external-state boundary
+- ties use stable contract-local identity ordering, not a hardcoded family preference
+- `broader_repo_completion_not_proved` stays last because it is the scope-derived remainder
+
+Skipped lanes are already visible in ordinary execution output. The more dangerous boundary is a
+green proof that depended on external state or neighboring dependency truth it never exercised.
+Each entry remains relative to the selected proof scope and cites its declared workflow or task
+owner; omit it when the contract does not provide that truth.
+
 ### 3. Proof classification without overclaim
 
 Direction:
@@ -244,6 +260,28 @@ Direction:
 - do not force a broader class when Ota only has narrow evidence
 - keep this classification derived from the actual exercised lane and published not-proved
   boundary, not from operator aspiration
+
+### 3a. Qualified top-level proof verdict
+
+Direction:
+
+- preserve `ok` as the execution outcome for compatibility
+- add one terminal post-evaluation `proof_verdict` field to the first carrier:
+  - `passed`
+  - `passed_with_unproven_boundaries`
+  - `failed`
+- a successful proof with any `not_proved[]` entries must use
+  `passed_with_unproven_boundaries`; consumers must not need to infer that qualification from a
+  nested optional array
+- `passed` means the selected proof lane completed and evaluated ready with no emitted unproved
+  boundary; `passed_with_unproven_boundaries` means the same selected lane passed but carries one
+  or more contract-derived exclusions; `failed` means the selected lane did not complete its
+  runtime-proof execution or readiness evaluation, with `failure_class` retaining the precise
+  reason
+- parse, contract-load, and other pre-proof command failures remain outside this terminal carrier;
+  they must not be collapsed into `proof_verdict: failed`
+- derive this field from the same proof scope and not-proved record at the decision site; do not
+  reconstruct it later in output formatting
 
 ### 4. First carrier before broader propagation
 
@@ -276,6 +314,10 @@ V11.11 is complete when:
   free-floating exclusion prose
 - that boundary is machine-readable on the first chosen JSON carrier
 - the classification does not overclaim beyond what the exercised lane actually proved
+- a top-level successful proof with boundaries is explicitly qualified as
+  `passed_with_unproven_boundaries`, not only `ok: true` plus nested exclusions
+- multiple exclusions are ordered by sharpest contract-derived evidence first and generic
+  scope-derived remainder last; category names alone must not decide the ordering
 - engineering notes no longer need to carry the only truthful statement of proof scope
 - downstream consumers can distinguish a green narrow proof from a broader runtime or repo proof
   without relying on narrative prose

@@ -97,7 +97,8 @@ use crate::output::{
     InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
     MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
     PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArtifacts,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffBaseline,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
+    ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
     ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
     ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
     ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
@@ -2656,6 +2657,7 @@ pub fn proof_runtime(
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
                 );
+                let proof_verdict = proof_runtime_verdict(ok, &not_proved);
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -2665,6 +2667,7 @@ pub fn proof_runtime(
                             &target.contract_path,
                             text_phase,
                             status,
+                            proof_verdict,
                             &proof_summary_for_output,
                             up_process_failure,
                             &topology_artifact_display,
@@ -2681,6 +2684,7 @@ pub fn proof_runtime(
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json(&ProofRuntimeStatus {
                             ok,
+                            proof_verdict,
                             path: &path_display,
                             mode: "runtime-proof",
                             workflow: effective_workflow_selector.as_deref(),
@@ -37008,6 +37012,31 @@ tasks:
             &[finding]
         ));
     }
+
+    #[test]
+    fn receipt_diff_contract_snapshot_trust_is_scoped_to_contract_truth() {
+        let matched =
+            super::receipt_diff_artifact_trust(Some("sha256:baseline"), Some("sha256:baseline"));
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].id, "semantic_contract_snapshot");
+        assert_eq!(matched[0].input_classes, ["contract_truth"]);
+        assert_eq!(
+            serde_json::to_value(&matched[0]).unwrap()["trust_role"],
+            "acquitting"
+        );
+        assert_eq!(
+            serde_json::to_value(&matched[0]).unwrap()["comparison"],
+            "matched"
+        );
+
+        let changed =
+            super::receipt_diff_artifact_trust(Some("sha256:baseline"), Some("sha256:current"));
+        assert_eq!(
+            serde_json::to_value(&changed[0]).unwrap()["comparison"],
+            "changed"
+        );
+        assert!(super::receipt_diff_artifact_trust(None, Some("sha256:current")).is_empty());
+    }
 }
 
 fn receipt_diff_correlation(
@@ -37162,6 +37191,10 @@ fn build_repo_receipt_diff_report(
         correlation_findings,
         Some(current_contract),
     );
+    let artifact_trust = receipt_diff_artifact_trust(
+        baseline.contract_snapshot_hash.as_deref(),
+        current.contract_snapshot_hash.as_deref(),
+    );
     let summary = ReceiptDiffSummary {
         baseline_ok: baseline.ok,
         current_ok: current.ok,
@@ -37177,6 +37210,7 @@ fn build_repo_receipt_diff_report(
                 (Some(baseline_hash), Some(current_hash)) => Some(baseline_hash != current_hash),
                 _ => None,
             },
+            artifact_trust,
             correlation: receipt_diff_correlation(
                 &contract_changes,
                 &likely_related_changes,
@@ -37198,6 +37232,33 @@ fn build_repo_receipt_diff_report(
         resolved,
         unchanged,
     })
+}
+
+// This first carrier is intentionally narrow: receipts already archive immutable semantic
+// contract snapshots, so a matching hash can acquit contract-truth drift only. It says nothing
+// about dependency, environment, runtime, or external-world input classes not yet captured.
+fn receipt_diff_artifact_trust(
+    baseline_snapshot_hash: Option<&str>,
+    current_snapshot_hash: Option<&str>,
+) -> Vec<ReceiptDiffArtifactTrust> {
+    let (Some(baseline_identity), Some(current_identity)) =
+        (baseline_snapshot_hash, current_snapshot_hash)
+    else {
+        return Vec::new();
+    };
+    vec![ReceiptDiffArtifactTrust {
+        id: String::from("semantic_contract_snapshot"),
+        kind: String::from("semantic_contract_snapshot"),
+        input_classes: vec![String::from("contract_truth")],
+        trust_role: ReceiptDiffArtifactTrustRole::Acquitting,
+        baseline_identity: baseline_identity.to_string(),
+        current_identity: current_identity.to_string(),
+        comparison: if baseline_identity == current_identity {
+            ReceiptDiffArtifactComparison::Matched
+        } else {
+            ReceiptDiffArtifactComparison::Changed
+        },
+    }]
 }
 
 fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {
@@ -53770,6 +53831,7 @@ workflows:
             &contract_path,
             "readiness",
             super::proof_runtime_status_word(summary.verdict, "readiness", false, false, false),
+            "failed",
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -53803,6 +53865,7 @@ workflows:
             Path::new("./ota.yaml"),
             "readiness",
             super::proof_runtime_status_word(summary.verdict, "readiness", false, false, false),
+            "failed",
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -53913,6 +53976,7 @@ workflows:
             Path::new("./ota.yaml"),
             "readiness",
             super::proof_runtime_status_word(summary.verdict, "readiness", false, false, false),
+            "failed",
             &summary,
             Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
             "topology.json",
@@ -55332,6 +55396,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: true,
+                proof_verdict: "passed_with_unproven_boundaries",
                 path: contract_path.to_str().unwrap(),
                 mode: "runtime-proof",
                 workflow: Some("docker-build"),
@@ -55387,6 +55452,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -55451,6 +55517,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -55598,6 +55665,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -55661,6 +55729,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -55724,6 +55793,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -55784,6 +55854,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -55847,6 +55918,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -56127,6 +56199,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
                 workflow: Some("app"),
@@ -86371,6 +86444,37 @@ workflows:
 
     #[cfg(unix)]
     #[test]
+    fn proof_runtime_child_up_is_detached_so_outer_proof_owns_teardown() {
+        let args = super::proof_runtime_up_args(ExecutionOverrides {
+            backend: Some(Backend::Native),
+            lifecycle: Some(Lifecycle::Ephemeral),
+            host_port: Some(43123),
+            memory: None,
+            skip_deps: true,
+        });
+        let args = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--detach",
+                "--mode",
+                "native",
+                "--lifecycle",
+                "ephemeral",
+                "--host-port",
+                "43123",
+                "--skip-deps",
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proof_runtime_activates_mise_paths_before_parent_re_diagnosis() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -95120,31 +95224,11 @@ fn spawn_proof_runtime_up_process(
         .map_err(|error| format!("could not prepare proof up log stream: {error}"))?;
 
     let mut command = Command::new(exe);
-    command.current_dir(working_dir).arg("up").arg("--stream");
+    command
+        .current_dir(working_dir)
+        .args(proof_runtime_up_args(overrides));
     command.envs(runtime_proof_child_env());
 
-    if let Some(backend) = overrides.backend {
-        command.arg("--mode").arg(match backend {
-            Backend::Native => "native",
-            Backend::Container => "container",
-            Backend::Remote => "remote",
-        });
-    }
-    if let Some(lifecycle) = overrides.lifecycle {
-        command.arg("--lifecycle").arg(match lifecycle {
-            Lifecycle::Persistent => "persistent",
-            Lifecycle::Ephemeral => "ephemeral",
-        });
-    }
-    if let Some(host_port) = overrides.host_port {
-        command.arg("--host-port").arg(host_port.to_string());
-    }
-    if let Some(memory) = overrides.memory {
-        command.arg("--memory").arg(memory.to_string());
-    }
-    if overrides.skip_deps {
-        command.arg("--skip-deps");
-    }
     if let Some(workflow_name) = workflow_name {
         command.arg("--workflow").arg(workflow_name);
     }
@@ -95168,7 +95252,40 @@ fn spawn_proof_runtime_up_process(
 
     command
         .spawn()
-        .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
+        .map_err(|error| format!("could not start detached `ota up` for runtime proof: {error}"))
+}
+
+// Runtime proof owns cleanup. Its child must leave the service running until the outer proof
+// has observed readiness and captured the final diagnostic state.
+fn proof_runtime_up_args(overrides: ExecutionOverrides) -> Vec<OsString> {
+    let mut args = vec![OsString::from("up"), OsString::from("--detach")];
+    if let Some(backend) = overrides.backend {
+        args.push(OsString::from("--mode"));
+        args.push(OsString::from(match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        }));
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        args.push(OsString::from("--lifecycle"));
+        args.push(OsString::from(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        }));
+    }
+    if let Some(host_port) = overrides.host_port {
+        args.push(OsString::from("--host-port"));
+        args.push(OsString::from(host_port.to_string()));
+    }
+    if let Some(memory) = overrides.memory {
+        args.push(OsString::from("--memory"));
+        args.push(OsString::from(memory.to_string()));
+    }
+    if overrides.skip_deps {
+        args.push(OsString::from("--skip-deps"));
+    }
+    args
 }
 
 fn runtime_proof_child_env() -> BTreeMap<OsString, OsString> {
@@ -95573,7 +95690,22 @@ fn proof_runtime_not_proved(
         source: String::from("proof_scope"),
         declared_by_workflows: Vec::new(),
     });
+    entries.sort_by(|left, right| {
+        proof_runtime_not_proved_order_key(left)
+            .cmp(&proof_runtime_not_proved_order_key(right))
+            .then_with(|| left.kind.cmp(&right.kind))
+    });
     entries
+}
+
+fn proof_runtime_not_proved_order_key(entry: &crate::output::ProofRuntimeNotProved) -> u8 {
+    if !entry.declared_by_workflows.is_empty() {
+        0
+    } else if entry.source == "contract_lane" {
+        1
+    } else {
+        2
+    }
 }
 
 fn proof_runtime_workflow_external_state(
@@ -95974,6 +96106,21 @@ fn proof_runtime_process_exit_failure(
         String::from(format!(
             "`{process_label}` was terminated before readiness could be observed"
         ))
+    }
+}
+
+// The verdict is emitted beside the final proof result, after readiness and boundary evaluation.
+// Parse/load failures never reach this carrier and therefore cannot masquerade as proof failure.
+fn proof_runtime_verdict(
+    ok: bool,
+    not_proved: &[crate::output::ProofRuntimeNotProved],
+) -> &'static str {
+    if !ok {
+        "failed"
+    } else if not_proved.is_empty() {
+        "passed"
+    } else {
+        "passed_with_unproven_boundaries"
     }
 }
 
@@ -97686,6 +97833,7 @@ fn render_proof_runtime_text(
     contract_path: &Path,
     phase: &str,
     status: &str,
+    proof_verdict: &str,
     summary: &DoctorSummary,
     up_process_failure: Option<&str>,
     topology_artifact: &str,
@@ -97707,6 +97855,11 @@ fn render_proof_runtime_text(
         paint_key("Mode:"),
         paint_mode_value("runtime-proof")
     ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Proof Verdict:"),
+        proof_verdict
+    ));
 
     if status == "READY" {
         stdout.push_str(&format!(
@@ -97722,7 +97875,7 @@ fn render_proof_runtime_text(
                 paint_backticked_code(&proof_runtime_command_for_repo(
                     "ota up",
                     workflow,
-                    Some("--stream"),
+                    Some("--detach"),
                     contract_path,
                 ))
             ),

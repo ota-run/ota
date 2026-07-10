@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- added terminal runtime-proof qualification: `ota proof runtime --json` now emits
+  `proof_verdict` as `passed`, `passed_with_unproven_boundaries`, or `failed`, and the text
+  surface renders the same decision so a narrow green proof is not over-read as broader repo
+  completion
+
+- added runner-derived artifact trust to receipt comparison: matching archived semantic contract
+  snapshots are now `acquitting` for the named `contract_truth` input class only, never for
+  dependency, environment, runtime, or external-world inputs that receipts did not capture. The
+  broader `acquitting` / `narrowing` / `pointer_only` model was sharpened through discovery
+  feedback from [Vinicius Pereira](https://github.com/vinimabreu).
+
 - redesigned task discovery text around closure-aware execution truth: `ota tasks` and
   `ota tasks --use` now render grouped `Human Run`, `Agent Run`, and `Agent Policy` sections;
   agent commands appear only when the full task closure is callable in agent mode, while blocked

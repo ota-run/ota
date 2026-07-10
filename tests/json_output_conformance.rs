@@ -372,6 +372,7 @@ workflows:
         fixture.path(),
     );
     assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["proof_verdict"], "passed_with_unproven_boundaries");
     assert_eq!(json["phase"], "readiness");
     assert_eq!(json["proof_scope"]["kind"], "runtime_path");
     assert_eq!(json["proof_scope"]["proof_class"], "slice_proof");
@@ -379,17 +380,17 @@ workflows:
     assert_eq!(json["proof_scope"]["task"], "setup");
     assert_eq!(
         json["not_proved"][0]["kind"],
-        "functional_runtime_not_proved"
-    );
-    assert_eq!(
-        json["not_proved"][1]["kind"],
         "external_network_path_not_proved"
     );
     assert_eq!(
-        json["not_proved"][1]["declared_by_workflows"],
+        json["not_proved"][1]["kind"],
+        "functional_runtime_not_proved"
+    );
+    assert_eq!(
+        json["not_proved"][0]["declared_by_workflows"],
         serde_json::json!(["live"])
     );
-    assert_eq!(json["not_proved"][1]["source"], "contract_lane");
+    assert_eq!(json["not_proved"][0]["source"], "contract_lane");
     assert_eq!(
         json["not_proved"][2]["kind"],
         "broader_repo_completion_not_proved"
@@ -459,6 +460,7 @@ workflows:
     );
     assert_matches_schema("proof-runtime.json", &json);
     assert_eq!(json["ok"], false);
+    assert_eq!(json["proof_verdict"], "failed");
     assert_eq!(json["failure_class"], "precondition_blocked");
     assert_eq!(json["proof_scope"]["kind"], "runtime_path");
     assert_eq!(

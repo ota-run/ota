@@ -817,6 +817,10 @@ Notes:
   `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`
 - `stage_family` is always `proof`, so CI and agents can classify this wrapper without inferring
   from proof phase names
+- `proof_verdict` is the terminal evaluation of this proof carrier: `passed` means the selected
+  runtime path passed with no declared boundary, `passed_with_unproven_boundaries` means the path
+  passed but must not be over-read beyond its published boundary, and `failed` means selected-lane
+  execution or readiness evaluation failed; parse/load failures do not enter this carrier
 - `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
@@ -890,6 +894,7 @@ Success:
   "workflow": "app",
   "phase": "readiness",
   "stage_family": "proof",
+  "proof_verdict": "passed_with_unproven_boundaries",
   "proof_scope": {
     "kind": "runtime_path",
     "proof_class": "slice_proof",
@@ -4889,6 +4894,11 @@ Current receipt diff JSON fields:
 - `summary.baseline_ok`
 - `summary.current_ok`
 - additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed`, `readiness_change`, and `contract_snapshot_changed` drift signals
+- `summary.comparison.artifact_trust[]` only for artifacts captured on both sides; each record names
+  its input class, immutable identities, comparison state, and runner-derived trust role. The
+  first shipped record is `semantic_contract_snapshot`, which is `acquitting` only for the named
+  `contract_truth` class when its identities match, never for dependency, environment, runtime,
+  or external-world inputs that the receipts did not capture
 - `summary.comparison.correlation` with an explicit advisory verdict:
   - `likely_related` when ota can correlate newly introduced blocker findings to specific semantic contract changes
   - `possibly_related` when ota cannot recover a strong direct match but the newly introduced blocker and contract drift still overlap in the same broad contract family
