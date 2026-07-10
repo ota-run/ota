@@ -218,6 +218,9 @@ fn execution_plan_json_output_matches_published_schema() {
 version: 1
 project:
   name: execution-demo
+toolchains:
+  dotnet:
+    version: "*"
 execution:
   default_context: host
   contexts:
@@ -1161,6 +1164,9 @@ fn up_dry_run_json_output_matches_published_schema() {
 version: 1
 project:
   name: up-demo
+toolchains:
+  dotnet:
+    version: "*"
 execution:
   default_context: host
   contexts:
@@ -1169,11 +1175,40 @@ execution:
 tasks:
   setup:
     context: host
-    run: echo ready
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: app
+        config_file: NuGet.Config
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: verify
+  verify:
+    intent: verification
+    run:
+      task: setup
 "#,
     );
+    fs::create_dir_all(fixture.path().join("app")).expect("create app directory");
+    fs::write(
+        fixture.path().join("app/NuGet.Config"),
+        r#"<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>"#,
+    )
+    .expect("write NuGet config");
 
-    let json = run_ota(
+    let json = run_ota_failure_stdout_json(
         &[
             "up",
             "--json",
@@ -1185,17 +1220,215 @@ tasks:
     assert_matches_schema("up.json", &json);
     assert_eq!(
         json["plan"]["dependency_steps"][0]["prepare"]["declared_hydration_provenance"]["source_posture"],
-        "explicit_sources"
+        "config_file"
     );
     assert_eq!(
         json["plan"]["dependency_steps"][0]["prepare"]["declared_hydration_provenance"]["config_file"],
         "NuGet.Config"
     );
     assert_eq!(
-        json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"]["sources"]
-            [0],
+        json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"]["source_identities"]
+            [0]["name"],
+        "nuget.org"
+    );
+    assert_eq!(
+        json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"]["source_identities"]
+            [0]["url"],
         "https://api.nuget.org/v3/index.json"
     );
+    assert_eq!(
+        json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"]["resolution"],
+        "resolved"
+    );
+}
+
+#[test]
+fn up_dry_run_json_marks_missing_dotnet_config_provenance_unavailable() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: unavailable-dotnet-provenance
+toolchains:
+  dotnet:
+    version: "*"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
+        config_file: missing/NuGet.Config
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: verify
+  verify:
+    intent: verification
+    run:
+      task: setup
+"#,
+    );
+    let json = run_ota_failure_stdout_json(
+        &[
+            "up",
+            "--json",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &json);
+    let provenance =
+        &json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"];
+    assert_eq!(provenance["resolution"], "unavailable");
+    assert!(provenance["source_identities"].as_array().is_none());
+    assert!(
+        provenance["resolution_error"]
+            .as_str()
+            .is_some_and(|message| message.contains("missing/NuGet.Config"))
+    );
+}
+
+#[test]
+fn up_dry_run_json_marks_ambient_dotnet_source_provenance_unavailable() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: ambient-dotnet-provenance
+toolchains:
+  dotnet:
+    version: "*"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: verify
+  verify:
+    intent: verification
+    run:
+      task: setup
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "up",
+            "--json",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &json);
+    let provenance =
+        &json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"];
+    assert_eq!(provenance["source_posture"], "ambient_default");
+    assert_eq!(provenance["resolution"], "unavailable");
+    assert!(provenance["source_identities"].as_array().is_none());
+    assert!(
+        provenance["resolution_error"]
+            .as_str()
+            .is_some_and(|message| message.contains("ambient"))
+    );
+}
+
+#[test]
+fn up_dry_run_json_resolves_nested_explicit_dotnet_sources_without_fabricating_names() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: nested-dotnet-provenance
+toolchains:
+  dotnet:
+    version: "*"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: dotnet_restore
+            cwd: .
+            sources:
+              - https://packages.example.test/v3/index.json
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: verify
+  verify:
+    intent: verification
+    run:
+      task: setup
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "up",
+            "--json",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &json);
+    let provenance = &json["plan"]["dependency_steps"][0]["prepare"]["steps"][0]["resolved_hydration_provenance"];
+    assert_eq!(provenance["resolution"], "resolved");
+    assert_eq!(
+        provenance["source_identities"][0]["url"],
+        "https://packages.example.test/v3/index.json"
+    );
+    assert!(provenance["source_identities"][0]["name"].is_null());
 }
 
 #[test]

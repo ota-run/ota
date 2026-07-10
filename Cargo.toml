@@ -21,6 +21,7 @@ jsonschema = { version = "0.18.3", features = ["draft202012"] }
 getrandom = "0.2.16"
 fs2 = "0.4.3"
 sha2 = "0.10.9"
+quick-xml = "0.38.3"
 
 [dev-dependencies]
 tempfile = "3.23.0"

@@ -363,7 +363,23 @@
         "sources": {
           "type": "array",
           "items": { "type": "string" }
-        }
+        },
+        "source_identities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url"],
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "resolution": {
+          "enum": ["resolved", "unavailable"]
+        },
+        "resolution_error": { "type": "string" }
       }
     },
     "taskAggregate": {

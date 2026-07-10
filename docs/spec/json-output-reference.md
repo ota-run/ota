@@ -2956,7 +2956,12 @@ Use this when a human or agent needs the selected run plan before execution:
 - when a dependency step is a structured setup lane, `plan.dependency_steps[].prepare` carries the
   same machine-readable prepare summary used by task/workflow discovery, including additive
   `declared_hydration_provenance` and `resolved_hydration_provenance` for hydration-owned source
-  posture such as `.NET restore` `config_file` and explicit `sources[]`
+  posture such as `.NET restore` `config_file` and explicit `sources[]`; the declared record is
+  contract truth, while the resolved record can add parsed `source_identities[]` with stable feed
+  `url` and, when config-backed, its declared `name`, plus `resolution: resolved|unavailable` and
+  `resolution_error` when Ota could not recover the config-backed source set honestly; an
+  `ambient_default` posture is intentionally `unavailable` until the contract declares a config
+  file or explicit source URLs
 - `plan.requirement_lines`, `plan.actions`, and `plan.notes` show what ota would check, activate,
   provision, or run
 - exit `0` means the preview is actionable; exit `1` means the preview is blocked by contract,
@@ -4362,9 +4367,12 @@ Optional fields:
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
 - `plan.dependency_steps[]`: additive selected setup/dependency-plane preview for the chosen `up`
   path; when a planned step is a structured hydration lane, `prepare.declared_hydration_provenance`
-  and `prepare.resolved_hydration_provenance` publish the selected source posture, optional
-  `config_file`, and explicit `sources[]` on the same canonical carrier instead of leaving feed or
-  source selection implicit
+  and `prepare.resolved_hydration_provenance` publish the selected source posture on the same
+  canonical carrier; the declared record preserves contract-owned `config_file` or explicit
+  `sources[]`, while the resolved record adds parsed config-backed `source_identities[]` plus
+  `resolution: resolved|unavailable` and an honest `resolution_error` when source recovery fails;
+  explicit URL overrides retain URL identity without inventing a feed name; ambient default source
+  selection remains `unavailable` because user/global NuGet configuration is not contract-owned
 - `receipt.dependency_steps`: additive executed dependency-plane provenance for task-backed phases,
   using the same `task` / `backend` / optional `context` / optional `parent_task` /
   `backend_selection_source` shape as preview `plan.dependency_steps[]`

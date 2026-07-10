@@ -114,7 +114,8 @@ use crate::output::{
     WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
     WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
+    WorkspaceStatusSummary, WorkspaceTaskHydrationProvenanceSummary,
+    WorkspaceTaskHydrationSourceIdentity, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
     WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
     execution_receipt_conflict,
 };
@@ -17650,6 +17651,7 @@ fn render_run_preview_target(
             );
             let plan = build_run_preview_plan(
                 &target.contract,
+                &target.contract_path,
                 task_name.as_str(),
                 overrides,
                 &requested_task,
@@ -17751,6 +17753,7 @@ fn render_run_preview_target(
     );
     let plan = build_run_preview_plan(
         &target.contract,
+        &target.contract_path,
         task_name.as_str(),
         overrides,
         &requested_task,
@@ -18205,6 +18208,7 @@ fn run_preview_execution_primary_blocker(
 
 fn build_run_preview_plan(
     contract: &Contract,
+    contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
     requested_task: &TaskSummary<'_>,
@@ -18273,6 +18277,7 @@ fn build_run_preview_plan(
     } else {
         plan.dependency_chain.push(task_name.to_string());
     }
+    enrich_hydration_provenance_for_run_plan(contract, contract_path, &mut plan.dependency_steps);
 
     let required_tool_names = direct_requirements
         .tools
@@ -18494,6 +18499,126 @@ fn planned_dependency_steps_for_task(
     crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
         .map(|task_plan| planned_dependency_steps_from_run_plan(contract, task_plan))
         .unwrap_or_default()
+}
+
+fn enrich_hydration_provenance_for_run_plan(
+    contract: &Contract,
+    contract_path: &Path,
+    dependency_steps: &mut [crate::output::RunPreviewDependencyStep],
+) {
+    for step in dependency_steps {
+        let Some(task) = contract.tasks.get(&step.task) else {
+            continue;
+        };
+        let Some(prepare) = step.prepare.as_mut() else {
+            continue;
+        };
+        let Some(spec) = task.prepare.as_ref() else {
+            continue;
+        };
+        enrich_hydration_provenance_for_prepare(prepare, spec, contract_path);
+    }
+}
+
+fn enrich_hydration_provenance_for_prepare(
+    prepare: &mut WorkspaceTaskPrepareSummary,
+    spec: &crate::schema::TaskPrepareSpec,
+    contract_path: &Path,
+) {
+    match spec {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            enrich_dotnet_hydration_provenance(prepare, spec, contract_path);
+        }
+        crate::schema::TaskPrepareSpec::Sequence(sequence) => {
+            for (summary, step) in prepare.steps.iter_mut().zip(&sequence.steps) {
+                enrich_hydration_provenance_for_sequence_step(summary, step, contract_path);
+            }
+        }
+        crate::schema::TaskPrepareSpec::ToolBootstrap(_) => {}
+    }
+}
+
+fn enrich_hydration_provenance_for_sequence_step(
+    prepare: &mut WorkspaceTaskPrepareSummary,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    contract_path: &Path,
+) {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            enrich_dotnet_hydration_provenance(prepare, spec, contract_path);
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => {
+            for (summary, nested_step) in prepare.steps.iter_mut().zip(&spec.steps) {
+                enrich_hydration_provenance_for_sequence_step(summary, nested_step, contract_path);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn enrich_dotnet_hydration_provenance(
+    prepare: &mut WorkspaceTaskPrepareSummary,
+    spec: &crate::schema::TaskDependencyHydrationPrepareSpec,
+    contract_path: &Path,
+) {
+    let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) = &spec.source
+    else {
+        return;
+    };
+    prepare.resolved_hydration_provenance =
+        Some(resolved_dotnet_hydration_provenance(contract_path, source));
+}
+
+fn resolved_dotnet_hydration_provenance(
+    contract_path: &Path,
+    source: &crate::schema::TaskDotnetRestoreHydrationSourceSpec,
+) -> WorkspaceTaskHydrationProvenanceSummary {
+    let (source_identities, resolution, resolution_error) = if !source.sources.is_empty() {
+        (
+            source
+                .sources
+                .iter()
+                .map(|url| WorkspaceTaskHydrationSourceIdentity {
+                    name: None,
+                    url: url.clone(),
+                })
+                .collect(),
+            Some(String::from("resolved")),
+            None,
+        )
+    } else if source.config_file.is_some() {
+        match crate::hydration_provenance::resolve_dotnet_config_sources(contract_path, source) {
+            Ok(sources) => (
+                sources
+                    .into_iter()
+                    .map(|source| WorkspaceTaskHydrationSourceIdentity {
+                        name: Some(source.name),
+                        url: source.url,
+                    })
+                    .collect(),
+                Some(String::from("resolved")),
+                None,
+            ),
+            Err(error) => (Vec::new(), Some(String::from("unavailable")), Some(error)),
+        }
+    } else {
+        (
+            Vec::new(),
+            Some(String::from("unavailable")),
+            Some(String::from(
+                "NuGet source selection is ambient; declare config_file or sources[] for replayable source provenance",
+            )),
+        )
+    };
+
+    WorkspaceTaskHydrationProvenanceSummary {
+        source_posture: source.source_posture(),
+        config_file: source.config_file.clone(),
+        sources: source.sources.clone(),
+        source_identities,
+        resolution,
+        resolution_error,
+    }
 }
 
 fn run_preview_task_execution_action(
@@ -62707,6 +62832,7 @@ tasks:
         .expect("execution plan");
         let preview_plan = super::build_run_preview_plan(
             &contract,
+            std::path::Path::new("."),
             "deploy",
             ExecutionOverrides::default(),
             &requested_task,
@@ -62785,6 +62911,7 @@ tasks:
         .expect("execution plan");
         let preview_plan = super::build_run_preview_plan(
             &contract,
+            std::path::Path::new("."),
             "web:up",
             ExecutionOverrides::default(),
             &requested_task,
@@ -104112,6 +104239,7 @@ fn build_up_preview(
         run_behavior_preference,
         &mut plan,
     );
+    enrich_hydration_provenance_for_run_plan(contract, resolved_path, &mut plan.dependency_steps);
 
     push_preview_plan_action(
         &mut plan.actions,

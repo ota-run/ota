@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- hardened first-class `.NET` restore provenance: `ota up --json` and `ota run --dry-run --json`
+  now distinguish declared `dotnet_restore` source posture from resolved execution evidence;
+  config-backed restores parse active `NuGet.Config` package sources into stable feed name/URL
+  identities; unreadable, invalid, environment-dependent, or undeclared ambient source selection
+  publishes `resolution: unavailable` with an honest error instead of repeating declared config as
+  resolved truth
+
 - Tightened runtime-proof boundaries: `ota proof runtime --json` now identifies adjacent declared
   external integration workflows as `external_network_path_not_proved`, while keeping generic
   broader-repo exclusion explicitly derived from the selected proof scope.

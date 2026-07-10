@@ -38,6 +38,7 @@ tasks:
       source:
         kind: dotnet_restore
         cwd: .
+        config_file: NuGet.Config
     requirements:
       toolchains:
         - dotnet

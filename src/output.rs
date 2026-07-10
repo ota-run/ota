@@ -4556,6 +4556,19 @@ pub struct WorkspaceTaskHydrationProvenanceSummary {
     pub config_file: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub source_identities: Vec<WorkspaceTaskHydrationSourceIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct WorkspaceTaskHydrationSourceIdentity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub url: String,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -5088,7 +5101,7 @@ fn summarize_dependency_hydration_prepare_spec(
     spec: &crate::schema::TaskDependencyHydrationPrepareSpec,
 ) -> TaskPrepareSummary<'_> {
     let mut declared_hydration_provenance = None;
-    let mut resolved_hydration_provenance = None;
+    let resolved_hydration_provenance = None;
     let (
         source_kind,
         cwd,
@@ -5327,8 +5340,7 @@ fn summarize_dependency_hydration_prepare_spec(
             config_file: source.config_file.as_deref(),
             sources: source.sources.iter().map(String::as_str).collect(),
         };
-        declared_hydration_provenance = Some(provenance.clone());
-        resolved_hydration_provenance = Some(provenance);
+        declared_hydration_provenance = Some(provenance);
     }
     TaskPrepareSummary {
         kind: "dependency_hydration",
@@ -5724,9 +5736,12 @@ pub fn summarize_task_prepare_owned(
                     source_posture: source.source_posture(),
                     config_file: source.config_file.clone(),
                     sources: source.sources.clone(),
+                    source_identities: Vec::new(),
+                    resolution: None,
+                    resolution_error: None,
                 };
                 declared_hydration_provenance = Some(provenance.clone());
-                resolved_hydration_provenance = Some(provenance);
+                resolved_hydration_provenance = None;
             }
             Some(WorkspaceTaskPrepareSummary {
                 kind: "dependency_hydration",
@@ -5875,6 +5890,9 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
                 source_posture: value.source_posture,
                 config_file: value.config_file.map(str::to_string),
                 sources: value.sources.into_iter().map(str::to_string).collect(),
+                source_identities: Vec::new(),
+                resolution: None,
+                resolution_error: None,
             }
         }),
         resolved_hydration_provenance: summary.resolved_hydration_provenance.map(|value| {
@@ -5882,6 +5900,9 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
                 source_posture: value.source_posture,
                 config_file: value.config_file.map(str::to_string),
                 sources: value.sources.into_iter().map(str::to_string).collect(),
+                source_identities: Vec::new(),
+                resolution: None,
+                resolution_error: None,
             }
         }),
         compose: summary

@@ -28,6 +28,7 @@ pub(crate) mod contract_drift;
 pub mod detector;
 pub mod doctor;
 pub(crate) mod execution;
+pub(crate) mod hydration_provenance;
 pub(crate) mod jsonc;
 pub mod output;
 pub mod parser;
