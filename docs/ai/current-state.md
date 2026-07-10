@@ -41,6 +41,15 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Recent Completed Slice
 
+- The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
+  `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal
+  verification setup task agent-callable so its declared-safe public verification closures remain
+  truthful without exposing setup in the default task inventory. Task mode rows now use stable
+  `Container`, `Native`, then `Remote` presentation, show unsupported local planes explicitly,
+  and recover native override support for container-context tasks without requiring a redundant
+  task mode branch. `ota tasks --json` now carries the same canonical per-mode truth under
+  `tasks[].use.modes[]`, while the existing `use.human` and `use.agent` remain selected-mode
+  compatibility projections.
 - `V11.11` contract-derived proof boundaries is implemented locally in Ota commit `58bd5ccc`.
 - It adds machine-readable `proof_scope` and contract-derived `not_proved` truth so a narrow green
   runtime proof cannot be read as repo-global proof.

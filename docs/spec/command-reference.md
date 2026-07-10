@@ -290,12 +290,17 @@ Current behavior:
   extra guidance
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
-- `--use` keeps the usage line but also shows command preview, safety posture, declared effects,
-  dry-run JSON, receipt follow-up guidance, plus `description` and `notes` when present
+- `--use` expands each task with human and agent run commands, closure-aware agent policy,
+  command preview, safety posture, declared effects, dry-run JSON, receipt follow-up guidance,
+  plus task description and required inputs when present; plain `ota tasks` remains the full
+  declaration view for dependencies, services, conditions, hooks, notes, and related metadata
 - `--safe` and `--unsafe` are mutually exclusive filters over the effective safe set
   (`safe_for_agent: true` plus `agent.safe_tasks`)
 - `--via <native|container>` filters to tasks runnable through the selected backend lane
 - `--all` includes orchestration tasks marked `internal: true`; those entries carry `internal: true` in JSON output
+- task JSON keeps `use.human` and `use.agent` as selected-mode compatibility projections, while
+  `use.modes[]` is the canonical human/agent mode matrix; it names supported and unavailable
+  Container/Native planes explicitly and includes Remote only when the task advertises it
 
 Text output:
 
@@ -309,12 +314,15 @@ Text output:
   body, including ordered `prepare.kind: sequence` summaries
 - each task may include `env`, `inputs`, `effects`, and `requires_services`
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
+- each task includes `Human Run`, with every advertised mode in stable `Container`, `Native`, then
+  `Remote` order; the selected lane is marked `(Default)`
+- `Container` and `Native` remain visible when unavailable, with an explicit unsupported status
+  instead of a fabricated command or silent omission
+- each task includes `Agent Run`; it prints `ota run <task> --agent` only when the full dependency
+  closure is effectively agent-callable, otherwise it names the review-required task or closure
+- each task includes `Agent Policy`, which distinguishes declared `safe_for_agent` truth from the
+  effective closure-aware decision
 - each task includes a short execution preview
-- each task keeps one canonical `Use: ota run <task>` command
-- when a task has multiple execution modes, text output adds a compact `Modes:` block with
-  mode-specific `ota run <task> --mode <mode>` commands
-- `Modes:` is rendered near the end of the task block (after notes) so mode variants stay visible
-  without displacing the canonical default run line
 
 Common operator lanes:
 
@@ -330,8 +338,8 @@ Common operator lanes:
 Agent discoverability:
 
 - `ota tasks --safe --use` is the canonical task-discovery surface before agent execution
-- use it to find the effective safe task surface, the canonical `ota run <task>` command, the
-  selected mode hints, the safety posture, and the matching dry-run / receipt follow-up commands
+- use it to find the effective safe task surface, the canonical `ota run <task> --agent` command,
+  selected mode hints, safety posture, and matching dry-run / receipt follow-up commands
 - once a task is selected from that surface, use `ota run <task> --agent` when the execution
   itself should enforce the declared agent-safe boundary
 

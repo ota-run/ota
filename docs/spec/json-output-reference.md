@@ -1855,7 +1855,36 @@ Success:
         "agent": {
           "callable": true,
           "command": "ota run test --agent"
-        }
+        },
+        "modes": [
+          {
+            "mode": "container",
+            "default": false,
+            "availability": "unavailable",
+            "reason": "not_supported_by_task",
+            "human": {
+              "callable": false,
+              "reason": "not_supported_by_task"
+            },
+            "agent": {
+              "callable": false,
+              "reason": "not_supported_by_task"
+            }
+          },
+          {
+            "mode": "native",
+            "default": true,
+            "availability": "supported",
+            "human": {
+              "callable": true,
+              "command": "ota run test"
+            },
+            "agent": {
+              "callable": true,
+              "command": "ota run test --agent"
+            }
+          }
+        ]
       },
       "kind": "command",
       "command": {
@@ -1883,10 +1912,16 @@ harness-facing agent surface built from the same closure-aware safety and refusa
 
 Each task summary now also carries a canonical `use` object:
 
-- `use.human` is the human-oriented runnable command
-- `use.agent.callable: true` plus `use.agent.command` is the canonical agent-mode invocation
-- `use.agent.callable: false` means the lane is not callable in agent mode; `reason` explains the
-  current posture without forcing consumers to scrape human text
+- `use.human` and `use.agent` remain compatibility projections for the selected default mode
+- `use.modes[]` is the canonical task-mode matrix for machine consumers; it lists `container`,
+  `native`, and when advertised `remote` in a stable order
+- every `use.modes[]` entry carries `default`, `availability`, and separate human/agent callable
+  truth, including the exact command when callable
+- unavailable local planes remain explicit with `availability: "unavailable"` and
+  `reason: "not_supported_by_task"`; this describes contract support, not current machine
+  readiness, which remains the responsibility of `ota doctor` and `ota run --dry-run`
+- `use.modes[].agent.callable: false` with `reason: "not_safe"` means the mode is declared but
+  its full task closure is not agent-callable, without forcing consumers to scrape human text
 
 Each task capability entry carries:
 

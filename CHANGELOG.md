@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- redesigned task discovery text around closure-aware execution truth: `ota tasks` and
+  `ota tasks --use` now render grouped `Human Run`, `Agent Run`, and `Agent Policy` sections;
+  agent commands appear only when the full task closure is callable in agent mode, while blocked
+  lanes name the review-required dependency closure instead of making `safe_for_agent: true` look
+  executable by itself; Human and Agent mode lists now keep stable `Container`, `Native`, then
+  `Remote` display order and mark the selected lane as `(Default)`, while explicitly marking
+  unavailable Container or Native task planes instead of silently omitting them
+- widened `ota tasks --json` with canonical `use.modes[]` task-mode truth: each Container,
+  Native, and advertised Remote mode now publishes selected/default status, contract support,
+  and separate human/agent callable commands or explicit refusal/unavailability reasons, while
+  preserving `use.human` and `use.agent` as compatibility projections of the selected mode
+
 - hardened first-class `.NET` restore provenance: `ota up --json` and `ota run --dry-run --json`
   now distinguish declared `dotnet_restore` source posture from resolved execution evidence;
   config-backed restores parse active `NuGet.Config` package sources into stable feed name/URL

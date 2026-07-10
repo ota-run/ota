@@ -55,7 +55,7 @@
         }
       }
     },
-    "agentLaneUseSummary": {
+    "laneUseInvocationSummary": {
       "type": "object",
       "additionalProperties": false,
       "required": ["callable"],
@@ -65,13 +65,33 @@
         "reason": { "type": "string" }
       }
     },
+    "laneUseModeAvailability": {
+      "enum": ["supported", "unavailable"]
+    },
+    "laneUseModeSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "default", "availability", "human", "agent"],
+      "properties": {
+        "mode": { "enum": ["container", "native", "remote"] },
+        "default": { "type": "boolean" },
+        "availability": { "$ref": "#/$defs/laneUseModeAvailability" },
+        "reason": { "type": "string" },
+        "human": { "$ref": "#/$defs/laneUseInvocationSummary" },
+        "agent": { "$ref": "#/$defs/laneUseInvocationSummary" }
+      }
+    },
     "laneUseSummary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["human", "agent"],
+      "required": ["human", "agent", "modes"],
       "properties": {
         "human": { "type": "string" },
-        "agent": { "$ref": "#/$defs/agentLaneUseSummary" }
+        "agent": { "$ref": "#/$defs/laneUseInvocationSummary" },
+        "modes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/laneUseModeSummary" }
+        }
       }
     },
     "taskLaunchVolume": {

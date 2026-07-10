@@ -670,10 +670,15 @@ ota run test --mode container --lifecycle persistent
 ota run test --mode container --ephemeral
 ```
 
-Use `ota tasks --use` to see the exact runnable task surface for the current contract, including
-the explicit `Humans` and `Agents` commands, command preview, effective default mode, alternate
-`--mode ...` invocations, safety posture, effect surface, and the matching dry-run / receipt
-follow-up commands:
+Use `ota tasks --use` to see the exact runnable task surface for the current contract. Each task
+shows its `Human Run` commands, `Agent Run` commands only when the full dependency closure is
+agent-callable, the closure-aware `Agent Policy`, and modes in stable `Container`, `Native`, then
+`Remote` order with the selected lane marked `(Default)`, plus command preview, effect surface,
+required inputs, and matching dry-run / receipt follow-up commands. Use plain `ota tasks` for the
+full declaration view, including dependencies, hooks, and notes. Unsupported Container or Native
+planes are marked explicitly instead of being silently omitted. Automation should consume
+`ota tasks --json` and use `tasks[].use.modes[]` as the canonical human/agent mode matrix;
+`use.human` and `use.agent` remain selected-mode compatibility projections:
 
 ```bash
 ota tasks --use

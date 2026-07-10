@@ -13539,7 +13539,7 @@ fn task_supports_backend(
     }
 
     backend == crate::schema::Backend::Native
-        && task.mode_default_backend() == Some(crate::schema::Backend::Container)
+        && task.workflow_backend(contract.execution.as_ref()) == crate::schema::Backend::Container
         && task
             .mode_execution_branch(crate::schema::Backend::Native)
             .is_none()
@@ -42067,24 +42067,18 @@ fn render_tasks_text(
 
     for task in tasks {
         let command_preview = render_task_command_preview(task);
-        let mode_commands = render_task_mode_commands(task);
         let effects = render_task_effects_text(&task.effects);
         let mode_branches = render_task_mode_branches_filtered(task, false);
 
         output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
         push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Default Mode:"),
-            render_task_default_mode(task)
-        ));
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
-        push_lane_use_fields(&mut output, &task.usage);
+        push_task_run_fields(&mut output, task);
         push_rendered_field(
             &mut output,
-            "Command Preview:",
+            "Preview:",
             render_non_placeholder(&command_preview),
         );
         if !task.inputs.is_empty() {
@@ -42122,20 +42116,6 @@ fn render_tasks_text(
                 render_task_action_text(action)
             ));
         }
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Safe For Agent:"),
-            if task.safe_for_agent { "true" } else { "false" }
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Effective Safe For Agent:"),
-            if task.effective_safe_for_agent {
-                "true"
-            } else {
-                "false"
-            }
-        ));
         push_rendered_field(&mut output, "Effects:", render_non_placeholder(&effects));
         push_rendered_field(
             &mut output,
@@ -42147,12 +42127,6 @@ fn render_tasks_text(
             "Mode Branches:",
             render_non_placeholder(&mode_branches),
         );
-        if !mode_commands.is_empty() {
-            output.push_str(&format!("\n  {}", paint_key("Runnable Modes:")));
-            for line in &mode_commands {
-                output.push_str(&format!("\n    {line}"));
-            }
-        }
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
@@ -42527,24 +42501,6 @@ fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSumm
 
 fn render_task_aggregate_text(aggregate: &crate::output::TaskAggregateSummary) -> String {
     format!("aggregate: {}", aggregate.tasks.join(", "))
-}
-
-fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
-    let runnable_modes = run_preview_runnable_modes(task);
-    if runnable_modes.len() <= 1 {
-        return Vec::new();
-    }
-
-    runnable_modes
-        .into_iter()
-        .map(|entry| {
-            if entry.default {
-                format!("default ({}): `{}`", entry.mode, paint_code(&entry.command))
-            } else {
-                format!("{}: `{}`", entry.mode, paint_code(&entry.command))
-            }
-        })
-        .collect()
 }
 
 fn run_preview_runnable_modes(
@@ -44381,18 +44337,16 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         let safety_posture = render_task_safety_posture_text(task);
         output.push_str(&format!("\n\n{} {}", info_bullet(), paint(task.name, "1")));
         push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Default Mode:"),
-            render_task_default_mode(task)
-        ));
-        push_lane_use_fields(&mut output, &task.usage);
+        if let Some(description) = task.description {
+            output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
+        }
+        push_task_run_fields(&mut output, task);
         push_rendered_field(
             &mut output,
-            "Command Preview:",
+            "Preview:",
             render_non_placeholder(&command_preview),
         );
-        let mode_commands = render_task_mode_commands(task);
+        output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
         if task.launch.is_some() {
             output.push_str(&format!(
                 "\n  {} {}",
@@ -44407,27 +44361,11 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 render_task_prepare_text(prepare)
             ));
         }
-        if !mode_commands.is_empty() {
-            push_rendered_field(
-                &mut output,
-                "Mode Branches:",
-                render_non_placeholder(&mode_branches),
-            );
-        }
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Safe For Agent:"),
-            if task.safe_for_agent { "true" } else { "false" }
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Effective Safe For Agent:"),
-            if task.effective_safe_for_agent {
-                "true"
-            } else {
-                "false"
-            }
-        ));
+        push_rendered_field(
+            &mut output,
+            "Mode Branches:",
+            render_non_placeholder(&mode_branches),
+        );
         push_rendered_field(&mut output, "Safety Posture:", Some(safety_posture));
         push_rendered_field(
             &mut output,
@@ -44438,25 +44376,9 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
-        if let Some(description) = task.description {
-            output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
-        }
         if !task.inputs.is_empty() {
             output.push_str(&format!("\n  {}", paint_key("Inputs")));
             output.push_str(&render_task_inputs_compact(&task.inputs));
-        }
-        if let Some(notes) = task.notes {
-            output.push_str(&format!(
-                "\n  {} {}",
-                paint_key("Notes:"),
-                render_multiline_field(notes)
-            ));
-        }
-        if !mode_commands.is_empty() {
-            output.push_str(&format!("\n  {}", paint_key("Runnable Modes:")));
-            for command in &mode_commands {
-                output.push_str(&format!("\n    {command}"));
-            }
         }
         output.push_str(&format!(
             "\n  {} `{}`",
@@ -44694,6 +44616,90 @@ fn render_multiline_field(value: &str) -> String {
         output.push_str(line);
     }
     output
+}
+
+fn render_task_run_mode(entry: &crate::output::LaneUseModeSummary, agent: bool) -> String {
+    let mode = entry.mode.as_str();
+    let mode_label = match mode {
+        "container" => "Container",
+        "native" => "Native",
+        "remote" => "Remote",
+        other => other,
+    };
+    if entry.availability == crate::output::LaneUseModeAvailability::Unavailable {
+        return format!("{mode_label}: unavailable: not supported by this task");
+    }
+
+    let label = if entry.default {
+        format!("{mode_label} (Default)")
+    } else {
+        mode_label.to_string()
+    };
+    let invocation = if agent { &entry.agent } else { &entry.human };
+    match invocation.command.as_deref() {
+        Some(command) => format!("{label}: `{}`", paint_code(command)),
+        None => format!("{label}: unavailable: not callable in agent mode"),
+    }
+}
+
+fn render_task_run_modes(task: &TaskSummary<'_>, agent: bool) -> Vec<String> {
+    task.usage
+        .modes
+        .iter()
+        .map(|entry| render_task_run_mode(entry, agent))
+        .collect()
+}
+
+fn render_agent_run_unavailable(task: &TaskSummary<'_>) -> String {
+    if !task.unsafe_closure_tasks.is_empty() {
+        let blockers = task
+            .unsafe_closure_tasks
+            .iter()
+            .map(|task| format!("`{task}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let verb = if task.unsafe_closure_tasks.len() == 1 {
+            "is"
+        } else {
+            "are"
+        };
+        return format!(
+            "unavailable: dependency closure includes {blockers}, which {verb} not agent-callable"
+        );
+    }
+
+    String::from("unavailable: task requires review before agent execution")
+}
+
+fn render_task_agent_policy(task: &TaskSummary<'_>) -> &'static str {
+    match (task.safe_for_agent, task.effective_safe_for_agent) {
+        (true, true) => "declared safe; full dependency closure is agent-callable",
+        (true, false) => "declared safe, but the dependency closure requires review",
+        (false, true) => "allowed by the contract agent-safe task policy",
+        (false, false) => "not declared safe; review required before agent execution",
+    }
+}
+
+fn push_task_run_fields(output: &mut String, task: &TaskSummary<'_>) {
+    output.push_str(&format!("\n  {}", paint_key("Human Run:")));
+    for line in render_task_run_modes(task, false) {
+        output.push_str(&format!("\n    {line}"));
+    }
+
+    output.push_str(&format!("\n  {}", paint_key("Agent Run:")));
+    if task.usage.agent.callable {
+        for line in render_task_run_modes(task, true) {
+            output.push_str(&format!("\n    {line}"));
+        }
+    } else {
+        output.push_str(&format!("\n    {}", render_agent_run_unavailable(task)));
+    }
+
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Agent Policy:"),
+        render_task_agent_policy(task)
+    ));
 }
 
 fn render_agent_lane_use_text(agent: &crate::output::AgentLaneUseSummary) -> String {
@@ -56284,6 +56290,16 @@ tasks:
         effective_safe_for_agent: bool,
         inputs: &BTreeMap<String, TaskInputSpec>,
     ) -> crate::output::LaneUseSummary {
+        test_task_usage_with_modes(name, effective_safe_for_agent, inputs, "native", &[])
+    }
+
+    fn test_task_usage_with_modes(
+        name: &str,
+        effective_safe_for_agent: bool,
+        inputs: &BTreeMap<String, TaskInputSpec>,
+        default_mode: &str,
+        supported_modes: &[&str],
+    ) -> crate::output::LaneUseSummary {
         let mut human = format!("ota run {name}");
         for (input_name, spec) in inputs {
             human.push(' ');
@@ -56319,7 +56335,82 @@ tasks:
                 reason: Some(String::from("not_safe")),
             }
         };
-        crate::output::LaneUseSummary { human, agent }
+        let displayed_modes = ["container", "native"];
+        let modes = displayed_modes
+            .into_iter()
+            .map(|mode| {
+                let supported = mode == default_mode || supported_modes.contains(&mode);
+                let mode_command = |agent: bool| {
+                    let mut command = format!("ota run {name}");
+                    if mode != default_mode {
+                        command.push(' ');
+                        command.push_str(match mode {
+                            "container" => "--container",
+                            "native" => "--native",
+                            _ => unreachable!("test only uses local modes"),
+                        });
+                    }
+                    if agent {
+                        command.push_str(" --agent");
+                    }
+                    for (input_name, spec) in inputs {
+                        command.push(' ');
+                        command.push_str(&format!("--{}", input_name.replace('_', "-")));
+                        command.push(' ');
+                        command.push_str(&if spec.allowed.is_empty() {
+                            String::from("<value>")
+                        } else {
+                            format!("<{}>", spec.allowed.join("|"))
+                        });
+                    }
+                    command
+                };
+                let unavailable = || crate::output::AgentLaneUseSummary {
+                    callable: false,
+                    command: None,
+                    reason: Some(String::from("not_supported_by_task")),
+                };
+                crate::output::LaneUseModeSummary {
+                    mode: mode.to_string(),
+                    default: mode == default_mode,
+                    availability: if supported {
+                        crate::output::LaneUseModeAvailability::Supported
+                    } else {
+                        crate::output::LaneUseModeAvailability::Unavailable
+                    },
+                    reason: (!supported).then(|| String::from("not_supported_by_task")),
+                    human: if supported {
+                        crate::output::AgentLaneUseSummary {
+                            callable: true,
+                            command: Some(mode_command(false)),
+                            reason: None,
+                        }
+                    } else {
+                        unavailable()
+                    },
+                    agent: if supported && effective_safe_for_agent {
+                        crate::output::AgentLaneUseSummary {
+                            callable: true,
+                            command: Some(mode_command(true)),
+                            reason: None,
+                        }
+                    } else if supported {
+                        crate::output::AgentLaneUseSummary {
+                            callable: false,
+                            command: None,
+                            reason: Some(String::from("not_safe")),
+                        }
+                    } else {
+                        unavailable()
+                    },
+                }
+            })
+            .collect();
+        crate::output::LaneUseSummary {
+            human,
+            agent,
+            modes,
+        }
     }
 
     fn test_workflow_usage(
@@ -56345,6 +56436,7 @@ tasks:
                     reason: Some(String::from("unknown")),
                 },
             },
+            modes: Vec::new(),
         }
     }
 
@@ -56481,7 +56573,7 @@ tasks:
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
             when_checks: Vec::new(),
-            after_success: Vec::new(),
+            after_success: vec![String::from("discoverability:check")],
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: true,
@@ -56496,22 +56588,26 @@ tasks:
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
 
         assert!(
-            rendered.contains("Command Preview: ./scripts/api/run-api-tests.sh"),
+            rendered.contains("Preview: ./scripts/api/run-api-tests.sh"),
             "{rendered}"
         );
         assert!(
             rendered.contains(
-                "Humans: `ota run api:automation:tests --base-url <value> --mode <standard|chaos>`"
+                "Human Run:\n    Container: unavailable: not supported by this task\n    Native (Default): `ota run api:automation:tests --base-url <value> --mode <standard|chaos>`"
             ),
             "{rendered}"
         );
         assert!(
             rendered.contains(
-                "Agents: `ota run api:automation:tests --agent --base-url <value> --mode <standard|chaos>`"
+                "Agent Run:\n    Container: unavailable: not supported by this task\n    Native (Default): `ota run api:automation:tests --agent --base-url <value> --mode <standard|chaos>`"
             ),
             "{rendered}"
         );
-        assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
+        assert!(
+            rendered
+                .contains("Agent Policy: declared safe; full dependency closure is agent-callable"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("Safety Posture: agent-safe routine repo-scoped lane"),
             "{rendered}"
@@ -56540,13 +56636,19 @@ tasks:
     }
 
     #[test]
-    fn render_tasks_use_text_surfaces_safety_effects_and_mode_branches() {
+    fn render_tasks_use_text_surfaces_agent_mode_commands() {
         let task = TaskSummary {
             name: "verify:live",
             context: Some("tooling"),
             default_mode: None,
             effective_default_mode: "container",
-            usage: test_task_usage("verify:live", false, &BTreeMap::new()),
+            usage: test_task_usage_with_modes(
+                "verify:live",
+                true,
+                &BTreeMap::new(),
+                "container",
+                &["native"],
+            ),
             description: Some("Run the live verification lane"),
             notes: None,
             category: None,
@@ -56569,14 +56671,7 @@ tasks:
             action: None,
             prepare: None,
             aggregate: None,
-            effects: crate::output::TaskEffectsSummary {
-                writes: Vec::new(),
-                workspace_writes: Vec::new(),
-                network: true,
-                network_kind: Some(crate::schema::TaskNetworkEffectKind::IntegrationTest),
-                adapter_state: Vec::new(),
-                external_state: vec![String::from("staging_api")],
-            },
+            effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
@@ -56584,8 +56679,8 @@ tasks:
             after_success: Vec::new(),
             after_failure: Vec::new(),
             after_always: Vec::new(),
-            safe_for_agent: false,
-            effective_safe_for_agent: false,
+            safe_for_agent: true,
+            effective_safe_for_agent: true,
             unsafe_closure_tasks: Vec::new(),
             internal: false,
             variants: Vec::new(),
@@ -56610,35 +56705,22 @@ tasks:
 
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
 
-        assert!(
-            rendered.contains("Command Preview: pnpm test:live"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("Humans: `ota run verify:live`"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("Agents: not callable in agent mode"),
-            "{rendered}"
-        );
-        assert!(rendered.contains("Safe For Agent: false"), "{rendered}");
-        assert!(
-            rendered.contains("Effective Safe For Agent: false"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("Preview: pnpm test:live"), "{rendered}");
         assert!(
             rendered.contains(
-                "Safety Posture: review-required lane with live or staging integration test; external state `staging_api`"
+                "Human Run:\n    Container (Default): `ota run verify:live`\n    Native: `ota run verify:live --native`"
             ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("Effects: network=integration_test; external_state=staging_api"),
+            rendered.contains(
+                "Agent Run:\n    Container (Default): `ota run verify:live --agent`\n    Native: `ota run verify:live --native --agent`"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("Runnable Modes:\n    default (container): `ota run verify:live`\n    native: `ota run verify:live --mode native`"),
+            rendered
+                .contains("Agent Policy: declared safe; full dependency closure is agent-callable"),
             "{rendered}"
         );
     }
@@ -56650,7 +56732,13 @@ tasks:
             context: Some("host"),
             default_mode: None,
             effective_default_mode: "native",
-            usage: test_task_usage("verify", false, &BTreeMap::new()),
+            usage: test_task_usage_with_modes(
+                "verify",
+                false,
+                &BTreeMap::new(),
+                "native",
+                &["container"],
+            ),
             description: Some("Run the verification entrypoint"),
             notes: None,
             category: Some("test"),
@@ -56686,20 +56774,43 @@ tasks:
             unsafe_closure_tasks: vec![String::from("setup")],
             internal: false,
             variants: Vec::new(),
-            modes: Vec::new(),
+            modes: vec![crate::output::TaskModeView {
+                mode: "container",
+                context: Some("host"),
+                depends_on: Vec::new(),
+                env_files: Vec::new(),
+                adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+                lifecycle: None,
+                kind: Some("command"),
+                run: None,
+                script: None,
+                command: None,
+                compose: None,
+                launch: None,
+                prepare: None,
+                has_runtime: false,
+            }],
             supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
 
-        assert!(rendered.contains("Safe For Agent: true"), "{rendered}");
-        assert!(rendered.contains("Humans: `ota run verify`"), "{rendered}");
         assert!(
-            rendered.contains("Agents: not callable in agent mode"),
+            rendered.contains(
+                "Human Run:\n    Container: `ota run verify --container`\n    Native (Default): `ota run verify`"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("Effective Safe For Agent: false"),
+            rendered.contains(
+                "Agent Run:\n    unavailable: dependency closure includes `setup`, which is not agent-callable"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Agent Policy: declared safe, but the dependency closure requires review"
+            ),
             "{rendered}"
         );
         assert!(rendered.contains("Closure Blockers: setup"), "{rendered}");
@@ -58056,7 +58167,19 @@ tasks:
 
         assert!(
             rendered.contains(
-                "Command Preview: docker compose exec -T -w /workspace api bundle exec rails db:migrate"
+                "Human Run:\n    Container: unavailable: not supported by this task\n    Native (Default): `ota run db:migrate`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Agent Run:\n    unavailable: task requires review before agent execution"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Preview: docker compose exec -T -w /workspace api bundle exec rails db:migrate"
             ),
             "{rendered}"
         );

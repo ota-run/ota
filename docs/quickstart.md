@@ -82,8 +82,15 @@ ota tasks --via native
 ota tasks --via container
 ```
 
-Use `--safe`/`--unsafe` to split by effective agent-safe status, and `--via` to filter by execution
-backend lane.
+Use `--safe`/`--unsafe` to split by effective closure-aware agent safety, and `--via` to filter by
+execution backend lane. `ota tasks --use` shows `Agent Run` commands only for effective
+agent-callable closures; a declared-safe task with a review-required dependency is shown as
+unavailable with the blocking closure named explicitly. Human and agent mode lists keep stable
+`Container`, `Native`, then `Remote` order and mark the selected lane as `(Default)`; unavailable
+Container or Native planes are called out instead of being silently omitted.
+For automation, use `ota tasks --json` and read `tasks[].use.modes[]` for the canonical per-mode
+human and agent commands; the existing `use.human` and `use.agent` fields remain compatibility
+projections of the selected default mode.
 
 If you want repo-local agent guidance from the same contract after the core loop is working, use:
 

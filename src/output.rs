@@ -3855,17 +3855,43 @@ pub struct TaskAggregateSummary {
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct LaneUseSummary {
+    /// Compatibility projection for the selected human execution mode.
     pub human: String,
-    pub agent: AgentLaneUseSummary,
+    /// Compatibility projection for the selected agent execution mode.
+    pub agent: LaneUseInvocationSummary,
+    /// Canonical task execution-mode matrix. Workflows currently leave this empty because their
+    /// mode selection is owned by the selected task path rather than the workflow declaration.
+    pub modes: Vec<LaneUseModeSummary>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
-pub struct AgentLaneUseSummary {
+pub struct LaneUseInvocationSummary {
     pub callable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// Backward-compatible Rust name for the selected agent invocation projection.
+pub type AgentLaneUseSummary = LaneUseInvocationSummary;
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct LaneUseModeSummary {
+    pub mode: String,
+    pub default: bool,
+    pub availability: LaneUseModeAvailability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub human: LaneUseInvocationSummary,
+    pub agent: LaneUseInvocationSummary,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LaneUseModeAvailability {
+    Supported,
+    Unavailable,
 }
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
@@ -3992,12 +4018,71 @@ impl<'a> TaskSummary<'a> {
             effective_task_execution_preview(contract, name, task, selected_backend, current_os);
         let launch_preview =
             effective_task_launch_preview(contract, name, task, selected_backend, current_os);
+        let modes: Vec<TaskModeView<'a>> = task
+            .execution
+            .as_ref()
+            .map(|execution| {
+                execution
+                    .modes
+                    .iter()
+                    .map(|(backend, branch)| {
+                        let branch_effective = effective_task_execution(
+                            contract,
+                            name,
+                            ExecutionOverrides {
+                                backend: Some(backend),
+                                lifecycle: None,
+                                host_port: None,
+                                memory: None,
+                                skip_deps: false,
+                            },
+                        );
+                        let branch_execution = branch.execution();
+                        TaskModeView {
+                            mode: task_mode_name(backend),
+                            context: branch_effective.context_name,
+                            depends_on: branch
+                                .depends_on
+                                .clone()
+                                .unwrap_or_else(|| task.depends_on.clone()),
+                            env_files: branch.env_files.iter().map(String::as_str).collect(),
+                            adapter_inputs: summarize_task_adapter_inputs(&branch.adapter_inputs),
+                            lifecycle: branch.lifecycle.map(format_lifecycle),
+                            kind: branch_execution.map(|execution| execution.kind),
+                            run: branch.run.as_deref(),
+                            script: branch.script.as_deref(),
+                            command: summarize_task_command(branch.command.as_ref()),
+                            compose: summarize_task_compose(branch.compose.as_ref()),
+                            launch: branch
+                                .launch
+                                .as_ref()
+                                .and_then(|launch| summarize_task_launch(Some(launch))),
+                            prepare: summarize_task_prepare(branch.prepare.as_ref()),
+                            has_runtime: branch.runtime.is_some(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let supports_native_mode_override = task.workflow_backend(contract.execution.as_ref())
+            == crate::schema::Backend::Container
+            && task
+                .mode_execution_branch(crate::schema::Backend::Native)
+                .is_none()
+            && task.resolved_execution(current_os).is_some();
         Self {
             name,
             context: effective.context_name,
             default_mode: task.mode_default_backend().map(task_mode_name),
             effective_default_mode: task_mode_name(selected_backend),
-            usage: task_lane_use_summary(name, &inputs, task_safety.effective_safe),
+            usage: task_lane_use_summary(
+                name,
+                &inputs,
+                task_safety.effective_safe,
+                task_mode_name(selected_backend),
+                &modes,
+                supports_native_mode_override,
+            ),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
@@ -4061,60 +4146,8 @@ impl<'a> TaskSummary<'a> {
                     adapter_inputs: summarize_task_adapter_inputs(&variant.adapter_inputs),
                 })
                 .collect(),
-            modes: task
-                .execution
-                .as_ref()
-                .map(|execution| {
-                    execution
-                        .modes
-                        .iter()
-                        .map(|(backend, branch)| {
-                            let branch_effective = effective_task_execution(
-                                contract,
-                                name,
-                                ExecutionOverrides {
-                                    backend: Some(backend),
-                                    lifecycle: None,
-                                    host_port: None,
-                                    memory: None,
-                                    skip_deps: false,
-                                },
-                            );
-                            let branch_execution = branch.execution();
-                            TaskModeView {
-                                mode: task_mode_name(backend),
-                                context: branch_effective.context_name,
-                                depends_on: branch
-                                    .depends_on
-                                    .clone()
-                                    .unwrap_or_else(|| task.depends_on.clone()),
-                                env_files: branch.env_files.iter().map(String::as_str).collect(),
-                                adapter_inputs: summarize_task_adapter_inputs(
-                                    &branch.adapter_inputs,
-                                ),
-                                lifecycle: branch.lifecycle.map(format_lifecycle),
-                                kind: branch_execution.map(|execution| execution.kind),
-                                run: branch.run.as_deref(),
-                                script: branch.script.as_deref(),
-                                command: summarize_task_command(branch.command.as_ref()),
-                                compose: summarize_task_compose(branch.compose.as_ref()),
-                                launch: branch
-                                    .launch
-                                    .as_ref()
-                                    .and_then(|launch| summarize_task_launch(Some(launch))),
-                                prepare: summarize_task_prepare(branch.prepare.as_ref()),
-                                has_runtime: branch.runtime.is_some(),
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            supports_native_mode_override: task.mode_default_backend()
-                == Some(crate::schema::Backend::Container)
-                && task
-                    .mode_execution_branch(crate::schema::Backend::Native)
-                    .is_none()
-                && task.resolved_execution(current_os).is_some(),
+            modes,
+            supports_native_mode_override,
         }
     }
 
@@ -4152,6 +4185,9 @@ fn task_lane_use_summary(
     task_name: &str,
     inputs: &BTreeMap<String, TaskInputSpec>,
     effective_safe_for_agent: bool,
+    default_mode: &str,
+    modes: &[TaskModeView<'_>],
+    supports_native_mode_override: bool,
 ) -> LaneUseSummary {
     let mut human = format!("ota run {task_name}");
     append_task_input_placeholders(&mut human, inputs);
@@ -4172,7 +4208,79 @@ fn task_lane_use_summary(
         }
     };
 
-    LaneUseSummary { human, agent }
+    let mut displayed_modes = vec!["container", "native"];
+    if default_mode == "remote" || modes.iter().any(|mode| mode.mode == "remote") {
+        displayed_modes.push("remote");
+    }
+
+    let mode_summary = |mode: &str| {
+        let supported = mode == default_mode
+            || modes.iter().any(|entry| entry.mode == mode)
+            || (mode == "native" && supports_native_mode_override);
+        let mut mode_human = format!("ota run {task_name}");
+        let mut mode_agent = format!("ota run {task_name}");
+        if mode != default_mode {
+            let flag = match mode {
+                "native" => "--native",
+                "container" => "--container",
+                "remote" => "--remote",
+                _ => "--mode",
+            };
+            mode_human.push(' ');
+            mode_human.push_str(flag);
+            mode_agent.push(' ');
+            mode_agent.push_str(flag);
+        }
+        mode_agent.push_str(" --agent");
+        append_task_input_placeholders(&mut mode_human, inputs);
+        append_task_input_placeholders(&mut mode_agent, inputs);
+
+        let unavailable = || AgentLaneUseSummary {
+            callable: false,
+            command: None,
+            reason: Some(String::from("not_supported_by_task")),
+        };
+        LaneUseModeSummary {
+            mode: mode.to_string(),
+            default: mode == default_mode,
+            availability: if supported {
+                LaneUseModeAvailability::Supported
+            } else {
+                LaneUseModeAvailability::Unavailable
+            },
+            reason: (!supported).then(|| String::from("not_supported_by_task")),
+            human: if supported {
+                AgentLaneUseSummary {
+                    callable: true,
+                    command: Some(mode_human),
+                    reason: None,
+                }
+            } else {
+                unavailable()
+            },
+            agent: if supported && effective_safe_for_agent {
+                AgentLaneUseSummary {
+                    callable: true,
+                    command: Some(mode_agent),
+                    reason: None,
+                }
+            } else if supported {
+                AgentLaneUseSummary {
+                    callable: false,
+                    command: None,
+                    reason: Some(String::from("not_safe")),
+                }
+            } else {
+                unavailable()
+            },
+        }
+    };
+
+    LaneUseSummary {
+        human,
+        agent,
+        modes: displayed_modes.into_iter().map(mode_summary).collect(),
+    }
 }
 
 fn workflow_lane_use_summary(
@@ -4198,6 +4306,7 @@ fn workflow_lane_use_summary(
                 reason: Some(String::from("unknown")),
             },
         },
+        modes: Vec::new(),
     }
 }
 
@@ -6177,6 +6286,74 @@ tasks:
         assert_eq!(compose.kind, "exec");
         assert_eq!(compose.service, Some("api"));
         assert!(compose.detach);
+    }
+
+    #[test]
+    fn task_summary_exposes_native_override_for_container_context_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    verify:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  build:
+    context: verify
+    safe_for_agent: true
+    command:
+      exe: npm
+      args:
+        - run
+        - build
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "build",
+            contract.tasks.get("build").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.effective_default_mode, "container");
+        assert!(summary.supports_native_mode_override);
+        assert_eq!(summary.usage.modes.len(), 2);
+
+        let container = &summary.usage.modes[0];
+        assert_eq!(container.mode, "container");
+        assert!(container.default);
+        assert_eq!(
+            container.availability,
+            super::LaneUseModeAvailability::Supported
+        );
+        assert_eq!(container.human.command.as_deref(), Some("ota run build"));
+        assert_eq!(
+            container.agent.command.as_deref(),
+            Some("ota run build --agent")
+        );
+
+        let native = &summary.usage.modes[1];
+        assert_eq!(native.mode, "native");
+        assert!(!native.default);
+        assert_eq!(
+            native.availability,
+            super::LaneUseModeAvailability::Supported
+        );
+        assert_eq!(
+            native.human.command.as_deref(),
+            Some("ota run build --native")
+        );
+        assert_eq!(
+            native.agent.command.as_deref(),
+            Some("ota run build --native --agent")
+        );
     }
 
     #[test]

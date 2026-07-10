@@ -42,7 +42,8 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let sandbox_destination_constraint =
         &schema["$defs"]["harnessSandboxDestinationConstraint"]["properties"];
     let lane_use = &schema["$defs"]["laneUseSummary"]["properties"];
-    let agent_lane_use = &schema["$defs"]["agentLaneUseSummary"]["properties"];
+    let lane_use_invocation = &schema["$defs"]["laneUseInvocationSummary"]["properties"];
+    let lane_use_mode = &schema["$defs"]["laneUseModeSummary"]["properties"];
     let workflow_properties = &schema["$defs"]["workflowSummary"]["properties"];
     let task_command = &schema["$defs"]["taskCommand"]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
@@ -85,9 +86,15 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(sandbox_destination_constraint.get("shared_pin").is_some());
     assert!(lane_use.get("human").is_some());
     assert!(lane_use.get("agent").is_some());
-    assert!(agent_lane_use.get("callable").is_some());
-    assert!(agent_lane_use.get("command").is_some());
-    assert!(agent_lane_use.get("reason").is_some());
+    assert!(lane_use.get("modes").is_some());
+    assert!(lane_use_mode.get("mode").is_some());
+    assert!(lane_use_mode.get("default").is_some());
+    assert!(lane_use_mode.get("availability").is_some());
+    assert!(lane_use_mode.get("human").is_some());
+    assert!(lane_use_mode.get("agent").is_some());
+    assert!(lane_use_invocation.get("callable").is_some());
+    assert!(lane_use_invocation.get("command").is_some());
+    assert!(lane_use_invocation.get("reason").is_some());
     assert!(workflow_properties.get("use").is_some());
     assert!(workflow_properties.get("run_task_launch").is_some());
     assert!(workflow_properties.get("notes").is_some());
