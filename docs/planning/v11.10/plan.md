@@ -24,7 +24,8 @@
 
 # V11.10 Plan
 
-Status: planned follow-on trust slice.
+Status: active implementation slice. The first receipt-authoring cut captures declared
+lockfile-strict pnpm dependency identity; broader replay posture remains planned.
 
 Release target:
 

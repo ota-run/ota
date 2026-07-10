@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added receipt-authored immutable dependency input identity for typed lockfile-strict pnpm
+  hydration: selected task and workflow receipts now capture `pnpm-lock.yaml` as an
+  `evaluated_inputs[]` SHA-256 record at authoring time, and receipt comparison reports a matching
+  or changed lockfile as runner-derived `acquitting` evidence only for the named
+  `declared_dependency_resolution` input class
+
 - added terminal runtime-proof qualification: `ota proof runtime --json` now emits
   `proof_verdict` as `passed`, `passed_with_unproven_boundaries`, or `failed`, and the text
   surface renders the same decision so a narrow green proof is not over-read as broader repo

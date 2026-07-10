@@ -83,25 +83,25 @@ use crate::output::{
     EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus,
     EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure,
     ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
-    ExecutionReceiptEnvSource, ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary,
-    ExecutionSummary, ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
-    ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
-    ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
-    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
-    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
-    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
-    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, HarnessCapabilityProfile, HarnessEnvironmentBoundary,
-    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
-    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
-    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArtifacts,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
-    ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
-    ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput, ExecutionReceiptLogs,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExecutionTopologyFailure,
+    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
+    ExecutionTopologyProbeObserverSummary, ExecutionTopologyProbeSummary,
+    ExecutionTopologyProbeTargetSummary, ExecutionTopologyReadinessSummary,
+    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
+    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
+    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
+    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
+    HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
+    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, ListedWorkflowSummary,
+    MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
+    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
+    ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
+    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess,
+    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
     ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
     ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, RunPreviewPlan,
     RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
@@ -163,10 +163,10 @@ use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
     ServiceReadinessSpec, TaskDependencyHydrationSourceSpec, TaskNetworkEffectKind,
-    TaskPrepareSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
-    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
-    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
+    TaskNodePackageManagerKind, TaskPrepareSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode,
+    TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec, TaskRuntimeProjectionSpec,
+    TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
     TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
@@ -37015,8 +37015,12 @@ tasks:
 
     #[test]
     fn receipt_diff_contract_snapshot_trust_is_scoped_to_contract_truth() {
-        let matched =
-            super::receipt_diff_artifact_trust(Some("sha256:baseline"), Some("sha256:baseline"));
+        let matched = super::receipt_diff_artifact_trust(
+            Some("sha256:baseline"),
+            Some("sha256:baseline"),
+            &[],
+            &[],
+        );
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].id, "semantic_contract_snapshot");
         assert_eq!(matched[0].input_classes, ["contract_truth"]);
@@ -37029,13 +37033,88 @@ tasks:
             "matched"
         );
 
-        let changed =
-            super::receipt_diff_artifact_trust(Some("sha256:baseline"), Some("sha256:current"));
+        let changed = super::receipt_diff_artifact_trust(
+            Some("sha256:baseline"),
+            Some("sha256:current"),
+            &[],
+            &[],
+        );
         assert_eq!(
             serde_json::to_value(&changed[0]).unwrap()["comparison"],
             "changed"
         );
-        assert!(super::receipt_diff_artifact_trust(None, Some("sha256:current")).is_empty());
+        assert!(
+            super::receipt_diff_artifact_trust(None, Some("sha256:current"), &[], &[]).is_empty()
+        );
+    }
+
+    #[test]
+    fn receipt_diff_lockfile_trust_uses_captured_identities_only() {
+        let baseline = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("pnpm-lock.yaml"),
+            kind: String::from("lockfile"),
+            input_class: String::from("declared_dependency_resolution"),
+            identity: String::from("sha256:baseline"),
+        };
+        let mut current = baseline.clone();
+        let matched =
+            super::receipt_diff_artifact_trust(None, None, &[baseline.clone()], &[current.clone()]);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].id, "pnpm-lock.yaml");
+        assert_eq!(matched[0].input_classes, ["declared_dependency_resolution"]);
+        assert_eq!(
+            serde_json::to_value(&matched[0]).unwrap()["comparison"],
+            "matched"
+        );
+
+        current.identity = String::from("sha256:current");
+        let changed = super::receipt_diff_artifact_trust(None, None, &[baseline], &[current]);
+        assert_eq!(
+            serde_json::to_value(&changed[0]).unwrap()["comparison"],
+            "changed"
+        );
+    }
+
+    #[test]
+    fn receipt_captures_declared_frozen_pnpm_lockfile_identity() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let lockfile = "lockfileVersion: '9.0'\n";
+        fs::write(repo.path().join("pnpm-lock.yaml"), lockfile).expect("write lockfile");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-lockfile
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    command:
+      exe: pnpm
+      args: [install, --frozen-lockfile]
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs =
+            super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "pnpm-lock.yaml");
+        assert_eq!(inputs[0].kind, "lockfile");
+        assert_eq!(inputs[0].input_class, "declared_dependency_resolution");
+        assert_eq!(
+            inputs[0].identity,
+            super::contract_snapshot_hash(lockfile.as_bytes())
+        );
     }
 }
 
@@ -37125,6 +37204,7 @@ fn build_repo_receipt_diff_report(
         contract_snapshot_hash: baseline.record.payload.receipt.contract_snapshot_hash,
         contract_snapshot_ref: baseline.record.payload.receipt.contract_snapshot_ref,
         assumption_set_hash: baseline.record.payload.receipt.assumption_set_hash,
+        evaluated_inputs: baseline.record.payload.receipt.evaluated_inputs.clone(),
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
         status: baseline.record.payload.receipt.status,
@@ -37144,6 +37224,7 @@ fn build_repo_receipt_diff_report(
         contract_snapshot_hash: current_snapshot_hash,
         contract_snapshot_ref: current_receipt.contract_snapshot_ref.clone(),
         assumption_set_hash: current_receipt.assumption_set_hash.clone(),
+        evaluated_inputs: current_receipt.evaluated_inputs.clone(),
         status: current_receipt.status.clone(),
         backend: current_receipt.backend.clone(),
         target: current_receipt.target.clone(),
@@ -37194,6 +37275,8 @@ fn build_repo_receipt_diff_report(
     let artifact_trust = receipt_diff_artifact_trust(
         baseline.contract_snapshot_hash.as_deref(),
         current.contract_snapshot_hash.as_deref(),
+        &baseline.evaluated_inputs,
+        &current.evaluated_inputs,
     );
     let summary = ReceiptDiffSummary {
         baseline_ok: baseline.ok,
@@ -37240,25 +37323,55 @@ fn build_repo_receipt_diff_report(
 fn receipt_diff_artifact_trust(
     baseline_snapshot_hash: Option<&str>,
     current_snapshot_hash: Option<&str>,
+    baseline_inputs: &[ExecutionReceiptEvaluatedInput],
+    current_inputs: &[ExecutionReceiptEvaluatedInput],
 ) -> Vec<ReceiptDiffArtifactTrust> {
-    let (Some(baseline_identity), Some(current_identity)) =
+    let mut artifacts = Vec::new();
+    if let (Some(baseline_identity), Some(current_identity)) =
         (baseline_snapshot_hash, current_snapshot_hash)
-    else {
-        return Vec::new();
-    };
-    vec![ReceiptDiffArtifactTrust {
-        id: String::from("semantic_contract_snapshot"),
-        kind: String::from("semantic_contract_snapshot"),
-        input_classes: vec![String::from("contract_truth")],
-        trust_role: ReceiptDiffArtifactTrustRole::Acquitting,
-        baseline_identity: baseline_identity.to_string(),
-        current_identity: current_identity.to_string(),
-        comparison: if baseline_identity == current_identity {
-            ReceiptDiffArtifactComparison::Matched
-        } else {
-            ReceiptDiffArtifactComparison::Changed
-        },
-    }]
+    {
+        artifacts.push(ReceiptDiffArtifactTrust {
+            id: String::from("semantic_contract_snapshot"),
+            kind: String::from("semantic_contract_snapshot"),
+            input_classes: vec![String::from("contract_truth")],
+            trust_role: ReceiptDiffArtifactTrustRole::Acquitting,
+            baseline_identity: baseline_identity.to_string(),
+            current_identity: current_identity.to_string(),
+            comparison: if baseline_identity == current_identity {
+                ReceiptDiffArtifactComparison::Matched
+            } else {
+                ReceiptDiffArtifactComparison::Changed
+            },
+        });
+    }
+    for baseline in baseline_inputs {
+        let Some(current) = current_inputs.iter().find(|current| {
+            current.id == baseline.id
+                && current.kind == baseline.kind
+                && current.input_class == baseline.input_class
+        }) else {
+            continue;
+        };
+        // A lockfile can acquit only the declared dependency-resolution input class. Other
+        // evaluated inputs will receive their own trust semantics as Ota captures them.
+        if baseline.input_class != "declared_dependency_resolution" {
+            continue;
+        }
+        artifacts.push(ReceiptDiffArtifactTrust {
+            id: baseline.id.clone(),
+            kind: baseline.kind.clone(),
+            input_classes: vec![baseline.input_class.clone()],
+            trust_role: ReceiptDiffArtifactTrustRole::Acquitting,
+            baseline_identity: baseline.identity.clone(),
+            current_identity: current.identity.clone(),
+            comparison: if baseline.identity == current.identity {
+                ReceiptDiffArtifactComparison::Matched
+            } else {
+                ReceiptDiffArtifactComparison::Changed
+            },
+        });
+    }
+    artifacts
 }
 
 fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {
@@ -59148,6 +59261,7 @@ workflows:
             contract_snapshot_hash: Some(String::from("sha256:abc")),
             contract_snapshot_ref: Some(String::from(".ota/contracts/sha256-abc.json")),
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -60236,6 +60350,7 @@ project:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -66987,6 +67102,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67077,6 +67193,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67281,6 +67398,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67352,6 +67470,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67453,6 +67572,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67576,6 +67696,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67666,6 +67787,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67763,6 +67885,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -68050,6 +68173,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: Some(crossing.clone()),
             refusal: None,
             workspace: None,
@@ -68373,6 +68497,7 @@ tasks:
                 contract_snapshot_hash: None,
                 contract_snapshot_ref: None,
                 assumption_set_hash: None,
+                evaluated_inputs: Vec::new(),
                 crossing: None,
                 refusal: None,
                 workspace: None,
@@ -76108,6 +76233,7 @@ agent:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -77562,6 +77688,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -77623,6 +77750,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -77684,6 +77812,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -77762,6 +77891,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -77840,6 +77970,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -77959,6 +78090,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78066,6 +78198,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78181,6 +78314,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78244,6 +78378,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81483,6 +81618,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81568,6 +81704,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81638,6 +81775,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81711,6 +81849,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81778,6 +81917,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81845,6 +81985,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -81918,6 +82059,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82747,6 +82889,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82894,6 +83037,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83001,6 +83145,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83611,6 +83756,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83709,6 +83855,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83793,6 +83940,7 @@ tasks:
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
             assumption_set_hash: None,
+            evaluated_inputs: Vec::new(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -92841,6 +92989,90 @@ fn run_execution_receipt(
     )
 }
 
+// Capture declared, lockfile-strict hydration inputs as the receipt is issued. Receipt comparison
+// must use these stored identities rather than re-reading the repository later.
+fn receipt_evaluated_inputs(
+    contract: &Contract,
+    contract_path: &Path,
+    task_names: impl IntoIterator<Item = String>,
+) -> Vec<ExecutionReceiptEvaluatedInput> {
+    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut inputs = BTreeMap::new();
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(&task_name) else {
+            continue;
+        };
+        let Some(prepare) = task.prepare.as_ref() else {
+            continue;
+        };
+        collect_receipt_hydration_inputs(prepare, root, &mut inputs);
+    }
+    inputs.into_values().collect()
+}
+
+fn collect_receipt_hydration_inputs(
+    prepare: &TaskPrepareSpec,
+    root: &Path,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    match prepare {
+        TaskPrepareSpec::DependencyHydration(spec) => {
+            collect_receipt_hydration_source_inputs(&spec.source, root, inputs);
+        }
+        TaskPrepareSpec::Sequence(sequence) => {
+            for step in &sequence.steps {
+                match step {
+                    crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+                        collect_receipt_hydration_source_inputs(&spec.source, root, inputs);
+                    }
+                    crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+                        collect_receipt_hydration_inputs(
+                            &TaskPrepareSpec::Sequence(sequence.clone()),
+                            root,
+                            inputs,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        TaskPrepareSpec::ToolBootstrap(_) => {}
+    }
+}
+
+fn collect_receipt_hydration_source_inputs(
+    source: &TaskDependencyHydrationSourceSpec,
+    root: &Path,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    let TaskDependencyHydrationSourceSpec::NodePackageManager(source) = source else {
+        return;
+    };
+    if source.manager != TaskNodePackageManagerKind::Pnpm || !source.frozen_lockfile {
+        return;
+    }
+    let cwd = source.cwd.trim();
+    let relative_path = if cwd.is_empty() || cwd == "." {
+        PathBuf::from("pnpm-lock.yaml")
+    } else {
+        PathBuf::from(cwd).join("pnpm-lock.yaml")
+    };
+    let lockfile_path = root.join(&relative_path);
+    let Ok(bytes) = fs::read(lockfile_path) else {
+        return;
+    };
+    let id = relative_path.to_string_lossy().replace('\\', "/");
+    inputs.insert(
+        id.clone(),
+        ExecutionReceiptEvaluatedInput {
+            id,
+            kind: String::from("lockfile"),
+            input_class: String::from("declared_dependency_resolution"),
+            identity: contract_snapshot_hash(&bytes),
+        },
+    );
+}
+
 fn run_execution_receipt_with_shared(
     contract: &Contract,
     contract_path: &Path,
@@ -93040,6 +93272,14 @@ fn run_execution_receipt_with_shared(
         task_name,
         overrides,
     ));
+    let evaluated_inputs = receipt_evaluated_inputs(
+        contract,
+        contract_path,
+        executed_steps
+            .iter()
+            .map(|step| step.name.clone())
+            .chain(std::iter::once(task_name.to_string())),
+    );
 
     ExecutionReceipt {
         ok,
@@ -93050,6 +93290,7 @@ fn run_execution_receipt_with_shared(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        evaluated_inputs,
         crossing: None,
         refusal: None,
         workspace: None,
@@ -100531,6 +100772,8 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     assumption_set_hash: Option<String>,
     #[serde(default)]
+    evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     backend: Option<String>,
@@ -101146,6 +101389,12 @@ fn repo_execution_receipt_with_overrides(
         })
         .unwrap_or_else(|| fallback_toolchain_summaries_for_backend(contract, execution_backend));
     let toolchain_names = toolchain_summary_names(&toolchains);
+    let evaluated_inputs = receipt_evaluated_inputs(
+        contract,
+        path,
+        task.map(|task_name| contract.task_dependency_closure_names([task_name.to_string()]))
+            .unwrap_or_else(|| contract.selected_workflow_task_closure_names(workflow_name)),
+    );
 
     ExecutionReceipt {
         ok,
@@ -101156,6 +101405,7 @@ fn repo_execution_receipt_with_overrides(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        evaluated_inputs,
         crossing: None,
         refusal: None,
         workspace: None,
@@ -102056,6 +102306,7 @@ fn workspace_up_receipt(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        evaluated_inputs: Vec::new(),
         crossing: None,
         refusal: None,
         workspace: Some(workspace_name.to_string()),
@@ -102151,6 +102402,7 @@ fn workspace_status_receipt(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        evaluated_inputs: Vec::new(),
         crossing: None,
         refusal: None,
         workspace: Some(workspace_name.to_string()),
@@ -102250,6 +102502,7 @@ fn workspace_run_receipt(
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
         assumption_set_hash: None,
+        evaluated_inputs: Vec::new(),
         crossing: None,
         refusal: None,
         workspace: Some(workspace_name.to_string()),

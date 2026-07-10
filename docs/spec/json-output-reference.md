@@ -4574,6 +4574,14 @@ selected or effective workflow owns a rendered env artifact, receipt JSON keeps 
     "contract_snapshot_hash": "sha256:5dc5c7f6e0bf...",
     "contract_snapshot_ref": ".ota/contracts/sha256-5dc5c7f6e0bf....json",
     "assumption_set_hash": "sha256:8b7e5f1c3a0d...",
+    "evaluated_inputs": [
+      {
+        "id": "pnpm-lock.yaml",
+        "kind": "lockfile",
+        "input_class": "declared_dependency_resolution",
+        "identity": "sha256:4ed6a1..."
+      }
+    ],
     "backend": "native",
     "workflow_env_artifacts": [
       {
@@ -4629,6 +4637,11 @@ The nested `receipt` object can also include:
 - `assumption_set_hash` with the canonical extracted assumption-set identity used for this
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file
+- `evaluated_inputs[]` with immutable execution inputs captured while Ota authored the receipt.
+  The first shipped record is a declared `pnpm-lock.yaml` identity for a selected typed,
+  lockfile-strict pnpm hydration path. This records the receipt-time input identity; it never
+  re-reads the filesystem later and does not claim anything about undeclared dependencies,
+  ambient environment, runtime, or external-world inputs.
 - `backend`
 - `workflow_env_artifacts` when the selected or effective workflow owns one rendered env artifact;
   each entry reports `path`, `kind`, `profile`, `includes`, `exists`, and the consuming
@@ -4878,6 +4891,7 @@ Current receipt diff JSON fields:
 - `baseline.contract_snapshot_hash` when the archived baseline carries normalized semantic contract identity
 - `baseline.contract_snapshot_ref` when the archived baseline points at a normalized archived contract snapshot under `.ota/contracts`
 - `baseline.assumption_set_hash` when the archived baseline carries canonical extracted assumption-set identity
+- `baseline.evaluated_inputs[]` when the archived baseline captured immutable evaluated inputs
 - `baseline.contract_identity_details` with the compact declared contract identity when the archived receipt recorded it
 - `baseline.ok`
 - `baseline.contract`
@@ -4888,6 +4902,7 @@ Current receipt diff JSON fields:
 - `current.contract_identity` with the current repo-local contract identity
 - `current.contract_snapshot_hash` with the normalized semantic contract hash for the current in-memory contract truth, even when the current receipt is not archived
 - `current.assumption_set_hash` with the canonical extracted assumption-set identity for the current in-memory contract truth
+- `current.evaluated_inputs[]` with immutable inputs captured while Ota authored the current receipt
 - `current.contract_identity_details` with the compact declared contract identity for the current receipt
 - `current.backend` / `current.lifecycle` when recorded
 - `current.summary`
@@ -4898,7 +4913,8 @@ Current receipt diff JSON fields:
   its input class, immutable identities, comparison state, and runner-derived trust role. The
   first shipped record is `semantic_contract_snapshot`, which is `acquitting` only for the named
   `contract_truth` class when its identities match, never for dependency, environment, runtime,
-  or external-world inputs that the receipts did not capture
+  or external-world inputs that the receipts did not capture. A matching captured
+  `pnpm-lock.yaml` is likewise `acquitting` only for `declared_dependency_resolution`.
 - `summary.comparison.correlation` with an explicit advisory verdict:
   - `likely_related` when ota can correlate newly introduced blocker findings to specific semantic contract changes
   - `possibly_related` when ota cannot recover a strong direct match but the newly introduced blocker and contract drift still overlap in the same broad contract family

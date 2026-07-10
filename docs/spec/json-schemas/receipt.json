@@ -103,6 +103,20 @@
             "contract_snapshot_hash": { "type": "string" },
             "contract_snapshot_ref": { "type": "string" },
             "assumption_set_hash": { "type": "string" },
+            "evaluated_inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "input_class", "identity"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "kind": { "type": "string" },
+                  "input_class": { "type": "string" },
+                  "identity": { "type": "string", "pattern": "^sha256:" }
+                }
+              }
+            },
             "crossing": {
               "type": "object",
               "additionalProperties": false,
@@ -430,6 +444,9 @@
             "ok": { "type": "boolean" },
             "contract": { "type": "string" },
             "assumption_set_hash": { "type": "string" },
+            "evaluated_inputs": {
+              "$ref": "#/oneOf/0/properties/receipt/properties/evaluated_inputs"
+            },
             "status": { "type": "string" },
             "backend": { "type": "string" },
             "target": { "type": "string" },
@@ -465,6 +482,9 @@
               "$ref": "#/oneOf/0/properties/receipt/properties/contract_identity"
             },
             "assumption_set_hash": { "type": "string" },
+            "evaluated_inputs": {
+              "$ref": "#/oneOf/0/properties/receipt/properties/evaluated_inputs"
+            },
             "backend": { "type": "string" },
             "status": { "type": "string" },
             "target": { "type": "string" },
@@ -538,6 +558,36 @@
                 },
                 "contract_snapshot_changed": {
                   "type": "boolean"
+                },
+                "artifact_trust": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "kind",
+                      "input_classes",
+                      "trust_role",
+                      "baseline_identity",
+                      "current_identity",
+                      "comparison"
+                    ],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "kind": { "type": "string" },
+                      "input_classes": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "trust_role": {
+                        "enum": ["acquitting", "narrowing", "pointer_only"]
+                      },
+                      "baseline_identity": { "type": "string" },
+                      "current_identity": { "type": "string" },
+                      "comparison": { "enum": ["matched", "changed"] }
+                    }
+                  }
                 }
               }
             },

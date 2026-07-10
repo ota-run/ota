@@ -35,9 +35,10 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
-- active planning slice: `V11.12` hydration input provenance
-- immediate proof gate: pressure-test explicit .NET NuGet source/config provenance on a real repo
-  before broadening the source model
+- active planning slice: `V11.10` replay artifact trust
+- immediate proof gate: finish review and commit the first receipt-authored pnpm lockfile identity
+  cut, then pressure a changed archived-versus-current lockfile comparison without reading the
+  current filesystem as if it were historical evidence
 
 ## Recent Completed Slice
 
@@ -50,14 +51,24 @@ durable agent workflow belongs in the canonical Ota skill.
   task mode branch. `ota tasks --json` now carries the same canonical per-mode truth under
   `tasks[].use.modes[]`, while the existing `use.human` and `use.agent` remain selected-mode
   compatibility projections.
-- `V11.11` contract-derived proof boundaries is implemented locally in Ota commit `58bd5ccc`.
-- It adds machine-readable `proof_scope` and contract-derived `not_proved` truth so a narrow green
-  runtime proof cannot be read as repo-global proof.
+- `V11.11` contract-derived proof boundaries is implemented in Ota commit `e3bbdf02`.
+  `ota proof runtime --json` now emits terminal `proof_verdict`, and Lead Quorum pressure proved
+  `passed_with_unproven_boundaries` on the app lane across Ubuntu and macOS.
+- The same commit fixes detached native proof lifecycle ownership: nested `ota up --detach` leaves
+  the service running for the outer proof to observe and clean up, preventing recursive teardown.
+- V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching
+  semantic contract snapshots. It is `acquitting` for `contract_truth` only; lockfile/runtime
+  artifact capture remains the next implementation cut.
+- The in-progress V11.10 cut captures a declared lockfile-strict pnpm `pnpm-lock.yaml` SHA-256 in
+  `receipt.evaluated_inputs[]` at receipt authoring time, carries it through archived baseline and
+  current receipt diff, and labels only a matching `declared_dependency_resolution` identity as
+  `acquitting`. Directus proved the matching archived/current path with the source-built binary;
+  its local Node-version diagnosis remains a separate repo/runtime finding.
 
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.12/plan.md`. Then run `git status --short` in both `ota` and
+`docs/planning/v11.10/plan.md`. Then run `git status --short` in both `ota` and
 `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
 The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
@@ -66,10 +77,10 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-Continue with V11.12 by selecting a real .NET repo that declares explicit NuGet source or config
-truth. Pressure the declared-versus-resolved hydration provenance on the selected `ota up --json`
-path before broadening source semantics. Follow the pressure-testing protocol exactly and record
-whether the repo exposes a contract issue, implementation issue, or Ota platform gap.
+Continue V11.10 by pressure-testing a changed archived-versus-current receipt identity on a
+deterministic lockfile-strict pnpm lane. Do not infer lockfile identity from a later filesystem
+read. Follow the pressure-testing protocol exactly and record whether the repo exposes a contract
+issue, implementation issue, or Ota platform gap.
 
 ## Working Rules
 

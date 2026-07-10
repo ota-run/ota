@@ -523,6 +523,10 @@ pub struct ExecutionReceipt {
     pub contract_snapshot_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumption_set_hash: Option<String>,
+    /// Immutable execution inputs captured while Ota issued this receipt.
+    /// These are compared receipt-to-receipt; consumers must not substitute a later filesystem read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crossing: Option<ExecutionBoundaryCrossing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -590,6 +594,15 @@ pub struct ExecutionReceipt {
     pub next: Option<String>,
 }
 
+/// A declared execution input captured at receipt-authoring time.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptEvaluatedInput {
+    pub id: String,
+    pub kind: String,
+    pub input_class: String,
+    pub identity: String,
+}
+
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct ExecutionConflictReceipt {
     pub reasons: Vec<String>,
@@ -641,6 +654,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(assumption_set_hash) = self.assumption_set_hash.as_ref() {
             map.serialize_entry("assumption_set_hash", assumption_set_hash)?;
+        }
+        if !self.evaluated_inputs.is_empty() {
+            map.serialize_entry("evaluated_inputs", &self.evaluated_inputs)?;
         }
         if let Some(crossing) = self.crossing.as_ref() {
             map.serialize_entry("crossing", crossing)?;
@@ -2337,6 +2353,8 @@ pub struct ReceiptDiffSide {
     pub contract_snapshot_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumption_set_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2375,6 +2393,8 @@ pub struct ReceiptDiffBaseline {
     pub contract_snapshot_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumption_set_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
     pub ok: bool,
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]
