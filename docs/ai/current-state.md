@@ -59,6 +59,12 @@ durable agent workflow belongs in the canonical Ota skill.
   browser-bootstrap-only boundary into a pnpm-owned dependency-hydration selector. The first
   sibling build failure identified real missing SDK and visualiser build dependencies; modeling
   those finite tasks made the final extension build pass without shell orchestration.
+- Bedrock pressure proved the V11.10 replay-artifact shape on a deterministic offline NL-to-SQL
+  stability harness across Ubuntu, macOS, and Windows: explicit script-test aggregation, committed
+  SQL fixture replay, and the defended baseline gate all run in agent mode with no model key. Its
+  live recording lane remains intentionally outside that claim because it reaches Claude, rewrites
+  the fixture, and depends on an unpinned generic-pip requirements path that Ota does not yet own
+  through typed dependency hydration.
 
 - The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal
