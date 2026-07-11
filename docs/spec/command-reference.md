@@ -237,6 +237,7 @@ Current behavior:
 - applies semantic validation
 - emits advisory warnings when authoring choices are valid but likely misleading, such as `depends_on` crossing execution boundaries or isolated cache paths that are not wired to the tool's effective `/workspace/...` path
 - includes provider-specific target examples for remote target validation errors:
+
 - `daytona`: `sandbox-dev`
 - `ssh` / `tsh`: `user@host`
 - `kubectl`: `pod/ota-dev`
