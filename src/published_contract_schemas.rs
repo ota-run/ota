@@ -1412,6 +1412,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "cwd": { "type": "string" },
             "manager": { "enum": ["npm", "pnpm", "yarn", "bun"] },
             "mode": { "enum": ["install", "ci"] },
+            "filter": { "type": "string" },
             "frozen_lockfile": { "type": "boolean" },
             "inline_builds": { "type": "boolean" },
             "force": { "type": "boolean" },

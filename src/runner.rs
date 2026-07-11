@@ -3257,7 +3257,17 @@ fn dependency_hydration_command_specs(
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
-            let mut args = vec![source.mode.label().to_string()];
+            let mut args = Vec::new();
+            if let Some(filter) = source
+                .filter
+                .as_deref()
+                .map(str::trim)
+                .filter(|filter| !filter.is_empty())
+            {
+                args.push(String::from("--filter"));
+                args.push(filter.to_string());
+            }
+            args.push(source.mode.label().to_string());
             if let Some(flag) = source.lockfile_flag() {
                 args.push(String::from(flag));
             }

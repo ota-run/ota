@@ -79,6 +79,9 @@ tasks:
 4. Surface producer/consumer lineage in task JSON and receipts.
 5. Pressure Dagger's narrow SDK generation path, then a real independent sibling-repo case.
 
+The first real workspace pressure lane also widened typed pnpm hydration with a structural
+`prepare.source.filter` selector. It remains manager-owned scope, not arbitrary raw argv.
+
 ## Non-Goals
 
 - Do not infer freshness from mtimes or Git state.

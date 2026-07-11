@@ -7416,6 +7416,8 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
     pub cwd: String,
     pub manager: TaskNodePackageManagerKind,
     pub mode: TaskNodePackageManagerHydrationMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -7456,10 +7458,17 @@ impl TaskNodePackageManagerHydrationSourceSpec {
     }
 
     pub fn command_preview(&self) -> String {
-        let mut parts = vec![
-            self.manager.label().to_string(),
-            self.mode.label().to_string(),
-        ];
+        let mut parts = vec![self.manager.label().to_string()];
+        if let Some(filter) = self
+            .filter
+            .as_deref()
+            .map(str::trim)
+            .filter(|filter| !filter.is_empty())
+        {
+            parts.push(String::from("--filter"));
+            parts.push(filter.to_string());
+        }
+        parts.push(self.mode.label().to_string());
         if let Some(flag) = self.lockfile_flag() {
             parts.push(String::from(flag));
         }
@@ -9735,6 +9744,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Pnpm,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            filter: None,
             frozen_lockfile: true,
             inline_builds: false,
             force: false,
@@ -9743,10 +9753,18 @@ tasks:
         assert_eq!(pnpm.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(pnpm.command_preview(), "pnpm install --frozen-lockfile");
 
+        let mut filtered_pnpm = pnpm.clone();
+        filtered_pnpm.filter = Some(String::from("@eventcatalog/language-server"));
+        assert_eq!(
+            filtered_pnpm.command_preview(),
+            "pnpm --filter @eventcatalog/language-server install --frozen-lockfile"
+        );
+
         let yarn = super::TaskNodePackageManagerHydrationSourceSpec {
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Yarn,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            filter: None,
             frozen_lockfile: true,
             inline_builds: true,
             force: false,
@@ -9763,6 +9781,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Npm,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            filter: None,
             frozen_lockfile: true,
             inline_builds: false,
             force: true,
@@ -9776,6 +9795,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Npm,
             mode: super::TaskNodePackageManagerHydrationMode::Ci,
+            filter: None,
             frozen_lockfile: false,
             inline_builds: false,
             force: true,
@@ -9788,6 +9808,7 @@ tasks:
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Bun,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
+            filter: None,
             frozen_lockfile: true,
             inline_builds: false,
             force: false,
@@ -9957,6 +9978,7 @@ tasks:
                         cwd: String::from("app"),
                         manager: super::TaskNodePackageManagerKind::Npm,
                         mode: super::TaskNodePackageManagerHydrationMode::Ci,
+                        filter: None,
                         frozen_lockfile: false,
                         inline_builds: false,
                         force: false,
@@ -10061,6 +10083,7 @@ tasks:
                                 cwd: String::from("."),
                                 manager: super::TaskNodePackageManagerKind::Pnpm,
                                 mode: super::TaskNodePackageManagerHydrationMode::Install,
+                                filter: None,
                                 frozen_lockfile: true,
                                 inline_builds: false,
                                 force: false,

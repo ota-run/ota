@@ -2080,7 +2080,7 @@ Task-effect rules:
   - `prepare.source.kind: node_package_manager`
   - `prepare.source.cwd`: required repo-relative working directory for the bootstrap invocation
   - `prepare.source.manager`: required package manager; ota currently ships `npm`, `pnpm`, `yarn`, and `bun`
-  - `prepare.source.filter`: optional workspace/package selector for manager-owned targeted bootstrap; ota currently only owns this shape for `manager: pnpm`
+  - `prepare.source.filter`: optional workspace/package selector for manager-owned targeted hydration or bootstrap; ota currently only owns this shape for `manager: pnpm` and renders it before the manager action
 - `prepare.kind: dependency_hydration`
   - `prepare.medium: container_images`
     - `prepare.source.kind: docker_compose`
@@ -2154,7 +2154,7 @@ Task-effect rules:
 - `prepare.kind: tool_bootstrap` with `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]` and currently only supports `prepare.tool: playwright_browsers` or `prepare.tool: cypress_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.browsers` currently only applies to `prepare.tool: playwright_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.with_deps: true` currently only applies to `prepare.tool: playwright_browsers`
-- `prepare.kind: tool_bootstrap` with `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm` and `prepare.tool: playwright_browsers`
+- `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm`; dependency hydration uses it for a scoped `pnpm --filter <selector> install`, while browser tool bootstrap uses it for its selected package scope
 - use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip` or downloading Playwright or Cypress browsers through a repo-owned Node package manager
 - `prepare.kind: dependency_hydration` with `medium: container_images` and `source.kind: docker_compose` requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: container_image_hydration`; keep the declared Compose files and selected image targets explicit so image-pull truth is not collapsed into package dependency hydration
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper

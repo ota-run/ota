@@ -5548,7 +5548,14 @@ fn summarize_dependency_hydration_prepare_spec(
         files,
         env_files,
         manager,
-        filter: None,
+        filter: match &spec.source {
+            crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => source
+                .filter
+                .as_deref()
+                .map(str::trim)
+                .filter(|filter| !filter.is_empty()),
+            _ => None,
+        },
         mode,
         group_mode,
         groups,
@@ -5951,7 +5958,17 @@ pub fn summarize_task_prepare_owned(
                 files,
                 env_files,
                 manager,
-                filter: None,
+                filter: match &spec.source {
+                    crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(
+                        source,
+                    ) => source
+                        .filter
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|filter| !filter.is_empty())
+                        .map(str::to_string),
+                    _ => None,
+                },
                 mode,
                 group_mode,
                 groups,

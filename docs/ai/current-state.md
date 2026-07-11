@@ -36,10 +36,10 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
 - active planning slice: `V11.13` generated artifact lineage
-- immediate proof gate: pressure one real generator lane with a provisioned generator runtime,
-  then a distinct sibling-repo consumer path. Dagger validates and exposes the first narrow SDK
+- immediate proof gate: review and commit the pnpm workspace-filter widening, then publish a
+  matrix for the EventCatalog generated-source slice. Dagger still validates as a narrow SDK
   lineage contract, but its real generator execution is blocked by the absent Dagger CLI/engine;
-  that is external-tool acquisition pressure, not a lineage-model failure.
+  that remains external-tool acquisition pressure, not a lineage-model failure.
 
 ## Recent Completed Slice
 
@@ -50,6 +50,12 @@ durable agent workflow belongs in the canonical Ota skill.
   runner checks declared outputs after the producer closure and before consumers execute. Task
   JSON carries the producer map plus consumer references, and receipt `evaluated_inputs[]` captures
   producer/path/input lineage at issue time as pointer-only evidence, never as a freshness claim.
+- EventCatalog pressure proved the first healthy generator and sibling-package consumer closure:
+  typed `pnpm --filter @eventcatalog/language-server install`, Langium generation, and the
+  downstream VS Code extension build. It also widened `prepare.source.filter` from its old
+  browser-bootstrap-only boundary into a pnpm-owned dependency-hydration selector. The first
+  sibling build failure identified real missing SDK and visualiser build dependencies; modeling
+  those finite tasks made the final extension build pass without shell orchestration.
 
 - The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal

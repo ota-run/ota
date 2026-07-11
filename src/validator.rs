@@ -5844,6 +5844,18 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
+                    if let Some(filter) = source.filter.as_deref() {
+                        if filter.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` prepare `node_package_manager` must declare a non-empty `prepare.source.filter` when present"
+                            )));
+                        }
+                        if source.manager != crate::schema::TaskNodePackageManagerKind::Pnpm {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` prepare `node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
+                            )));
+                        }
+                    }
                     if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
                         && !requirements
                             .toolchains
@@ -37966,6 +37978,54 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup:browsers` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_dependency_hydration_filter_for_non_pnpm_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+        mode: install
+        filter: web
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes: [node_modules]
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("dependency hydration filter must stay pnpm-owned")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` prepare `node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
             )),
             "{rendered:?}"
         );

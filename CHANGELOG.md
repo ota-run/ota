@@ -30,6 +30,9 @@
   source artifact's producer task, output paths, and derivation inputs, while consumer tasks use
   `requires_artifacts`; Ota validates explicit producer dependencies and rejects execution when a
   producer did not materialize its declared output
+- widened typed `node_package_manager` dependency hydration with `prepare.source.filter` for
+  pnpm workspace slices; Ota renders the selector before `install` and rejects unsupported
+  package-manager ownership instead of requiring raw `pnpm --filter ... install` shell
 
 - upgraded `quick-xml` to `0.41.0` to remediate `RUSTSEC-2026-0194` and `RUSTSEC-2026-0195`;
   the NuGet feed-provenance parser now uses the current XML 1.0 attribute-normalization API
