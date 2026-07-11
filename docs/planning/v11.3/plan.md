@@ -107,6 +107,7 @@ path.
 - closure enforcement so workflow-selected setup/run/verify paths cannot reach unsafe task closure
 - structured machine-readable refusal output
 - explicit receipt/outcome semantics for refused execution
+- contract-declared refusal canaries that prove the runner still refuses selected unsafe lanes
 - policy alignment so agent safety can become runtime truth, not only review-time governance
 
 ## Non-goals
@@ -255,6 +256,34 @@ Direction:
   - `requested_task_not_safe`
   - `unsafe_dependency_closure`
   - `unsafe_workflow_closure`
+
+### 6. Refusal canaries on the real runner boundary
+
+Repositories should be able to require a negative control alongside their positive safe lane:
+
+```yaml
+agent:
+  refusal_canaries:
+    - task: publish
+    - workflow: release
+```
+
+The contract declares only the target. Ota resolves the current closure and derives the refusal
+reason at execution time; a contract-supplied expected reason would test annotation rather than
+the real enforcement boundary.
+
+The first command shape stays on the existing runner surface:
+
+- `ota run publish --agent --expect-refusal`
+- `ota up --workflow release --agent --expect-refusal`
+
+A canary passes only when the real runner refuses before any selected task starts. It fails when
+the lane is admitted, when execution starts, or when Ota cannot derive a refusal. A changed but
+still-valid derived refusal reason remains a passing canary result, but must be emitted as
+governance drift for review.
+
+This is not a synthetic proof task. It exercises the same closure resolution and refusal engine
+used by ordinary agent execution.
 
 Required fields should include:
 

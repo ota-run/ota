@@ -61,6 +61,11 @@ available locally. Every pressure repo must prove the advertised task, workflow,
 matrix, and bootstrap surfaces, and must separately identify repo issues from genuine Ota platform
 gaps.
 
+The completion bar is complete execution governance: every material repo behavior must be either
+contract-owned, explicitly bounded as external or not proved, or recorded as a named Ota platform
+gap. A green matrix alone does not close a repo if material truth remains implicit in prose,
+workflow shell, or helper scripts.
+
 ---
 
 ## Core Product Context

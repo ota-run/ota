@@ -134,6 +134,7 @@ pub fn validate_contract_with_path(
     validate_surfaces(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
+    validate_task_replay_inputs(contract, &mut errors);
     validate_generated_artifacts(contract, &mut errors);
     validate_workflows(contract, &mut errors);
     validate_checks(contract, &mut errors);
@@ -143,6 +144,42 @@ pub fn validate_contract_with_path(
         Ok(())
     } else {
         Err(ValidationErrors::from_vec(errors))
+    }
+}
+
+fn validate_task_replay_inputs(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (task_name, task) in &contract.tasks {
+        let closure_writes = contract
+            .task_dependency_closure_names([task_name.to_string()])
+            .into_iter()
+            .filter_map(|name| contract.tasks.get(&name))
+            .flat_map(|closure_task| closure_task.effects.writes.iter())
+            .map(|path| path.trim())
+            .collect::<BTreeSet<_>>();
+        let mut ids = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        for (index, input) in task.replay_inputs.iter().enumerate() {
+            let id = input.id.trim();
+            if id.is_empty() || !ids.insert(id) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` `replay_inputs[{index}].id` must be non-empty and unique"
+                )));
+            }
+            let path = input.path.trim();
+            if !is_safe_repo_relative_file_path(path) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` `replay_inputs[{index}].path` must be a repo-relative path that does not escape the repo"
+                )));
+            } else if !paths.insert(path) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` `replay_inputs` must not contain duplicate path `{path}`"
+                )));
+            } else if closure_writes.contains(path) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` replay input `{path}` overlaps a write in its selected dependency closure"
+                )));
+            }
+        }
     }
 }
 

@@ -10003,6 +10003,7 @@ fn build_assist_add_task_proposal(
         env_bindings: BTreeMap::new(),
         adapter_inputs: crate::schema::TaskAdapterInputsSpec::default(),
         inputs: BTreeMap::new(),
+        replay_inputs: Vec::new(),
         targets: BTreeMap::new(),
         run: None,
         script: None,
@@ -37700,6 +37701,8 @@ fn receipt_diff_artifact_trust(
             ReplayInputClass::SelectedRuntimeVersion => ReceiptDiffArtifactTrustRole::Narrowing,
             // A static digest-pinned Compose image identifies the selected runtime artifact.
             ReplayInputClass::SelectedRuntimeArtifact => ReceiptDiffArtifactTrustRole::Acquitting,
+            // A declared static file proves only that this named input held still.
+            ReplayInputClass::DeclaredReplayInput => ReceiptDiffArtifactTrustRole::Narrowing,
             // Declared lineage points to the producer and paths; it never proves artifact freshness.
             ReplayInputClass::GeneratedArtifactLineage => ReceiptDiffArtifactTrustRole::PointerOnly,
             _ => continue,
@@ -89322,6 +89325,17 @@ fn run_single_contract_target_streaming(
         });
     }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
+    let replay_inputs = capture_replay_inputs_before_execution(
+        &target.contract,
+        &target.contract_path,
+        [task_name.clone()],
+    )
+    .map_err(|message| RunCommandFailure {
+        message,
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })?;
     let prepared_logs = prepare_streaming_durable_run_logs(
         &target.contract_path,
         task_name.as_str(),
@@ -89370,6 +89384,7 @@ fn run_single_contract_target_streaming(
                 outcome.runtime.clone(),
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
+            attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89452,6 +89467,7 @@ fn run_single_contract_target_streaming(
                     details_footer
                 )),
             );
+            attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89560,6 +89576,7 @@ fn run_single_contract_target_streaming(
                 None,
                 Some(next_note),
             );
+            attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
             attach_task_crossing_to_receipt(
                 &mut receipt,
@@ -89628,6 +89645,17 @@ fn run_single_contract_target_captured(
         });
     }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
+    let replay_inputs = capture_replay_inputs_before_execution(
+        &target.contract,
+        &target.contract_path,
+        [task_name.clone()],
+    )
+    .map_err(|message| RunCommandFailure {
+        message,
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })?;
     match run_task_captured_with_args_with_overrides_with_policy(
         &target.contract,
         &target.contract_path,
@@ -89665,6 +89693,7 @@ fn run_single_contract_target_captured(
                 outcome.runtime.clone(),
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
+            attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89745,6 +89774,7 @@ fn run_single_contract_target_captured(
                     )
                 )),
             );
+            attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89853,6 +89883,7 @@ fn run_single_contract_target_captured(
                 None,
                 Some(next_note),
             );
+            attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
             attach_task_crossing_to_receipt(
                 &mut receipt,
@@ -93395,6 +93426,54 @@ fn receipt_evaluated_inputs(
         collect_receipt_generated_artifact_inputs(contract, task, &mut inputs);
     }
     inputs.into_values().collect()
+}
+
+fn capture_replay_inputs_before_execution(
+    contract: &Contract,
+    contract_path: &Path,
+    roots: impl IntoIterator<Item = String>,
+) -> Result<Vec<ExecutionReceiptEvaluatedInput>, String> {
+    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut captured = BTreeMap::new();
+    for task_name in contract.task_dependency_closure_names(roots) {
+        let Some(task) = contract.tasks.get(&task_name) else {
+            continue;
+        };
+        for input in &task.replay_inputs {
+            let path = input.path.trim();
+            let bytes = fs::read(root.join(path)).map_err(|error| {
+                format!(
+                    "declared replay input `{}` for task `{task_name}` could not be captured before execution: {error}",
+                    input.id
+                )
+            })?;
+            let id = format!("replay_input:{task_name}:{}", input.id.trim());
+            captured.insert(
+                id.clone(),
+                ExecutionReceiptEvaluatedInput {
+                    id,
+                    kind: String::from("static_file"),
+                    input_class: ReplayInputClass::DeclaredReplayInput,
+                    identity: contract_snapshot_hash(&bytes),
+                    artifact_lineage: None,
+                },
+            );
+        }
+    }
+    Ok(captured.into_values().collect())
+}
+
+fn attach_pre_execution_replay_inputs(
+    receipt: &mut ExecutionReceipt,
+    captured: &[ExecutionReceiptEvaluatedInput],
+) {
+    receipt.evaluated_inputs.extend_from_slice(captured);
+    receipt
+        .evaluated_inputs
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    receipt
+        .evaluated_inputs
+        .dedup_by(|left, right| left.id == right.id);
 }
 
 // Generated artifacts are contract lineage, not freshness proof. Capture the exact declaration
@@ -99738,6 +99817,21 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     if !receipt.toolchains.is_empty() {
         stdout.push_str("\n\n");
         stdout.push_str(&render_toolchain_summary_text(&receipt.toolchains));
+    }
+
+    if !receipt.evaluated_inputs.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Evaluated Inputs")));
+        for input in &receipt.evaluated_inputs {
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {})",
+                paint_key(&input.id),
+                input.identity,
+                input.kind,
+                serde_json::to_string(&input.input_class)
+                    .expect("replay input class must serialize")
+                    .trim_matches('"')
+            ));
+        }
     }
 
     if let Some(runtime) = receipt.runtime.as_ref() {
@@ -107827,6 +107921,43 @@ fn execute_repo_up_with_behavior(
 }
 
 fn execute_repo_up_with_behavior_with_agent(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
+    let captured_replay_inputs = if dry_run {
+        Vec::new()
+    } else {
+        capture_replay_inputs_before_execution(
+            contract,
+            resolved_path,
+            contract.selected_workflow_task_closure_names(workflow_name),
+        )?
+    };
+    let mut result = execute_repo_up_with_behavior_with_agent_inner(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        agent,
+        policy_env,
+        dry_run,
+        mode,
+        run_behavior_preference,
+        ready_timeout,
+    )?;
+    attach_pre_execution_replay_inputs(&mut result.receipt, &captured_replay_inputs);
+    Ok(result)
+}
+
+fn execute_repo_up_with_behavior_with_agent_inner(
     contract: &Contract,
     resolved_path: &Path,
     overrides: ExecutionOverrides,

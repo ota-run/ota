@@ -296,6 +296,46 @@ First explicit pressure target:
   - pinned runtime identity
   - no required live external world in the first honest cut
 
+### 1a. Task-scoped declared replay inputs
+
+The first honest static-input widening should be task-scoped rather than reusing `artifacts`:
+
+- `artifacts` remains producer-owned generated-output lineage; a committed fixture, baseline, or
+  frozen data store is an execution input, not generated output
+- add `tasks.<name>.replay_inputs[]` for immutable repo-relative static files consumed by that
+  task; declarations may live on any task in the selected dependency closure
+- the first kind is `static_file`, with a stable `id` and one repo-relative `path`
+- Ota resolves the selected task or workflow closure, aggregates every reachable declaration with
+  a stable task-qualified identity, and captures content identities before the closure begins;
+  receipt rendering must not re-read paths later
+- a declared replay input is runner-derived `narrowing` evidence for the canonical
+  `declared_replay_input` family: matching content proves that named file held still, not that
+  every ambient input did
+- validation rejects duplicate ids or paths, paths that escape the repo, and declared replay
+  inputs that overlap writes in the selected closure; duplicate ids across closure tasks remain
+  distinct only through their task-qualified receipt identities
+
+The first pressure shape is a Bedrock-style finite offline verification lane:
+
+```yaml
+tasks:
+  gate:
+    replay_inputs:
+      - id: recorded_sql
+        kind: static_file
+        path: data/fixture.jsonl
+      - id: frozen_store
+        kind: static_file
+        path: data/store.db
+      - id: defended_baseline
+        kind: static_file
+        path: data/baseline.json
+```
+
+This does not make the lane hermetic by itself. It gives the receipt an exact, decision-time
+record of the frozen inputs it did consume. Lockfile identity, runtime identity, source identity,
+and any live-world boundary remain separate inputs with their own trust semantics.
+
 ### 2. Replay artifact trust classes
 
 Direction:
@@ -348,6 +388,7 @@ The first typed replay input taxonomy is runner-owned and closed:
 - `declared_dependency_resolution`
 - `selected_runtime_version`
 - `selected_runtime_artifact`
+- `declared_replay_input`
 
 `selected_runtime_version` is intentionally `narrowing` when it comes from a command version
 probe. `selected_runtime_artifact` is `acquitting` only when Ota captures an immutable executable
@@ -411,6 +452,8 @@ Direction:
   - selected tool/runtime identity
   - selected workflow/task lane identity
   - selected execution mode and relevant runtime/provider boundary
+  - deterministic presentation/runtime identity where it can change an otherwise fixed result:
+    ordering, NULL ordering, timezone, locale, numeric formatting, or equivalent adapter behavior
   - relevant env/profile selection identity
   - policy or ruleset identity when that policy or ruleset participates in the evaluated replay
     truth
@@ -418,6 +461,44 @@ Direction:
 - treat CI or container witness as helpful evidence, but not a full substitute for named inputs
 
 This is the input side of replay trust.
+
+### 4a. Presentation profile ownership
+
+`execution_presentation_profile` must not blur declared contract truth with runner observation.
+The first honest shape is deliberately asymmetric:
+
+- a task may declare one content-addressed replay presentation profile file alongside its static
+  replay inputs; this is contract-owned selected-lane truth and is captured before execution
+- Ota may later capture an observed runtime profile, but it remains a distinct runner-derived
+  record with its own source and completeness posture; it must never silently override or stand
+  in for the declared profile
+- the first implementation does not infer ordering, NULL placement, timezone, locale, or numeric
+  formatting from arbitrary process state
+- when no declared profile exists for semantics that can affect the claimed output, Ota publishes
+  the relevant replay boundary as ambient or narrowing rather than treating the frozen data as
+  hermetic
+
+The first production target is a declared profile file because it has clear contract ownership and
+immutable capture semantics. Runner-observed profiles are a later widening only after Ota can name
+their completeness truthfully.
+
+### 4b. Comparator semantics are not presentation identity
+
+Some deterministic replay lanes define an equivalence relation that intentionally absorbs selected
+presentation differences. That is a distinct control from pinning the runtime presentation:
+
+- a declared comparator may normalize labels, numeric tolerance, ordering, or another bounded
+  output dimension before deciding whether two results are equivalent
+- the comparator defines the semantic claim of the proof; it does not prove raw output bytes or
+  the full runtime presentation were identical
+- a comparator identity should be captured as a declared replay input when it participates in the
+  selected lane, but it remains `narrowing` for runtime presentation unless Ota also has a complete
+  declared presentation profile
+- a repo must not use a comparator to silently turn an ambient runtime claim into a hermetic one
+
+Bedrock is the first pressure example: its equivalence implementation deliberately ignores labels
+and applies numeric tolerance. That makes its stated result-set claim cheaper and honest, but does
+not itself pin timezone, NULL ordering, or every runtime formatting semantic.
 
 ### 5. Replay-aware comparison
 
@@ -467,8 +548,9 @@ The promotion order should stay explicit:
 
 1. name dependencies
 2. name runtime
-3. name environment
-4. snapshot the world or abstain from hermetic replay claims
+3. name execution presentation semantics
+4. name environment
+5. snapshot the world or abstain from hermetic replay claims
 
 This is the practical replay-hardening order because:
 
@@ -476,8 +558,11 @@ This is the practical replay-hardening order because:
   with lockfiles or equivalent dependency identity
 - runtime and machine drift close next through pinned interpreter, base image, or equivalent
   runtime identity
-- ambient environment drift is often the next residue once dependency and runtime identity are
-  pinned
+- execution presentation drift is the next distinct residue when fixed inputs can still produce
+  different observed results because ordering, NULL placement, timezone, locale, or numeric
+  rendering changed
+- ambient environment drift remains in play once dependency, runtime, and presentation identity
+  are pinned
 - live external state is the least pin-able class and therefore needs snapshotting or an honest
   downgrade from hermetic replay to fresh derivation
 
@@ -498,6 +583,9 @@ The hermetic boundary should stay explicit:
 - if the evaluated path depends on live external state that was not snapshotted or otherwise named
   as replay input, Ota should not present that path as hermetic replay
 - a replay that reaches the live world is a fresh derivation wearing a replay's clothes
+- a replay against frozen data with ambient presentation semantics is also not hermetic for any
+  claim those semantics can influence; the snapshot narrows data drift but does not acquit runtime
+  presentation drift
 - the mature operator choices are:
   - snapshot or vendor the external state
   - replay against a frozen mirror
@@ -508,6 +596,60 @@ This should stay aligned with V11.9:
 - V11.9 promotes ambient inputs into cited inputs on the authoritative decision path
 - V11.10 uses that stronger named-input set to decide whether a baseline is hermetic,
   replay-verified, witness-only, or still partly ambient
+
+### 6a. Query identity carrier before attribution
+
+Ota must define the machine record before publishing query-attribution guidance. The first carrier
+is a receipt-attached witnessed record recovered from a contract-declared structured trace source:
+
+```json
+{
+  "id": "query_identity:<task>:<run>",
+  "kind": "emitted_query_identity",
+  "input_class": "witnessed_query_output",
+  "identity": "sha256:<canonical-query-or-record>",
+  "source": {
+    "kind": "repo_emitted_trace",
+    "path": "<declared structured trace path>"
+  },
+  "evidence_class": "attested"
+}
+```
+
+The trace source is contract-declared; the identity and record are captured by Ota at the selected
+execution boundary. `witnessed_query_output` extends the canonical V11.9 input taxonomy rather
+than creating a replay-local class.
+
+The first concrete admission is the Bedrock JSONL shape, one record per `(id, run)` with a `sql`
+field. Ota canonicalizes the `sql` string and hashes the `(id, run, sql)` record. It preserves the
+repo-emitted trace as witnessed evidence rather than attempting to regenerate a query from the
+model. Other trace formats stay out of scope until they have equally explicit run identity and
+query fields.
+
+### 6b. Query identity before data or model attribution
+
+For model-mediated or generated-query lanes, Ota should use the strongest cheapest split first:
+
+1. capture or consume the emitted query identity for each run
+2. compare query identity before attributing a changed result to the model, data, or runtime
+3. when query identity is fixed, compare against frozen data plus the declared comparator and any
+   relevant presentation profile before attributing the remaining flap
+
+The first Bedrock-shaped interpretation is intentionally narrow:
+
+- changed captured SQL across K runs is witnessed evidence of generation divergence; attribute it
+  to model variance only when prompt/context, model configuration, and runtime identity are held
+  fixed
+- fixed SQL that changes only against live data, with comparator and presentation semantics held
+  fixed, points toward external-state drift
+- fixed SQL that changes against the same frozen data but has an ambient comparator or
+  presentation profile remains comparison/runtime drift, not model variance
+- a data fingerprint or frozen fixture alone is `narrowing`; it becomes part of a hermetic claim
+  only alongside the relevant runtime and presentation inputs
+
+Ota should consume an existing repo-emitted query trace where it is already authoritative. It must
+not duplicate application instrumentation or attempt to replay a model decision function from an
+opaque provider. Query output is a witnessed input; Ota evaluates the replay boundary around it.
 
 ### 7. Operator UX only after evidence is solid
 
@@ -543,6 +685,17 @@ V11.10 is complete when:
   instead of blurring them into one selector
 - baseline trust output makes weaker states explicit instead of implying stronger reproducibility
 - replay-sensitive input identity is stronger than contract hash alone on the first honest paths
+- static replay-input identities are captured before selected execution begins, never reconstructed
+  from a later filesystem read, and remain `narrowing` unless Ota has stronger input-specific
+  semantics
+- replay inputs declared by any reachable dependency task are aggregated into the selected lane's
+  receipt with task-qualified identity; final-task declarations are never treated as the whole
+  input set by default
+- declared presentation profiles remain contract-owned and separate from any later runner-observed
+  profile; absent or incomplete presentation truth downgrades hermeticity rather than being
+  silently inferred
+- query-attribution guidance ships only after its contract-declared trace source and receipt
+  carrier use canonical `witnessed_query_output` identity
 - replay-sensitive input identity includes policy or ruleset identity where that policy
   participates in the evaluated trust claim
 - replay failure can be surfaced separately from semantic contract drift

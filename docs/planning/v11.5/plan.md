@@ -116,6 +116,7 @@ The repo contract should be able to declare:
 - which verification lanes are merge-relevant
 - whether proof artifacts are required
 - whether refusal or unsafe execution should fail the gate
+- which contract-declared refusal canaries must prove the agent enforcement boundary remains live
 
 ### 4. CI comparison needs stable check identity
 
@@ -170,6 +171,8 @@ Add a machine-readable merge-gate result that answers:
 - is unsafe/refused state blocking
 - is contract drift blocking
 - which `merge_check_id` values are satisfied, missing, or miswired
+- which required enforcement canaries produced `refused_as_expected` versus admitted, failed, or
+  were not run
 
 ### 4. CI-facing renderers
 
@@ -202,6 +205,8 @@ V11.5 is complete when:
 - Ota can project contract-owned required verification truth in a machine-readable CI-facing form
 - Ota defines stable merge-check identity for required lanes
 - CI can fail on contract-owned merge-blocking governance verdicts without reimplementing Ota
+- CI can require both a positive safe lane and a contract-owned refusal canary without wrapping
+  `ota run` or `ota up` in provider-specific assertion shell
 - Ota can compare contract-required lanes against actual CI wiring honestly
 
 ## Follow-on boundary

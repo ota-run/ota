@@ -211,6 +211,7 @@ Define the canonical machine-readable governance states, for example:
   - not_run
   - executed
   - refused
+  - refused_as_expected
   - evidence_missing
   - evidence_satisfied
 
@@ -236,6 +237,10 @@ That means:
 - governance output points at the relevant receipt/proof/doctor artifacts and statuses
 - the governance model stays canonical; evidence links enrich it instead of creating a separate
   undocumented phase model
+
+For an enforcement canary, `refused_as_expected` is a dedicated runner-authored outcome. It must
+record the selected target, derived closure, derived refusal reason, and a zero-start execution
+assertion. It is neither ordinary execution success nor an unstructured refusal failure.
 
 ### 5. Additive command discipline
 

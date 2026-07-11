@@ -1928,6 +1928,11 @@ Each task summary now also carries a canonical `use` object:
   `native`, and when advertised `remote` in a stable order
 - every `use.modes[]` entry carries `default`, `availability`, and separate human/agent callable
   truth, including the exact command when callable
+
+Receipt `evaluated_inputs[]` also includes task-declared `replay_inputs` captured before execution.
+These records use `kind: static_file` and `input_class: declared_replay_input`; matching identities
+only prove the named file held still and remain narrowing evidence rather than a hermetic replay
+claim.
 - unavailable local planes remain explicit with `availability: "unavailable"` and
   `reason: "not_supported_by_task"`; this describes contract support, not current machine
   readiness, which remains the responsibility of `ota doctor` and `ota run --dry-run`

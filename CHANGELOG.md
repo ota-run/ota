@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added task-scoped `replay_inputs` for static files consumed by deterministic verification lanes;
+  Ota validates repo-relative non-overlapping declarations, captures their SHA-256 identities before
+  `ota run` or `ota up` begins the selected closure, persists them in receipts, and renders them as
+  runner-derived narrowing `declared_replay_input` evidence
+
 - added contract-owned generated artifact lineage: `artifacts.<name>` now declares a generated
   source artifact's producer task, output paths, and derivation inputs, while consumer tasks use
   `requires_artifacts`; Ota validates explicit producer dependencies and rejects execution when a

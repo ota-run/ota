@@ -623,6 +623,7 @@ pub enum ReplayInputClass {
     SelectedRuntimeVersion,
     SelectedRuntimeArtifact,
     GeneratedArtifactLineage,
+    DeclaredReplayInput,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

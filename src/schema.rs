@@ -4773,6 +4773,8 @@ pub struct TaskSpec {
     pub adapter_inputs: TaskAdapterInputsSpec,
     #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replay_inputs: Vec<TaskReplayInputSpec>,
     #[serde(default)]
     pub targets: BTreeMap<String, TaskTargetSpec>,
     #[serde(default)]
@@ -8443,6 +8445,20 @@ pub struct TaskInputSpec {
     pub default: Option<String>,
     #[serde(default)]
     pub allowed: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskReplayInputSpec {
+    pub id: String,
+    pub kind: TaskReplayInputKind,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskReplayInputKind {
+    StaticFile,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

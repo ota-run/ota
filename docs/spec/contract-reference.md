@@ -1935,6 +1935,10 @@ Fields:
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `requires_artifacts`: optional list of named generated artifacts the task consumes; each consumer
   must directly depend on the named artifact's producer task
+- `replay_inputs`: optional static repo files consumed by this task and captured before the selected
+  task or workflow closure begins; each entry declares `id`, `kind: static_file`, and a
+  repo-relative `path`; these are narrowing replay evidence and cannot overlap declared closure
+  writes
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean (`false` when omitted)
 - `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces
