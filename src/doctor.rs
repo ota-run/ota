@@ -12751,6 +12751,7 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
 
 pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime artifacts";
 pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/*";
+pub(crate) const OTA_CONTRACTS_GITIGNORE_ENTRY: &str = ".ota/contracts/*";
 pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/*";
 pub(crate) const OTA_PROOF_GITIGNORE_ENTRY: &str = ".ota/proof/*";
 
@@ -12794,6 +12795,26 @@ fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
     })
 }
 
+fn gitignore_has_ota_contracts_entry(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/"
+                | ".ota"
+                | ".ota/*"
+                | "/.ota/"
+                | "/.ota"
+                | "/.ota/*"
+                | ".ota/contracts/"
+                | ".ota/contracts"
+                | ".ota/contracts/*"
+                | "/.ota/contracts/"
+                | "/.ota/contracts"
+                | "/.ota/contracts/*"
+        )
+    })
+}
+
 fn gitignore_has_ota_proof_entry(contents: &str) -> bool {
     contents.lines().any(|line| {
         matches!(
@@ -12828,6 +12849,7 @@ pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, Stri
     let contents = fs::read_to_string(&gitignore_path)
         .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
     Ok(!(gitignore_has_ota_state_entry(&contents)
+        && gitignore_has_ota_contracts_entry(&contents)
         && gitignore_has_ota_receipts_entry(&contents)
         && gitignore_has_ota_proof_entry(&contents)))
 }
@@ -12841,8 +12863,8 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
             "repo_contract",
             FindingSeverity::Warn,
             "Repo local Ota artifacts are not ignored by git",
-            "`.ota/state/`, `.ota/receipts/`, and `.ota/proof/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue, archived receipts, and runtime proof artifacts can pollute repo diffs and diagnosis artifacts",
-            "run `ota doctor --fix --dry-run` to preview adding `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` to `.gitignore`, or add the ignore rules manually",
+            "`.ota/state/`, `.ota/contracts/`, `.ota/receipts/`, and `.ota/proof/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue, archived semantic snapshots, receipts, and runtime proof artifacts can pollute repo diffs and diagnosis artifacts",
+            "run `ota doctor --fix --dry-run` to preview adding `.ota/state/`, `.ota/contracts/`, `.ota/receipts/`, and `.ota/proof/` to `.gitignore`, or add the ignore rules manually",
         )),
         Ok(false) => None,
         Err(error) => Some(Finding::identified(
@@ -12852,7 +12874,7 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
             FindingSeverity::Warn,
             "Repo `.gitignore` could not be inspected",
             format!(
-                "ota could not inspect whether `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` are ignored: {error}"
+                "ota could not inspect whether `.ota/state/`, `.ota/contracts/`, `.ota/receipts/`, and `.ota/proof/` are ignored: {error}"
             ),
             "repair `.gitignore` readability and rerun `ota doctor`",
         )),
@@ -21945,6 +21967,27 @@ workflows:
         let fixture = TempDir::new().unwrap();
         fs::write(fixture.path().join(".gitignore"), ".ota/\n").unwrap();
 
+        let missing = super::repo_missing_ota_state_gitignore(fixture.path()).unwrap();
+        assert!(!missing);
+    }
+
+    #[test]
+    fn repo_hygiene_requires_archived_contract_snapshot_ignore_entry() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join(".gitignore"),
+            ".ota/state/*\n.ota/receipts/*\n.ota/proof/*\n",
+        )
+        .unwrap();
+
+        let missing = super::repo_missing_ota_state_gitignore(fixture.path()).unwrap();
+        assert!(missing, "archived contract snapshots must be ignored too");
+
+        fs::write(
+            fixture.path().join(".gitignore"),
+            ".ota/state/*\n.ota/contracts/*\n.ota/receipts/*\n.ota/proof/*\n",
+        )
+        .unwrap();
         let missing = super::repo_missing_ota_state_gitignore(fixture.path()).unwrap();
         assert!(!missing);
     }

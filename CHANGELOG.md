@@ -26,6 +26,19 @@
 
 ## Unreleased
 
+- fixed Compose adapter-file preflight to resolve declared Compose files relative to the same
+  adapter `cwd` used by execution, so valid `cwd`-relative contracts no longer fail before Docker
+  can run them
+
+- fixed repo-hygiene diagnosis and `ota doctor --fix` so archived semantic snapshots under
+  `.ota/contracts/` are protected alongside Ota state, receipt, and runtime-proof artifacts
+
+- added receipt-authored immutable Compose image evidence for explicitly selected services in
+  explicitly declared Compose files: a literal `@sha256:` image is captured as
+  `selected_runtime_artifact`, and receipt comparison reports a matching digest as
+  `acquitting` only for that named runtime artifact; mutable tags, interpolation, and inferred
+  Compose files remain outside the evidence
+
 - added receipt-authored selected Node runtime-version evidence for the same typed lockfile-strict
   hydration lanes: receipt comparison now reports a matching `node --version` as runner-derived
   `narrowing` evidence for `selected_runtime_version`, never as a binary/image digest or broader

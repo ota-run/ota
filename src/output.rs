@@ -610,6 +610,7 @@ pub enum ReplayInputClass {
     ContractTruth,
     DeclaredDependencyResolution,
     SelectedRuntimeVersion,
+    SelectedRuntimeArtifact,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

@@ -4580,6 +4580,12 @@ selected or effective workflow owns a rendered env artifact, receipt JSON keeps 
         "kind": "lockfile",
         "input_class": "declared_dependency_resolution",
         "identity": "sha256:4ed6a1..."
+      },
+      {
+        "id": "compose_image:compose.yaml#services.database",
+        "kind": "container_image_digest",
+        "input_class": "selected_runtime_artifact",
+        "identity": "sha256:8b7e5f..."
       }
     ],
     "backend": "native",
@@ -4638,10 +4644,12 @@ The nested `receipt` object can also include:
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file
 - `evaluated_inputs[]` with execution inputs captured while Ota authored the receipt.
-  The first shipped records are declared Node lockfile identities: `pnpm-lock.yaml` for frozen
-  pnpm and `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`. This records
-  the receipt-time input identity; it never re-reads the filesystem later and does not claim
-  anything about undeclared dependencies, ambient environment, runtime, or external-world inputs.
+  Shipped records include declared Node lockfile identities: `pnpm-lock.yaml` for frozen pnpm and
+  `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`; `runtime:node` command
+  version evidence for those selected typed lanes; and static digest-pinned Compose images for
+  explicitly selected services in explicitly declared Compose files. Ota never re-reads these
+  identities later. Mutable tags, interpolated image references, inferred Compose files, ambient
+  environment, and external-world inputs remain outside this evidence.
 - the same selected Node hydration lane can also record `runtime:node` with the contract-local
   `node --version` observed while authoring the receipt. This is intentionally a runtime-version
   observation, not an executable or image digest.
@@ -4917,7 +4925,10 @@ Current receipt diff JSON fields:
   first shipped record is `semantic_contract_snapshot`, which is `acquitting` only for the named
   `contract_truth` class when its identities match, never for dependency, environment, runtime,
   or external-world inputs that the receipts did not capture. A matching captured
-  typed Node lockfile is likewise `acquitting` only for `declared_dependency_resolution`.
+  typed Node lockfile is likewise `acquitting` only for `declared_dependency_resolution`. A
+  matching static digest-pinned Compose image is `acquitting` only for the named
+  `selected_runtime_artifact` input; it does not clear other runtime, environment, or external
+  state classes.
   A matching `runtime:node` record is `narrowing` for `selected_runtime_version`: it rules out a
   reported Node version change, but does not prove binary, image, host, environment, or external
   state identity.

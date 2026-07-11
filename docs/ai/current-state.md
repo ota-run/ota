@@ -36,8 +36,9 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
 - active planning slice: `V11.10` replay artifact trust
-- immediate proof gate: pressure the new Node runtime-version observation alongside a typed
-  lockfile receipt, then design the separate immutable executable/image-digest lane
+- immediate proof gate: the first immutable runtime-artifact lane is proven locally on Immich;
+  commit the Ota and pressure-repo batches, then push the Immich branch for matrix proof before
+  widening the artifact taxonomy
 
 ## Recent Completed Slice
 
@@ -70,12 +71,24 @@ durable agent workflow belongs in the canonical Ota skill.
 - The in-progress next cut captures `runtime:node` through contract-local `node --version` on the
   same typed lockfile-strict Node hydration path. It is deliberately `narrowing` for
   `selected_runtime_version`, not an executable/image-digest acquittal.
+- The current V11.10 cut adds the first immutable runtime-artifact carrier. Receipts
+  recover literal digest-pinned Compose `image` values only for explicitly selected services in
+  explicitly declared files as `selected_runtime_artifact`; receipt diff treats a matching digest
+  as `acquitting` only for that named artifact. Mutable tags, interpolation, and inferred files
+  remain outside the claim. Immich pressure also exposed and fixed an Ota runner gap: Compose
+  adapter-file preflight now resolves files relative to the same adapter `cwd` used by execution.
+  The narrow Redis/PostgreSQL launch, status, and stop path passed locally with the source-built
+  binary.
+- Immich also exposed a follow-on taxonomy opportunity, not a bug in the current receipt lane:
+  Compose image pulls are declared as broad network effects today. Do not mislabel them as
+  package-manager `dependency_hydration`; consider a separate `container_image_hydration`
+  network-effect kind only if another real repo confirms the need.
 
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.10/plan.md`. Then run `git status --short` in both `ota` and
-`/Users/bobai/Workspace/Ota.run/skills` before editing.
+`docs/planning/v11.10/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
+`/Users/bobai/Workspace/Ota.run/skills`, and the active pressure repo before editing.
 
 The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
 required a connected-surface decision for Ota changes, and synchronized the skill into the global
@@ -83,10 +96,10 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-Continue V11.10 by pressure-testing Node runtime-version evidence, then design the immutable
-executable/image-digest carrier separately. Do not infer any identity from a later filesystem
-read. Follow the pressure-testing protocol exactly and record whether the repo exposes a contract
-issue, implementation issue, or Ota platform gap.
+After the Immich GitHub matrix, choose the next immutable executable or image-digest carrier only
+from another real pressure repo. Do not infer identity from a later filesystem read. Follow the
+pressure-testing protocol exactly and record whether the repo exposes a contract issue,
+implementation issue, or Ota platform gap.
 
 ## Working Rules
 

@@ -1490,9 +1490,9 @@ ota doctor --member api --member web --json [PATH]
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
-- for contract-backed repos, when Ota-owned local artifacts are git-backed but `.ota/state/` or `.ota/receipts/` is not ignored, reports a fixable repo-hygiene finding
+- for contract-backed repos, when Ota-owned local artifacts are git-backed but `.ota/state/`, `.ota/contracts/`, `.ota/receipts/`, or `.ota/proof/` is not ignored, reports a fixable repo-hygiene finding
 - `--fix --dry-run` previews deterministic safe fixes without writing files
-- `--fix` applies only supported deterministic safe fixes for repos with a valid `ota.yaml`; current scope is `.gitignore` hygiene for `.ota/state/` and `.ota/receipts/`
+- `--fix` applies only supported deterministic safe fixes for repos with a valid `ota.yaml`; current scope is `.gitignore` hygiene for `.ota/state/`, `.ota/contracts/`, `.ota/receipts/`, and `.ota/proof/`
 - when no `ota.yaml` exists yet, `ota doctor --fix` does not propose repo-hygiene mutations and instead points operators to preview-first onboarding with `ota detect --dry-run` or `ota init --dry-run`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
 - in container mode, ota also uses safe non-mutating installability probes for the shipped mutating provisioning adapters when policy-backed provisioning is declared

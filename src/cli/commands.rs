@@ -58,10 +58,10 @@ use crate::detector::{
     Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
 };
 use crate::doctor::{
-    DoctorMode, DoctorReport, Finding, FindingIdentity, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
-    OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
-    command_available, command_version, command_version_in_working_dir,
-    diagnose_checks_only_for_workflow, diagnose_contract,
+    DoctorMode, DoctorReport, Finding, FindingIdentity, FindingSeverity,
+    OTA_CONTRACTS_GITIGNORE_ENTRY, OTA_PROOF_GITIGNORE_ENTRY, OTA_RECEIPTS_GITIGNORE_ENTRY,
+    OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
+    command_version_in_working_dir, diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode_for_task_with_overrides,
@@ -20191,6 +20191,15 @@ fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
     })
 }
 
+fn gitignore_has_ota_contracts_entry(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/contracts/" | ".ota/contracts" | ".ota/contracts/*"
+        )
+    })
+}
+
 fn gitignore_has_ota_proof_entry(contents: &str) -> bool {
     contents
         .lines()
@@ -20199,10 +20208,12 @@ fn gitignore_has_ota_proof_entry(contents: &str) -> bool {
 
 fn ota_artifact_gitignore_block(contents: Option<&str>) -> Option<String> {
     let missing_state = contents.is_none_or(|contents| !gitignore_has_ota_state_entry(contents));
+    let missing_contracts =
+        contents.is_none_or(|contents| !gitignore_has_ota_contracts_entry(contents));
     let missing_receipts =
         contents.is_none_or(|contents| !gitignore_has_ota_receipts_entry(contents));
     let missing_proof = contents.is_none_or(|contents| !gitignore_has_ota_proof_entry(contents));
-    if !missing_state && !missing_receipts && !missing_proof {
+    if !missing_state && !missing_contracts && !missing_receipts && !missing_proof {
         return None;
     }
 
@@ -20218,6 +20229,10 @@ fn ota_artifact_gitignore_block(contents: Option<&str>) -> Option<String> {
     }
     if missing_state {
         block.push_str(OTA_STATE_GITIGNORE_ENTRY);
+        block.push('\n');
+    }
+    if missing_contracts {
+        block.push_str(OTA_CONTRACTS_GITIGNORE_ENTRY);
         block.push('\n');
     }
     if missing_receipts {
@@ -37131,8 +37146,12 @@ tasks:
         )
         .expect("parse contract");
 
-        let inputs =
-            super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("setup")],
+            ExecutionOverrides::default(),
+        );
         let input = inputs
             .iter()
             .find(|input| input.id == "pnpm-lock.yaml")
@@ -37179,8 +37198,12 @@ tasks:
         )
         .expect("parse contract");
 
-        let inputs =
-            super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("setup")],
+            ExecutionOverrides::default(),
+        );
         let input = inputs
             .iter()
             .find(|input| input.id == "npm-shrinkwrap.json")
@@ -37191,8 +37214,12 @@ tasks:
         );
 
         fs::remove_file(repo.path().join("npm-shrinkwrap.json")).expect("remove shrinkwrap");
-        let inputs =
-            super::receipt_evaluated_inputs(&contract, &contract_path, vec![String::from("setup")]);
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("setup")],
+            ExecutionOverrides::default(),
+        );
         let input = inputs
             .iter()
             .find(|input| input.id == "package-lock.json")
@@ -37200,6 +37227,92 @@ tasks:
         assert_eq!(
             input.identity,
             super::contract_snapshot_hash(package_lock.as_bytes())
+        );
+    }
+
+    #[test]
+    fn receipt_captures_selected_static_compose_image_digest_only() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("docker")).expect("create compose directory");
+        fs::write(
+            repo.path().join("docker/compose.yaml"),
+            r#"
+services:
+  database:
+    image: ghcr.io/example/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  web:
+    image: ghcr.io/example/web:latest
+  unrelated:
+    image: ghcr.io/example/unrelated@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"#,
+        )
+        .expect("write compose file");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-compose-image
+tasks:
+  database:start:
+    adapter_inputs:
+      compose:
+        cwd: docker
+        files: [compose.yaml]
+    compose:
+      kind: up
+      services: [database]
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("database:start")],
+            ExecutionOverrides::default(),
+        );
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(
+            inputs[0].id,
+            "compose_image:docker/compose.yaml#services.database"
+        );
+        assert_eq!(inputs[0].kind, "container_image_digest");
+        assert_eq!(
+            inputs[0].input_class,
+            ReplayInputClass::SelectedRuntimeArtifact
+        );
+        assert_eq!(
+            inputs[0].identity,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+    }
+
+    #[test]
+    fn receipt_diff_static_compose_image_digest_is_acquitting() {
+        let image = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("compose_image:compose.yaml#services.database"),
+            kind: String::from("container_image_digest"),
+            input_class: ReplayInputClass::SelectedRuntimeArtifact,
+            identity: String::from(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        };
+        let trust =
+            super::receipt_diff_artifact_trust(None, None, &[image.clone()], &[image.clone()]);
+        assert_eq!(trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&trust[0]).unwrap()["trust_role"],
+            "acquitting"
+        );
+        let mut changed_image = image.clone();
+        changed_image.identity =
+            String::from("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let changed = super::receipt_diff_artifact_trust(None, None, &[image], &[changed_image]);
+        assert_eq!(
+            serde_json::to_value(&changed[0]).unwrap()["comparison"],
+            "changed"
         );
     }
 }
@@ -37446,6 +37559,8 @@ fn receipt_diff_artifact_trust(
             // A command-reported version is useful but not a binary or image digest. It narrows
             // runtime-version drift without claiming the full runtime artifact is identical.
             ReplayInputClass::SelectedRuntimeVersion => ReceiptDiffArtifactTrustRole::Narrowing,
+            // A static digest-pinned Compose image identifies the selected runtime artifact.
+            ReplayInputClass::SelectedRuntimeArtifact => ReceiptDiffArtifactTrustRole::Acquitting,
             _ => continue,
         };
         artifacts.push(ReceiptDiffArtifactTrust {
@@ -93086,6 +93201,7 @@ fn receipt_evaluated_inputs(
     contract: &Contract,
     contract_path: &Path,
     task_names: impl IntoIterator<Item = String>,
+    overrides: ExecutionOverrides,
 ) -> Vec<ExecutionReceiptEvaluatedInput> {
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut inputs = BTreeMap::new();
@@ -93093,12 +93209,256 @@ fn receipt_evaluated_inputs(
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
         };
-        let Some(prepare) = task.prepare.as_ref() else {
-            continue;
-        };
-        collect_receipt_hydration_inputs(prepare, root, &mut inputs);
+        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+        if let Some(prepare) = task.prepare.as_ref() {
+            collect_receipt_hydration_inputs(prepare, root, &mut inputs);
+        }
+        collect_receipt_compose_image_inputs(task, root, backend, &mut inputs);
     }
     inputs.into_values().collect()
+}
+
+// Compose image references are execution inputs only when the task selects a declared Compose
+// file and service set. Keep this intentionally strict: interpolation, inferred default files,
+// and mutable tags are not immutable runtime evidence.
+fn collect_receipt_compose_image_inputs(
+    task: &TaskSpec,
+    root: &Path,
+    backend: Backend,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    let mut services = BTreeSet::new();
+    let mut selects_all_services = false;
+    collect_compose_invocation_services(
+        task.compose.as_ref().map(|compose| &compose.invocation),
+        &mut services,
+        &mut selects_all_services,
+    );
+    if let Some(crate::schema::TaskLaunchSpec::Compose(launch)) = task.launch.as_ref() {
+        if launch.services.is_empty() {
+            selects_all_services = true;
+        } else {
+            services.extend(
+                launch
+                    .services
+                    .iter()
+                    .map(|service| service.trim())
+                    .filter(|service| !service.is_empty())
+                    .map(str::to_string),
+            );
+        }
+    }
+    if let Some(prepare) = task.prepare.as_ref() {
+        collect_prepare_compose_invocation_services(
+            prepare,
+            &mut services,
+            &mut selects_all_services,
+        );
+    }
+
+    let cwd = task
+        .compose_adapter_cwd_for_backend(backend)
+        .unwrap_or_default();
+    let files = task.compose_adapter_files_for_backend(backend);
+    for file in files {
+        collect_receipt_compose_images_from_file(
+            root,
+            cwd.as_str(),
+            file.as_str(),
+            &services,
+            selects_all_services,
+            inputs,
+        );
+    }
+    if let Some(prepare) = task.prepare.as_ref() {
+        collect_prepare_docker_compose_image_inputs(prepare, root, inputs);
+    }
+}
+
+fn collect_compose_invocation_services(
+    invocation: Option<&crate::schema::TaskComposeInvocationSpec>,
+    services: &mut BTreeSet<String>,
+    selects_all_services: &mut bool,
+) {
+    let Some(invocation) = invocation else {
+        return;
+    };
+    let service = invocation.service.trim();
+    if !service.is_empty() {
+        services.insert(service.to_string());
+    }
+    services.extend(
+        invocation
+            .services
+            .iter()
+            .map(|service| service.trim())
+            .filter(|service| !service.is_empty())
+            .map(str::to_string),
+    );
+    if service.is_empty() && invocation.services.is_empty() {
+        *selects_all_services = true;
+    }
+}
+
+fn collect_prepare_compose_invocation_services(
+    prepare: &TaskPrepareSpec,
+    services: &mut BTreeSet<String>,
+    selects_all_services: &mut bool,
+) {
+    match prepare {
+        TaskPrepareSpec::DependencyHydration(spec) => collect_compose_invocation_services(
+            spec.source.compose_invocation(),
+            services,
+            selects_all_services,
+        ),
+        TaskPrepareSpec::Sequence(sequence) => {
+            for step in &sequence.steps {
+                match step {
+                    crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+                        collect_compose_invocation_services(
+                            spec.source.compose_invocation(),
+                            services,
+                            selects_all_services,
+                        );
+                    }
+                    crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+                        collect_prepare_compose_invocation_services(
+                            &TaskPrepareSpec::Sequence(sequence.clone()),
+                            services,
+                            selects_all_services,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        TaskPrepareSpec::ToolBootstrap(_) => {}
+    }
+}
+
+fn collect_prepare_docker_compose_image_inputs(
+    prepare: &TaskPrepareSpec,
+    root: &Path,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    match prepare {
+        TaskPrepareSpec::DependencyHydration(spec) => {
+            let TaskDependencyHydrationSourceSpec::DockerCompose(source) = &spec.source else {
+                return;
+            };
+            let services = spec
+                .targets
+                .iter()
+                .map(|target| target.trim())
+                .filter(|target| !target.is_empty())
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>();
+            let selects_all_services = services.is_empty();
+            for file in source.effective_files() {
+                collect_receipt_compose_images_from_file(
+                    root,
+                    source.cwd.as_str(),
+                    file,
+                    &services,
+                    selects_all_services,
+                    inputs,
+                );
+            }
+        }
+        TaskPrepareSpec::Sequence(sequence) => {
+            for step in &sequence.steps {
+                match step {
+                    crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+                        collect_prepare_docker_compose_image_inputs(
+                            &TaskPrepareSpec::DependencyHydration(spec.clone()),
+                            root,
+                            inputs,
+                        );
+                    }
+                    crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+                        collect_prepare_docker_compose_image_inputs(
+                            &TaskPrepareSpec::Sequence(sequence.clone()),
+                            root,
+                            inputs,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        TaskPrepareSpec::ToolBootstrap(_) => {}
+    }
+}
+
+fn collect_receipt_compose_images_from_file(
+    root: &Path,
+    cwd: &str,
+    file: &str,
+    selected_services: &BTreeSet<String>,
+    selects_all_services: bool,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    let file = file.trim();
+    if file.is_empty() {
+        return;
+    }
+    let relative_path = if cwd.trim().is_empty() || cwd.trim() == "." {
+        PathBuf::from(file)
+    } else {
+        PathBuf::from(cwd.trim()).join(file)
+    };
+    let Ok(contents) = fs::read_to_string(root.join(&relative_path)) else {
+        return;
+    };
+    let Ok(document) = serde_yaml::from_str::<YamlValue>(&contents) else {
+        return;
+    };
+    let Some(services) = document
+        .as_mapping()
+        .and_then(|root| root.get(YamlValue::String(String::from("services"))))
+        .and_then(YamlValue::as_mapping)
+    else {
+        return;
+    };
+    let file_id = relative_path.to_string_lossy().replace('\\', "/");
+    for (service_name, service) in services {
+        let Some(service_name) = service_name
+            .as_str()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if !selects_all_services && !selected_services.contains(service_name) {
+            continue;
+        }
+        let Some(image) = service
+            .as_mapping()
+            .and_then(|service| service.get(YamlValue::String(String::from("image"))))
+            .and_then(YamlValue::as_str)
+        else {
+            continue;
+        };
+        let Some(digest) = static_sha256_digest(image) else {
+            continue;
+        };
+        let id = format!("compose_image:{file_id}#services.{service_name}");
+        inputs.insert(
+            id.clone(),
+            ExecutionReceiptEvaluatedInput {
+                id,
+                kind: String::from("container_image_digest"),
+                input_class: ReplayInputClass::SelectedRuntimeArtifact,
+                identity: digest,
+            },
+        );
+    }
+}
+
+fn static_sha256_digest(image: &str) -> Option<String> {
+    let digest = image.trim().rsplit_once("@sha256:")?.1;
+    (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| format!("sha256:{}", digest.to_ascii_lowercase()))
 }
 
 fn collect_receipt_hydration_inputs(
@@ -93401,6 +93761,7 @@ fn run_execution_receipt_with_shared(
             .iter()
             .map(|step| step.name.clone())
             .chain(std::iter::once(task_name.to_string())),
+        overrides,
     );
 
     ExecutionReceipt {
@@ -101516,6 +101877,7 @@ fn repo_execution_receipt_with_overrides(
         path,
         task.map(|task_name| contract.task_dependency_closure_names([task_name.to_string()]))
             .unwrap_or_else(|| contract.selected_workflow_task_closure_names(workflow_name)),
+        execution_overrides.unwrap_or_default(),
     );
 
     ExecutionReceipt {

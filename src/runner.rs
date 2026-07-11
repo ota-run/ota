@@ -2752,7 +2752,17 @@ pub(crate) fn ensure_task_adapter_inputs_ready(
             if trimmed.is_empty() {
                 continue;
             }
-            let full_path = working_dir.join(trimmed);
+            // Compose executes its declared files from the adapter working directory. Preflight
+            // must validate the same path, otherwise a truthful `cwd`-relative contract fails
+            // before the command path can run.
+            let full_path = match field {
+                crate::adapter_inputs::AdapterInputField::ComposeEnvFiles
+                | crate::adapter_inputs::AdapterInputField::ComposeFiles => task
+                    .compose_adapter_cwd_for_backend(backend)
+                    .map(|cwd| working_dir.join(cwd).join(trimmed))
+                    .unwrap_or_else(|| working_dir.join(trimmed)),
+                _ => working_dir.join(trimmed),
+            };
             fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
                 kind: kind.to_string(),
                 path: trimmed.to_string(),
@@ -64468,6 +64478,38 @@ tasks:
                 String::from("verify")
             ]
         );
+    }
+
+    #[test]
+    fn adapter_readiness_resolves_compose_files_relative_to_adapter_cwd() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: compose-cwd
+tasks:
+  status:
+    adapter_inputs:
+      compose:
+        cwd: docker
+        files: [compose.yaml]
+    compose:
+      kind: ps
+      services: [database]
+"#,
+        );
+        fixture.write(
+            "docker/compose.yaml",
+            "services:\n  database:\n    image: postgres:16\n",
+        );
+
+        super::ensure_task_adapter_inputs_ready(
+            "status",
+            fixture.contract.tasks.get("status").expect("status task"),
+            Backend::Native,
+            fixture.dir.path(),
+        )
+        .expect("compose file should be resolved from adapter cwd");
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {
