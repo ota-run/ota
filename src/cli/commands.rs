@@ -1757,6 +1757,9 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 crate::schema::TaskNetworkEffectKind::DependencyHydration => {
                     "network dependency hydration"
                 }
+                crate::schema::TaskNetworkEffectKind::ContainerImageHydration => {
+                    "container image hydration"
+                }
                 crate::schema::TaskNetworkEffectKind::IntegrationTest => {
                     "network integration testing"
                 }
@@ -13617,6 +13620,10 @@ fn merge_network_kind(
         | (_, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
             crate::schema::TaskNetworkEffectKind::ToolBootstrap
         }
+        (Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration), _)
+        | (_, crate::schema::TaskNetworkEffectKind::ContainerImageHydration) => {
+            crate::schema::TaskNetworkEffectKind::ContainerImageHydration
+        }
         (Some(crate::schema::TaskNetworkEffectKind::IntegrationTest), _)
         | (_, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
             crate::schema::TaskNetworkEffectKind::IntegrationTest
@@ -17360,6 +17367,10 @@ fn collect_task_closure_effects(
                 (Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap), _)
                 | (_, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
                     crate::schema::TaskNetworkEffectKind::ToolBootstrap
+                }
+                (Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration), _)
+                | (_, crate::schema::TaskNetworkEffectKind::ContainerImageHydration) => {
+                    crate::schema::TaskNetworkEffectKind::ContainerImageHydration
                 }
                 (Some(crate::schema::TaskNetworkEffectKind::IntegrationTest), _)
                 | (_, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
@@ -42675,6 +42686,9 @@ fn render_task_safety_posture_text(task: &TaskSummary<'_>) -> String {
         signals.push(match task.effects.network_kind {
             Some(crate::schema::TaskNetworkEffectKind::DependencyHydration) => {
                 String::from("networked dependency hydration")
+            }
+            Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration) => {
+                String::from("container image hydration")
             }
             Some(crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
                 String::from("live or staging integration test")

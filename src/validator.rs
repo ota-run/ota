@@ -5732,10 +5732,10 @@ fn validate_task_prepare(
                         )));
                     }
                     if effects.network_kind
-                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                        != Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration)
                     {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                            "task `{task_name}` prepare `dependency_hydration` with `prepare.medium: container_images` must declare `effects.network_kind: container_image_hydration`"
                         )));
                     }
                 }
@@ -9745,6 +9745,9 @@ impl ContractAdvisory {
                 TaskNetworkEffectKind::DependencyHydration => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
                 }
+                TaskNetworkEffectKind::ContainerImageHydration => {
+                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_CONTAINER_IMAGE_HYDRATION"
+                }
                 TaskNetworkEffectKind::IntegrationTest => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST"
                 }
@@ -10447,6 +10450,10 @@ fn agent_safe_network_summary(advisory: &AgentSafeTaskNetworkAdvisory) -> String
             "agent-safe task `{}` performs network dependency hydration",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::ContainerImageHydration => format!(
+            "agent-safe task `{}` performs container image hydration",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::IntegrationTest => format!(
             "agent-safe task `{}` performs network integration testing",
             advisory.task_name
@@ -10468,6 +10475,10 @@ fn agent_safe_network_why(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
             "task `{}` is declared agent-safe and performs dependency hydration over the network (for example lockfile-backed package-manager fetches); this is narrower than arbitrary remote mutation but still depends on registry/service reachability outside repo write boundaries",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::ContainerImageHydration => format!(
+            "task `{}` is declared agent-safe and may pull container images from a registry; this is narrower than arbitrary remote mutation but still depends on registry reachability and the declared image identity outside repo write boundaries",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::IntegrationTest => format!(
             "task `{}` is declared agent-safe and performs live, staging, or remote-backed verification over the network; this is narrower than arbitrary remote mutation but still depends on real service reachability plus non-local credentials or seeded fixtures",
             advisory.task_name
@@ -10487,6 +10498,10 @@ fn agent_safe_network_next(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
     match advisory.network_kind {
         TaskNetworkEffectKind::DependencyHydration => format!(
             "keep `effects.network: true` with `effects.network_kind: dependency_hydration` explicit for `{}`, and keep lockfile/provenance discipline strict on this task path",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::ContainerImageHydration => format!(
+            "keep `effects.network: true` with `effects.network_kind: container_image_hydration` explicit for `{}`, prefer immutable image digests where the runtime identity is known, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended image acquisition is not acceptable",
             advisory.task_name
         ),
         TaskNetworkEffectKind::IntegrationTest => format!(
@@ -13555,6 +13570,10 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
                     (Some(TaskNetworkEffectKind::ToolBootstrap), _)
                     | (_, TaskNetworkEffectKind::ToolBootstrap) => {
                         TaskNetworkEffectKind::ToolBootstrap
+                    }
+                    (Some(TaskNetworkEffectKind::ContainerImageHydration), _)
+                    | (_, TaskNetworkEffectKind::ContainerImageHydration) => {
+                        TaskNetworkEffectKind::ContainerImageHydration
                     }
                     (Some(TaskNetworkEffectKind::IntegrationTest), _)
                     | (_, TaskNetworkEffectKind::IntegrationTest) => {
@@ -17420,6 +17439,13 @@ fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<Vali
             "task `{task_name}` effect `network_kind` requires `effects.network: true`"
         )));
     }
+    if task.effects.network_kind == Some(TaskNetworkEffectKind::ContainerImageHydration)
+        && !task_declares_container_image_hydration_owner(task)
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` declares `effects.network_kind: container_image_hydration`, but must own `prepare.medium: container_images`, structured `compose.kind: up`, or `launch.kind: compose`"
+        )));
+    }
 
     let mut normalized_writes = BTreeSet::new();
     for write_path in &task.effects.writes {
@@ -17507,6 +17533,62 @@ fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<Vali
                 "task `{task_name}` effect `adapter_state` must not contain duplicate entry `{trimmed}`"
             )));
         }
+    }
+}
+
+fn task_declares_container_image_hydration_owner(task: &TaskSpec) -> bool {
+    task_body_declares_container_image_hydration_owner(
+        task.prepare.as_ref(),
+        task.compose.as_ref(),
+        task.launch.as_ref(),
+    ) || task.execution.as_ref().is_some_and(|execution| {
+        execution.modes.iter().any(|(_, branch)| {
+            task_body_declares_container_image_hydration_owner(
+                branch.prepare.as_ref(),
+                branch.compose.as_ref(),
+                branch.launch.as_ref(),
+            )
+        })
+    })
+}
+
+fn task_body_declares_container_image_hydration_owner(
+    prepare: Option<&crate::schema::TaskPrepareSpec>,
+    compose: Option<&crate::schema::TaskComposeExecutionSpec>,
+    launch: Option<&crate::schema::TaskLaunchSpec>,
+) -> bool {
+    prepare.is_some_and(prepare_declares_container_image_hydration)
+        || compose.is_some_and(|compose| {
+            compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Up
+        })
+        || matches!(launch, Some(crate::schema::TaskLaunchSpec::Compose(_)))
+}
+
+fn prepare_declares_container_image_hydration(prepare: &crate::schema::TaskPrepareSpec) -> bool {
+    match prepare {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            spec.medium == crate::schema::TaskDependencyHydrationMedium::ContainerImages
+        }
+        crate::schema::TaskPrepareSpec::ToolBootstrap(_) => false,
+        crate::schema::TaskPrepareSpec::Sequence(sequence) => sequence
+            .steps
+            .iter()
+            .any(prepare_sequence_step_declares_container_image_hydration),
+    }
+}
+
+fn prepare_sequence_step_declares_container_image_hydration(
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+) -> bool {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            spec.medium == crate::schema::TaskDependencyHydrationMedium::ContainerImages
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => sequence
+            .steps
+            .iter()
+            .any(prepare_sequence_step_declares_container_image_hydration),
+        _ => false,
     }
 }
 
@@ -27192,12 +27274,38 @@ tasks:
         docker: "*"
     effects:
       network: true
-      network_kind: dependency_hydration
+      network_kind: container_image_hydration
 "#,
         )
         .unwrap();
 
         validate_contract(&contract).expect("prepare task should validate");
+    }
+
+    #[test]
+    fn rejects_container_image_hydration_without_a_compose_image_owner() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    command:
+      exe: echo
+      args: [ready]
+    effects:
+      network: true
+      network_kind: container_image_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("task should be rejected");
+        assert!(errors.to_string().contains(
+            "must own `prepare.medium: container_images`, structured `compose.kind: up`, or `launch.kind: compose`"
+        ));
     }
 
     #[test]
@@ -27227,7 +27335,9 @@ tasks:
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.tools.docker`"));
         assert!(rendered.contains("must declare `effects.network: true`"));
-        assert!(rendered.contains("must declare `effects.network_kind: dependency_hydration`"));
+        assert!(
+            rendered.contains("must declare `effects.network_kind: container_image_hydration`")
+        );
     }
 
     #[test]

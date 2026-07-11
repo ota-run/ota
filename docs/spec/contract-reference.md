@@ -1732,7 +1732,7 @@ tasks:
         docker: "*"
     effects:
       network: true
-      network_kind: dependency_hydration
+      network_kind: container_image_hydration
       external_state:
         - docker
   setup:container:deps:
@@ -1919,7 +1919,7 @@ Fields:
 - `network`: optional boolean; set `true` when the task requires network access or reaches out to
   remote services during execution
 - `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`,
-  `integration_test`, or `tool_bootstrap`) for networked task paths
+  `container_image_hydration`, `integration_test`, or `tool_bootstrap`) for networked task paths
 - `adapter_state`: optional list of lowercase `<adapter_family>:<state_name>` tokens naming
   durable adapter-owned state the task mutates, such as `compose_volume:bundle_data`
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
@@ -1932,8 +1932,12 @@ Task-effect rules:
   paths outside the repo root but still inside the intended local workspace layout
 - use `effects.network: true` when the task depends on networked fetches or remote calls and that
   dependency should stay explicit for CI and agent execution
-- use `effects.network_kind: dependency_hydration` for finite dependency acquisition lanes such as
-  lockfile-backed package-manager install or first-class image hydration; keep
+- use `effects.network_kind: dependency_hydration` for finite package, module, chart, or other
+  dependency acquisition lanes such as lockfile-backed package-manager install; keep
+- use `effects.network_kind: container_image_hydration` for Compose-managed image pull lanes,
+  including `prepare.medium: container_images` and Compose startup paths that may pull declared
+  images; keep image identity and runtime receipt evidence explicit rather than collapsing it into
+  package dependency hydration
 - use `effects.network_kind: integration_test` for live, staging, or remote-backed verification
   lanes that depend on real services, credentials, or seeded environments beyond the local repo
 - test tasks that declare `requires_services` or `effects.external_state` should normally classify
@@ -2123,7 +2127,8 @@ Task-effect rules:
 - `prepare.kind: tool_bootstrap` with `prepare.with_deps: true` currently only applies to `prepare.tool: playwright_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm` and `prepare.tool: playwright_browsers`
 - use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip` or downloading Playwright or Cypress browsers through a repo-owned Node package manager
-- `prepare.kind: dependency_hydration` currently requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper
+- `prepare.kind: dependency_hydration` with `medium: container_images` and `source.kind: docker_compose` requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: container_image_hydration`; keep the declared Compose files and selected image targets explicit so image-pull truth is not collapsed into package dependency hydration
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Node toolchain truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; host-side repo-local gem hydration also requires `prepare.source.path`, while compose-wrapped lanes may omit it when Bundler truthfully uses the container-default install path; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Ruby toolchain truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: composer` currently requires `requirements.tools.composer`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Composer tool truth for the in-container command

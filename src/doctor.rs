@@ -5215,6 +5215,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
                 "Agent-safe task `{}` performs network dependency hydration",
                 advisory.task_name
             ),
+            TaskNetworkEffectKind::ContainerImageHydration => format!(
+                "Agent-safe task `{}` performs container image hydration",
+                advisory.task_name
+            ),
             TaskNetworkEffectKind::IntegrationTest => format!(
                 "Agent-safe task `{}` performs network integration testing",
                 advisory.task_name
@@ -5262,6 +5266,7 @@ fn diagnose_selected_task_effects(
 
     let mut broad_network_tasks = Vec::new();
     let mut hydration_network_tasks = Vec::new();
+    let mut container_image_hydration_tasks = Vec::new();
     let mut integration_test_network_tasks = Vec::new();
     let mut tool_bootstrap_tasks = Vec::new();
     let mut workspace_write_tasks = Vec::new();
@@ -5278,6 +5283,9 @@ fn diagnose_selected_task_effects(
                 TaskNetworkEffectKind::Broad => broad_network_tasks.push(task_name.clone()),
                 TaskNetworkEffectKind::DependencyHydration => {
                     hydration_network_tasks.push(task_name.clone())
+                }
+                TaskNetworkEffectKind::ContainerImageHydration => {
+                    container_image_hydration_tasks.push(task_name.clone())
                 }
                 TaskNetworkEffectKind::IntegrationTest => {
                     integration_test_network_tasks.push(task_name.clone())
@@ -5328,6 +5336,21 @@ fn diagnose_selected_task_effects(
             ),
             "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
             "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
+        ));
+    }
+
+    if !container_image_hydration_tasks.is_empty() {
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_CONTAINER_IMAGE_HYDRATION",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!(
+                "Selected task path performs container image hydration: {}",
+                container_image_hydration_tasks.join(", ")
+            ),
+            "the selected task path includes tasks with `effects.network_kind: container_image_hydration`; this narrower network lane may pull images from a registry before Compose startup, so readiness still depends on registry reachability and the declared image identity",
+            "keep `effects.network_kind: container_image_hydration` explicit, prefer immutable image digests where the runtime identity is known, and keep image receipt evidence separate from general package dependency hydration",
         ));
     }
 

@@ -36,9 +36,9 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
 - active planning slice: `V11.10` replay artifact trust
-- immediate proof gate: the immutable Compose runtime-artifact lane is proven locally and on the
-  Immich matrix; Grafana now confirms selected-service dependency-closure receipt truth locally.
-  Grafana GitHub matrix proof is the remaining gate before widening the artifact taxonomy.
+- immediate proof gate: validate the newly typed `container_image_hydration` effect on the existing
+  Immich and Grafana Compose pressure contracts, then publish their matrices before selecting the
+  next replay artifact lane.
 
 ## Recent Completed Slice
 
@@ -79,10 +79,11 @@ durable agent workflow belongs in the canonical Ota skill.
   outside the claim. Immich pressure also exposed and fixed an Ota runner gap: Compose adapter-file
   preflight now resolves files relative to the same adapter `cwd` used by execution. The narrow
   Redis/PostgreSQL launch, status, and stop path passed locally with the source-built binary.
-- Immich also exposed a follow-on taxonomy opportunity, not a bug in the current receipt lane:
-  Compose image pulls are declared as broad network effects today. Do not mislabel them as
-  package-manager `dependency_hydration`; consider a separate `container_image_hydration`
-  network-effect kind only if another real repo confirms the need.
+- Immich and Grafana confirmed the follow-on taxonomy need. `effects.network_kind:
+  container_image_hydration` now owns registry-backed Compose image acquisition independently from
+  package dependency hydration; `prepare.medium: container_images` requires this label, doctor and
+  policy packs expose the same lane, and immutable image receipt evidence remains separate from
+  the effect declaration.
 - Grafana confirmed the receipt carrier on a mixed Compose stack with locally built, mutable, and
   digest-pinned services. The selected observability lane records four explicit digest-pinned
   services plus `tempo-init` through Tempo's declared `depends_on` closure, while excluding

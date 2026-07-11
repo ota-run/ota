@@ -138,6 +138,9 @@ V11.10 is the slice for making that difference explicit.
 - do not redefine V10 semantic snapshots or V11.9 reconciliation
 - do not collapse replay posture into one binary `good` / `bad` field without provenance
 - do not treat container images or CI success alone as sufficient replay truth
+- keep registry-backed container image acquisition as `effects.network_kind:
+  container_image_hydration`, distinct from package dependency hydration and from immutable image
+  receipt evidence
 
 ## Core product gaps
 

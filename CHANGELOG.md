@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added `effects.network_kind: container_image_hydration` for registry-backed Compose image-pull
+  lanes. Structured `prepare.medium: container_images` now requires that explicit effect instead
+  of misclassifying image acquisition as package dependency hydration; doctor and policy packs can
+  govern the lane independently, while immutable image receipt evidence remains a separate claim
+
 - fixed whitespace-separated semver range evaluation for runtime and tool probes, so valid ranges
   such as `>=1.26.3 <1.27` accept `go1.26.3` without weakening Ota's existing shorthand-version
   behavior

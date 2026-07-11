@@ -251,7 +251,7 @@ tasks:
         docker: "*"
     effects:
       network: true
-      network_kind: dependency_hydration
+      network_kind: container_image_hydration
       external_state:
         - docker
   services:up:

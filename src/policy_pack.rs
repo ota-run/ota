@@ -133,6 +133,8 @@ pub struct PolicyTaskEffectsRules {
     #[serde(default)]
     pub dependency_hydration: Option<PolicyEffectDecision>,
     #[serde(default)]
+    pub container_image_hydration: Option<PolicyEffectDecision>,
+    #[serde(default)]
     pub integration_test: Option<PolicyEffectDecision>,
     #[serde(default)]
     pub adapter_state_default: Option<PolicyEffectDecision>,
@@ -2041,6 +2043,32 @@ fn resolve_network_effect_governance_decision(
         }
         (
             EffectGovernanceScope::SafeTask,
+            crate::schema::TaskNetworkEffectKind::ContainerImageHydration,
+        ) => {
+            if let Some(decision) = safe.container_image_hydration {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.container_image_hydration"),
+                );
+            }
+            if let Some(decision) = safe.network {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.network"),
+                );
+            }
+            if let Some(decision) = task.container_image_hydration {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.container_image_hydration"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (
+            EffectGovernanceScope::SafeTask,
             crate::schema::TaskNetworkEffectKind::IntegrationTest,
         ) => {
             if let Some(decision) = safe.integration_test {
@@ -2095,6 +2123,20 @@ fn resolve_network_effect_governance_decision(
                 return (
                     decision,
                     String::from("policies.effects.tasks.dependency_hydration"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (
+            EffectGovernanceScope::Task,
+            crate::schema::TaskNetworkEffectKind::ContainerImageHydration,
+        ) => {
+            if let Some(decision) = task.container_image_hydration {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.container_image_hydration"),
                 );
             }
             if let Some(decision) = task.network {
@@ -4314,6 +4356,53 @@ policies:
                 decision.effect == "network:integration_test"
                     && decision.decision == PolicyEffectDecision::Warn
                     && decision.source == "policies.effects.tasks.integration_test"
+            }),
+            "{task_decisions:?}"
+        );
+    }
+
+    #[test]
+    fn container_image_hydration_policy_decisions_use_narrower_rules_before_network() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+      container_image_hydration: warn
+    safe_tasks:
+      network: deny
+      container_image_hydration: deny
+"#,
+        )
+        .unwrap();
+
+        let safe_task_decisions = policy.safe_task_effect_governance_decisions(
+            Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
+        let task_decisions = policy.effect_governance_decisions(
+            EffectGovernanceScope::Task,
+            Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            None,
+        );
+
+        assert!(
+            safe_task_decisions.iter().any(|decision| {
+                decision.effect == "network:container_image_hydration"
+                    && decision.decision == PolicyEffectDecision::Deny
+                    && decision.source == "policies.effects.safe_tasks.container_image_hydration"
+            }),
+            "{safe_task_decisions:?}"
+        );
+        assert!(
+            task_decisions.iter().any(|decision| {
+                decision.effect == "network:container_image_hydration"
+                    && decision.decision == PolicyEffectDecision::Warn
+                    && decision.source == "policies.effects.tasks.container_image_hydration"
             }),
             "{task_decisions:?}"
         );
