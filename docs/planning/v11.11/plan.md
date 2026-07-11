@@ -45,6 +45,8 @@ V11.11 theme:
 Priority:
 
 - implement this before hydration source/feed posture widening
+- build it on top of `v11.10` replay input identity instead of inventing a second proof-input
+  vocabulary
 - proof-boundary truth is the first trust move because silent proof over-read is worse than a loud
   restore or feed failure
 
@@ -213,6 +215,7 @@ causally required at runtime.
 4. attach both to that carrier first
 5. add ordinary seam-exercise evidence only where the selected lane already exposes it
 6. add separately recorded negative-control proof truth without changing ordinary green semantics
+   or overloading replay artifacts from `v11.10`
 7. pressure-test on repos that intentionally carry narrow proof and one declared dependency seam
 8. only then widen the taxonomy or replicate across other artifacts
 9. only after that move to hydration source/feed posture in `v11.12`
@@ -302,6 +305,45 @@ Direction:
 - preserve unrun counterfactuals as `not_proved`; Ota must not emit “would fail” language from a
   declaration, heuristic, or ordinary green run
 
+#### Evidence provenance is part of the claim
+
+A seam fingerprint is not a single kind of evidence. The canonical carrier must classify its
+origin as runner-derived evidence metadata:
+
+- `caller_side`: the selected lane emitted a request payload, client trace, or command-side log
+  consistent with the declared interaction
+- `dependency_side`: the dependency emitted an independently observed server log, queue insert,
+  database mutation, or other dependency-owned state change
+- `round_trip_effect`: the selected lane observed the dependency's externally visible result, such
+  as a sink delivery, callback, or stored object
+
+The promotion rule is deliberately strict:
+
+- `interaction_attempted` is an additive observation flag, not a fourth evidence level and not a
+  downgraded `exercised` record
+- caller-side evidence may publish `interaction_attempted: true`, but cannot establish
+  `reachable` or promote a dependency to `exercised`; either level needs its own observed evidence
+- every caller-side-only `interaction_attempted` observation must pair with a contract-derived
+  `not_proved` entry for dependency exercise on that same dependency seam
+- dependency-side and round-trip-effect evidence may support `exercised` when the evidence maps to
+  the declared dependency seam and interaction without heuristic inference
+- a non-secret fingerprint strengthens its observed provenance; it does not change the evidence
+  level by itself
+- missing, ambiguous, or caller-side-only evidence must remain an explicit `not_proved` boundary
+  for dependency exercise rather than being summarized as an exercised seam
+
+This reuses V11.9 provenance classes for whether a value is asserted, derived, or attested. The
+canonical record nests both dimensions under `observation`:
+
+- `observation.origin` is the runner-derived seam-observation origin: `caller_side`,
+  `dependency_side`, or `round_trip_effect`
+- `observation.evidence_class` is the V11.9 authority class for the observation: for example,
+  `derived` or `attested`
+
+Downstream policy and UX consume the level plus `observation.evidence_class` as the authority
+boundary. `observation.origin` explains the evidence's location and controls promotion to
+`exercised`; it is not a second authority taxonomy.
+
 The first machine-readable shape should stay narrow:
 
 ```json
@@ -311,7 +353,28 @@ The first machine-readable shape should stay narrow:
       "dependency_id": "service:postgres",
       "level": "exercised",
       "interaction": "migration_connection",
+      "observation": {
+        "origin": "dependency_side",
+        "evidence_class": "attested"
+      },
       "fingerprint": "postgres:16"
+    },
+    {
+      "dependency_id": "service:postgres",
+      "interaction": "report_write",
+      "interaction_attempted": true,
+      "observation": {
+        "origin": "caller_side",
+        "evidence_class": "attested"
+      }
+    }
+  ],
+  "not_proved": [
+    {
+      "kind": "dependency_exercise_not_proved",
+      "dependency_id": "service:postgres",
+      "interaction": "report_write",
+      "reason": "caller_side_only_evidence"
     }
   ]
 }
@@ -334,6 +397,8 @@ Direction:
   declared expected way
 - publish an unexpected control success or an invalid control setup as evidence that the seam is
   not yet proven, never as a passing fault test
+- never derive `fault_tested` from a fingerprint, ordinary execution log, or successful selected
+  lane; the negative-control record is the only authority for that level
 
 The first machine-readable shape should be additive:
 
@@ -390,6 +455,8 @@ Direction:
 
 - attach proof-scope and not-proved boundary to the first chosen carrier, then derive outward
   from there
+- keep seam-exercise evidence and separately recorded negative-control evidence as additive fields
+  on that same canonical carrier instead of creating a second ordinary proof receipt shape
 - keep the human-readable summary aligned with the same fields instead of inventing a second
   narrative-only explanation
 - ensure future docs and engineering notes can point to the artifact directly
@@ -410,8 +477,14 @@ V11.11 is complete when:
   scope-derived remainder last; category names alone must not decide the ordering
 - ordinary proof output distinguishes `reachable` from `exercised` where Ota has seam evidence
   and leaves unobserved interactions as `not_proved`
+- caller-side-only evidence records `interaction_attempted` but cannot publish `exercised`; a
+  fixture proves it always pairs with a contract-derived `dependency_exercise_not_proved` entry
+  and that dependency-side or round-trip-effect evidence is required for ordinary seam exercise
+- each seam observation nests runner-derived `observation.origin` with the V11.9
+  `observation.evidence_class`; the latter is authoritative for downstream policy/UX while the
+  former controls evidence-level promotion and is never caller-selected prose
 - `fault_tested` appears only on a separately recorded negative-control run with an observed
-  expected failure; ordinary green proof never implies it
+  expected failure; ordinary green proof, fingerprint, or caller-side trace never implies it
 - engineering notes no longer need to carry the only truthful statement of proof scope
 - downstream consumers can distinguish a green narrow proof from a broader runtime or repo proof
   without relying on narrative prose

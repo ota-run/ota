@@ -35,11 +35,14 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
-- active planning slice: `V11.13` generated artifact lineage
-- immediate proof gate: review and commit the pnpm workspace-filter widening, then publish a
-  matrix for the EventCatalog generated-source slice. Dagger still validates as a narrow SDK
-  lineage contract, but its real generator execution is blocked by the absent Dagger CLI/engine;
-  that remains external-tool acquisition pressure, not a lineage-model failure.
+- active implementation and proof slice: `V11.13` generated artifact lineage
+- queued design refinement: `V11.11` seam-evidence provenance, which keeps caller-side attempts,
+  dependency-side or round-trip exercise, and separately recorded negative controls distinct on
+  the existing proof carrier
+- immediate proof gate: publish and verify a matrix for the EventCatalog generated-source slice.
+  Dagger still validates as a narrow SDK lineage contract, but its real generator execution is
+  blocked by the absent Dagger CLI/engine; that remains external-tool acquisition pressure, not a
+  lineage-model failure.
 
 ## Recent Completed Slice
 
