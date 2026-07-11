@@ -36,8 +36,8 @@ use crate::runner::{
     resolve_execution_backend_with_contract_path,
 };
 use crate::schema::{
-    AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
-    TaskInputSpec, TaskSpec, TaskVariantView,
+    AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, GeneratedArtifactSpec,
+    Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec, TaskVariantView,
 };
 use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
 
@@ -601,6 +601,17 @@ pub struct ExecutionReceiptEvaluatedInput {
     pub kind: String,
     pub input_class: ReplayInputClass,
     pub identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_lineage: Option<ExecutionReceiptArtifactLineage>,
+}
+
+/// Contract-declared lineage for a generated artifact consumed by the selected execution path.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptArtifactLineage {
+    pub producer: String,
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,
 }
 
 /// Canonical replay input families shared by receipt capture and comparison evidence.
@@ -611,6 +622,7 @@ pub enum ReplayInputClass {
     DeclaredDependencyResolution,
     SelectedRuntimeVersion,
     SelectedRuntimeArtifact,
+    GeneratedArtifactLineage,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -1792,6 +1804,8 @@ pub struct WorkspaceTaskSummary {
     pub effects: TaskEffectsSummary,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires_artifacts: Vec<String>,
     pub after_success: Vec<String>,
     pub after_failure: Vec<String>,
     pub after_always: Vec<String>,
@@ -3161,6 +3175,8 @@ pub struct TasksSuccess<'a> {
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_profile: Option<HarnessCapabilityProfile>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub artifacts: BTreeMap<String, GeneratedArtifactSpec>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<MemberTasksSuccess<'a>>,
     pub tasks: Vec<TaskSummary<'a>>,
@@ -3877,6 +3893,8 @@ pub struct TaskSummary<'a> {
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires_artifacts: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub when_checks: Vec<String>,
     pub after_success: Vec<String>,
     pub after_failure: Vec<String>,
@@ -4175,6 +4193,7 @@ impl<'a> TaskSummary<'a> {
                 .or(resolved_execution.os),
             depends_on: task.depends_on_for_backend(selected_backend).to_vec(),
             requires_services: task.requires_services.clone(),
+            requires_artifacts: task.requires_artifacts.clone(),
             when_checks: task.when.checks.clone(),
             after_success: task.after_success.clone(),
             after_failure: task.after_failure.clone(),

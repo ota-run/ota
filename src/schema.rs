@@ -174,6 +174,8 @@ pub struct Contract {
     #[serde(default)]
     pub tasks: BTreeMap<String, TaskSpec>,
     #[serde(default)]
+    pub artifacts: BTreeMap<String, GeneratedArtifactSpec>,
+    #[serde(default)]
     pub checks: Vec<CheckSpec>,
     #[serde(default)]
     pub exports: BTreeMap<String, serde_yaml::Value>,
@@ -183,6 +185,22 @@ pub struct Contract {
     pub metadata: BTreeMap<String, serde_yaml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedArtifactSpec {
+    pub kind: GeneratedArtifactKind,
+    pub producer: String,
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedArtifactKind {
+    GeneratedSource,
 }
 
 impl Contract {
@@ -4781,6 +4799,8 @@ pub struct TaskSpec {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub requires_services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_artifacts: Vec<String>,
     #[serde(default)]
     pub runtime: Option<TaskRuntimeSpec>,
     #[serde(default)]

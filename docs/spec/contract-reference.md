@@ -264,6 +264,33 @@ Current behavior:
 - repo commands run from inside a member directory automatically load the merged member contract
 - current member targeting expects the named member to be declared in `workspace.members`
 
+## `artifacts`
+
+Optional.
+
+Use `artifacts` when a task generates a named repo-local artifact that later tasks consume. This
+keeps code-generation ownership separate from broad `effects.writes` bookkeeping.
+
+```yaml
+artifacts:
+  typescript-sdk:
+    kind: generated_source
+    producer: sdk:generate
+    paths:
+      - sdk/typescript/src/api/client.gen.ts
+    inputs:
+      - core/schema
+```
+
+- `kind`: currently `generated_source`
+- `producer`: required task name that materializes the artifact
+- `paths`: required non-empty repo-relative output paths owned by the artifact
+- `inputs`: optional repo-relative source paths that define the declared derivation boundary
+- task consumers declare `requires_artifacts: [typescript-sdk]` and directly depend on the
+  producer task; Ota verifies the declared output paths after dependencies complete and before the
+  consumer body starts
+- presence is not freshness: Ota does not infer currentness from timestamps or Git state
+
 ## `exports` and `policies`
 
 Optional.
@@ -1906,6 +1933,8 @@ Fields:
 - `runtime_boundary`: optional canonical runtime sandbox baseline for this task lane
 - `variants`: optional list of conditional task executions
 - `requires_services`: optional list of service names that must be ready before the task body runs
+- `requires_artifacts`: optional list of named generated artifacts the task consumes; each consumer
+  must directly depend on the named artifact's producer task
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean (`false` when omitted)
 - `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces

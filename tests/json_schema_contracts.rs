@@ -70,6 +70,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         .expect("task mode kind enum");
 
     assert!(success.get("workflow").is_some());
+    assert!(success.get("artifacts").is_some());
     assert!(sandbox_network.get("enforcement").is_some());
     assert!(sandbox_network.get("outbound_targets").is_some());
     assert!(sandbox_outbound_target.get("destination_shape").is_some());
@@ -114,6 +115,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("use").is_some());
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
+    assert!(task_properties.get("requires_artifacts").is_some());
     assert!(task_properties.get("after_success").is_some());
     assert!(task_properties.get("after_failure").is_some());
     assert!(task_properties.get("after_always").is_some());

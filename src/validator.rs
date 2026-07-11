@@ -134,6 +134,7 @@ pub fn validate_contract_with_path(
     validate_surfaces(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
+    validate_generated_artifacts(contract, &mut errors);
     validate_workflows(contract, &mut errors);
     validate_checks(contract, &mut errors);
     validate_agent(contract, &mut errors);
@@ -142,6 +143,80 @@ pub fn validate_contract_with_path(
         Ok(())
     } else {
         Err(ValidationErrors::from_vec(errors))
+    }
+}
+
+fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let mut owned_paths = BTreeMap::new();
+    for (artifact_name, artifact) in &contract.artifacts {
+        if artifact_name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`artifacts` must not declare an empty artifact name",
+            ));
+        }
+        if !contract.tasks.contains_key(artifact.producer.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "artifact `{artifact_name}` declares unknown producer task `{}`",
+                artifact.producer
+            )));
+        }
+        if artifact.paths.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "artifact `{artifact_name}` must declare at least one output path"
+            )));
+        }
+        for (field, paths) in [("paths", &artifact.paths), ("inputs", &artifact.inputs)] {
+            let mut seen = BTreeSet::new();
+            for (index, path) in paths.iter().enumerate() {
+                let path = path.trim();
+                if !is_safe_repo_relative_file_path(path) {
+                    errors.push(ValidationError::new(format!(
+                        "artifact `{artifact_name}` `{field}[{index}]` must be a repo-relative path that does not escape the repo"
+                    )));
+                    continue;
+                }
+                if !seen.insert(path) {
+                    errors.push(ValidationError::new(format!(
+                        "artifact `{artifact_name}` `{field}` must not contain duplicate path `{path}`"
+                    )));
+                }
+                if field == "paths" {
+                    if let Some(owner) = owned_paths.insert(path, artifact_name) {
+                        errors.push(ValidationError::new(format!(
+                            "artifact `{artifact_name}` output path `{path}` is already owned by artifact `{owner}`"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    for (task_name, task) in &contract.tasks {
+        let mut seen = BTreeSet::new();
+        for artifact_name in &task.requires_artifacts {
+            if !seen.insert(artifact_name.trim()) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` `requires_artifacts` must not contain duplicate artifact `{artifact_name}`"
+                )));
+                continue;
+            }
+            let Some(artifact) = contract.artifacts.get(artifact_name) else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` requires unknown artifact `{artifact_name}`"
+                )));
+                continue;
+            };
+            if !task
+                .depends_on
+                .iter()
+                .any(|dependency| dependency == &artifact.producer)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` requires artifact `{artifact_name}` but must declare `depends_on: [{}]` so producer `{}` stays explicit",
+                    artifact.producer, artifact.producer
+                )));
+            }
+        }
     }
 }
 
@@ -2826,6 +2901,11 @@ fn validate_tasks(
             if !task.requires_services.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "task `{name}` must not declare `requires_services` when `aggregate` is present"
+                )));
+            }
+            if !task.requires_artifacts.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `requires_artifacts` when `aggregate` is present"
                 )));
             }
             if task.runtime.is_some() {
@@ -40658,6 +40738,72 @@ tasks:
                 "`toolchains.go.fulfillment.source: corepack` is not valid for `toolchains.go`",
             )),
             "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_generated_artifact_producer_consumer_lineage() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: generated-artifacts
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    inputs: [schema/api.graphql]
+tasks:
+  generate:
+    command:
+      exe: generator
+      args: [build]
+  verify:
+    command:
+      exe: test
+    depends_on: [generate]
+    requires_artifacts: [client]
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("explicit generated artifact lineage should validate");
+    }
+
+    #[test]
+    fn rejects_generated_artifact_consumer_without_producer_dependency() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: generated-artifacts
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+tasks:
+  generate:
+    command:
+      exe: generator
+  verify:
+    command:
+      exe: test
+    requires_artifacts: [client]
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("consumer must carry an explicit producer dependency")
+            .to_string();
+        assert!(
+            rendered
+                .contains("requires artifact `client` but must declare `depends_on: [generate]`"),
+            "{rendered}"
         );
     }
 }

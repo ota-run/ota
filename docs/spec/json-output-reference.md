@@ -1850,6 +1850,7 @@ Success:
       },
       "depends_on": [],
       "requires_services": ["postgres"],
+      "requires_artifacts": [],
       "safe_for_agent": false,
       "effective_safe_for_agent": false
     },
@@ -1898,6 +1899,7 @@ Success:
       },
       "depends_on": ["setup"],
       "requires_services": [],
+      "requires_artifacts": [],
       "safe_for_agent": true,
       "effective_safe_for_agent": true
     }
@@ -1914,6 +1916,10 @@ status fields.
 `ota tasks --json` may also include additive top-level `capability_profile`, a derived
 harness-facing agent surface built from the same closure-aware safety and refusal truth that powers
 `ota run --agent`.
+
+`tasks[].requires_artifacts` names generated artifacts consumed by that task. Their producer,
+declared output paths, and source inputs remain canonical under top-level `artifacts` in the
+contract; a non-empty list means the task must directly depend on each artifact producer.
 
 Each task summary now also carries a canonical `use` object:
 

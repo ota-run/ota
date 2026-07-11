@@ -752,6 +752,20 @@
         "path": { "type": "string" },
         "workflow": { "$ref": "#/$defs/workflowSummary" },
         "capability_profile": { "$ref": "#/$defs/harnessCapabilityProfile" },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "producer", "paths"],
+            "properties": {
+              "kind": { "const": "generated_source" },
+              "producer": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "inputs": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
         "agent": {
           "type": "object",
           "additionalProperties": false,
@@ -835,6 +849,10 @@
                 "items": { "type": "string" }
               },
               "requires_services": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "requires_artifacts": {
                 "type": "array",
                 "items": { "type": "string" }
               },
@@ -998,6 +1016,10 @@
                       "items": { "type": "string" }
                     },
                     "requires_services": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "requires_artifacts": {
                       "type": "array",
                       "items": { "type": "string" }
                     },

@@ -1,0 +1,62 @@
+#
+#                 █████
+#                ░░███
+#        ██████  ███████    ██████
+#       ███░░███░░░███░    ░░░░░███
+#      ░███ ░███  ░███      ███████
+#      ░███ ░███  ░███ ███ ███░░███
+#      ░░██████   ░░█████ ░░████████
+#       ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#    Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#    DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    Unless required by applicable law or agreed to in writing, software distributed under the
+#    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#    either express or implied. See the License for the specific language governing permissions
+#    and limitations under the License.
+#
+
+version: 1
+project:
+  name: generated-artifact-lineage
+  description: Canonical generated SDK producer and consumer ownership
+
+artifacts:
+  typescript-sdk:
+    kind: generated_source
+    producer: sdk:generate
+    paths:
+      - sdk/typescript/src/api/client.gen.ts
+    inputs:
+      - schema/api.graphql
+
+tasks:
+  sdk:generate:
+    description: Generate the typed TypeScript SDK from the declared API schema
+    command:
+      exe: api-generator
+      args:
+        - generate
+        - --schema
+        - schema/api.graphql
+        - --output
+        - sdk/typescript/src/api/client.gen.ts
+    effects:
+      writes:
+        - sdk/typescript/src/api/client.gen.ts
+
+  sdk:verify:
+    description: Verify the generated TypeScript SDK after its producer materializes it
+    command:
+      exe: npm
+      args:
+        - run
+        - test:sdk
+    depends_on:
+      - sdk:generate
+    requires_artifacts:
+      - typescript-sdk

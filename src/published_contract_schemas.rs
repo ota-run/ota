@@ -1958,6 +1958,17 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "tasks": { "$ref": "#/$defs/stringArray" }
       }
     },
+    "generatedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "producer", "paths"],
+      "properties": {
+        "kind": { "const": "generated_source" },
+        "producer": { "type": "string" },
+        "paths": { "$ref": "#/$defs/stringArray" },
+        "inputs": { "$ref": "#/$defs/stringArray" }
+      }
+    },
     "taskSpec": {
       "type": "object",
       "additionalProperties": false,
@@ -1994,6 +2005,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "requirements": { "$ref": "#/$defs/taskRequirements" },
         "depends_on": { "$ref": "#/$defs/stringArray" },
         "requires_services": { "$ref": "#/$defs/stringArray" },
+        "requires_artifacts": { "$ref": "#/$defs/stringArray" },
         "runtime": { "$ref": "#/$defs/taskRuntime" },
         "after_success": { "$ref": "#/$defs/stringArray" },
         "after_failure": { "$ref": "#/$defs/stringArray" },
@@ -2192,6 +2204,10 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
     "tasks": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/taskSpec" }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/generatedArtifact" }
     },
     "checks": {
       "type": "array",

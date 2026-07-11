@@ -84,25 +84,26 @@ use crate::output::{
     EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus,
     EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure,
     ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
-    ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput, ExecutionReceiptLogs,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExecutionTopologyFailure,
-    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
-    ExecutionTopologyProbeObserverSummary, ExecutionTopologyProbeSummary,
-    ExecutionTopologyProbeTargetSummary, ExecutionTopologyReadinessSummary,
-    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
-    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
-    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
-    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
-    HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
-    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, ListedWorkflowSummary,
-    MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
-    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
-    ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
-    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess,
-    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput,
+    ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
+    ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
+    ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
+    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
+    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
+    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
+    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, HarnessCapabilityProfile, HarnessEnvironmentBoundary,
+    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
+    InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
+    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArtifacts,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
+    ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
+    ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
     ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
     ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass,
     RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
@@ -10015,6 +10016,7 @@ fn build_assist_add_task_proposal(
         requirements: crate::schema::TaskRequirementsSpec::default(),
         depends_on: Vec::new(),
         requires_services: Vec::new(),
+        requires_artifacts: Vec::new(),
         runtime: None,
         after_success: Vec::new(),
         after_failure: Vec::new(),
@@ -14972,6 +14974,7 @@ pub fn tasks(
                             workflow: workflow_summary,
                             agent: agent_summary,
                             capability_profile,
+                            artifacts: contract.artifacts.clone(),
                             members: member_results,
                             tasks: task_summaries,
                         })),
@@ -14996,6 +14999,7 @@ pub fn tasks(
                             workflow: workflow_summary,
                             agent: agent_summary,
                             capability_profile,
+                            artifacts: contract.artifacts.clone(),
                             members: Vec::new(),
                             tasks: task_summaries,
                         })),
@@ -15101,6 +15105,7 @@ pub fn tasks(
                         workflow: None,
                         agent: None,
                         capability_profile: None,
+                        artifacts: BTreeMap::new(),
                         members: member_results,
                         tasks: Vec::new(),
                     })),
@@ -31474,6 +31479,7 @@ pub fn workspace_tasks(
                                 ),
                                 depends_on: filter_relationships(&task.depends_on),
                                 requires_services: task.requires_services.clone(),
+                                requires_artifacts: task.requires_artifacts.clone(),
                                 after_success: filter_relationships(&task.after_success),
                                 after_failure: filter_relationships(&task.after_failure),
                                 after_always: filter_relationships(&task.after_always),
@@ -37085,6 +37091,7 @@ tasks:
             kind: String::from("lockfile"),
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: String::from("sha256:baseline"),
+            artifact_lineage: None,
         };
         let mut current = baseline.clone();
         let matched =
@@ -37112,6 +37119,7 @@ tasks:
             kind: String::from("runtime_version"),
             input_class: ReplayInputClass::SelectedRuntimeVersion,
             identity: String::from("v24.1.0"),
+            artifact_lineage: None,
         };
         let runtime_trust =
             super::receipt_diff_artifact_trust(None, None, &[runtime.clone()], &[runtime.clone()]);
@@ -37179,6 +37187,58 @@ tasks:
             input.identity,
             super::contract_snapshot_hash(lockfile.as_bytes())
         );
+    }
+
+    #[test]
+    fn receipt_captures_generated_artifact_lineage_at_issue_time() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-generated-artifact
+artifacts:
+  sdk:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    inputs: [schema/api.graphql]
+tasks:
+  generate:
+    command:
+      exe: true
+  verify:
+    command:
+      exe: true
+    depends_on: [generate]
+    requires_artifacts: [sdk]
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("verify")],
+            ExecutionOverrides::default(),
+        );
+        let artifact = inputs
+            .iter()
+            .find(|input| input.id == "generated_artifact:sdk")
+            .expect("captured generated artifact lineage");
+        assert_eq!(
+            artifact.input_class,
+            ReplayInputClass::GeneratedArtifactLineage
+        );
+        let lineage = artifact
+            .artifact_lineage
+            .as_ref()
+            .expect("lineage details are captured");
+        assert_eq!(lineage.producer, "generate");
+        assert_eq!(lineage.paths, ["sdk/client.gen.ts"]);
+        assert_eq!(lineage.inputs, ["schema/api.graphql"]);
     }
 
     #[test]
@@ -37376,6 +37436,7 @@ tasks:
             identity: String::from(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
+            artifact_lineage: None,
         };
         let trust =
             super::receipt_diff_artifact_trust(None, None, &[image.clone()], &[image.clone()]);
@@ -37639,6 +37700,8 @@ fn receipt_diff_artifact_trust(
             ReplayInputClass::SelectedRuntimeVersion => ReceiptDiffArtifactTrustRole::Narrowing,
             // A static digest-pinned Compose image identifies the selected runtime artifact.
             ReplayInputClass::SelectedRuntimeArtifact => ReceiptDiffArtifactTrustRole::Acquitting,
+            // Declared lineage points to the producer and paths; it never proves artifact freshness.
+            ReplayInputClass::GeneratedArtifactLineage => ReceiptDiffArtifactTrustRole::PointerOnly,
             _ => continue,
         };
         artifacts.push(ReceiptDiffArtifactTrust {
@@ -42602,6 +42665,11 @@ fn render_tasks_text(
             &mut output,
             "Requires Services:",
             render_joined_or_none(&task.requires_services),
+        );
+        push_rendered_field(
+            &mut output,
+            "Requires Artifacts:",
+            render_joined_or_none(&task.requires_artifacts),
         );
         push_rendered_field(
             &mut output,
@@ -56964,6 +57032,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57045,6 +57114,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: vec![String::from("discoverability:check")],
             after_failure: Vec::new(),
@@ -57148,6 +57218,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57238,6 +57309,7 @@ tasks:
             selected_variant_os: None,
             depends_on: vec![String::from("setup")],
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57329,6 +57401,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57408,6 +57481,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57563,6 +57637,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57705,6 +57780,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57787,6 +57863,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57854,6 +57931,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -57943,6 +58021,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58023,6 +58102,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58121,6 +58201,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58219,6 +58300,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58302,6 +58384,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58384,6 +58467,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58466,6 +58550,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58548,6 +58633,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58623,6 +58709,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            requires_artifacts: Vec::new(),
             when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
@@ -58988,6 +59075,7 @@ workflows:
                 selected_variant_os: None,
                 depends_on: Vec::new(),
                 requires_services: Vec::new(),
+                requires_artifacts: Vec::new(),
                 when_checks: Vec::new(),
                 after_success: Vec::new(),
                 after_failure: Vec::new(),
@@ -59081,6 +59169,7 @@ workflows:
                 selected_variant_os: None,
                 depends_on: Vec::new(),
                 requires_services: Vec::new(),
+                requires_artifacts: Vec::new(),
                 when_checks: Vec::new(),
                 after_success: Vec::new(),
                 after_failure: Vec::new(),
@@ -59177,6 +59266,7 @@ workflows:
                     },
                     depends_on: Vec::new(),
                     requires_services: Vec::new(),
+                    requires_artifacts: Vec::new(),
                     after_success: Vec::new(),
                     after_failure: Vec::new(),
                     after_always: Vec::new(),
@@ -59220,6 +59310,7 @@ workflows:
                     effects: crate::output::TaskEffectsSummary::default(),
                     depends_on: Vec::new(),
                     requires_services: Vec::new(),
+                    requires_artifacts: Vec::new(),
                     after_success: Vec::new(),
                     after_failure: Vec::new(),
                     after_always: Vec::new(),
@@ -59291,6 +59382,7 @@ workflows:
                     effects: crate::output::TaskEffectsSummary::default(),
                     depends_on: Vec::new(),
                     requires_services: Vec::new(),
+                    requires_artifacts: Vec::new(),
                     after_success: Vec::new(),
                     after_failure: Vec::new(),
                     after_always: Vec::new(),
@@ -93300,8 +93392,43 @@ fn receipt_evaluated_inputs(
             collect_receipt_hydration_inputs(prepare, root, &mut inputs);
         }
         collect_receipt_compose_image_inputs(task, root, backend, &mut inputs);
+        collect_receipt_generated_artifact_inputs(contract, task, &mut inputs);
     }
     inputs.into_values().collect()
+}
+
+// Generated artifacts are contract lineage, not freshness proof. Capture the exact declaration
+// while issuing the receipt so consumers do not reconstruct producer ownership from task text.
+fn collect_receipt_generated_artifact_inputs(
+    contract: &Contract,
+    task: &TaskSpec,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    for artifact_name in &task.requires_artifacts {
+        let Some(artifact) = contract.artifacts.get(artifact_name) else {
+            continue;
+        };
+        let lineage = ExecutionReceiptArtifactLineage {
+            producer: artifact.producer.clone(),
+            paths: artifact.paths.clone(),
+            inputs: artifact.inputs.clone(),
+        };
+        let identity = contract_snapshot_hash(
+            &serde_json::to_vec(&lineage)
+                .expect("generated artifact lineage must serialize for receipt identity"),
+        );
+        let id = format!("generated_artifact:{artifact_name}");
+        inputs.insert(
+            id.clone(),
+            ExecutionReceiptEvaluatedInput {
+                id,
+                kind: String::from("generated_artifact_lineage"),
+                input_class: ReplayInputClass::GeneratedArtifactLineage,
+                identity,
+                artifact_lineage: Some(lineage),
+            },
+        );
+    }
 }
 
 // Compose image references are execution inputs only when the task selects a declared Compose
@@ -93538,6 +93665,7 @@ fn collect_receipt_compose_images_from_file(
                 kind: String::from("container_image_digest"),
                 input_class: ReplayInputClass::SelectedRuntimeArtifact,
                 identity: digest,
+                artifact_lineage: None,
             },
         );
     }
@@ -93685,6 +93813,7 @@ fn collect_receipt_hydration_source_inputs(
             kind: String::from("lockfile"),
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: contract_snapshot_hash(&bytes),
+            artifact_lineage: None,
         },
     );
     if let Some(version) = command_version_in_working_dir("node", root) {
@@ -93695,6 +93824,7 @@ fn collect_receipt_hydration_source_inputs(
                 kind: String::from("runtime_version"),
                 input_class: ReplayInputClass::SelectedRuntimeVersion,
                 identity: version,
+                artifact_lineage: None,
             },
         );
     }
@@ -99907,6 +100037,12 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     task.requires_services.join(",")
                 ));
             }
+            if !task.requires_artifacts.is_empty() {
+                stdout.push_str(&format!(
+                    " requires_artifacts={}",
+                    task.requires_artifacts.join(",")
+                ));
+            }
             if !task.effects.is_empty() {
                 stdout.push_str(&format!(
                     " effects={}",
@@ -100005,6 +100141,11 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 } else {
                     task.requires_services.join(",")
                 },
+                if task.requires_artifacts.is_empty() {
+                    String::from("-")
+                } else {
+                    task.requires_artifacts.join(",")
+                },
                 [
                     task.repo_task
                         .as_ref()
@@ -100058,6 +100199,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             "Binding",
             "Depends On",
             "Requires Services",
+            "Requires Artifacts",
             "Hooks",
             "Effects",
             "Command",

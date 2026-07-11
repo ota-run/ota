@@ -35,12 +35,21 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
-- active planning slice: `V11.10` replay artifact trust
-- immediate proof gate: validate the newly typed `container_image_hydration` effect on the existing
-  Immich and Grafana Compose pressure contracts, then publish their matrices before selecting the
-  next replay artifact lane.
+- active planning slice: `V11.13` generated artifact lineage
+- immediate proof gate: pressure one real generator lane with a provisioned generator runtime,
+  then a distinct sibling-repo consumer path. Dagger validates and exposes the first narrow SDK
+  lineage contract, but its real generator execution is blocked by the absent Dagger CLI/engine;
+  that is external-tool acquisition pressure, not a lineage-model failure.
 
 ## Recent Completed Slice
+
+- The in-progress `V11.13` core cut makes generated source a named repo-scoped contract artifact:
+  `artifacts.<name>` declares `kind: generated_source`, one producer task, output paths, and
+  optional source inputs; consumers declare `requires_artifacts` and directly depend on the
+  producer. Validation rejects dangling, overlapping, and dependency-disconnected lineage. The
+  runner checks declared outputs after the producer closure and before consumers execute. Task
+  JSON carries the producer map plus consumer references, and receipt `evaluated_inputs[]` captures
+  producer/path/input lineage at issue time as pointer-only evidence, never as a freshness claim.
 
 - The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal
@@ -99,7 +108,7 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.10/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
+`docs/planning/v11.13/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
 `/Users/bobai/Workspace/Ota.run/skills`, and the active pressure repo before editing.
 
 The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
@@ -108,10 +117,10 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-After the Immich GitHub matrix, choose the next immutable executable or image-digest carrier only
-from another real pressure repo. Do not infer identity from a later filesystem read. Follow the
-pressure-testing protocol exactly and record whether the repo exposes a contract issue,
-implementation issue, or Ota platform gap.
+Before widening the V11.13 model further, finish one healthy real generator lane and one
+independent sibling-consumer lane. Do not infer generated-file freshness from timestamps or later
+filesystem reads. Follow the pressure-testing protocol exactly and record whether the repo exposes
+a contract issue, implementation issue, or Ota platform gap.
 
 ## Working Rules
 

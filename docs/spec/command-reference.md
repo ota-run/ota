@@ -316,7 +316,9 @@ Text output:
 - each task may include `Launch` when the resolved execution source is structured `launch`
 - each task may include `Prepare` when the resolved execution source is a first-class `prepare`
   body, including ordered `prepare.kind: sequence` summaries
-- each task may include `env`, `inputs`, `effects`, and `requires_services`
+- each task may include `env`, `inputs`, `effects`, `requires_services`, and
+  `requires_artifacts`; generated artifact producer/consumer truth remains declared under top-level
+  `artifacts`
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes `Human Run`, with every advertised mode in stable `Container`, `Native`, then
   `Remote` order; the selected lane is marked `(Default)`
@@ -2895,7 +2897,7 @@ JSON output:
 - `summary` with `repo_count`, `acquired_count`, and `task_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
-- each task includes: `name`, `kind`, optional `description`, one execution body field (`run` or `script`) or additive `launch`, `depends_on`, `requires_services`, `after_success`, `after_failure`, `after_always`
+- each task includes: `name`, `kind`, optional `description`, one execution body field (`run` or `script`) or additive `launch`, `depends_on`, `requires_services`, `requires_artifacts`, `after_success`, `after_failure`, `after_always`
 
 ## `ota workspace list`
 

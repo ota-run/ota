@@ -776,6 +776,15 @@ pub enum RunError {
     #[error("task `{task}` does not have a valid execution form")]
     InvalidTaskExecution { task: String },
     #[error(
+        "task `{task}` requires generated artifact `{artifact}`, but declared output `{path}` is missing; run producer task `{producer}`"
+    )]
+    MissingRequiredArtifact {
+        task: String,
+        artifact: String,
+        path: String,
+        producer: String,
+    },
+    #[error(
         "task `{task}` was requested with `--mode {requested_mode}`, but it only supports modes: {supported_modes}"
     )]
     UnsupportedTaskModeOverride {
@@ -8191,6 +8200,8 @@ fn execute_task_with_hooks(
         }
     }
 
+    ensure_task_required_artifacts(contract, task_name, task, working_dir)?;
+
     let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
     maybe_activate_command_acquisition_tools_on_run_path(
@@ -9141,6 +9152,32 @@ fn ensure_task_required_services(
     }
 
     Ok(None)
+}
+
+fn ensure_task_required_artifacts(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    working_dir: &Path,
+) -> Result<(), RunError> {
+    for artifact_name in &task.requires_artifacts {
+        let artifact = contract
+            .artifacts
+            .get(artifact_name)
+            .expect("validated task artifact references should exist");
+        for path in &artifact.paths {
+            let path = path.trim();
+            if !working_dir.join(path).exists() {
+                return Err(RunError::MissingRequiredArtifact {
+                    task: task_name.to_string(),
+                    artifact: artifact_name.to_string(),
+                    path: path.to_string(),
+                    producer: artifact.producer.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn service_producer_target_spec(
@@ -39825,6 +39862,71 @@ tasks:
             outcome.stderr.contains("container-stream-err"),
             "{}",
             outcome.stderr
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_allows_consumer_after_generated_artifact_producer_materializes_output() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: generated-artifacts
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [client.gen.ts]
+tasks:
+  generate:
+    run: echo generated > client.gen.ts
+  verify:
+    run: echo verify
+    depends_on: [generate]
+    requires_artifacts: [client]
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "verify")
+            .expect("producer-backed generated artifact consumer should run");
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("client.gen.ts")).unwrap(),
+            "generated\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_rejects_consumer_when_generated_artifact_remains_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: generated-artifacts
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+tasks:
+  generate:
+    run: true
+  verify:
+    run: true
+    depends_on: [generate]
+    requires_artifacts: [client]
+"#,
+        );
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "verify")
+            .expect_err("missing generated output must fail before consumer execution");
+        assert!(
+            error
+                .to_string()
+                .contains("requires generated artifact `client`"),
+            "{error}"
         );
     }
 

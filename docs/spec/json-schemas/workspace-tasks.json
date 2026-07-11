@@ -363,6 +363,10 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
+                "requires_artifacts": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
                 "after_success": {
                   "type": "array",
                   "items": {

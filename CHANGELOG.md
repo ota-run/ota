@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added contract-owned generated artifact lineage: `artifacts.<name>` now declares a generated
+  source artifact's producer task, output paths, and derivation inputs, while consumer tasks use
+  `requires_artifacts`; Ota validates explicit producer dependencies and rejects execution when a
+  producer did not materialize its declared output
+
 - upgraded `quick-xml` to `0.41.0` to remediate `RUSTSEC-2026-0194` and `RUSTSEC-2026-0195`;
   the NuGet feed-provenance parser now uses the current XML 1.0 attribute-normalization API
 
