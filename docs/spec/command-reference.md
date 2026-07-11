@@ -230,6 +230,7 @@ ota validate --member api [PATH]
 ```
 
 Current behavior:
+
 - resolves `ota.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - when `--member` is set, loads the root contract, merges the declared member override, and validates the merged contract
 - when a root contract declares `workspace.type: monorepo`, `ota validate` also validates each declared merged member contract
