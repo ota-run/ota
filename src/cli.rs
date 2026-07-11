@@ -20277,7 +20277,8 @@ tasks:
         let use_output = run_with(["ota", "tasks", "--use", "--all", fixture.path()]);
         assert_eq!(use_output.exit_code, 0);
         let use_text = strip_ansi(&use_output.stdout);
-        assert!(use_text.contains("Use: `ota run setup`"));
+        assert!(use_text.contains("Human Run:"));
+        assert!(use_text.contains("Native (Default): `ota run setup`"));
         assert!(use_text.contains("Visibility: internal"));
 
         let json_output = run_with(["ota", "tasks", "--all", "--json", fixture.path()]);
@@ -20404,8 +20405,8 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Use: `ota run dev`"));
-        assert!(!text.contains("Use: `ota run setup`"));
+        assert!(text.contains("Native (Default): `ota run dev`"));
+        assert!(!text.contains("Native (Default): `ota run setup`"));
     }
 
     #[test]
@@ -20842,7 +20843,7 @@ workflows:
         assert!(body.contains("Default: app"));
         assert!(body.contains("✦ app"));
         assert!(body.contains("Description: Full app workflow"));
-        assert!(body.contains("Use: `ota up --workflow app`"));
+        assert!(body.contains("Humans: `ota up --workflow app`"));
         assert!(body.contains("Proof: `ota proof runtime --workflow app`"));
         assert!(body.contains("Readiness Checks: repo-ready"));
         assert!(body.contains("Run: `ota run dev`"));
@@ -20984,7 +20985,7 @@ tasks:
         assert!(stdout.contains("setup"));
         assert!(stdout.contains("Kind: script"));
         assert!(stdout.contains("Notes:"));
-        assert!(stdout.contains("Use: `ota run setup`"));
+        assert!(stdout.contains("Native (Default): `ota run setup`"));
     }
 
     #[test]
@@ -21045,14 +21046,21 @@ tasks:
             .expect("ci task present");
 
         assert_eq!(output.exit_code, 0);
-        assert!(stdout.contains("Use: `ota run build`"));
-        assert!(stdout.contains("Default Mode: native"));
+        assert!(stdout.contains("Human Run:"));
+        assert!(stdout.contains("Native (Default): `ota run build`"));
         assert!(lines[ci_idx - 1].trim().is_empty());
-        assert_eq!(lines[build_idx + 1], "  Default Mode: native");
-        assert!(lines[build_idx + 2].starts_with("  Use: `ota run build`"));
+        assert_eq!(
+            lines[build_idx + 1],
+            "  Description: Build the site for production"
+        );
+        assert_eq!(lines[build_idx + 2], "  Human Run:");
         assert!(stdout.contains("Description: Build the site for production"));
-        assert_eq!(lines[ci_idx + 1], "  Default Mode: native");
-        assert!(lines[ci_idx + 2].starts_with("  Use: `ota run ci`"));
+        assert_eq!(
+            lines[ci_idx + 1],
+            "  Description: Canonical local verification"
+        );
+        assert_eq!(lines[ci_idx + 2], "  Human Run:");
+        assert!(stdout.contains("Native (Default): `ota run ci`"));
         assert!(stdout.contains("Description: Canonical local verification"));
         assert!(stdout.contains("Safety Posture: review-required lane"));
         assert!(stdout.contains("Dry Run JSON: `ota run build --dry-run --json`"));
@@ -21164,18 +21172,16 @@ tasks:
         assert!(stdout.contains("TASKS "));
         assert!(stdout.contains("✦ dev"));
         assert!(stdout.contains("Context: app"));
-        assert!(stdout.contains("Default Mode: native"));
-        assert!(stdout.contains("Use: `ota run dev`"));
+        assert!(stdout.contains("Native (Default): `ota run dev`"));
         assert!(stdout.contains("Description: Start the dev server"));
-        assert!(stdout.contains("Notes:"));
         assert!(stdout.contains("✦ start"));
-        assert!(stdout.contains("Use: `ota run start`"));
+        assert!(stdout.contains("Native (Default): `ota run start`"));
         assert!(stdout.contains("✦ typecheck"));
-        assert!(stdout.contains("Use: `ota run typecheck`"));
-        assert!(stdout.contains("Notes: Use this for local development and manual verification."));
+        assert!(stdout.contains("Native (Default): `ota run typecheck`"));
+        assert!(!stdout.contains("Notes:"));
         assert!(stdout.contains("Dry Run JSON: `ota run dev --dry-run --json`"));
         assert!(stdout.contains("Dry Run JSON: `ota run start --dry-run --json`"));
-        assert!(stdout.contains("Command Preview:"));
+        assert!(stdout.contains("Preview:"));
         assert!(!stdout.contains("Mode Branches: -"));
     }
 
@@ -21385,6 +21391,7 @@ tasks:
             native_names,
             vec![
                 "container_default_with_native_fallback",
+                "container_only",
                 "dual_mode",
                 "host_only"
             ]
@@ -21452,25 +21459,14 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Use: `ota run typecheck`"), "{stdout}");
-        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(stdout.contains("Human Run:"), "{stdout}");
         assert!(
-            stdout.contains("default (native): `ota run typecheck`"),
+            stdout.contains("Native (Default): `ota run typecheck`"),
             "{stdout}"
         );
         assert!(
-            stdout.contains("container: `ota run typecheck --mode container`"),
+            stdout.contains("Container: `ota run typecheck --container`"),
             "{stdout}"
-        );
-        let mode_branches_idx = stdout
-            .find("Mode Branches:")
-            .expect("mode branches line present");
-        let modes_idx = stdout
-            .find("Runnable Modes:")
-            .expect("runnable modes line present");
-        assert!(
-            modes_idx > mode_branches_idx,
-            "expected Modes block after Mode Branches"
         );
         assert!(
             stdout.contains("Mode Branches: container (context=app"),
@@ -21512,9 +21508,12 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Default Mode: container"), "{stdout}");
         assert!(
-            stdout.contains("Command Preview: cargo clippy --all-targets --no-deps"),
+            stdout.contains("Container (Default): `ota run lint`"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("Preview: cargo clippy --all-targets --no-deps"),
             "{stdout}"
         );
     }
@@ -21541,7 +21540,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(
-            stdout.contains("Command Preview: corepack yarn lint in `app/client`"),
+            stdout.contains("Preview: corepack yarn lint in `app/client`"),
             "{stdout}"
         );
     }
@@ -21587,16 +21586,18 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Default Mode: container"), "{stdout}");
-        assert!(stdout.contains("Use: `ota run lint`"), "{stdout}");
-        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(stdout.contains("Human Run:"), "{stdout}");
+        assert!(
+            stdout.contains("Container (Default): `ota run lint`"),
+            "{stdout}"
+        );
         assert!(!stdout.contains("Mode Branches:"), "{stdout}");
         assert!(
-            stdout.contains("default (container): `ota run lint`"),
+            stdout.contains("Container (Default): `ota run lint`"),
             "{stdout}"
         );
         assert!(
-            stdout.contains("native: `ota run lint --mode native`"),
+            stdout.contains("Native: `ota run lint --native"),
             "{stdout}"
         );
     }
@@ -21645,7 +21646,7 @@ tasks:
             !stdout.contains("Mode Branches: native (context=host);"),
             "{stdout}"
         );
-        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(stdout.contains("Human Run:"), "{stdout}");
     }
 
     #[test]
@@ -21681,18 +21682,17 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Use: `ota run start`"), "{stdout}");
-        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(stdout.contains("Human Run:"), "{stdout}");
         assert!(
-            stdout.contains("default (container): `ota run start`"),
+            stdout.contains("Container (Default): `ota run start`"),
             "{stdout}"
         );
         assert!(
-            stdout.contains("native: `ota run start --mode native`"),
+            stdout.contains("Native: `ota run start --native`"),
             "{stdout}"
         );
         assert!(
-            !stdout.contains("container: `ota run start --mode container`"),
+            !stdout.contains("Container: `ota run start --mode container`"),
             "{stdout}"
         );
     }
@@ -21732,9 +21732,12 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Use: `ota run deploy`"), "{stdout}");
+        assert!(
+            stdout.contains("Native (Default): `ota run deploy`"),
+            "{stdout}"
+        );
         assert!(!stdout.contains("Mode Branches:"), "{stdout}");
-        assert!(!stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(stdout.contains("Human Run:"), "{stdout}");
     }
 
     #[test]
