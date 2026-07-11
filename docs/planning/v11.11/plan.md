@@ -132,6 +132,10 @@ Without that, today's honest narrow proof can become tomorrow's silent overclaim
 - one named first JSON carrier for the first honest implementation cut
 - a non-collapsible qualified proof verdict so a green narrow proof cannot be read as repo-global
   completion by consumers that only inspect the top-level status
+- first-class seam-exercise evidence where Ota can observe that a declared dependency interaction
+  actually occurred
+- separate recorded negative-control proof runs for dependency disruption or null-substitution
+  lanes when a repo chooses to prove causal dependency necessity
 
 ## Non-goals
 
@@ -139,6 +143,10 @@ Without that, today's honest narrow proof can become tomorrow's silent overclaim
 - do not claim that every repo must declare every excluded thing manually
 - do not collapse proof scope into semantic snapshot or governance verdict identity
 - do not use this slice to widen execution capability or replay trust directly
+- do not infer that a dependency-down or null-substitution lane would fail without executing and
+  recording that control run
+- do not let a reachability check or a dependency fingerprint masquerade as causal dependency
+  necessity
 
 ## Core product gaps
 
@@ -182,15 +190,32 @@ The first honest boundary is:
 - those adjacent families must be recovered from contract-owned proof truth on the selected lane,
   not inferred ad hoc from runtime happenstance
 
+### 5. Reachability is weaker than dependency exercise
+
+A green readiness or runtime proof can show that a neighboring dependency was reachable without
+showing that the selected lane actually crossed that seam.
+
+These claims are materially different:
+
+- the dependency accepted a connection
+- the selected lane performed a declared interaction against it
+- the selected lane failed as expected when that dependency was disrupted or substituted
+
+Ota must not collapse those levels into one green dependency claim. In particular, a contract
+declaration, reachable socket, or observed fingerprint does not prove that the dependency is
+causally required at runtime.
+
 ## Proposed implementation order
 
 1. define the first honest proof-scope model
 2. define the corresponding relative not-proved model
 3. choose one first JSON carrier for the first honest cut
 4. attach both to that carrier first
-5. pressure-test on repos that intentionally carry narrow proof
-6. only then widen the taxonomy or replicate across other artifacts
-7. only after that move to hydration source/feed posture in `v11.12`
+5. add ordinary seam-exercise evidence only where the selected lane already exposes it
+6. add separately recorded negative-control proof truth without changing ordinary green semantics
+7. pressure-test on repos that intentionally carry narrow proof and one declared dependency seam
+8. only then widen the taxonomy or replicate across other artifacts
+9. only after that move to hydration source/feed posture in `v11.12`
 
 ## Proposed implementation slices
 
@@ -261,7 +286,72 @@ Direction:
 - keep this classification derived from the actual exercised lane and published not-proved
   boundary, not from operator aspiration
 
-### 3a. Qualified top-level proof verdict
+### 3a. Dependency seam-evidence ladder
+
+Direction:
+
+- publish dependency evidence at the strongest level the selected proof actually recorded:
+  - `reachable`: Ota observed availability or transport/readiness only
+  - `exercised`: Ota observed a contract-specific interaction across the declared dependency seam
+  - `fault_tested`: a separate negative-control proof run disrupted or substituted the dependency
+    and recorded the expected selected-lane failure
+- keep `reachable` and `exercised` as ordinary selected-proof evidence; neither alone claims
+  causal dependency necessity
+- permit a non-secret dependency fingerprint to strengthen an `exercised` record when it was
+  observed at the seam, but never let that fingerprint promote the record to `fault_tested`
+- preserve unrun counterfactuals as `not_proved`; Ota must not emit “would fail” language from a
+  declaration, heuristic, or ordinary green run
+
+The first machine-readable shape should stay narrow:
+
+```json
+{
+  "dependency_evidence": [
+    {
+      "dependency_id": "service:postgres",
+      "level": "exercised",
+      "interaction": "migration_connection",
+      "fingerprint": "postgres:16"
+    }
+  ]
+}
+```
+
+`interaction` and `fingerprint` are optional and must be omitted when Ota cannot recover them
+from execution evidence without guessing. Fingerprints must be non-secret and safe to publish.
+
+### 3b. Separate negative-control proof records
+
+Direction:
+
+- model a disruption or null-substitution lane as a separate control run, not as an annotation on
+  the ordinary green proof
+- reuse an already declared task, workflow, or adapter action for the first control lane; do not
+  introduce a generic fault-injection executor in this slice
+- link the control record to the same selected proof scope and dependency identity, while keeping
+  its intervention and observed outcome explicit
+- publish `fault_tested` only when the control executed and the selected lane failed in the
+  declared expected way
+- publish an unexpected control success or an invalid control setup as evidence that the seam is
+  not yet proven, never as a passing fault test
+
+The first machine-readable shape should be additive:
+
+```json
+{
+  "negative_control": {
+    "dependency_id": "service:postgres",
+    "intervention": "dependency_down",
+    "outcome": "expected_failure_observed",
+    "proof_scope_ref": "workflow:app/runtime:web"
+  }
+}
+```
+
+This is boundary-attested execution evidence. A caller-provided reason or contract declaration can
+request the control lane but cannot substitute for its recorded outcome.
+
+### 3c. Qualified top-level proof verdict
 
 Direction:
 
@@ -318,6 +408,10 @@ V11.11 is complete when:
   `passed_with_unproven_boundaries`, not only `ok: true` plus nested exclusions
 - multiple exclusions are ordered by sharpest contract-derived evidence first and generic
   scope-derived remainder last; category names alone must not decide the ordering
+- ordinary proof output distinguishes `reachable` from `exercised` where Ota has seam evidence
+  and leaves unobserved interactions as `not_proved`
+- `fault_tested` appears only on a separately recorded negative-control run with an observed
+  expected failure; ordinary green proof never implies it
 - engineering notes no longer need to carry the only truthful statement of proof scope
 - downstream consumers can distinguish a green narrow proof from a broader runtime or repo proof
   without relying on narrative prose
@@ -331,6 +425,8 @@ Strong examples include:
 
 - a .NET restore / build slice that intentionally stops short of full runtime proof
 - a repo with deterministic verification but intentionally unproved live external paths
+- a service repo with one declared dependency seam that can first prove ordinary exercise, then
+  run an isolated dependency-down control without widening the ordinary proof claim
 
 The point is not breadth. The point is proving that Ota can carry bounded honesty as contract and
 artifact truth.
