@@ -13502,13 +13502,15 @@ pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
             .any(|branch| version_matches(branch, actual));
     }
 
-    if requirement.contains(',') || requirement.starts_with(['^', '~', '=']) {
-        if let (Some(req), Some(actual_version)) = (
+    if (requirement.contains(',')
+        || requirement.chars().any(char::is_whitespace)
+        || requirement.starts_with(['^', '~', '=']))
+        && let (Some(req), Some(actual_version)) = (
             parse_semver_requirement(requirement),
             parse_semver_candidate(actual),
-        ) {
-            return req.matches(&actual_version);
-        }
+        )
+    {
+        return req.matches(&actual_version);
     }
 
     if let Some(maximum) = requirement.strip_prefix("<=") {
@@ -23168,6 +23170,8 @@ tasks:
         assert!(!version_matches("<=21", "25.0.2"));
         assert!(version_matches(">=go1.2.1", "go1.24.2"));
         assert!(version_matches("1.26.3", "go1.26.3"));
+        assert!(version_matches(">=1.26.3 <1.27", "go1.26.3"));
+        assert!(!version_matches(">=1.26.3 <1.27", "go1.27.0"));
     }
 
     #[test]

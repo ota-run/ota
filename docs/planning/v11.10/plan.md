@@ -349,8 +349,9 @@ The first typed replay input taxonomy is runner-owned and closed:
 `selected_runtime_version` is intentionally `narrowing` when it comes from a command version
 probe. `selected_runtime_artifact` is `acquitting` only when Ota captures an immutable executable
 or image digest from the selected declared runtime path. The first shipped artifact lane is a
-literal digest-pinned Compose service image in an explicitly declared file; mutable tags,
-interpolation, and inferred Compose files stay outside the claim.
+literal digest-pinned Compose service image in an explicitly declared file, including the selected
+service's declared `depends_on` closure; mutable tags, interpolation, inferred Compose files, and
+unrelated stack services stay outside the claim.
 
 The first honest interpretation should be:
 

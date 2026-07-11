@@ -36,9 +36,9 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
 - active planning slice: `V11.10` replay artifact trust
-- immediate proof gate: the first immutable runtime-artifact lane is proven locally on Immich;
-  commit the Ota and pressure-repo batches, then push the Immich branch for matrix proof before
-  widening the artifact taxonomy
+- immediate proof gate: the immutable Compose runtime-artifact lane is proven locally and on the
+  Immich matrix; Grafana now confirms selected-service dependency-closure receipt truth locally.
+  Grafana GitHub matrix proof is the remaining gate before widening the artifact taxonomy.
 
 ## Recent Completed Slice
 
@@ -73,16 +73,24 @@ durable agent workflow belongs in the canonical Ota skill.
   `selected_runtime_version`, not an executable/image-digest acquittal.
 - The current V11.10 cut adds the first immutable runtime-artifact carrier. Receipts
   recover literal digest-pinned Compose `image` values only for explicitly selected services in
-  explicitly declared files as `selected_runtime_artifact`; receipt diff treats a matching digest
-  as `acquitting` only for that named artifact. Mutable tags, interpolation, and inferred files
-  remain outside the claim. Immich pressure also exposed and fixed an Ota runner gap: Compose
-  adapter-file preflight now resolves files relative to the same adapter `cwd` used by execution.
-  The narrow Redis/PostgreSQL launch, status, and stop path passed locally with the source-built
-  binary.
+  explicitly declared files and their declared Compose `depends_on` closure as
+  `selected_runtime_artifact`; receipt diff treats a matching digest as `acquitting` only for that
+  named artifact. Mutable tags, interpolation, inferred files, and unrelated stack services remain
+  outside the claim. Immich pressure also exposed and fixed an Ota runner gap: Compose adapter-file
+  preflight now resolves files relative to the same adapter `cwd` used by execution. The narrow
+  Redis/PostgreSQL launch, status, and stop path passed locally with the source-built binary.
 - Immich also exposed a follow-on taxonomy opportunity, not a bug in the current receipt lane:
   Compose image pulls are declared as broad network effects today. Do not mislabel them as
   package-manager `dependency_hydration`; consider a separate `container_image_hydration`
   network-effect kind only if another real repo confirms the need.
+- Grafana confirmed the receipt carrier on a mixed Compose stack with locally built, mutable, and
+  digest-pinned services. The selected observability lane records four explicit digest-pinned
+  services plus `tempo-init` through Tempo's declared `depends_on` closure, while excluding
+  unrelated built and mutable stack services. This exposed and fixed the closure-recovery gap in
+  Ota rather than leaving the init image absent from a selected runtime receipt.
+- The same Grafana pass exposed and fixed a doctor semver gap: whitespace-separated compound
+  ranges such as `>=1.26.3 <1.27` now use the canonical normalized semver path while preserving
+  Ota's established shorthand comparator behavior.
 
 ## Handoff To The Next Chat
 

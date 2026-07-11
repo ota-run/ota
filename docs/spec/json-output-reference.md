@@ -4647,9 +4647,10 @@ The nested `receipt` object can also include:
   Shipped records include declared Node lockfile identities: `pnpm-lock.yaml` for frozen pnpm and
   `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`; `runtime:node` command
   version evidence for those selected typed lanes; and static digest-pinned Compose images for
-  explicitly selected services in explicitly declared Compose files. Ota never re-reads these
-  identities later. Mutable tags, interpolated image references, inferred Compose files, ambient
-  environment, and external-world inputs remain outside this evidence.
+  explicitly selected services and their declared `depends_on` closure in explicitly declared
+  Compose files. Ota never re-reads these identities later. Mutable tags, interpolated image
+  references, inferred Compose files, unrelated stack services, ambient environment, and
+  external-world inputs remain outside this evidence.
 - the same selected Node hydration lane can also record `runtime:node` with the contract-local
   `node --version` observed while authoring the receipt. This is intentionally a runtime-version
   observation, not an executable or image digest.

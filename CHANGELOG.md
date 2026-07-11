@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed whitespace-separated semver range evaluation for runtime and tool probes, so valid ranges
+  such as `>=1.26.3 <1.27` accept `go1.26.3` without weakening Ota's existing shorthand-version
+  behavior
+
 - fixed Compose adapter-file preflight to resolve declared Compose files relative to the same
   adapter `cwd` used by execution, so valid `cwd`-relative contracts no longer fail before Docker
   can run them
@@ -37,7 +41,9 @@
   explicitly declared Compose files: a literal `@sha256:` image is captured as
   `selected_runtime_artifact`, and receipt comparison reports a matching digest as
   `acquitting` only for that named runtime artifact; mutable tags, interpolation, and inferred
-  Compose files remain outside the evidence
+  Compose files remain outside the evidence; selected Compose services now include their declared
+  `depends_on` closure so receipt evidence follows the actual selected runtime path without
+  pulling unrelated stack services into the claim
 
 - added receipt-authored selected Node runtime-version evidence for the same typed lockfile-strict
   hydration lanes: receipt comparison now reports a matching `node --version` as runner-derived

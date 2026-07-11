@@ -37290,6 +37290,70 @@ tasks:
     }
 
     #[test]
+    fn receipt_captures_static_compose_image_digests_for_selected_dependency_closure() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("docker")).expect("create compose directory");
+        fs::write(
+            repo.path().join("docker/compose.yaml"),
+            r#"
+services:
+  tempo-init:
+    image: busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  tempo:
+    image: grafana/tempo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    depends_on:
+      tempo-init:
+        condition: service_completed_successfully
+  unrelated:
+    image: grafana/loki@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+"#,
+        )
+        .expect("write compose file");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-compose-image-dependency
+tasks:
+  tempo:start:
+    adapter_inputs:
+      compose:
+        cwd: docker
+        files: [compose.yaml]
+    compose:
+      kind: up
+      services: [tempo]
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("tempo:start")],
+            ExecutionOverrides::default(),
+        );
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(
+            inputs
+                .iter()
+                .map(|input| input.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "compose_image:docker/compose.yaml#services.tempo",
+                "compose_image:docker/compose.yaml#services.tempo-init",
+            ]
+        );
+        assert!(
+            inputs
+                .iter()
+                .all(|input| { input.input_class == ReplayInputClass::SelectedRuntimeArtifact })
+        );
+    }
+
+    #[test]
     fn receipt_diff_static_compose_image_digest_is_acquitting() {
         let image = crate::output::ExecutionReceiptEvaluatedInput {
             id: String::from("compose_image:compose.yaml#services.database"),
@@ -93420,6 +93484,8 @@ fn collect_receipt_compose_images_from_file(
     else {
         return;
     };
+    let selected_services =
+        compose_selected_service_closure(services, selected_services, selects_all_services);
     let file_id = relative_path.to_string_lossy().replace('\\', "/");
     for (service_name, service) in services {
         let Some(service_name) = service_name
@@ -93429,7 +93495,7 @@ fn collect_receipt_compose_images_from_file(
         else {
             continue;
         };
-        if !selects_all_services && !selected_services.contains(service_name) {
+        if !selected_services.contains(service_name) {
             continue;
         }
         let Some(image) = service
@@ -93453,6 +93519,63 @@ fn collect_receipt_compose_images_from_file(
             },
         );
     }
+}
+
+fn compose_selected_service_closure(
+    services: &serde_yaml::Mapping,
+    selected_services: &BTreeSet<String>,
+    selects_all_services: bool,
+) -> BTreeSet<String> {
+    let mut closure = if selects_all_services {
+        services
+            .keys()
+            .filter_map(YamlValue::as_str)
+            .map(str::trim)
+            .filter(|service| !service.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        selected_services.clone()
+    };
+    let mut pending = closure.iter().cloned().collect::<Vec<_>>();
+    while let Some(service_name) = pending.pop() {
+        let Some(service) = services.get(YamlValue::String(service_name)) else {
+            continue;
+        };
+        for dependency in compose_service_depends_on(service) {
+            if closure.insert(dependency.clone()) {
+                pending.push(dependency);
+            }
+        }
+    }
+    closure
+}
+
+fn compose_service_depends_on(service: &YamlValue) -> Vec<String> {
+    let Some(depends_on) = service
+        .as_mapping()
+        .and_then(|service| service.get(YamlValue::String(String::from("depends_on"))))
+    else {
+        return Vec::new();
+    };
+    let names = match depends_on {
+        YamlValue::Sequence(dependencies) => dependencies
+            .iter()
+            .filter_map(YamlValue::as_str)
+            .collect::<Vec<_>>(),
+        YamlValue::Mapping(dependencies) => dependencies
+            .keys()
+            .filter_map(YamlValue::as_str)
+            .collect::<Vec<_>>(),
+        YamlValue::String(dependency) => vec![dependency.as_str()],
+        _ => Vec::new(),
+    };
+    names
+        .into_iter()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn static_sha256_digest(image: &str) -> Option<String> {
