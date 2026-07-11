@@ -16124,6 +16124,9 @@ fn parse_effect_override_selector(value: &str) -> Option<String> {
     if selector.eq_ignore_ascii_case("network:dependency_hydration") {
         return Some(String::from("network:dependency_hydration"));
     }
+    if selector.eq_ignore_ascii_case("network:container_image_hydration") {
+        return Some(String::from("network:container_image_hydration"));
+    }
     if selector.eq_ignore_ascii_case("network:integration_test") {
         return Some(String::from("network:integration_test"));
     }
@@ -89145,6 +89148,7 @@ fn effect_override_parser_accepts_supported_selectors() {
     let overrides = parse_effect_governance_overrides(&[
         String::from("network=deny"),
         String::from("network:dependency_hydration=allow"),
+        String::from("network:container_image_hydration=deny"),
         String::from("network:integration_test=warn"),
         String::from("network:tool_bootstrap=allow"),
         String::from("adapter_state:compose_volume:bundle_data=deny"),
@@ -89159,6 +89163,10 @@ fn effect_override_parser_accepts_supported_selectors() {
     assert_eq!(
         overrides.decisions.get("network:dependency_hydration"),
         Some(&PolicyEffectDecision::Allow)
+    );
+    assert_eq!(
+        overrides.decisions.get("network:container_image_hydration"),
+        Some(&PolicyEffectDecision::Deny)
     );
     assert_eq!(
         overrides.decisions.get("network:integration_test"),
