@@ -84,6 +84,9 @@ durable agent workflow belongs in the canonical Ota skill.
   package dependency hydration; `prepare.medium: container_images` requires this label, doctor and
   policy packs expose the same lane, and immutable image receipt evidence remains separate from
   the effect declaration.
+- The same branch upgraded the direct `quick-xml` dependency to `0.41.0` after `cargo deny`
+  surfaced the two XML denial-of-service advisories in `0.38.4`; the NuGet feed-provenance parser
+  uses the current XML 1.0 attribute-normalization API and its focused tests pass.
 - Grafana confirmed the receipt carrier on a mixed Compose stack with locally built, mutable, and
   digest-pinned services. The selected observability lane records four explicit digest-pinned
   services plus `tempo-init` through Tempo's declared `depends_on` closure, while excluding

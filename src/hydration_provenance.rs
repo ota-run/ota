@@ -24,6 +24,7 @@
 //   limitations under the License.
 
 use quick_xml::Reader;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use std::collections::BTreeSet;
 use std::fs;
@@ -229,7 +230,7 @@ fn config_attributes(
                 .map_err(|error| error.to_string())?
                 .to_string();
             let value = attribute
-                .unescape_value()
+                .normalized_value(XmlVersion::Implicit1_0)
                 .map_err(|error| error.to_string())?
                 .into_owned();
             Ok((key, value))
