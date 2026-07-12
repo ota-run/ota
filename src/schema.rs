@@ -204,6 +204,23 @@ pub enum GeneratedArtifactKind {
 }
 
 impl Contract {
+    pub fn task_active_for_backend_on_os(
+        &self,
+        task: &TaskSpec,
+        backend: Backend,
+        os: &str,
+    ) -> bool {
+        task.active_for_os(os)
+            && task
+                .context_for_backend(self.execution.as_ref(), backend)
+                .and_then(|context_name| {
+                    self.execution
+                        .as_ref()
+                        .and_then(|execution| execution.contexts.get(context_name))
+                })
+                .is_none_or(|context| context.active_for_os(os))
+    }
+
     pub fn minimum_ota_version(&self) -> Option<&str> {
         self.metadata
             .get("ota")
@@ -467,6 +484,13 @@ impl Contract {
             let Some(task) = self.tasks.get(task_name.as_str()) else {
                 continue;
             };
+            if !self.task_active_for_backend_on_os(
+                task,
+                task.workflow_backend(self.execution.as_ref()),
+                current_os(),
+            ) {
+                continue;
+            }
             names.extend(task.requirements.env.iter().cloned());
             names.extend(task.all_env_binding_password_env_names());
         }
@@ -495,6 +519,13 @@ impl Contract {
             let Some(task) = self.tasks.get(task_name.as_str()) else {
                 continue;
             };
+            if !self.task_active_for_backend_on_os(
+                task,
+                task.workflow_backend(self.execution.as_ref()),
+                current_os(),
+            ) {
+                continue;
+            }
             let backend = task.workflow_backend(self.execution.as_ref());
             let context_name = task.context_for_backend(self.execution.as_ref(), backend);
             for toolchain_name in
@@ -555,6 +586,13 @@ impl Contract {
             let Some(task) = self.tasks.get(task_name.as_str()) else {
                 continue;
             };
+            if !self.task_active_for_backend_on_os(
+                task,
+                task.workflow_backend(self.execution.as_ref()),
+                current_os(),
+            ) {
+                continue;
+            }
             for service_name in &task.requires_services {
                 if !names.iter().any(|existing| existing == service_name) {
                     names.push(service_name.clone());
@@ -2261,7 +2299,19 @@ impl Contract {
         &self,
         workflow_name: Option<&str>,
     ) -> Option<RequirementSurface> {
-        self.task_requirement_surface(self.selected_workflow_task_closure_names(workflow_name))
+        self.task_requirement_surface(
+            self.selected_workflow_task_closure_names(workflow_name)
+                .into_iter()
+                .filter(|task_name| {
+                    self.tasks.get(task_name.as_str()).is_some_and(|task| {
+                        self.task_active_for_backend_on_os(
+                            task,
+                            task.workflow_backend(self.execution.as_ref()),
+                            current_os(),
+                        )
+                    })
+                }),
+        )
     }
 
     pub fn task_requirement_surface(
@@ -4819,6 +4869,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub safe_for_agent: bool,
     #[serde(default)]
+    pub only_on: Option<Vec<String>>,
+    #[serde(default)]
     pub internal: bool,
     #[serde(default)]
     pub variants: Vec<TaskVariantSpec>,
@@ -4831,6 +4883,12 @@ pub struct TaskSpec {
 }
 
 impl TaskSpec {
+    pub fn active_for_os(&self, os: &str) -> bool {
+        self.only_on
+            .as_ref()
+            .is_none_or(|platforms| platforms.iter().any(|platform| platform == os))
+    }
+
     pub fn all_depends_on(&self) -> Vec<&String> {
         let mut dependencies = self.depends_on.iter().collect::<Vec<_>>();
         if let Some(execution) = self.execution.as_ref() {

@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added task-level `only_on` host support declarations. Ota validates the same platform tokens
+  used by tool, runtime, and execution-context scope; task planning and execution now refuse an
+  unsupported selected dependency closure before provisioning or side effects. `ota doctor` now
+  honors unavailable selected closures before probing their requirements, while `ota tasks --use`
+  marks unavailable mode commands instead of advertising a runnable host path
+
 - widened `ota proof runtime --json` not-proved boundaries with contract-derived service seams:
   each `requires_services` dependency in the selected workflow closure now emits
   `dependency_exercise_not_proved` with its `service:<name>` identity and declaring tasks until Ota

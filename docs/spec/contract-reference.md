@@ -1945,6 +1945,10 @@ Fields:
   current-run replay inputs. Each nonblank line must contain `id` (subject), `run` (non-negative
   integer), and `sql` (query text); the selected closure must not write the trace path.
 - `depends_on`: optional list of task names
+- `only_on`: optional host OS inclusion list (`linux`, `macos`, `windows`). When declared, the
+  task and any selected dependency closure that reaches it are unavailable on other hosts; Ota
+  refuses before provisioning or execution. Use this for platform support truth. Keep
+  `variants.<i>.when.os` for choosing an alternate body on a supported host.
 - `safe_for_agent`: optional boolean (`false` when omitted)
 - `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces
 

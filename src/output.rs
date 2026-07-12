@@ -4229,6 +4229,32 @@ impl<'a> TaskSummary<'a> {
                 .mode_execution_branch(crate::schema::Backend::Native)
                 .is_none()
             && task.resolved_execution(current_os).is_some();
+        let mode_platform_availability = [
+            (
+                "container",
+                contract.task_active_for_backend_on_os(
+                    task,
+                    crate::schema::Backend::Container,
+                    current_os,
+                ),
+            ),
+            (
+                "native",
+                contract.task_active_for_backend_on_os(
+                    task,
+                    crate::schema::Backend::Native,
+                    current_os,
+                ),
+            ),
+            (
+                "remote",
+                contract.task_active_for_backend_on_os(
+                    task,
+                    crate::schema::Backend::Remote,
+                    current_os,
+                ),
+            ),
+        ];
         Self {
             name,
             context: effective.context_name,
@@ -4241,6 +4267,7 @@ impl<'a> TaskSummary<'a> {
                 task_mode_name(selected_backend),
                 &modes,
                 supports_native_mode_override,
+                &mode_platform_availability,
             ),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
@@ -4348,11 +4375,23 @@ fn task_lane_use_summary(
     default_mode: &str,
     modes: &[TaskModeView<'_>],
     supports_native_mode_override: bool,
+    mode_platform_availability: &[(&str, bool)],
 ) -> LaneUseSummary {
     let mut human = format!("ota run {task_name}");
     append_task_input_placeholders(&mut human, inputs);
 
-    let agent = if effective_safe_for_agent {
+    let default_platform_available = mode_platform_availability
+        .iter()
+        .find(|(mode, _)| *mode == default_mode)
+        .map(|(_, available)| *available)
+        .unwrap_or(true);
+    let agent = if !default_platform_available {
+        AgentLaneUseSummary {
+            callable: false,
+            command: None,
+            reason: Some(String::from("unsupported_host_platform")),
+        }
+    } else if effective_safe_for_agent {
         let mut command = format!("ota run {task_name} --agent");
         append_task_input_placeholders(&mut command, inputs);
         AgentLaneUseSummary {
@@ -4374,9 +4413,15 @@ fn task_lane_use_summary(
     }
 
     let mode_summary = |mode: &str| {
-        let supported = mode == default_mode
-            || modes.iter().any(|entry| entry.mode == mode)
-            || (mode == "native" && supports_native_mode_override);
+        let platform_available = mode_platform_availability
+            .iter()
+            .find(|(candidate, _)| *candidate == mode)
+            .map(|(_, available)| *available)
+            .unwrap_or(true);
+        let supported = platform_available
+            && (mode == default_mode
+                || modes.iter().any(|entry| entry.mode == mode)
+                || (mode == "native" && supports_native_mode_override));
         let mut mode_human = format!("ota run {task_name}");
         let mut mode_agent = format!("ota run {task_name}");
         if mode != default_mode {
@@ -4398,7 +4443,11 @@ fn task_lane_use_summary(
         let unavailable = || AgentLaneUseSummary {
             callable: false,
             command: None,
-            reason: Some(String::from("not_supported_by_task")),
+            reason: Some(String::from(if platform_available {
+                "not_supported_by_task"
+            } else {
+                "unsupported_host_platform"
+            })),
         };
         LaneUseModeSummary {
             mode: mode.to_string(),
@@ -4408,7 +4457,13 @@ fn task_lane_use_summary(
             } else {
                 LaneUseModeAvailability::Unavailable
             },
-            reason: (!supported).then(|| String::from("not_supported_by_task")),
+            reason: (!supported).then(|| {
+                String::from(if platform_available {
+                    "not_supported_by_task"
+                } else {
+                    "unsupported_host_platform"
+                })
+            }),
             human: if supported {
                 AgentLaneUseSummary {
                     callable: true,

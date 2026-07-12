@@ -2012,6 +2012,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "after_failure": { "$ref": "#/$defs/stringArray" },
         "after_always": { "$ref": "#/$defs/stringArray" },
         "safe_for_agent": { "type": "boolean" },
+        "only_on": { "$ref": "#/$defs/stringArray" },
         "internal": { "type": "boolean" },
         "variants": {
           "type": "array",

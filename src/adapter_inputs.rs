@@ -1561,6 +1561,7 @@ mod tests {
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            only_on: None,
             internal: false,
             variants: Vec::new(),
             execution: Some(crate::schema::TaskModeExecutionSpec {
@@ -1682,6 +1683,7 @@ mod tests {
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            only_on: None,
             internal: false,
             variants: Vec::new(),
             execution: None,
@@ -1755,6 +1757,7 @@ mod tests {
             after_failure: Vec::new(),
             after_always: Vec::new(),
             safe_for_agent: false,
+            only_on: None,
             internal: false,
             variants: Vec::new(),
             execution: None,

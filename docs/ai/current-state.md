@@ -47,6 +47,14 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Recent Completed Slice
 
+- Task platform availability is now contract-owned. `tasks.<name>.only_on` uses the same
+  `linux` / `macos` / `windows` vocabulary as prerequisite and context scope; runner planning,
+  `ota run`, and dry-run preview refuse an unsupported dependency closure before side effects.
+  `ota tasks --use` marks context- or task-unavailable modes non-callable, and doctor filters
+  unavailable closures before probing their requirements. Athena pressure uses this truth through
+  its Linux/macOS Ruby context and proves the expected Windows refusal rather than hiding it with
+  a workflow skip.
+
 - The current V11.10 refinement adds contract-owned
   `tasks.<name>.witnessed_observations.query_traces[]` for existing JSONL query traces. Ota
   validates immutable repo-relative trace paths, captures the selected closure before execution,

@@ -4038,6 +4038,10 @@ fn resolve_execution_plan_for_selected_task(
 ) -> Result<ExecutionPlanResolved, RunError> {
     let selected_task_name = selected_task.map(|(task_name, _)| task_name);
     let selected_task_source = selected_task.map(|(_, source)| source);
+    if let Some(selected_task_name) = selected_task_name {
+        // Keep preview admission on the same closure-aware platform boundary as execution.
+        crate::runner::plan_task_execution_with_overrides(contract, selected_task_name, overrides)?;
+    }
     let task_name = selected_task_name.unwrap_or("execution plan");
     let effective = effective_task_execution(contract, task_name, overrides);
     let backend = effective.backend;
@@ -10026,6 +10030,7 @@ fn build_assist_add_task_proposal(
         after_failure: Vec::new(),
         after_always: Vec::new(),
         safe_for_agent: false,
+        only_on: None,
         internal: internal.unwrap_or(matches!(kind, AssistTaskKindArg::Setup)),
         projected_env_materialization_paths: Vec::new(),
         variants: Vec::new(),
@@ -45223,6 +45228,23 @@ fn render_task_agent_policy(task: &TaskSummary<'_>) -> &'static str {
 }
 
 fn push_task_run_fields(output: &mut String, task: &TaskSummary<'_>) {
+    let host_unavailable = task
+        .usage
+        .modes
+        .iter()
+        .find(|mode| mode.default)
+        .is_some_and(|mode| mode.reason.as_deref() == Some("unsupported_host_platform"));
+    if host_unavailable {
+        output.push_str(&format!(
+            "\n  {} not callable on this host",
+            paint_key("Humans:")
+        ));
+        output.push_str(&format!(
+            "\n  {} not callable on this host",
+            paint_key("Agents:")
+        ));
+        return;
+    }
     output.push_str(&format!("\n  {}", paint_key("Human Run:")));
     for line in render_task_run_modes(task, false) {
         output.push_str(&format!("\n    {line}"));
@@ -61743,6 +61765,66 @@ tasks:
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Unsupported host platform"), "{stderr}");
         assert!(stderr.contains("supported hosts"), "{stderr}");
+    }
+
+    #[test]
+    fn run_dry_run_preview_refuses_unsupported_task_dependency_closure() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let unsupported = if super::current_os() == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+tasks:
+  setup:
+    only_on:
+      - {unsupported}
+    command:
+      exe: echo
+      args: [setup]
+  verify:
+    depends_on: [setup]
+    command:
+      exe: echo
+      args: [verify]
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_ne!(output.exit_code, 0);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert!(
+            json["summary"]["primary_blocker"]["why"]
+                .as_str()
+                .is_some_and(|why| why.contains("selected closure includes `setup`"))
+        );
     }
 
     #[test]

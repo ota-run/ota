@@ -776,6 +776,15 @@ pub enum RunError {
     #[error("task `{task}` does not have a valid execution form")]
     InvalidTaskExecution { task: String },
     #[error(
+        "task `{task}` cannot run on `{os}` because its selected closure includes `{blocked_task}`, which supports: {supported_os}"
+    )]
+    UnsupportedTaskPlatform {
+        task: String,
+        blocked_task: String,
+        os: String,
+        supported_os: String,
+    },
+    #[error(
         "task `{task}` requires generated artifact `{artifact}`, but declared output `{path}` is missing; run producer task `{producer}`"
     )]
     MissingRequiredArtifact {
@@ -2120,6 +2129,26 @@ pub fn plan_task_execution_with_overrides(
         &mut ordered,
         &mut steps,
     );
+
+    if let Some(blocked_task) = ordered.iter().find(|name| {
+        contract
+            .tasks
+            .get(name.as_str())
+            .is_some_and(|task| !task.active_for_os(current_os()))
+    }) {
+        let supported_os = contract
+            .tasks
+            .get(blocked_task.as_str())
+            .and_then(|task| task.only_on.as_ref())
+            .map(|platforms| platforms.join(", "))
+            .unwrap_or_else(|| String::from("none"));
+        return Err(RunError::UnsupportedTaskPlatform {
+            task: task_name.to_string(),
+            blocked_task: blocked_task.clone(),
+            os: current_os().to_string(),
+            supported_os,
+        });
+    }
 
     Ok(RunPlan {
         tasks: ordered,
@@ -6880,6 +6909,8 @@ fn run_task_internal(
             task: task_name.to_string(),
         });
     }
+    // Admission must match dry-run planning before any backend provisioning or task side effects.
+    plan_task_execution_with_overrides(contract, task_name, overrides)?;
     let backend = match resolve_execution_backend_with_contract_path(
         contract,
         task_name,
@@ -51506,6 +51537,45 @@ tasks:
             } if task == "start"
                 && requested_mode == "container"
                 && supported_modes == "native"
+        ));
+    }
+
+    #[test]
+    fn run_task_refuses_unsupported_task_in_selected_dependency_closure_before_execution() {
+        let unsupported = if current_os() == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    only_on:
+      - {unsupported}
+    run: echo should-not-run
+  verify:
+    depends_on:
+      - setup
+    run: echo should-not-run
+"#
+        ));
+
+        let error = run_task(&fixture.contract, fixture.file_path(), "verify").unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::UnsupportedTaskPlatform {
+                task,
+                blocked_task,
+                os,
+                supported_os,
+            } if task == "verify"
+                && blocked_task == "setup"
+                && os == current_os()
+                && supported_os == unsupported
         ));
     }
 

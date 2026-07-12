@@ -2828,6 +2828,7 @@ fn validate_tasks(
             }
         }
 
+        validate_only_on("task", name, task.only_on.as_ref(), errors);
         let has_base_fields = task.run.is_some()
             || task.script.is_some()
             || task.command.is_some()
@@ -29777,6 +29778,31 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `setup` variant #0 must declare `when.os`"
+        );
+    }
+
+    #[test]
+    fn rejects_task_only_on_with_unsupported_platform() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    only_on:
+      - bsd
+    run: echo verify
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `verify` has unsupported `only_on` platform `bsd`; expected one of: linux, macos, windows"
         );
     }
 

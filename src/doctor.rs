@@ -508,6 +508,26 @@ fn task_execution_owns_dependency_hydration(
         .is_some_and(prepare_spec_owns_dependency_hydration)
 }
 
+fn task_closure_is_available_on_host(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> bool {
+    contract
+        .task_dependency_closure_names([task_name.to_string()])
+        .into_iter()
+        .all(|closure_task_name| {
+            contract
+                .tasks
+                .get(closure_task_name.as_str())
+                .is_some_and(|task| {
+                    let effective =
+                        effective_task_execution(contract, closure_task_name.as_str(), overrides);
+                    contract.task_active_for_backend_on_os(task, effective.backend, current_os())
+                })
+        })
+}
+
 fn looks_like_repo_local_executable(name: &str) -> bool {
     name.starts_with("./") || name.starts_with("../") || name.contains('/') || name.contains('\\')
 }
@@ -527,7 +547,11 @@ fn selected_backend_precondition_selections(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> Vec<BackendPreconditionSelection> {
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let task_names = contract
+        .selected_workflow_task_closure_names(workflow_name)
+        .into_iter()
+        .filter(|task_name| task_closure_is_available_on_host(contract, task_name, overrides))
+        .collect::<Vec<_>>();
     if task_names.is_empty() {
         return Vec::new();
     }
@@ -685,7 +709,11 @@ fn selected_task_backend_precondition_selections(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<BackendPreconditionSelection> {
-    let task_names = contract.task_dependency_closure_names([task_name.to_string()]);
+    let task_names = contract
+        .task_dependency_closure_names([task_name.to_string()])
+        .into_iter()
+        .filter(|task_name| task_closure_is_available_on_host(contract, task_name, overrides))
+        .collect::<Vec<_>>();
     if task_names.is_empty() {
         return Vec::new();
     }
