@@ -2355,7 +2355,48 @@ pub struct ReceiptDiffComparison {
     pub contract_snapshot_changed: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub artifact_trust: Vec<ReceiptDiffArtifactTrust>,
+    /// A receipt diff compares witnesses; it does not itself rerun the selected lane.
+    pub replay: ReceiptDiffReplayPosture,
     pub correlation: ReceiptDiffCorrelation,
+}
+
+/// The exact lane and trust boundary for replay-related receipt comparison output.
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffReplayPosture {
+    pub scope: ReceiptDiffReplayScope,
+    pub posture: ReceiptDiffReplayPostureKind,
+    pub hermeticity: ReceiptDiffReplayHermeticity,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffReplayScope {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptDiffReplayPostureKind {
+    WitnessOnly,
+    ReplayVerified,
+    ReplayFailed,
+    ReplayUnavailable,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptDiffReplayHermeticity {
+    Unassessed,
+    Hermetic,
+    PartlyAmbient,
+    AmbientFreshDerivation,
 }
 
 /// Trust posture for a comparison artifact that was actually captured by both receipts.

@@ -4948,6 +4948,10 @@ Current receipt diff JSON fields:
 - `summary.baseline_ok`
 - `summary.current_ok`
 - additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed`, `readiness_change`, and `contract_snapshot_changed` drift signals
+- `summary.comparison.replay` names the selected workflow/runtime scope and replay trust posture. A
+  plain `ota receipt --baseline` comparison is always `witness_only` with `hermeticity:
+  unassessed`: it compares captured witnesses but does not execute the lane, so it must not be
+  read as replay verification.
 - `summary.comparison.artifact_trust[]` only for artifacts captured on both sides; each record names
   its input class, immutable identities, comparison state, and runner-derived trust role. The
   first shipped record is `semantic_contract_snapshot`, which is `acquitting` only for the named
