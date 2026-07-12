@@ -825,11 +825,16 @@ Notes:
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
   Ota emits `functional_runtime_not_proved` when proof fell back to a setup-only lane,
+  `dependency_exercise_not_proved` for each declared service seam in the selected closure when
+  Ota has not independently observed a contract-specific interaction across it,
   `external_network_path_not_proved` when an adjacent declared workflow owns an explicit external
   integration-test path for the selected lane's declared external state, and
   `broader_repo_completion_not_proved` as the scope-derived remainder outside this runtime slice
 - `not_proved[].declared_by_workflows` names the adjacent contract workflows that establish a
   contract-derived exclusion; scope-derived exclusions omit it
+- `not_proved[].dependency_id` and `not_proved[].declared_by_tasks` identify a declared service
+  seam that remains unproved. This is deliberately not evidence that the service is unused or
+  unreachable; it prevents a green runtime proof from being over-read as an exercised dependency.
 - `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as
   `proof_runtime_json`, `proof_topology`, `proof_doctor`, and `proof_up_log`
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect

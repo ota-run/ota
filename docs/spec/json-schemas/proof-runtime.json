@@ -109,6 +109,7 @@
           "type": "string",
           "enum": [
             "functional_runtime_not_proved",
+            "dependency_exercise_not_proved",
             "external_network_path_not_proved",
             "broader_repo_completion_not_proved"
           ]
@@ -120,6 +121,12 @@
         "source": {
           "type": "string",
           "enum": ["contract_lane", "proof_scope"]
+        },
+        "dependency_id": { "type": "string" },
+        "declared_by_tasks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
         },
         "declared_by_workflows": {
           "type": "array",

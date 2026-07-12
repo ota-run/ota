@@ -2882,6 +2882,10 @@ pub struct ProofRuntimeNotProved {
     pub kind: String,
     pub relative_to: String,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declared_by_tasks: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub declared_by_workflows: Vec<String>,
 }

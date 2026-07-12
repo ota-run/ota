@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- widened `ota proof runtime --json` not-proved boundaries with contract-derived service seams:
+  each `requires_services` dependency in the selected workflow closure now emits
+  `dependency_exercise_not_proved` with its `service:<name>` identity and declaring tasks until Ota
+  records independent seam evidence. Runtime proof no longer lets declared availability imply
+  exercised dependency interaction.
+
 - added task-scoped `witnessed_observations.query_traces` for JSONL query identity evidence from
   prior or external runs. Ota captures the declared source before the selected closure begins and
   emits its full attested trace under receipt `witnessed_observations`, separately from

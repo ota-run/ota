@@ -55896,6 +55896,44 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_marks_declared_service_exercise_as_not_proved_without_observation() {
+        let contract_path = Path::new("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path,
+            r#"
+version: 1
+project:
+  name: proof-seam
+tasks:
+  verify:
+    run: "true"
+    requires_services:
+      - postgres
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("parse proof seam contract");
+
+        let not_proved = super::proof_runtime_not_proved(&contract, contract_path, Some("verify"));
+        let seam = not_proved
+            .iter()
+            .find(|entry| entry.kind == "dependency_exercise_not_proved")
+            .expect("declared service seam stays unproved without observed interaction");
+        assert_eq!(seam.dependency_id.as_deref(), Some("service:postgres"));
+        assert_eq!(seam.declared_by_tasks, ["verify"]);
+        assert_eq!(seam.declared_by_workflows, ["verify"]);
+        assert_eq!(
+            not_proved.first().map(|entry| entry.kind.as_str()),
+            Some("dependency_exercise_not_proved"),
+            "a direct declared seam must outrank the generic proof remainder"
+        );
+    }
+
+    #[test]
     fn proof_runtime_status_json_includes_workflow_env_artifacts() {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
@@ -55953,6 +55991,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56009,6 +56049,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56074,6 +56116,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56222,6 +56266,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56286,6 +56332,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56350,6 +56398,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56411,6 +56461,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56475,6 +56527,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -56756,6 +56810,8 @@ workflows:
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
+                    dependency_id: None,
+                    declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
                 summary: DoctorSummary::default(),
@@ -96981,6 +97037,8 @@ fn proof_runtime_not_proved(
             kind: String::from("functional_runtime_not_proved"),
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
+            dependency_id: None,
+            declared_by_tasks: Vec::new(),
             declared_by_workflows: Vec::new(),
         });
     }
@@ -97021,13 +97079,46 @@ fn proof_runtime_not_proved(
             kind: String::from("external_network_path_not_proved"),
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
+            dependency_id: None,
+            declared_by_tasks: Vec::new(),
             declared_by_workflows: external_network_workflows,
+        });
+    }
+    let declared_service_seams = selected_workflow_name
+        .map(|workflow_name| {
+            let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
+            for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
+                let Some(task) = contract.tasks.get(task_name.as_str()) else {
+                    continue;
+                };
+                for service_name in &task.requires_services {
+                    owners
+                        .entry(service_name.clone())
+                        .or_default()
+                        .insert(task_name.clone());
+                }
+            }
+            owners
+        })
+        .unwrap_or_default();
+    for (service_name, tasks) in declared_service_seams {
+        entries.push(crate::output::ProofRuntimeNotProved {
+            kind: String::from("dependency_exercise_not_proved"),
+            relative_to: String::from("runtime_path"),
+            source: String::from("contract_lane"),
+            dependency_id: Some(format!("service:{service_name}")),
+            declared_by_tasks: tasks.into_iter().collect(),
+            declared_by_workflows: selected_workflow_name
+                .map(|name| vec![name.to_string()])
+                .unwrap_or_default(),
         });
     }
     entries.push(crate::output::ProofRuntimeNotProved {
         kind: String::from("broader_repo_completion_not_proved"),
         relative_to: String::from("runtime_path"),
         source: String::from("proof_scope"),
+        dependency_id: None,
+        declared_by_tasks: Vec::new(),
         declared_by_workflows: Vec::new(),
     });
     entries.sort_by(|left, right| {
@@ -97039,12 +97130,14 @@ fn proof_runtime_not_proved(
 }
 
 fn proof_runtime_not_proved_order_key(entry: &crate::output::ProofRuntimeNotProved) -> u8 {
-    if !entry.declared_by_workflows.is_empty() {
+    if entry.dependency_id.is_some() && !entry.declared_by_tasks.is_empty() {
         0
-    } else if entry.source == "contract_lane" {
+    } else if !entry.declared_by_workflows.is_empty() {
         1
-    } else {
+    } else if entry.source == "contract_lane" {
         2
+    } else {
+        3
     }
 }
 
