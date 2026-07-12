@@ -47,6 +47,15 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Recent Completed Slice
 
+- Dagger generated-SDK pressure exposed and fixed native source-managed tool activation: a
+  release-asset tool was fulfilled and version-probed correctly, but the native shell task path
+  discarded the managed PATH before executing its command. Ota now applies the resolved PATH to
+  native shell execution and has a focused regression test. The narrowed Dagger contract proves
+  release-asset fulfillment, workflow preparation, selected generator execution, generated-source
+  lineage, a clean consumer diff, scoped doctor, and archived receipt locally. The selected
+  closure requires Dagger v0.21.7 despite root `dagger.json` still naming v0.21.0; that is
+  recorded as repo truth rather than hidden by the pressure contract.
+
 - Task platform availability is now contract-owned. `tasks.<name>.only_on` uses the same
   `linux` / `macos` / `windows` vocabulary as prerequisite and context scope; runner planning,
   `ota run`, and dry-run preview refuse an unsupported dependency closure before side effects.
