@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed native shell task execution after source-managed tool fulfillment: release-asset and
+  other managed tool PATH exports now reach the task shell itself, so a fulfilled contract-owned
+  tool remains callable for the task that required it instead of only for Ota's fulfillment probe
+
 - added task-level `only_on` host support declarations. Ota validates the same platform tokens
   used by tool, runtime, and execution-context scope; task planning and execution now refuse an
   unsupported selected dependency closure before provisioning or side effects. `ota doctor` now

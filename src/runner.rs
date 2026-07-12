@@ -9628,12 +9628,14 @@ fn execute_task_command(
                 preflight_native_runtime_listener_binds(task_name, runtime)?;
                 let mut resolved_env = env_overrides.clone();
                 extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
+                // Native shell execution needs the same source-managed tool path as container shells.
+                let command = command_with_optional_path_export(command, path_export);
                 execute_native_task_command(
                     contract,
                     task,
                     task_name,
                     runtime,
-                    command,
+                    command.as_str(),
                     effective_working_dir.as_path(),
                     &resolved_env,
                     mode,
@@ -58845,6 +58847,54 @@ tasks:
             fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
             "TOKEN=local"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_shell_execution_honors_path_export() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let managed_bin = fixture.dir.path().join("managed-bin");
+        fs::create_dir_all(&managed_bin).expect("create managed bin");
+        let tool = managed_bin.join("ota-managed-test-tool");
+        fs::write(&tool, "#!/bin/sh\nprintf managed-tool\n").expect("write managed tool");
+        let mut permissions = fs::metadata(&tool)
+            .expect("read managed tool metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tool, permissions).expect("make managed tool executable");
+
+        let output = execute_task_command(
+            None,
+            None,
+            "managed-tool",
+            None,
+            &PreparedTaskExecution::Shell {
+                command: String::from("ota-managed-test-tool"),
+                cwd: None,
+            },
+            fixture.dir.path(),
+            &BTreeMap::new(),
+            Some(managed_bin.to_str().expect("managed bin should be UTF-8")),
+            &BTreeSet::new(),
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            None,
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .expect("native shell execution should succeed");
+
+        assert_eq!(output.exit_code, 0, "{}", output.stderr);
+        assert_eq!(output.stdout, "managed-tool");
     }
 
     #[test]
