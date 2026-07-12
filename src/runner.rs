@@ -2861,13 +2861,15 @@ pub(crate) fn planned_env_file_outputs_for_task_closure(
     }
 
     let mut outputs = BTreeSet::new();
-    visit(
-        contract,
-        task_name,
-        backend,
-        &mut BTreeSet::new(),
-        &mut outputs,
-    );
+    let mut visited = BTreeSet::new();
+    // Only dependencies run before the selected task's env files are validated.
+    // Including the selected task would let dry-run accept a file its own action
+    // has not produced yet.
+    if let Some(task) = contract.tasks.get(task_name) {
+        for dependency in task.depends_on_for_backend(backend) {
+            visit(contract, dependency, backend, &mut visited, &mut outputs);
+        }
+    }
     outputs
 }
 
@@ -58695,6 +58697,41 @@ tasks:
             &outputs,
         )
         .expect("planned dependency env output should not block dry-run input resolution");
+    }
+
+    #[test]
+    fn planned_env_file_outputs_exclude_selected_task_actions() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    env_files: [.env.local]
+    action:
+      kind: ensure_env_file
+      path: .env.local
+"#,
+        );
+
+        let outputs = super::planned_env_file_outputs_for_task_closure(
+            &fixture.contract,
+            "setup",
+            Backend::Native,
+        );
+
+        assert!(outputs.is_empty());
+        assert!(
+            super::ensure_task_env_files_ready_with_planned_outputs(
+                "setup",
+                fixture.contract.tasks.get("setup").unwrap(),
+                Backend::Native,
+                fixture.dir.path(),
+                &outputs,
+            )
+            .is_err()
+        );
     }
 
     #[test]
