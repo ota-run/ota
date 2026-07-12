@@ -2453,7 +2453,9 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     for supported server adapters whose bind argv should be projected from canonical runtime
     listener truth instead of duplicated in `launch.args`
   - `launch.runtime_projection.adapter`: required when `launch.runtime_projection.listener` is
-    set; currently `uvicorn` and `rails`
+    set; currently `uvicorn`, `rails`, and `nextjs`. Use `nextjs` with a direct structured
+    `next dev` invocation (for example `pnpm exec next dev --turbopack`), not a package-script
+    wrapper that already owns host or port flags.
 - `launch.kind: compose`
   - `launch.engine`: optional compose CLI engine; `docker` by default, `podman` also supported
   - `launch.action`: required compose launch action; currently `up`
@@ -2569,6 +2571,11 @@ this is the governed replacement for shell copy-plus-`sed` env normalization. Us
 `action.vars.<KEY>.from_env` when one generated env file should project already-declared Ota env
 truth into a workflow-specific overlay, and use `action.vars.<KEY>.mode: remove` when stale keys
 must be deleted deterministically instead of relying on shell mutation.
+
+When a dependent task declares the same path under `env_files`, Ota treats a preceding declared
+`ensure_env_file` action in its closure as planned setup output during dry-run. This keeps previews
+usable from a clean checkout while real execution still validates the rendered dotenv file after
+its dependencies complete.
 
 Use `action.kind: ensure_file` when setup needs one deterministic bootstrap file (for example a
 secret token file) without shell glue. It creates `action.path` once from one explicit source

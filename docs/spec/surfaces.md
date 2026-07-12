@@ -212,6 +212,10 @@ It does not redefine what the `site` surface means.
 Explicit listener form is also the canonical bind source when a supported launch adapter should
 project host/port argv from runtime truth instead of duplicating them in `launch.args`.
 
+For Next.js development servers, use the `nextjs` adapter with a direct `next dev` invocation so
+Ota can project `--hostname` and `--port` from the selected listener. Do not keep those flags in
+an npm or pnpm script wrapper as a second bind owner.
+
 ```yaml
 tasks:
   dev:

@@ -150,9 +150,10 @@ use crate::runner::{
     clean_execution_report, clean_execution_report_for_workflow, clean_stale_execution,
     cleanup_selected_workflow_native_service_workloads, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
-    ensure_task_adapter_inputs_ready, ensure_task_env_files_ready, env_resolution_source_label,
-    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
-    load_policy_env_overlay, named_execution_context, persistent_container_name,
+    ensure_task_adapter_inputs_ready, ensure_task_env_files_ready_with_planned_outputs,
+    env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
+    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
+    persistent_container_name, planned_env_file_outputs_for_task_closure,
     preflight_native_runtime_listener_binds, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
@@ -12603,11 +12604,14 @@ fn build_env_report_with_overrides(
                 .to_string());
             };
             let backend = effective_task_execution(contract, task_name, overrides).backend;
-            ensure_task_env_files_ready(
+            let planned_env_files =
+                planned_env_file_outputs_for_task_closure(contract, task_name, backend);
+            ensure_task_env_files_ready_with_planned_outputs(
                 task_name,
                 task,
                 backend,
                 contract_working_dir(contract_path),
+                &planned_env_files,
             )
             .map_err(|error| error.to_string())?;
             ensure_task_adapter_inputs_ready(

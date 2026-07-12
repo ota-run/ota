@@ -6429,6 +6429,7 @@ pub struct TaskCommandRuntimeProjectionSpec {
 pub enum TaskCommandRuntimeProjectionAdapter {
     Uvicorn,
     Rails,
+    Nextjs,
 }
 
 impl TaskCommandRuntimeProjectionAdapter {
@@ -6436,6 +6437,7 @@ impl TaskCommandRuntimeProjectionAdapter {
         match self {
             Self::Uvicorn => "uvicorn",
             Self::Rails => "rails",
+            Self::Nextjs => "nextjs",
         }
     }
 
@@ -6451,6 +6453,12 @@ impl TaskCommandRuntimeProjectionAdapter {
                 String::from("-b"),
                 address.to_string(),
                 String::from("-p"),
+                port.to_string(),
+            ],
+            Self::Nextjs => vec![
+                String::from("--hostname"),
+                address.to_string(),
+                String::from("--port"),
                 port.to_string(),
             ],
         }

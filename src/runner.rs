@@ -2747,18 +2747,45 @@ pub(crate) fn ensure_task_env_files_ready(
     backend: Backend,
     working_dir: &Path,
 ) -> Result<(), RunError> {
+    ensure_task_env_files_ready_with_planned_outputs(
+        task_name,
+        task,
+        backend,
+        working_dir,
+        &BTreeSet::new(),
+    )
+}
+
+pub(crate) fn ensure_task_env_files_ready_with_planned_outputs(
+    task_name: &str,
+    task: &TaskSpec,
+    backend: Backend,
+    working_dir: &Path,
+    planned_outputs: &BTreeSet<String>,
+) -> Result<(), RunError> {
     for path in task.env_files_for_backend_for_os(backend, current_os()) {
         let trimmed = path.trim();
         if trimmed.is_empty() {
             continue;
         }
         let source_path = working_dir.join(trimmed);
-        let file = File::open(&source_path).map_err(|source| RunError::FileActionFailed {
-            task: task_name.to_string(),
-            message: format!(
-                "env file `{trimmed}` declared in `env_files` is not readable: {source}"
-            ),
-        })?;
+        let file = match File::open(&source_path) {
+            Ok(file) => file,
+            Err(source)
+                if source.kind() == io::ErrorKind::NotFound
+                    && planned_outputs.contains(trimmed) =>
+            {
+                continue;
+            }
+            Err(source) => {
+                return Err(RunError::FileActionFailed {
+                    task: task_name.to_string(),
+                    message: format!(
+                        "env file `{trimmed}` declared in `env_files` is not readable: {source}"
+                    ),
+                });
+            }
+        };
         for entry in dotenvy::from_read_iter(file) {
             entry.map_err(|source| RunError::FileActionFailed {
                 task: task_name.to_string(),
@@ -2769,6 +2796,79 @@ pub(crate) fn ensure_task_env_files_ready(
         }
     }
     Ok(())
+}
+
+pub(crate) fn planned_env_file_outputs_for_task_closure(
+    contract: &Contract,
+    task_name: &str,
+    backend: Backend,
+) -> BTreeSet<String> {
+    fn collect_prepare_outputs(
+        prepare: &crate::schema::TaskPrepareSpec,
+        outputs: &mut BTreeSet<String>,
+    ) {
+        if let crate::schema::TaskPrepareSpec::Sequence(sequence) = prepare {
+            for step in &sequence.steps {
+                match step {
+                    crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(action) => {
+                        outputs.insert(action.path.trim().to_string());
+                    }
+                    crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+                        collect_prepare_outputs(
+                            &crate::schema::TaskPrepareSpec::Sequence(sequence.clone()),
+                            outputs,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn collect_task_outputs(task: &TaskSpec, outputs: &mut BTreeSet<String>) {
+        if let Some(crate::schema::TaskActionSpec::EnsureEnvFile(action)) = task.action.as_ref() {
+            outputs.insert(action.path.trim().to_string());
+        }
+        if let Some(crate::schema::TaskActionSpec::EnsureBundle(bundle)) = task.action.as_ref() {
+            for step in &bundle.steps {
+                if let crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(action) = step {
+                    outputs.insert(action.path.trim().to_string());
+                }
+            }
+        }
+        if let Some(prepare) = task.prepare.as_ref() {
+            collect_prepare_outputs(prepare, outputs);
+        }
+    }
+
+    fn visit(
+        contract: &Contract,
+        task_name: &str,
+        backend: Backend,
+        visited: &mut BTreeSet<String>,
+        outputs: &mut BTreeSet<String>,
+    ) {
+        if !visited.insert(task_name.to_string()) {
+            return;
+        }
+        let Some(task) = contract.tasks.get(task_name) else {
+            return;
+        };
+        for dependency in task.depends_on_for_backend(backend) {
+            visit(contract, dependency, backend, visited, outputs);
+        }
+        collect_task_outputs(task, outputs);
+    }
+
+    let mut outputs = BTreeSet::new();
+    visit(
+        contract,
+        task_name,
+        backend,
+        &mut BTreeSet::new(),
+        &mut outputs,
+    );
+    outputs
 }
 
 pub(crate) fn ensure_task_adapter_inputs_ready(
@@ -8194,9 +8294,6 @@ fn execute_task_with_hooks(
         return Ok(exit_code);
     }
 
-    ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
-    ensure_task_adapter_inputs_ready(task_name, task, backend_kind, working_dir)?;
-
     if !(requested_relation && requested_overrides.skip_deps) {
         for dependency in task.depends_on_for_backend(backend_kind) {
             let dependency_spec = contract
@@ -8240,6 +8337,9 @@ fn execute_task_with_hooks(
             }
         }
     }
+
+    ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
+    ensure_task_adapter_inputs_ready(task_name, task, backend_kind, working_dir)?;
 
     ensure_task_required_artifacts(contract, task_name, task, working_dir)?;
 
@@ -58560,6 +58660,44 @@ tasks:
     }
 
     #[test]
+    fn planned_env_file_outputs_include_dependency_closure_actions() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+  test:
+    env_files: [.env.local]
+    depends_on: [setup]
+    command:
+      exe: cargo
+      args: [test]
+"#,
+        );
+
+        let outputs = super::planned_env_file_outputs_for_task_closure(
+            &fixture.contract,
+            "test",
+            Backend::Native,
+        );
+
+        assert_eq!(outputs, BTreeSet::from([String::from(".env.local")]));
+        super::ensure_task_env_files_ready_with_planned_outputs(
+            "test",
+            fixture.contract.tasks.get("test").unwrap(),
+            Backend::Native,
+            fixture.dir.path(),
+            &outputs,
+        )
+        .expect("planned dependency env output should not block dry-run input resolution");
+    }
+
+    #[test]
     fn effective_task_env_for_selection_projects_compose_adapter_env_files() {
         let fixture = ContractFixture::new(
             r#"
@@ -62940,6 +63078,62 @@ tasks:
                 String::from("0.0.0.0"),
                 String::from("-p"),
                 String::from("3000"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_command_launch_appends_nextjs_bind_args_from_runtime_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args: [exec, next, dev, --turbopack]
+      runtime_projection:
+        listener: web:http
+        adapter: nextjs
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3005
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let projected = super::projected_command_launch_for_task(
+            task,
+            Backend::Native,
+            match task.launch.as_ref().unwrap() {
+                crate::schema::TaskLaunchSpec::Command(command) => command,
+                _ => unreachable!("expected command launch"),
+            },
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("exec"),
+                String::from("next"),
+                String::from("dev"),
+                String::from("--turbopack"),
+                String::from("--hostname"),
+                String::from("127.0.0.1"),
+                String::from("--port"),
+                String::from("3005"),
             ]
         );
     }

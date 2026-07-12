@@ -64,6 +64,11 @@ tasks:
           - kind: domain
             value: api.stripe.com
             destination_shape: multi_tenant_host
+            destination_constraint:
+              kind: tenant_scope
+              values: [acct_example]
+              source_posture: repo_local_authoritative
+              enforcement: authoritative_app_enforced
     safe_for_agent: true
 
 workflows:

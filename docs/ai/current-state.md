@@ -47,6 +47,19 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Recent Completed Slice
 
+- Kylrix pressure exposed two connected Ota execution gaps and proved their fixes on the
+  deterministic SQLite contributor lane. `launch.runtime_projection.adapter: nextjs` now
+  projects `--hostname` / `--port` from the runtime listener into direct `next dev` launches,
+  while validation rejects package-script wrappers that would make projection ambiguous. Dry-run
+  input resolution now recognizes `ensure_env_file` output from the selected dependency closure as
+  planned setup state on a clean checkout, while real execution waits for dependencies and then
+  validates the rendered dotenv input. Published contract-schema coverage was synchronized for
+  command runtime projection and already-shipped generated workflow-instance fields; the full
+  examples gate now passes. Kylrix itself proves idempotent SQLite env materialization, agent-safe
+  Vitest/lint/build verification, workflow preparation, archived receipt, and isolated native
+  runtime proof. Its interactive Appwrite topology and credential/schema-provisioning paths remain
+  explicitly outside this narrow proof.
+
 - Dagger generated-SDK pressure exposed and fixed native source-managed tool activation: a
   release-asset tool was fulfilled and version-probed correctly, but the native shell task path
   discarded the managed PATH before executing its command. Ota now applies the resolved PATH to

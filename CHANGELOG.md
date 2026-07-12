@@ -213,6 +213,12 @@
 - added `launch.runtime_projection` for supported long-running command adapters, so explicit
   `runtime.listeners.<name>` bind truth can project `uvicorn` or `rails` host/port argv into
   `launch.kind: command` without duplicating bind flags in `launch.args`
+- widened `launch.runtime_projection` with a `nextjs` adapter for direct structured `next dev`
+  launches, so Node application runtime listeners can own `--hostname` and `--port` instead of
+  duplicating those flags in package-script wrappers
+- fixed task and workflow dry-run input ordering when a dependency closure declares
+  `ensure_env_file`: a clean checkout now treats that env artifact as planned setup output rather
+  than rejecting the dependent preview before setup can materialize it
 - tightened native run-path fulfillment around repo-local Python setup lanes: backend/runtime
   requirement probing now waits until `depends_on` materializes repo-local executables like
   `.venv/bin/python`, and native Python runtime candidate probing now prefers satisfying

@@ -4695,6 +4695,13 @@ fn validate_command_launch_runtime_projection(
             projection.adapter.label()
         )));
     }
+    if projection.adapter == crate::schema::TaskCommandRuntimeProjectionAdapter::Nextjs
+        && !is_direct_nextjs_dev_launch(command)
+    {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` uses `launch.runtime_projection.adapter: nextjs`, but `launch` must invoke `next dev` directly (for example `next dev ...` or `pnpm exec next dev ...`) so Ota can project bind argv without package-script wrapper ambiguity"
+        )));
+    }
     if let Some(conflict) = command_launch_runtime_projection_conflicting_arg(
         command.args.as_slice(),
         projection.adapter,
@@ -4703,6 +4710,14 @@ fn validate_command_launch_runtime_projection(
             "{scope} `{task_name}` uses `launch.runtime_projection`, but `launch.args` already declares conflicting bind flag `{conflict}`"
         )));
     }
+}
+
+fn is_direct_nextjs_dev_launch(command: &crate::schema::TaskCommandLaunchSpec) -> bool {
+    let exe = command.exe.trim();
+    let args = command.args.as_slice();
+    (exe == "next" && args.first().is_some_and(|arg| arg == "dev"))
+        || (exe == "pnpm"
+            && matches!(args, [first, second, third, ..] if first == "exec" && second == "next" && third == "dev"))
 }
 
 fn command_launch_runtime_projection_conflicting_arg(
@@ -4730,6 +4745,14 @@ fn command_launch_runtime_projection_conflicting_arg(
                     || arg.starts_with("-p")
                 {
                     return Some("-p");
+                }
+            }
+            crate::schema::TaskCommandRuntimeProjectionAdapter::Nextjs => {
+                if arg == "--hostname" || arg.starts_with("--hostname=") {
+                    return Some("--hostname");
+                }
+                if arg == "--port" || arg.starts_with("--port=") {
+                    return Some("--port");
                 }
             }
         }
@@ -29303,6 +29326,45 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "uses `launch.runtime_projection`, but `launch.args` already declares conflicting bind flag `--port`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_nextjs_runtime_projection_through_package_script_wrapper() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args: [dev]
+      runtime_projection:
+        listener: web:http
+        adapter: nextjs
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3005
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "must invoke `next dev` directly (for example `next dev ...` or `pnpm exec next dev ...`)",
             )
         }));
     }

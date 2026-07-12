@@ -30,6 +30,10 @@ project:
 toolchains:
   python:
     version: ">=3.12,<3.14"
+  node:
+    version: ">=22"
+    package_managers:
+      pnpm: 11.5.1
 
 surfaces:
   web:
@@ -75,6 +79,41 @@ tasks:
     requirements:
       toolchains:
         - python
+
+  next-dev:
+    description: Start a Next.js development server without duplicating hostname or port flags in a package script
+    launch:
+      kind: command
+      exe: pnpm
+      args: [exec, next, dev, --turbopack]
+      runtime_projection:
+        listener: web:http
+        adapter: nextjs
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3005
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3005
+              path: /
+              primary: true
+      readiness:
+        kind: http
+        listener: web:http
+        path: /
+    requirements:
+      toolchains:
+        - node
 
 workflows:
   default: local

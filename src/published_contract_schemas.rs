@@ -843,7 +843,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "mode": { "enum": ["fixed", "discover", "auto"] },
-        "value": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        "value": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "stride": { "type": "integer", "minimum": 1, "maximum": 65535 }
       }
     },
     "workflowInstanceTaskRuntimeHostPortOverlay": {
@@ -851,7 +852,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "mode": { "enum": ["fixed", "auto"] },
-        "value": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        "value": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "stride": { "type": "integer", "minimum": 1, "maximum": 65535 }
       }
     },
     "workflowInstanceTaskRuntimeBindOverlay": {
@@ -906,6 +908,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "port_stride": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "path": { "type": "string" }
       }
     },
@@ -927,11 +930,26 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         }
       }
     },
+    "workflowGeneratedInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prefix", "start", "end", "template"],
+      "properties": {
+        "prefix": { "type": "string" },
+        "start": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "end": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "template": { "$ref": "#/$defs/workflowInstance" }
+      }
+    },
     "workflowInstances": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/workflowInstance" },
       "properties": {
-        "default": { "type": "string" }
+        "default": { "type": "string" },
+        "generated": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/workflowGeneratedInstance" }
+        }
       },
       "required": ["default"]
     },
@@ -1354,7 +1372,9 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "command" },
             "exe": { "type": "string" },
-            "args": { "$ref": "#/$defs/stringArray" }
+            "args": { "$ref": "#/$defs/stringArray" },
+            "cwd": { "type": "string" },
+            "runtime_projection": { "$ref": "#/$defs/taskCommandRuntimeProjection" }
           }
         },
         {
@@ -1387,6 +1407,15 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           }
         }
       ]
+    },
+    "taskCommandRuntimeProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listener", "adapter"],
+      "properties": {
+        "listener": { "type": "string" },
+        "adapter": { "enum": ["uvicorn", "rails", "nextjs"] }
+      }
     },
     "taskPrepareSource": {
       "oneOf": [
