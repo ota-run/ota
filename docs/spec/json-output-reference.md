@@ -1933,6 +1933,12 @@ Receipt `evaluated_inputs[]` also includes task-declared `replay_inputs` capture
 These records use `kind: static_file` and `input_class: declared_replay_input`; matching identities
 only prove the named file held still and remain narrowing evidence rather than a hermetic replay
 claim.
+
+Receipt `witnessed_observations.query_traces[]` carries contract-declared historical query evidence
+separately from `evaluated_inputs[]`. Each trace is `evidence_class: attested`, retains its source
+path, source SHA-256 identity, and per-subject/per-run identity records, and summarizes divergent subjects. Query
+identities are observed behavior, not current-run decision inputs; a divergence identifies a
+changed query shape without claiming model causality or a negative-control result.
 - unavailable local planes remain explicit with `availability: "unavailable"` and
   `reason: "not_supported_by_task"`; this describes contract support, not current machine
   readiness, which remains the responsibility of `ota doctor` and `ota run --dry-run`
@@ -4662,6 +4668,11 @@ The nested `receipt` object can also include:
   Compose files. Ota never re-reads these identities later. Mutable tags, interpolated image
   references, inferred Compose files, unrelated stack services, ambient environment, and
   external-world inputs remain outside this evidence.
+- `witnessed_observations.query_traces[]` when a selected task closure declares a JSONL query
+  trace under `witnessed_observations.query_traces`. These are attested historical observations,
+  not evaluated inputs. The nested summary reports subjects, records, and divergent subjects so
+  consumers can distinguish stable query identity from observed variation without over-reading it
+  as a current-run replay decision.
 - the same selected Node hydration lane can also record `runtime:node` with the contract-local
   `node --version` observed while authoring the receipt. This is intentionally a runtime-version
   observation, not an executable or image digest.

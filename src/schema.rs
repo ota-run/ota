@@ -4775,6 +4775,11 @@ pub struct TaskSpec {
     pub inputs: BTreeMap<String, TaskInputSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replay_inputs: Vec<TaskReplayInputSpec>,
+    #[serde(
+        default,
+        skip_serializing_if = "TaskWitnessedObservationsSpec::is_empty"
+    )]
+    pub witnessed_observations: TaskWitnessedObservationsSpec,
     #[serde(default)]
     pub targets: BTreeMap<String, TaskTargetSpec>,
     #[serde(default)]
@@ -8459,6 +8464,29 @@ pub struct TaskReplayInputSpec {
 #[serde(rename_all = "snake_case")]
 pub enum TaskReplayInputKind {
     StaticFile,
+}
+
+/// Execution evidence declared by a task but observed from a prior or external run.
+/// It is deliberately separate from `replay_inputs`, which are captured before execution.
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWitnessedObservationsSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_traces: Vec<TaskQueryTraceObservationSpec>,
+}
+
+impl TaskWitnessedObservationsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.query_traces.is_empty()
+    }
+}
+
+/// A JSONL trace of queries produced by a previously witnessed execution.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskQueryTraceObservationSpec {
+    pub id: String,
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

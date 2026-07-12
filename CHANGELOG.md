@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- added task-scoped `witnessed_observations.query_traces` for JSONL query identity evidence from
+  prior or external runs. Ota captures the declared source before the selected closure begins and
+  emits its full attested trace under receipt `witnessed_observations`, separately from
+  `evaluated_inputs`; stable repeated queries retain one identity across runs, while divergent
+  subjects name observed query-shape variation without claiming model causality or treating
+  historical output as a current-run decision input
+
 - added task-scoped `replay_inputs` for static files consumed by deterministic verification lanes;
   Ota validates repo-relative non-overlapping declarations, captures their SHA-256 identities before
   `ota run` or `ota up` begins the selected closure, persists them in receipts, and renders them as

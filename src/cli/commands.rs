@@ -82,28 +82,30 @@ use crate::output::{
     DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary,
     DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind,
     EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus,
-    EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure,
-    ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
-    ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput,
-    ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
-    ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
-    ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
-    ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
-    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
-    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
-    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
-    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, HarnessCapabilityProfile, HarnessEnvironmentBoundary,
-    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
-    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
-    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArtifacts,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
-    ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
-    ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionEvidenceClass,
+    ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
+    ExecutionReceipt, ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource,
+    ExecutionReceiptEvaluatedInput, ExecutionReceiptLogs, ExecutionReceiptQueryTraceDivergence,
+    ExecutionReceiptQueryTraceObservation, ExecutionReceiptQueryTraceRecord,
+    ExecutionReceiptQueryTraceSummary, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionReceiptWitnessedObservations, ExecutionSummary, ExecutionTopologyFailure,
+    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
+    ExecutionTopologyProbeObserverSummary, ExecutionTopologyProbeSummary,
+    ExecutionTopologyProbeTargetSummary, ExecutionTopologyReadinessSummary,
+    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
+    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
+    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
+    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
+    HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
+    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, ListedWorkflowSummary,
+    MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
+    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
+    ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
+    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess,
+    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
     ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
     ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass,
     RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
@@ -10004,6 +10006,7 @@ fn build_assist_add_task_proposal(
         adapter_inputs: crate::schema::TaskAdapterInputsSpec::default(),
         inputs: BTreeMap::new(),
         replay_inputs: Vec::new(),
+        witnessed_observations: crate::schema::TaskWitnessedObservationsSpec::default(),
         targets: BTreeMap::new(),
         run: None,
         script: None,
@@ -37544,6 +37547,12 @@ fn build_repo_receipt_diff_report(
         contract_snapshot_ref: baseline.record.payload.receipt.contract_snapshot_ref,
         assumption_set_hash: baseline.record.payload.receipt.assumption_set_hash,
         evaluated_inputs: baseline.record.payload.receipt.evaluated_inputs.clone(),
+        witnessed_observations: baseline
+            .record
+            .payload
+            .receipt
+            .witnessed_observations
+            .clone(),
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
         status: baseline.record.payload.receipt.status,
@@ -37564,6 +37573,7 @@ fn build_repo_receipt_diff_report(
         contract_snapshot_ref: current_receipt.contract_snapshot_ref.clone(),
         assumption_set_hash: current_receipt.assumption_set_hash.clone(),
         evaluated_inputs: current_receipt.evaluated_inputs.clone(),
+        witnessed_observations: current_receipt.witnessed_observations.clone(),
         status: current_receipt.status.clone(),
         backend: current_receipt.backend.clone(),
         target: current_receipt.target.clone(),
@@ -51955,7 +51965,7 @@ impl Drop for PlainModeGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs;
     use std::io::{Read, Write};
@@ -51974,7 +51984,8 @@ mod tests {
         DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
         RepoUpResult, RequirementActivationAction, adapter_bootstrap_request_for_missing_backend,
         bootstrap_failure_findings, build_env_report, build_env_report_with_overrides,
-        build_up_preview, collect_validate_warnings, compact_contract_file_path_relative_to,
+        build_up_preview, capture_witnessed_observations_before_execution,
+        collect_validate_warnings, compact_contract_file_path_relative_to,
         compact_path_relative_to, compact_policy_path_relative_to_contract,
         contractless_signal_summary_parts, doctor as doctor_command,
         doctor_mode_execution_overrides, env as env_command, execute_repo_up,
@@ -52200,6 +52211,64 @@ mod tests {
             mise_log.display(),
         );
         write_executable_script(&dir.join("sh"), &sh_script);
+    }
+
+    #[test]
+    fn witnessed_query_trace_keeps_run_context_out_of_query_identity() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            repo.path().join("queries.jsonl"),
+            concat!(
+                "{\"id\":\"stable\",\"run\":0,\"sql\":\"SELECT 1\"}\n",
+                "{\"id\":\"stable\",\"run\":1,\"sql\":\"SELECT 1\"}\n",
+                "{\"id\":\"flapping\",\"run\":0,\"sql\":\"SELECT 1\"}\n",
+                "{\"id\":\"flapping\",\"run\":1,\"sql\":\"SELECT 2\"}\n"
+            ),
+        )
+        .expect("write query trace");
+        let yaml = r#"
+version: 1
+project:
+  name: witnessed-trace
+tasks:
+  verify:
+    run: "true"
+    witnessed_observations:
+      query_traces:
+        - id: recorded_queries
+          path: queries.jsonl
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let observations = capture_witnessed_observations_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("verify")],
+        )
+        .expect("capture trace");
+
+        let trace = observations
+            .query_traces
+            .first()
+            .expect("captured query trace");
+        assert_eq!(trace.summary.records, 4);
+        assert_eq!(trace.summary.subjects, 2);
+        assert!(trace.source_identity.starts_with("sha256:"));
+        assert_eq!(trace.summary.divergent_subjects.len(), 1);
+        assert_eq!(trace.summary.divergent_subjects[0].subject, "flapping");
+        assert_eq!(
+            trace
+                .records
+                .iter()
+                .filter(|record| record.subject == "stable")
+                .map(|record| record.identity.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            1,
+            "a repeated query must retain one identity across distinct run indexes"
+        );
     }
 
     #[test]
@@ -59644,6 +59713,7 @@ workflows:
             contract_snapshot_ref: Some(String::from(".ota/contracts/sha256-abc.json")),
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -60733,6 +60803,7 @@ project:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67485,6 +67556,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67576,6 +67648,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67781,6 +67854,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67853,6 +67927,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -67955,6 +68030,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -68079,6 +68155,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -68170,6 +68247,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -68268,6 +68346,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -68556,6 +68635,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: Some(crossing.clone()),
             refusal: None,
             workspace: None,
@@ -68880,6 +68960,8 @@ tasks:
                 contract_snapshot_ref: None,
                 assumption_set_hash: None,
                 evaluated_inputs: Vec::new(),
+                witnessed_observations:
+                    crate::output::ExecutionReceiptWitnessedObservations::default(),
                 crossing: None,
                 refusal: None,
                 workspace: None,
@@ -76616,6 +76698,7 @@ agent:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78071,6 +78154,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78133,6 +78217,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78195,6 +78280,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78274,6 +78360,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78353,6 +78440,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78473,6 +78561,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78581,6 +78670,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78697,6 +78787,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -78761,6 +78852,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82001,6 +82093,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82087,6 +82180,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82158,6 +82252,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82232,6 +82327,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82300,6 +82396,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82368,6 +82465,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -82442,6 +82540,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83272,6 +83371,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83420,6 +83520,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -83528,6 +83629,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -84139,6 +84241,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -84238,6 +84341,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -84323,6 +84427,7 @@ tasks:
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
@@ -89336,6 +89441,17 @@ fn run_single_contract_target_streaming(
         exit_code: 1,
         receipt: None,
     })?;
+    let witnessed_observations = capture_witnessed_observations_before_execution(
+        &target.contract,
+        &target.contract_path,
+        [task_name.clone()],
+    )
+    .map_err(|message| RunCommandFailure {
+        message,
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })?;
     let prepared_logs = prepare_streaming_durable_run_logs(
         &target.contract_path,
         task_name.as_str(),
@@ -89385,6 +89501,7 @@ fn run_single_contract_target_streaming(
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89468,6 +89585,7 @@ fn run_single_contract_target_streaming(
                 )),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89577,6 +89695,7 @@ fn run_single_contract_target_streaming(
                 Some(next_note),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
             attach_task_crossing_to_receipt(
                 &mut receipt,
@@ -89656,6 +89775,17 @@ fn run_single_contract_target_captured(
         exit_code: 1,
         receipt: None,
     })?;
+    let witnessed_observations = capture_witnessed_observations_before_execution(
+        &target.contract,
+        &target.contract_path,
+        [task_name.clone()],
+    )
+    .map_err(|message| RunCommandFailure {
+        message,
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })?;
     match run_task_captured_with_args_with_overrides_with_policy(
         &target.contract,
         &target.contract_path,
@@ -89694,6 +89824,7 @@ fn run_single_contract_target_captured(
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89775,6 +89906,7 @@ fn run_single_contract_target_captured(
                 )),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             attach_task_crossing_to_receipt(
@@ -89884,6 +90016,7 @@ fn run_single_contract_target_captured(
                 Some(next_note),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
             attach_task_crossing_to_receipt(
                 &mut receipt,
@@ -93463,6 +93596,116 @@ fn capture_replay_inputs_before_execution(
     Ok(captured.into_values().collect())
 }
 
+// Query traces are attested observations from a recorded run. Capture their immutable source
+// before execution, but keep them separate from evaluated decision inputs in the receipt.
+fn capture_witnessed_observations_before_execution(
+    contract: &Contract,
+    contract_path: &Path,
+    roots: impl IntoIterator<Item = String>,
+) -> Result<ExecutionReceiptWitnessedObservations, String> {
+    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut query_traces = BTreeMap::new();
+    for task_name in contract.task_dependency_closure_names(roots) {
+        let Some(task) = contract.tasks.get(&task_name) else {
+            continue;
+        };
+        for trace in &task.witnessed_observations.query_traces {
+            let source_path = trace.path.trim();
+            let source_bytes = fs::read(root.join(source_path)).map_err(|error| {
+                format!(
+                    "declared witnessed query trace `{}` for task `{task_name}` could not be captured before execution: {error}",
+                    trace.id
+                )
+            })?;
+            let source_identity = contract_snapshot_hash(&source_bytes);
+            let content = String::from_utf8(source_bytes).map_err(|error| {
+                format!(
+                    "declared witnessed query trace `{}` for task `{task_name}` must be valid UTF-8: {error}",
+                    trace.id
+                )
+            })?;
+            let mut records = Vec::new();
+            for (line_index, line) in content.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let value: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+                    format!(
+                        "witnessed query trace `{}` for task `{task_name}` has invalid JSON on line {}: {error}",
+                        trace.id,
+                        line_index + 1
+                    )
+                })?;
+                let subject = value.get("id").and_then(serde_json::Value::as_str).filter(|value| !value.trim().is_empty()).ok_or_else(|| {
+                    format!("witnessed query trace `{}` for task `{task_name}` needs a non-empty string `id` on line {}", trace.id, line_index + 1)
+                })?;
+                let run = value.get("run").and_then(serde_json::Value::as_u64).ok_or_else(|| {
+                    format!("witnessed query trace `{}` for task `{task_name}` needs a non-negative integer `run` on line {}", trace.id, line_index + 1)
+                })?;
+                let sql = value.get("sql").and_then(serde_json::Value::as_str).filter(|value| !value.trim().is_empty()).ok_or_else(|| {
+                    format!("witnessed query trace `{}` for task `{task_name}` needs a non-empty string `sql` on line {}", trace.id, line_index + 1)
+                })?;
+                // `run` locates the observation. Identity must represent the query alone or a
+                // stable query repeated across K runs would be falsely classified as divergent.
+                let identity = contract_snapshot_hash(
+                    &serde_json::to_vec(&(subject, sql))
+                        .expect("query trace identity must serialize"),
+                );
+                records.push(ExecutionReceiptQueryTraceRecord {
+                    subject: subject.to_string(),
+                    run,
+                    identity,
+                });
+            }
+            records.sort_by(|left, right| {
+                left.subject
+                    .cmp(&right.subject)
+                    .then(left.run.cmp(&right.run))
+                    .then(left.identity.cmp(&right.identity))
+            });
+            let mut identities_by_subject = BTreeMap::<String, BTreeSet<String>>::new();
+            for record in &records {
+                identities_by_subject
+                    .entry(record.subject.clone())
+                    .or_default()
+                    .insert(record.identity.clone());
+            }
+            let divergent_subjects = identities_by_subject
+                .into_iter()
+                .filter_map(|(subject, identities)| {
+                    (identities.len() > 1).then_some(ExecutionReceiptQueryTraceDivergence {
+                        subject,
+                        distinct_identities: identities.len(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let id = format!("query_trace:{task_name}:{}", trace.id.trim());
+            query_traces.insert(
+                id.clone(),
+                ExecutionReceiptQueryTraceObservation {
+                    id,
+                    source_path: source_path.to_string(),
+                    source_identity,
+                    evidence_class: ExecutionEvidenceClass::Attested,
+                    summary: ExecutionReceiptQueryTraceSummary {
+                        subjects: records
+                            .iter()
+                            .map(|record| record.subject.as_str())
+                            .collect::<BTreeSet<_>>()
+                            .len(),
+                        records: records.len(),
+                        divergent_subjects,
+                    },
+                    records,
+                },
+            );
+        }
+    }
+    Ok(ExecutionReceiptWitnessedObservations {
+        query_traces: query_traces.into_values().collect(),
+    })
+}
+
 fn attach_pre_execution_replay_inputs(
     receipt: &mut ExecutionReceipt,
     captured: &[ExecutionReceiptEvaluatedInput],
@@ -93473,6 +93716,24 @@ fn attach_pre_execution_replay_inputs(
         .sort_by(|left, right| left.id.cmp(&right.id));
     receipt
         .evaluated_inputs
+        .dedup_by(|left, right| left.id == right.id);
+}
+
+fn attach_witnessed_observations(
+    receipt: &mut ExecutionReceipt,
+    captured: &ExecutionReceiptWitnessedObservations,
+) {
+    receipt
+        .witnessed_observations
+        .query_traces
+        .extend(captured.query_traces.iter().cloned());
+    receipt
+        .witnessed_observations
+        .query_traces
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    receipt
+        .witnessed_observations
+        .query_traces
         .dedup_by(|left, right| left.id == right.id);
 }
 
@@ -94128,6 +94389,7 @@ fn run_execution_receipt_with_shared(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs,
+        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         workspace: None,
@@ -99834,6 +100096,43 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         }
     }
 
+    if !receipt.witnessed_observations.query_traces.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Query Identity Evidence")
+        ));
+        for trace in &receipt.witnessed_observations.query_traces {
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {})",
+                paint_key("Trace:"),
+                trace.id,
+                trace.source_path,
+                trace.source_identity
+            ));
+            stdout.push_str(&format!(
+                "\n  {} {} across {} subjects",
+                paint_key("Records:"),
+                trace.summary.records,
+                trace.summary.subjects
+            ));
+            if trace.summary.divergent_subjects.is_empty() {
+                stdout.push_str(&format!("\n  {} none", paint_key("Divergent Subjects:")));
+            } else {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Divergent Subjects:"),
+                    trace
+                        .summary
+                        .divergent_subjects
+                        .iter()
+                        .map(|entry| format!("{} ({})", entry.subject, entry.distinct_identities))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    }
+
     if let Some(runtime) = receipt.runtime.as_ref() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime")));
         append_runtime_listener_lines(&mut stdout, runtime, "");
@@ -101638,6 +101937,8 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
     #[serde(default)]
+    witnessed_observations: ExecutionReceiptWitnessedObservations,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     backend: Option<String>,
@@ -102271,6 +102572,7 @@ fn repo_execution_receipt_with_overrides(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs,
+        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         workspace: None,
@@ -103172,6 +103474,7 @@ fn workspace_up_receipt(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs: Vec::new(),
+        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         workspace: Some(workspace_name.to_string()),
@@ -103268,6 +103571,7 @@ fn workspace_status_receipt(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs: Vec::new(),
+        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         workspace: Some(workspace_name.to_string()),
@@ -103368,6 +103672,7 @@ fn workspace_run_receipt(
         contract_snapshot_ref: None,
         assumption_set_hash: None,
         evaluated_inputs: Vec::new(),
+        witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
         workspace: Some(workspace_name.to_string()),
@@ -107941,6 +108246,15 @@ fn execute_repo_up_with_behavior_with_agent(
             contract.selected_workflow_task_closure_names(workflow_name),
         )?
     };
+    let captured_witnessed_observations = if dry_run {
+        ExecutionReceiptWitnessedObservations::default()
+    } else {
+        capture_witnessed_observations_before_execution(
+            contract,
+            resolved_path,
+            contract.selected_workflow_task_closure_names(workflow_name),
+        )?
+    };
     let mut result = execute_repo_up_with_behavior_with_agent_inner(
         contract,
         resolved_path,
@@ -107954,6 +108268,7 @@ fn execute_repo_up_with_behavior_with_agent(
         ready_timeout,
     )?;
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_replay_inputs);
+    attach_witnessed_observations(&mut result.receipt, &captured_witnessed_observations);
     Ok(result)
 }
 

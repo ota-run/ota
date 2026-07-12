@@ -527,6 +527,13 @@ pub struct ExecutionReceipt {
     /// These are compared receipt-to-receipt; consumers must not substitute a later filesystem read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
+    /// Observed execution evidence. Unlike `evaluated_inputs`, these records are not
+    /// current-run decision inputs and must not be treated as such during replay.
+    #[serde(
+        default,
+        skip_serializing_if = "ExecutionReceiptWitnessedObservations::is_empty"
+    )]
+    pub witnessed_observations: ExecutionReceiptWitnessedObservations,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crossing: Option<ExecutionBoundaryCrossing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -605,6 +612,59 @@ pub struct ExecutionReceiptEvaluatedInput {
     pub artifact_lineage: Option<ExecutionReceiptArtifactLineage>,
 }
 
+/// Receipt-owned observations from declared evidence artifacts.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct ExecutionReceiptWitnessedObservations {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_traces: Vec<ExecutionReceiptQueryTraceObservation>,
+}
+
+impl ExecutionReceiptWitnessedObservations {
+    pub fn is_empty(&self) -> bool {
+        self.query_traces.is_empty()
+    }
+}
+
+/// A captured query-identity trace. The trace is attested historical evidence, not an input
+/// evaluated by the current task execution.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptQueryTraceObservation {
+    pub id: String,
+    pub source_path: String,
+    pub source_identity: String,
+    pub evidence_class: ExecutionEvidenceClass,
+    pub records: Vec<ExecutionReceiptQueryTraceRecord>,
+    pub summary: ExecutionReceiptQueryTraceSummary,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptQueryTraceRecord {
+    pub subject: String,
+    pub run: u64,
+    pub identity: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptQueryTraceSummary {
+    pub subjects: usize,
+    pub records: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub divergent_subjects: Vec<ExecutionReceiptQueryTraceDivergence>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptQueryTraceDivergence {
+    pub subject: String,
+    pub distinct_identities: usize,
+}
+
+/// How Ota knows an observation. This is distinct from where a seam observation originated.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionEvidenceClass {
+    Attested,
+}
+
 /// Contract-declared lineage for a generated artifact consumed by the selected execution path.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptArtifactLineage {
@@ -680,6 +740,9 @@ impl Serialize for ExecutionReceipt {
         }
         if !self.evaluated_inputs.is_empty() {
             map.serialize_entry("evaluated_inputs", &self.evaluated_inputs)?;
+        }
+        if !self.witnessed_observations.is_empty() {
+            map.serialize_entry("witnessed_observations", &self.witnessed_observations)?;
         }
         if let Some(crossing) = self.crossing.as_ref() {
             map.serialize_entry("crossing", crossing)?;
@@ -2380,6 +2443,11 @@ pub struct ReceiptDiffSide {
     pub assumption_set_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
+    #[serde(
+        default,
+        skip_serializing_if = "ExecutionReceiptWitnessedObservations::is_empty"
+    )]
+    pub witnessed_observations: ExecutionReceiptWitnessedObservations,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2420,6 +2488,11 @@ pub struct ReceiptDiffBaseline {
     pub assumption_set_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
+    #[serde(
+        default,
+        skip_serializing_if = "ExecutionReceiptWitnessedObservations::is_empty"
+    )]
+    pub witnessed_observations: ExecutionReceiptWitnessedObservations,
     pub ok: bool,
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]

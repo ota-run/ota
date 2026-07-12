@@ -607,21 +607,23 @@ is a receipt-attached witnessed record recovered from a contract-declared struct
   "id": "query_identity:<task>:<run>",
   "kind": "emitted_query_identity",
   "input_class": "witnessed_query_output",
-  "identity": "sha256:<canonical-query-or-record>",
-  "source": {
-    "kind": "repo_emitted_trace",
-    "path": "<declared structured trace path>"
-  },
-  "evidence_class": "attested"
+  "source_path": "<declared structured trace path>",
+  "source_identity": "sha256:<captured-trace-file>",
+  "evidence_class": "attested",
+  "records": [
+    { "subject": "<id>", "run": 0, "identity": "sha256:<canonical-subject-query>" }
+  ]
 }
 ```
 
 The trace source is contract-declared; the identity and record are captured by Ota at the selected
-execution boundary. `witnessed_query_output` extends the canonical V11.9 input taxonomy rather
-than creating a replay-local class.
+execution boundary. The trace is a witnessed observation, not an `evaluated_input`: it must remain
+separate from current-run decision inputs so receipt comparison can distinguish named inputs that
+held still from observed behavior that changed.
 
 The first concrete admission is the Bedrock JSONL shape, one record per `(id, run)` with a `sql`
-field. Ota canonicalizes the `sql` string and hashes the `(id, run, sql)` record. It preserves the
+field. Ota preserves `run` as trace context and hashes the exact `(id, sql)` query identity so
+a stable query repeated across K runs does not become false divergence. It preserves the
 repo-emitted trace as witnessed evidence rather than attempting to regenerate a query from the
 model. Other trace formats stay out of scope until they have equally explicit run identity and
 query fields.
@@ -649,7 +651,7 @@ The first Bedrock-shaped interpretation is intentionally narrow:
 
 Ota should consume an existing repo-emitted query trace where it is already authoritative. It must
 not duplicate application instrumentation or attempt to replay a model decision function from an
-opaque provider. Query output is a witnessed input; Ota evaluates the replay boundary around it.
+opaque provider. Query output is witnessed evidence; Ota evaluates the replay boundary around it.
 
 ### 7. Operator UX only after evidence is solid
 

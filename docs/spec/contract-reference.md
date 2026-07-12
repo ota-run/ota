@@ -1939,6 +1939,11 @@ Fields:
   task or workflow closure begins; each entry declares `id`, `kind: static_file`, and a
   repo-relative `path`; these are narrowing replay evidence and cannot overlap declared closure
   writes
+- `witnessed_observations.query_traces`: optional JSONL query-trace artifacts emitted by a prior
+  or external execution; each entry declares an `id` and repo-relative `path`. Ota preserves
+  these as attested observations in the receipt rather than treating per-query identities as
+  current-run replay inputs. Each nonblank line must contain `id` (subject), `run` (non-negative
+  integer), and `sql` (query text); the selected closure must not write the trace path.
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean (`false` when omitted)
 - `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces

@@ -35,17 +35,26 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
-- active implementation and proof slice: `V11.13` generated artifact lineage
+- active implementation and proof slice: `V11.10` witnessed query-identity evidence; declared
+  static replay inputs remain receipt `evaluated_inputs[]`, while Bedrock-style historical query
+  traces are emitted separately as attested `witnessed_observations.query_traces[]`
 - queued design refinement: `V11.11` seam-evidence provenance, which keeps caller-side attempts,
   dependency-side or round-trip exercise, and separately recorded negative controls distinct on
   the existing proof carrier
-- immediate proof gate: publish and verify a matrix for the EventCatalog generated-source slice.
-  Dagger still validates as a narrow SDK lineage contract, but its real generator execution is
-  blocked by the absent Dagger CLI/engine; that remains external-tool acquisition pressure, not a
-  lineage-model failure.
+- immediate proof gate: review this receipt-carrier widening, then publish the Bedrock matrix on
+  the active branch. Continue V11.13 generated-artifact pressure only after the query observation
+  carrier is proven across the advertised OS lanes.
 
 ## Recent Completed Slice
 
+- The current uncommitted V11.10 refinement adds contract-owned
+  `tasks.<name>.witnessed_observations.query_traces[]` for existing JSONL query traces. Ota
+  validates immutable repo-relative trace paths, captures the selected closure before execution,
+  and emits source identity, full run records, and divergent-subject summary under receipt
+  `witnessed_observations`. It deliberately keeps the trace outside `evaluated_inputs[]` so
+  historical observed behavior cannot be over-read as a current-run decision input. Bedrock's
+  recorded SQL trace proves the narrow admission: three subjects diverge while stable repeated
+  queries retain one identity across runs.
 - The in-progress `V11.13` core cut makes generated source a named repo-scoped contract artifact:
   `artifacts.<name>` declares `kind: generated_source`, one producer task, output paths, and
   optional source inputs; consumers declare `requires_artifacts` and directly depend on the

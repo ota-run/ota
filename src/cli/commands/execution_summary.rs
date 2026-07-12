@@ -785,6 +785,7 @@ mod tests {
             contract_snapshot_ref: None,
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
+            witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
             workspace: None,
