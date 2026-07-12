@@ -47,7 +47,7 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Recent Completed Slice
 
-- The current uncommitted V11.10 refinement adds contract-owned
+- The current V11.10 refinement adds contract-owned
   `tasks.<name>.witnessed_observations.query_traces[]` for existing JSONL query traces. Ota
   validates immutable repo-relative trace paths, captures the selected closure before execution,
   and emits source identity, full run records, and divergent-subject summary under receipt
