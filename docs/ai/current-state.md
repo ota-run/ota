@@ -68,6 +68,11 @@ durable agent workflow belongs in the canonical Ota skill.
   runtime proof. Its interactive Appwrite topology and credential/schema-provisioning paths remain
   explicitly outside this narrow proof.
 
+- Kylrix also exposed a native long-running task UX gap: applications such as Next.js can exit
+  non-zero after a user `Ctrl+C`. Runner-observed interrupts now take precedence over that child
+  shutdown code, preserve it on the task step for diagnosis, and return canonical exit `130` with
+  an `interrupted` receipt and summary.
+
 - Dagger generated-SDK pressure exposed and fixed native source-managed tool activation: a
   release-asset tool was fulfilled and version-probed correctly, but the native shell task path
   discarded the managed PATH before executing its command. Ota now applies the resolved PATH to

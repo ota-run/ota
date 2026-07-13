@@ -63198,6 +63198,52 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn streamed_run_command_reports_interrupt_when_child_exits_one() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  dev:
+    run: sh -c 'sleep 0.2; exit 1'
+"#,
+        )
+        .expect("write contract");
+
+        let interrupt_thread = std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            simulate_run_interrupt_for_test();
+        });
+        let output = super::run_command(
+            "dev",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+            true,
+        );
+        interrupt_thread.join().expect("interrupt thread");
+
+        assert_eq!(output.exit_code, 130);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("INFO  Task interrupted"), "{stderr}");
+        assert!(stderr.contains("Status:      interrupted"), "{stderr}");
+        assert!(!stderr.contains("Task Failed"), "{stderr}");
+    }
+
     #[test]
     fn run_command_missing_contract_guidance_avoids_contract_dependent_next_steps() {
         let _guard = cwd_mutex_lock();
@@ -92097,6 +92143,12 @@ fn receipt_reports_user_interruption(
     service_termination: Option<&ServiceTermination>,
     interrupted: bool,
 ) -> bool {
+    // The runner observed the signal at the execution boundary. That is stronger evidence than a
+    // child application's exit code or shutdown classification.
+    if interrupted {
+        return true;
+    }
+
     if let Some(service_termination) = service_termination {
         return service_termination_reports_user_interruption(service_termination);
     }
@@ -92121,16 +92173,7 @@ fn receipt_reports_user_interruption(
         return true;
     }
 
-    if !interrupted {
-        return false;
-    }
-
-    let has_non_interrupt_nonzero = receipt.steps.iter().any(|step| {
-        step.exit_code.is_some_and(|exit_code| {
-            exit_code != 0 && !exit_code_indicates_user_interruption(exit_code)
-        })
-    });
-    !has_non_interrupt_nonzero
+    false
 }
 
 fn service_termination_reports_user_interruption(service_termination: &ServiceTermination) -> bool {
@@ -92514,6 +92557,10 @@ fn run_failure_reports_user_interruption(
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> bool {
+    if interrupted {
+        return true;
+    }
+
     let summary_plain = strip_ansi_codes(summary_block);
     let marker_indicates_interruption = summary_has_status(summary_plain.as_str(), "interrupted")
         || summary_plain.contains("interrupted by user")
@@ -92524,7 +92571,7 @@ fn run_failure_reports_user_interruption(
         return true;
     }
 
-    exit_code_indicates_user_interruption(exit_code) || (interrupted && exit_code == 0)
+    exit_code_indicates_user_interruption(exit_code)
 }
 
 fn render_task_interrupted_text(

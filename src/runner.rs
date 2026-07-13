@@ -5184,12 +5184,17 @@ pub(crate) fn simulate_run_interrupt_for_test() {
     RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
-fn interruption_execution_note(interrupted: bool, exit_code: i32) -> Option<String> {
-    (interrupted && (is_interrupt_exit_code(exit_code) || exit_code == 0))
-        .then(|| String::from("task interrupted by user"))
+fn interruption_execution_note(interrupted: bool, _exit_code: i32) -> Option<String> {
+    interrupted.then(|| String::from("task interrupted by user"))
 }
 
 fn task_command_output_reports_user_interruption(command_output: &TaskCommandOutput) -> bool {
+    // A runner-observed interrupt is authoritative even when the application converts Ctrl+C
+    // into its own non-zero exit code (for example, Next.js exits 1 after graceful shutdown).
+    if command_output.interrupted {
+        return true;
+    }
+
     if let Some(service_termination) = command_output.service_termination.as_ref() {
         return match service_termination.cause {
             ServiceTerminationCause::Interrupted => true,
@@ -5202,7 +5207,6 @@ fn task_command_output_reports_user_interruption(command_output: &TaskCommandOut
     }
 
     is_interrupt_exit_code(command_output.exit_code)
-        || (command_output.interrupted && command_output.exit_code == 0)
 }
 
 const NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_FLOOR_MILLIS: u64 = 5_000;
@@ -7169,6 +7173,9 @@ fn run_task_internal(
         );
     }
     let exit_code = execute_result?;
+    // Preserve the child exit code on its task step, but make the top-level result stable for an
+    // observed user interrupt. Consumers can then distinguish interruption from task failure.
+    let exit_code = if state.interrupted { 130 } else { exit_code };
 
     let executed_tasks = state
         .task_steps
@@ -41322,6 +41329,53 @@ tasks:
             "interrupt grace window should confirm readiness"
         );
         assert!(!outcome.budget_exhausted);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observed_interrupt_normalizes_nonzero_child_exit() {
+        let _guard = env_mutex_lock();
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: interrupt-demo
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: sh
+      args: [-c, 'touch started; sleep 1; exit 1']
+"#,
+        )
+        .expect("write contract");
+        let contract = load_contract(&contract_path).expect("load contract");
+
+        let started_marker = repo.path().join("started");
+        let interrupt_thread = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !started_marker.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(started_marker.exists(), "structured launch should start");
+            super::simulate_run_interrupt_for_test();
+        });
+        let outcome = run_task_captured_with_args_with_overrides(
+            &contract,
+            &contract_path,
+            "dev",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .expect("task outcome");
+        interrupt_thread.join().expect("interrupt thread");
+
+        assert!(outcome.interrupted);
+        assert_eq!(outcome.exit_code, 130);
+        assert_eq!(outcome.task_steps[0].exit_code, 1);
     }
 
     #[test]

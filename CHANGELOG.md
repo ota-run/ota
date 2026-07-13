@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed user-initiated interruption classification for long-running tasks. When Ota observes an
+  interrupt, it now returns the stable interrupt exit code (`130`) and renders an `interrupted`
+  receipt/summary even if the child application exits with its own non-zero shutdown code.
+
 - native `launch.kind: command` service tasks now use the same contract-owned readiness and
   endpoint-publication path as native shell and container service tasks. A declared attached
   surface can therefore publish its resolved external/internal endpoint once its readiness gate
