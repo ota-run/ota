@@ -680,6 +680,7 @@ pub struct ExecutionReceiptArtifactLineage {
 pub enum ReplayInputClass {
     ContractTruth,
     SourceIdentity,
+    PolicyRulesetIdentity,
     DeclaredDependencyResolution,
     SelectedRuntimeVersion,
     SelectedRuntimeArtifact,

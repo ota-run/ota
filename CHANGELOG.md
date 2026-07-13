@@ -40,6 +40,9 @@
 - replay baseline metadata now includes `last_known_good`, so a promoted witness is distinguished
   explicitly between `replay_verified`, `stale_witness`, and `unavailable` instead of all green
   archives reading as equally current.
+- active org policy packs are now captured as replay-grade `policy_ruleset_identity` receipt
+  inputs, so execution-governance drift can fail replay as named input drift instead of falling
+  through as generic hidden-input suspicion.
 
 - added first-class replay execution for repo `ota up`: `ota up --replay-baseline <latest|promoted|archive>`
   now resolves an archived baseline witness before execution, runs the selected workflow lane,

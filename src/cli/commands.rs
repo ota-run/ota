@@ -37709,6 +37709,54 @@ tasks:
     }
 
     #[test]
+    fn receipt_captures_active_org_policy_ruleset_identity() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join(".ota")).expect("create policy dir");
+        let policy = "policies: {}\n";
+        fs::write(repo.path().join(".ota/org-policy.yaml"), policy).expect("write policy pack");
+
+        let contract_path = repo.path().join("ota.yaml");
+        let contract_yaml = r#"
+version: 1
+project:
+  name: receipt-policy-identity
+tasks:
+  verify:
+    command:
+      exe: true
+"#;
+        fs::write(&contract_path, contract_yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, contract_yaml)
+        .expect("parse contract");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("verify")],
+            ExecutionOverrides::default(),
+        );
+        let policy_input = inputs
+            .iter()
+            .find(|input| input.id == "policy:org_ruleset")
+            .expect("captured policy identity");
+        assert_eq!(policy_input.kind, "policy_ruleset_identity");
+        assert_eq!(
+            policy_input.input_class,
+            ReplayInputClass::PolicyRulesetIdentity
+        );
+        assert_eq!(
+            policy_input.identity,
+            super::contract_snapshot_hash(policy.as_bytes())
+        );
+        let lineage = policy_input
+            .artifact_lineage
+            .as_ref()
+            .expect("policy lineage is present");
+        assert_eq!(lineage.producer, "org_policy_pack");
+        assert_eq!(lineage.paths, [".ota/org-policy.yaml"]);
+    }
+
+    #[test]
     fn receipt_captures_generated_artifact_lineage_at_issue_time() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -38037,6 +38085,36 @@ tasks:
         changed_image.identity =
             String::from("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         let changed = super::receipt_diff_artifact_trust(None, None, &[image], &[changed_image]);
+        assert_eq!(
+            serde_json::to_value(&changed[0]).unwrap()["comparison"],
+            "changed"
+        );
+    }
+
+    #[test]
+    fn receipt_diff_policy_ruleset_identity_is_acquitting() {
+        let policy = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("policy:org_ruleset"),
+            kind: String::from("policy_ruleset_identity"),
+            input_class: ReplayInputClass::PolicyRulesetIdentity,
+            identity: String::from("policy-hash-a"),
+            artifact_lineage: Some(crate::output::ExecutionReceiptArtifactLineage {
+                producer: String::from("org_policy_pack"),
+                paths: vec![String::from(".ota/org-policy.yaml")],
+                inputs: Vec::new(),
+            }),
+        };
+        let trust =
+            super::receipt_diff_artifact_trust(None, None, &[policy.clone()], &[policy.clone()]);
+        assert_eq!(trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&trust[0]).unwrap()["trust_role"],
+            "acquitting"
+        );
+        let mut changed_policy = policy.clone();
+        changed_policy.identity = String::from("policy-hash-b");
+        let changed =
+            super::receipt_diff_artifact_trust(None, None, &[policy], &[changed_policy]);
         assert_eq!(
             serde_json::to_value(&changed[0]).unwrap()["comparison"],
             "changed"
@@ -38433,6 +38511,8 @@ fn receipt_diff_artifact_trust(
         let trust_role = match baseline.input_class {
             // A clean git HEAD clears only the named source-identity class for this witness.
             ReplayInputClass::SourceIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
+            // A matching policy pack clears only the named policy/ruleset class for this witness.
+            ReplayInputClass::PolicyRulesetIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching lockfile clears only the named dependency-resolution class.
             ReplayInputClass::DeclaredDependencyResolution => {
                 ReceiptDiffArtifactTrustRole::Acquitting
@@ -94538,6 +94618,7 @@ fn receipt_evaluated_inputs(
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut inputs = BTreeMap::new();
     collect_receipt_source_identity_input(root, &mut inputs);
+    collect_receipt_policy_ruleset_identity_input(contract_path, root, &mut inputs);
     for task_name in task_names {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
@@ -94600,6 +94681,41 @@ fn git_head_identity(root: &Path) -> Result<String, String> {
         return Err(String::from("HEAD is empty"));
     }
     Ok(format!("git:{identity}"))
+}
+
+// A loaded org policy pack is part of execution truth. When it changes, replay should report
+// named policy/ruleset drift instead of leaving governance movement ambient.
+fn collect_receipt_policy_ruleset_identity_input(
+    contract_path: &Path,
+    root: &Path,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    let Ok(Some((_policy_pack, policy_path))) = load_org_policy_pack_auto(contract_path) else {
+        return;
+    };
+    let Ok(policy_bytes) = fs::read(&policy_path) else {
+        return;
+    };
+    let display_path = policy_path
+        .strip_prefix(root)
+        .ok()
+        .and_then(|path| path.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| native_path_display_text(&normalized_display_path(&policy_path)));
+    inputs.insert(
+        String::from("policy:org_ruleset"),
+        ExecutionReceiptEvaluatedInput {
+            id: String::from("policy:org_ruleset"),
+            kind: String::from("policy_ruleset_identity"),
+            input_class: ReplayInputClass::PolicyRulesetIdentity,
+            identity: contract_snapshot_hash(&policy_bytes),
+            artifact_lineage: Some(crate::output::ExecutionReceiptArtifactLineage {
+                producer: String::from("org_policy_pack"),
+                paths: vec![display_path],
+                inputs: Vec::new(),
+            }),
+        },
+    );
 }
 
 fn capture_replay_inputs_before_execution(

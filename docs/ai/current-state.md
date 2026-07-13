@@ -111,6 +111,9 @@ durable agent workflow belongs in the canonical Ota skill.
   `replay.baseline.last_known_good` with `replay_verified`, `stale_witness`, or `unavailable`
   derived from the replay result itself, so promoted archives no longer all read as equally
   current after drift or unavailable-baseline failures.
+- The next V11.10 tightening names active execution governance as a replay-grade input too.
+  Receipts now capture a loaded org policy pack as `policy_ruleset_identity`, and replay treats a
+  changed ruleset as named input drift rather than generic hidden-input suspicion.
 
 - The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal

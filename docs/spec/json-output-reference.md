@@ -1938,6 +1938,9 @@ Receipt `evaluated_inputs[]` also includes task-declared `replay_inputs` capture
 These records use `kind: static_file` and `input_class: declared_replay_input`; matching identities
 only prove the named file held still and remain narrowing evidence rather than a hermetic replay
 claim.
+When an active org policy pack participates in the selected lane, receipt capture also adds
+`kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
+policy/ruleset drift as named input drift instead of leaving governance movement ambient.
 
 Receipt `witnessed_observations.query_traces[]` carries contract-declared historical query evidence
 separately from `evaluated_inputs[]`. Each trace is `evidence_class: attested`, retains its source
@@ -4458,6 +4461,7 @@ Replay notes:
 - matching `semantic_contract_snapshot` is acquitting for contract truth only
 - matching task-declared `replay_inputs` remain narrowing evidence, so replay may be
   `replay_verified` with `hermeticity: partly_ambient`
+- matching `policy_ruleset_identity` is acquitting for the named policy/ruleset class only
 - `replay.failure_kind` is emitted only when replay is not verified:
   - `baseline_unavailable`
   - `semantic_contract_drift`
