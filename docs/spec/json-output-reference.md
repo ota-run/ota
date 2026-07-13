@@ -1941,6 +1941,10 @@ claim.
 When an active org policy pack participates in the selected lane, receipt capture also adds
 `kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
 policy/ruleset drift as named input drift instead of leaving governance movement ambient.
+When the selected lane actually resolves a declared env source, receipt capture also adds
+`kind: env_source_identity` with `input_class: declared_env_source_identity`. This hashes the
+source file itself, never the resolved env values, so replay can classify declared env-source drift
+as named input drift without leaking secrets or overclaiming process-env identity.
 
 Receipt `witnessed_observations.query_traces[]` carries contract-declared historical query evidence
 separately from `evaluated_inputs[]`. Each trace is `evidence_class: attested`, retains its source
@@ -4459,6 +4463,7 @@ Replay notes:
 - `replay.comparison.artifact_trust[]` only covers artifacts captured by both the archived
   baseline and the current execution receipt
 - matching `semantic_contract_snapshot` is acquitting for contract truth only
+- matching `env_source_identity` is acquitting for the named declared env-source file class only
 - matching task-declared `replay_inputs` remain narrowing evidence, so replay may be
   `replay_verified` with `hermeticity: partly_ambient`
 - matching `policy_ruleset_identity` is acquitting for the named policy/ruleset class only

@@ -37757,6 +37757,106 @@ tasks:
     }
 
     #[test]
+    fn receipt_captures_used_declared_env_source_identity() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let dotenv = "OTA_TEST_FROM_ENV_SOURCE=from-dotenv\n";
+        fs::write(repo.path().join(".env"), dotenv).expect("write dotenv");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-env-source-identity
+env:
+  vars:
+    OTA_TEST_FROM_ENV_SOURCE:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  verify:
+    command:
+      exe: true
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("verify")],
+            ExecutionOverrides::default(),
+        );
+        let env_source = inputs
+            .iter()
+            .find(|input| input.id == "env_source:dotenv:.env")
+            .expect("captured declared env source identity");
+        assert_eq!(env_source.kind, "env_source_identity");
+        assert_eq!(
+            env_source.input_class,
+            ReplayInputClass::DeclaredEnvSourceIdentity
+        );
+        assert_eq!(
+            env_source.identity,
+            super::contract_snapshot_hash(dotenv.as_bytes())
+        );
+    }
+
+    #[test]
+    fn receipt_skips_declared_env_source_when_process_env_wins_precedence() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join(".env"),
+            "OTA_TEST_PROCESS_PRECEDENCE=from-dotenv\n",
+        )
+        .expect("write dotenv");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-env-source-precedence
+env:
+  vars:
+    OTA_TEST_PROCESS_PRECEDENCE:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  verify:
+    command:
+      exe: true
+"#,
+        )
+        .expect("parse contract");
+
+        let previous = std::env::var("OTA_TEST_PROCESS_PRECEDENCE").ok();
+        unsafe { std::env::set_var("OTA_TEST_PROCESS_PRECEDENCE", "from-process") };
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("verify")],
+            ExecutionOverrides::default(),
+        );
+        match previous {
+            Some(value) => unsafe { std::env::set_var("OTA_TEST_PROCESS_PRECEDENCE", value) },
+            None => unsafe { std::env::remove_var("OTA_TEST_PROCESS_PRECEDENCE") },
+        }
+        assert!(
+            inputs
+                .iter()
+                .all(|input| input.id != "env_source:dotenv:.env"),
+            "process-resolved env should not claim declared env source identity"
+        );
+    }
+
+    #[test]
     fn receipt_captures_generated_artifact_lineage_at_issue_time() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -38115,6 +38215,40 @@ tasks:
         changed_policy.identity = String::from("policy-hash-b");
         let changed =
             super::receipt_diff_artifact_trust(None, None, &[policy], &[changed_policy]);
+        assert_eq!(
+            serde_json::to_value(&changed[0]).unwrap()["comparison"],
+            "changed"
+        );
+    }
+
+    #[test]
+    fn receipt_diff_declared_env_source_identity_is_acquitting() {
+        let env_source = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("env_source:dotenv:.env"),
+            kind: String::from("env_source_identity"),
+            input_class: ReplayInputClass::DeclaredEnvSourceIdentity,
+            identity: String::from("env-source-hash-a"),
+            artifact_lineage: None,
+        };
+        let trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[env_source.clone()],
+            &[env_source.clone()],
+        );
+        assert_eq!(trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&trust[0]).unwrap()["trust_role"],
+            "acquitting"
+        );
+        let mut changed_env_source = env_source.clone();
+        changed_env_source.identity = String::from("env-source-hash-b");
+        let changed = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[env_source],
+            &[changed_env_source],
+        );
         assert_eq!(
             serde_json::to_value(&changed[0]).unwrap()["comparison"],
             "changed"
@@ -38513,6 +38647,10 @@ fn receipt_diff_artifact_trust(
             ReplayInputClass::SourceIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching policy pack clears only the named policy/ruleset class for this witness.
             ReplayInputClass::PolicyRulesetIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
+            // A matching declared env source clears only the named env-source file class.
+            ReplayInputClass::DeclaredEnvSourceIdentity => {
+                ReceiptDiffArtifactTrustRole::Acquitting
+            }
             // A matching lockfile clears only the named dependency-resolution class.
             ReplayInputClass::DeclaredDependencyResolution => {
                 ReceiptDiffArtifactTrustRole::Acquitting
@@ -94615,10 +94753,17 @@ fn receipt_evaluated_inputs(
     task_names: impl IntoIterator<Item = String>,
     overrides: ExecutionOverrides,
 ) -> Vec<ExecutionReceiptEvaluatedInput> {
+    let task_names = task_names.into_iter().collect::<Vec<_>>();
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut inputs = BTreeMap::new();
     collect_receipt_source_identity_input(root, &mut inputs);
     collect_receipt_policy_ruleset_identity_input(contract_path, root, &mut inputs);
+    collect_receipt_declared_env_source_inputs(
+        contract,
+        contract_path,
+        &task_names,
+        &mut inputs,
+    );
     for task_name in task_names {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
@@ -94716,6 +94861,59 @@ fn collect_receipt_policy_ruleset_identity_input(
             }),
         },
     );
+}
+
+// Declared env source files are replay-grade only when the selected lane actually resolved env
+// from them. Matching source-file identity clears that named env-source class, but does not claim
+// process env, policy env, or undeclared ambient environment held still.
+fn collect_receipt_declared_env_source_inputs(
+    contract: &Contract,
+    contract_path: &Path,
+    task_names: &[String],
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let policy_env = load_policy_env_overlay(contract_path).ok();
+    let declared_sources = load_declared_env_sources(contract, contract_path);
+    let mut used_labels = BTreeSet::new();
+
+    for task_name in task_names {
+        let Ok(resolved) = resolve_task_env_details_for_task_with_policy(
+            contract,
+            contract_path,
+            task_name,
+            None,
+            policy_env.as_ref().map(|overlay| &overlay.values),
+        ) else {
+            continue;
+        };
+        for resolved in resolved.values() {
+            if let EnvResolutionSource::Source(label) = &resolved.source {
+                used_labels.insert(label.clone());
+            }
+        }
+    }
+
+    for source in &declared_sources {
+        let label = source.label();
+        if !used_labels.contains(&label) || source.status != DeclaredEnvSourceStatus::Loaded {
+            continue;
+        }
+        let Ok(bytes) = fs::read(root.join(&source.path)) else {
+            continue;
+        };
+        let id = format!("env_source:{label}");
+        inputs.insert(
+            id.clone(),
+            ExecutionReceiptEvaluatedInput {
+                id,
+                kind: String::from("env_source_identity"),
+                input_class: ReplayInputClass::DeclaredEnvSourceIdentity,
+                identity: contract_snapshot_hash(&bytes),
+                artifact_lineage: None,
+            },
+        );
+    }
 }
 
 fn capture_replay_inputs_before_execution(

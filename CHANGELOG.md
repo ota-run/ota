@@ -43,6 +43,9 @@
 - active org policy packs are now captured as replay-grade `policy_ruleset_identity` receipt
   inputs, so execution-governance drift can fail replay as named input drift instead of falling
   through as generic hidden-input suspicion.
+- selected declared env source files are now captured as replay-grade `env_source_identity`
+  receipt inputs when the lane actually resolves from them, so env-source drift becomes named
+  input drift without leaking resolved values into replay evidence.
 
 - added first-class replay execution for repo `ota up`: `ota up --replay-baseline <latest|promoted|archive>`
   now resolves an archived baseline witness before execution, runs the selected workflow lane,

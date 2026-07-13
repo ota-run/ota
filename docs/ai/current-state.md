@@ -114,6 +114,9 @@ durable agent workflow belongs in the canonical Ota skill.
 - The next V11.10 tightening names active execution governance as a replay-grade input too.
   Receipts now capture a loaded org policy pack as `policy_ruleset_identity`, and replay treats a
   changed ruleset as named input drift rather than generic hidden-input suspicion.
+- The current V11.10 tightening also names declared env-source files when the selected lane
+  actually resolved from them. Receipts capture `env_source_identity` without recording values, so
+  replay can distinguish declared env-source drift from still-ambient process or policy env.
 
 - The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal

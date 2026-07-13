@@ -681,6 +681,7 @@ pub enum ReplayInputClass {
     ContractTruth,
     SourceIdentity,
     PolicyRulesetIdentity,
+    DeclaredEnvSourceIdentity,
     DeclaredDependencyResolution,
     SelectedRuntimeVersion,
     SelectedRuntimeArtifact,
