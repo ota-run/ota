@@ -134,7 +134,7 @@ durable agent workflow belongs in the canonical Ota skill.
   actually resolved from them. Receipts capture `env_source_identity` without recording values, so
   replay can distinguish declared env-source drift from still-ambient process or policy env.
 
-- The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
+- The completed task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal
   verification setup task agent-callable so its declared-safe public verification closures remain
   truthful without exposing setup in the default task inventory. Task mode rows now use stable
