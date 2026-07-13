@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- replay hermeticity is now stricter: a same-contract rerun no longer reads as `hermetic`
+  unless replay also matched at least one material runtime, dependency, or presentation anchor;
+  pure contract/source/policy/env-source matches now fall to `ambient_fresh_derivation`, while
+  Bedrock-style lanes with narrowing replay artifacts remain `partly_ambient`
+
 - `ota up --replay-baseline ...` text output now surfaces replay evidence groups directly:
   matched `acquitting`, `narrowing`, and `pointer_only` artifacts are rendered before changed
   inputs, so operators can see which artifacts actually cleared a class and which only narrowed

@@ -37452,7 +37452,7 @@ tasks:
         );
         assert_eq!(
             replay.hermeticity,
-            crate::output::ReceiptDiffReplayHermeticity::Hermetic
+            crate::output::ReceiptDiffReplayHermeticity::AmbientFreshDerivation
         );
         assert_eq!(
             replay.comparison.replay.posture,
@@ -37462,6 +37462,67 @@ tasks:
         assert_eq!(
             replay.baseline.last_known_good,
             crate::output::UpReplayBaselineStatus::ReplayVerified
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_marks_same_contract_rerun_without_material_anchors_as_ambient() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("semantic_contract_snapshot"),
+                kind: String::from("semantic_contract_snapshot"),
+                input_classes: vec![ReplayInputClass::ContractTruth],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Acquitting,
+                baseline_identity: String::from("sha256:baseline"),
+                current_identity: String::from("sha256:baseline"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.hermeticity,
+            crate::output::ReceiptDiffReplayHermeticity::AmbientFreshDerivation
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_is_hermetic_when_material_anchor_matches() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![
+                crate::output::ReceiptDiffArtifactTrust {
+                    id: String::from("semantic_contract_snapshot"),
+                    kind: String::from("semantic_contract_snapshot"),
+                    input_classes: vec![ReplayInputClass::ContractTruth],
+                    trust_role: crate::output::ReceiptDiffArtifactTrustRole::Acquitting,
+                    baseline_identity: String::from("sha256:baseline"),
+                    current_identity: String::from("sha256:baseline"),
+                    comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+                },
+                crate::output::ReceiptDiffArtifactTrust {
+                    id: String::from("replay_input:verify:runtime-profile"),
+                    kind: String::from("presentation_profile"),
+                    input_classes: vec![ReplayInputClass::ExecutionPresentationProfile],
+                    trust_role: crate::output::ReceiptDiffArtifactTrustRole::Acquitting,
+                    baseline_identity: String::from("sha256:profile"),
+                    current_identity: String::from("sha256:profile"),
+                    comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+                },
+            ],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.hermeticity,
+            crate::output::ReceiptDiffReplayHermeticity::Hermetic
         );
     }
 
@@ -38551,6 +38612,11 @@ fn attach_repo_contract_snapshot_to_receipt(
 fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution {
     let summary = &report.summary;
     let comparison = &summary.comparison;
+    let matched_artifacts = comparison
+        .artifact_trust
+        .iter()
+        .filter(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Matched)
+        .collect::<Vec<_>>();
     let input_changed = comparison
         .artifact_trust
         .iter()
@@ -38558,6 +38624,17 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     let matched_narrowing_artifact = comparison.artifact_trust.iter().any(|artifact| {
         artifact.comparison == ReceiptDiffArtifactComparison::Matched
             && artifact.trust_role == ReceiptDiffArtifactTrustRole::Narrowing
+    });
+    let has_non_baseline_replay_artifact = comparison.artifact_trust.iter().any(|artifact| {
+        artifact.input_classes.iter().any(|class| {
+            !matches!(
+                class,
+                ReplayInputClass::ContractTruth
+                    | ReplayInputClass::SourceIdentity
+                    | ReplayInputClass::PolicyRulesetIdentity
+                    | ReplayInputClass::DeclaredEnvSourceIdentity
+            )
+        })
     });
     let findings_drifted =
         summary.introduced.count > 0 || summary.resolved.count > 0 || !report.current.ok;
@@ -38616,11 +38693,18 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     };
     let hermeticity = if posture == ReceiptDiffReplayPostureKind::ReplayUnavailable {
         ReceiptDiffReplayHermeticity::Unassessed
-    } else if comparison.artifact_trust.iter().all(|artifact| {
-        artifact.comparison == ReceiptDiffArtifactComparison::Matched
-            && artifact.trust_role == ReceiptDiffArtifactTrustRole::Acquitting
+    } else if matched_artifacts.iter().all(|artifact| {
+        artifact.trust_role == ReceiptDiffArtifactTrustRole::Acquitting
+    }) && matched_artifacts.iter().any(|artifact| {
+        artifact
+            .input_classes
+            .iter()
+            .any(|class| replay_input_class_closes_hermetic_replay(*class))
     }) {
         ReceiptDiffReplayHermeticity::Hermetic
+    } else if !has_non_baseline_replay_artifact
+    {
+        ReceiptDiffReplayHermeticity::AmbientFreshDerivation
     } else {
         ReceiptDiffReplayHermeticity::PartlyAmbient
     };
@@ -95056,6 +95140,15 @@ fn capture_replay_inputs_before_execution(
         }
     }
     Ok(captured.into_values().collect())
+}
+
+fn replay_input_class_closes_hermetic_replay(class: ReplayInputClass) -> bool {
+    matches!(
+        class,
+        ReplayInputClass::DeclaredDependencyResolution
+            | ReplayInputClass::SelectedRuntimeArtifact
+            | ReplayInputClass::ExecutionPresentationProfile
+    )
 }
 
 fn replay_input_capture_surface(
