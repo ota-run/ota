@@ -1801,6 +1801,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::PublishedReadinessListenerNotSurface(value) => format!(
+            "{} task `{}` listener `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            value.listener_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("published readiness without a named runtime surface"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
     }
 }
 
@@ -19085,6 +19097,9 @@ fn selected_task_requirement_surface(
             .entry(exe)
             .or_insert(crate::schema::ToolRequirement::Simple(String::from("*")));
     }
+    if let Some(prepare) = task.prepare.as_ref() {
+        add_prepare_node_package_manager_requirements(&mut surface, prepare);
+    }
     if let Some(context_name) = effective.context_name
         && let Some((_, context)) = named_execution_context(contract, context_name)
     {
@@ -19311,6 +19326,9 @@ fn requirement_surface_for_run_plan_steps(
                 .unwrap_or(crate::schema::ToolRequirement::Simple(String::from("*")));
             surface.tools.insert(exe, requirement);
         }
+        if let Some(prepare) = task.prepare.as_ref() {
+            add_prepare_node_package_manager_requirements(&mut surface, prepare);
+        }
         if let Some(context_name) = step.context.as_deref()
             && let Some((_, context)) = named_execution_context(contract, context_name)
         {
@@ -19339,6 +19357,76 @@ fn requirement_surface_for_run_plan_steps(
     }
 
     Some(surface)
+}
+
+fn add_prepare_node_package_manager_requirements(
+    surface: &mut RequirementSurface,
+    prepare: &crate::schema::TaskPrepareSpec,
+) {
+    match prepare {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            if let crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) =
+                &spec.source
+            {
+                add_node_package_manager_requirement(surface, source.manager.label());
+            }
+        }
+        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
+            if let crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) =
+                &spec.source
+            {
+                add_node_package_manager_requirement(surface, source.manager.label());
+            }
+        }
+        crate::schema::TaskPrepareSpec::Sequence(spec) => {
+            for step in &spec.steps {
+                add_prepare_sequence_step_node_package_manager_requirements(surface, step);
+            }
+        }
+    }
+}
+
+fn add_prepare_sequence_step_node_package_manager_requirements(
+    surface: &mut RequirementSurface,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+) {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            if let crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) =
+                &spec.source
+            {
+                add_node_package_manager_requirement(surface, source.manager.label());
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => {
+            if let crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) =
+                &spec.source
+            {
+                add_node_package_manager_requirement(surface, source.manager.label());
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => {
+            for nested in &spec.steps {
+                add_prepare_sequence_step_node_package_manager_requirements(surface, nested);
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => {}
+    }
+}
+
+fn add_node_package_manager_requirement(surface: &mut RequirementSurface, manager: &str) {
+    surface
+        .tools
+        .entry(manager.to_string())
+        .or_insert_with(|| crate::schema::ToolRequirement::Simple(String::from("*")));
 }
 
 fn toolchain_names_for_run_plan_steps(
@@ -83605,6 +83693,54 @@ tasks:
         assert!(
             !surface.tools.contains_key("clickhouse"),
             "unrelated optional repo tools should not leak into a narrow task surface"
+        );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_includes_typed_hydration_package_manager() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24"
+    package_managers:
+      pnpm: "11.5.1"
+    fulfillment:
+      source: corepack
+      mode: run
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains: [node]
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .expect("contract should parse");
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "setup",
+            ExecutionOverrides::default(),
+        )
+        .expect("task requirement surface should resolve");
+
+        assert!(
+            surface.tools.contains_key("pnpm"),
+            "typed package hydration should expose its package manager for fulfillment-aware diagnosis"
         );
     }
 

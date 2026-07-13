@@ -5151,6 +5151,14 @@ fn diagnose_contract_advisories(
                 }
                 ContractAdvisory::MissingIntegrationTestNetworkKind(advisory)
             }
+            ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => {
+                if !selected_task_names.is_empty()
+                    && !selected_task_names.contains(advisory.task_name.as_str())
+                {
+                    continue;
+                }
+                ContractAdvisory::PublishedReadinessListenerNotSurface(advisory)
+            }
         };
 
         findings.push(contract_advisory_finding(advisory));
@@ -5270,6 +5278,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
             "Test task `{}` uses real service verification without `effects.network_kind: integration_test`",
             advisory.task_name
+        ),
+        ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
+            "Task `{}` publishes readiness listener `{}` without a named runtime surface",
+            advisory.task_name, advisory.listener_name
         ),
     };
 
@@ -7373,6 +7385,51 @@ fn diagnose_tools(
         if requirement_surface.tools.keys().any(|owned_tool_name| {
             owned_tool_name == name || tool_executable_name(owned_tool_name) == name
         }) {
+            continue;
+        }
+        let toolchain_owned_requirement = selected_toolchain_owned_requirement_for_tool(
+            contract,
+            selected_toolchains,
+            target_os,
+            name,
+        );
+        let run_path_fulfillment_source = selected_toolchain_run_fulfillment_source_for_tool(
+            contract,
+            selected_toolchains,
+            target_os,
+            name,
+        );
+
+        // A command-inferred package manager is still owned by the selected toolchain. Probe the
+        // fulfillment provider first instead of requiring its activated binary in the base image.
+        if let Some(requirement) = toolchain_owned_requirement {
+            let tool_acquisition = requirement.acquisition_for_os(target_os);
+            let run_path_fulfillment_allowed = run_path_fulfillment_source.is_some()
+                || tool_acquisition.is_some_and(|acquisition| {
+                    acquisition.provider == ToolAcquisitionProvider::Corepack
+                });
+            container_probe_started |= diagnose_command_version(
+                "tool",
+                name,
+                &[tool_executable_name(name).to_string()],
+                requirement.version_for_os(target_os),
+                requirement.required_for_os(target_os),
+                false,
+                run_path_fulfillment_source.map(toolchain_fulfillment_source_label),
+                tool_acquisition,
+                mode,
+                selected_lifecycle,
+                container_probe,
+                remote_probe,
+                remote_context_name,
+                contract_path,
+                loaded_policy,
+                target_os,
+                run_path_fulfillment_allowed,
+                dependency_hydration_owned,
+                provisioning_actions,
+                findings,
+            );
             continue;
         }
         let executable_candidates = vec![name.to_string()];
@@ -17771,11 +17828,6 @@ tasks:
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("repo");
         fs::create_dir_all(&repo_dir).unwrap();
-        fs::write(
-            repo_dir.join("package.json"),
-            r#"{"name":"twenty","packageManager":"yarn@4.13.0"}"#,
-        )
-        .unwrap();
 
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -17787,7 +17839,7 @@ tasks:
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v24.15.0'; echo '{started}' >&2; echo '{path}/usr/local/bin/node' >&2; exit 0 ;;\n    *\"command -v 'yarn'\"*) echo '{started}' >&2; echo '{path}/usr/local/bin/yarn' >&2; case \"$*\" in *\"/workspace\"*) echo '4.13.0'; exit 0 ;; *) echo '1.22.22'; exit 0 ;; esac ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v24.15.0'; echo '{started}' >&2; echo '{path}/usr/local/bin/node' >&2; exit 0 ;;\n    *\"command -v 'corepack'\"*) echo '0.34.6'; echo '{started}' >&2; echo '{path}/usr/local/bin/corepack' >&2; exit 0 ;;\n    *\"command -v 'yarn'\"*) exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
                 started = super::CONTAINER_PROBE_STARTED_MARKER,
                 path = super::CONTAINER_PROBE_PATH_MARKER,
             )
@@ -17819,10 +17871,12 @@ execution:
       engines: [docker]
 toolchains:
   node:
-    provider: corepack
     version: "^24.5.0"
     package_managers:
       yarn: "4.13.0"
+    fulfillment:
+      source: corepack
+      mode: run
 tasks:
   install:
     run: yarn --immutable
@@ -17860,7 +17914,7 @@ workflows:
             report
                 .findings
                 .iter()
-                .all(|finding| finding.summary != "Version mismatch for tool: yarn"),
+                .all(|finding| finding.summary != "Missing tool: yarn"),
             "{report:?}"
         );
     }

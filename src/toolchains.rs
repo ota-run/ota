@@ -1543,6 +1543,8 @@ fn corepack_fulfillment_commands(
     _toolchain: &ToolchainSpec,
     _target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
+    // Container execution activates Corepack through a task-scoped wrapper so it never needs to
+    // mutate root-owned global shims. Native activation has its own explicit path in the runner.
     Vec::new()
 }
 

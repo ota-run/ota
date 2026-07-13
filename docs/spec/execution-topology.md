@@ -139,6 +139,12 @@ That split is deliberate:
 - runtime attachment = runtime-specific publication
 - normalized listener = operational truth
 
+For an operator-facing endpoint, declare the top-level surface and attach it through
+`runtime.surfaces`. Ota warns when a host-projected listener is selected for runtime readiness but
+is not attached to a reusable surface, because that otherwise hides the URL from the common
+topology and task-use surfaces. Raw `runtime.listeners` remain appropriate for runtime-private
+endpoints.
+
 ## Proposed contract model
 
 ### `execution.contexts` model

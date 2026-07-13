@@ -2924,6 +2924,10 @@ Surface attachment rules:
 - `project.host` is the host-facing projected endpoint ota reports, checks, and exposes
 - each attached surface normalizes into the same runtime listener model used by explicit
   `runtime.listeners`
+- when an explicit `runtime.readiness.listener` has a host projection but is not attached through
+  `runtime.surfaces`, `ota validate` and `ota doctor` emit an advisory. Promote that endpoint to
+  a named top-level surface when it is an operator-facing URL; keep raw listeners only for
+  runtime-private endpoints that should not become reusable contract surface
 - topology JSON now also exposes additive `runtime.surface_attachments.<name>` intent alongside the
   normalized listener truth
 - attached surface names become normalized listener names

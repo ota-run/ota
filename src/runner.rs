@@ -5603,6 +5603,7 @@ fn clean_execution_report_inner(
     };
     let strict_discovery = has_recorded_relevant_engines || !current_target_engines.is_empty();
     let mut engines_to_track = BTreeSet::new();
+    let mut current_target_engine_query_succeeded = false;
     report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
         let mut engine_query_succeeded = false;
@@ -5623,8 +5624,14 @@ fn clean_execution_report_inner(
                 }
             }
             Err(error) => {
+                let engine_unavailable = clean_discovery_error_is_engine_unavailable(&error);
                 first_discovery_error.get_or_insert(error);
-                engines_to_track.insert(engine.clone());
+                if !(has_current_cleanup_targets
+                    && !current_target_engines.contains(&engine)
+                    && engine_unavailable)
+                {
+                    engines_to_track.insert(engine.clone());
+                }
             }
         }
         match dependency_isolation_volume_names_for_repo(
@@ -5642,9 +5649,19 @@ fn clean_execution_report_inner(
                 }
             }
             Err(error) => {
+                let engine_unavailable = clean_discovery_error_is_engine_unavailable(&error);
                 first_discovery_error.get_or_insert(error);
-                engines_to_track.insert(engine.clone());
+                if !(has_current_cleanup_targets
+                    && !current_target_engines.contains(&engine)
+                    && engine_unavailable)
+                {
+                    engines_to_track.insert(engine.clone());
+                }
             }
+        }
+
+        if engine_query_succeeded && current_target_engines.contains(&engine) {
+            current_target_engine_query_succeeded = true;
         }
 
         if engine_query_succeeded {
@@ -5697,9 +5714,11 @@ fn clean_execution_report_inner(
             && current_target_engines.is_empty()
             && !has_current_cleanup_targets;
         let metadata_only_state = repo_state_contains_only_cleanup_metadata(working_dir)?;
-        if !(stale_recorded_engine_only
-            && metadata_only_state
-            && clean_discovery_error_is_engine_unavailable(&error))
+        let stale_engine_is_unavailable = clean_discovery_error_is_engine_unavailable(&error);
+        if !((stale_recorded_engine_only && metadata_only_state && stale_engine_is_unavailable)
+            || (has_current_cleanup_targets
+                && current_target_engine_query_succeeded
+                && stale_engine_is_unavailable))
         {
             return Err(error);
         }
@@ -7327,6 +7346,8 @@ fn run_host_structured_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, String> {
     execute_native_launch_command(
+        None,
+        None,
         task_name,
         None,
         command.exe.as_str(),
@@ -7453,6 +7474,8 @@ fn cmd_quote(value: &str) -> String {
 }
 
 fn execute_native_launch_command(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     exe: &str,
@@ -7462,6 +7485,7 @@ fn execute_native_launch_command(
     mode: TaskExecutionMode,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
+    let runtime_spec = runtime;
     let resolved_executable = resolve_native_launch_executable(exe);
     let mut process = Command::new(&resolved_executable);
     process
@@ -7505,7 +7529,7 @@ fn execute_native_launch_command(
                         )
                     })
                 });
-                let stderr_notifier = notifier;
+                let stderr_notifier = notifier.clone();
                 let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                 let stderr_handle = child.stderr.take().map(|stderr| {
                     thread::spawn(move || {
@@ -7518,8 +7542,30 @@ fn execute_native_launch_command(
                         )
                     })
                 });
-                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
-                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                let resolved_runtime =
+                    resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
+                let readiness_probe = start_runtime_readiness_probe(
+                    contract,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    true,
+                    // Endpoint publication is an Ota control-plane event. Do not let
+                    // continuous application output suppress it for native launches.
+                    None,
+                    interrupt_epoch,
+                );
+                let status = wait_for_child_with_runtime_readiness_budget(
+                    &mut child,
+                    readiness_probe.as_ref(),
+                    |child| {
+                        let _ = child.kill();
+                        let _ = cleanup_interrupted_native_service_workload_and_note(
+                            task_name,
+                            runtime_spec,
+                        );
+                    },
+                )
+                .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
@@ -7536,16 +7582,34 @@ fn execute_native_launch_command(
                 if let Some(loader) = loader {
                     loader.stop();
                 }
-                let exit_code = status.code().unwrap_or(1);
+                let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
+                let readiness_outcome = collect_runtime_readiness_after_command_exit(
+                    contract,
+                    task,
+                    Backend::Native,
+                    readiness_probe,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                );
+                let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                    task,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                    readiness_outcome,
+                );
                 Ok(TaskCommandOutput {
                     exit_code,
                     stdout,
                     stderr,
                     target: None,
-                    runtime,
+                    runtime: resolved_runtime,
                     service_termination: None,
-                    execution_note: interruption_execution_note(interrupted, exit_code),
+                    execution_note,
                     interrupted,
                 })
             } else {
@@ -7587,8 +7651,28 @@ fn execute_native_launch_command(
                 } else {
                     None
                 };
-                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
-                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                let resolved_runtime =
+                    resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
+                let readiness_probe = start_runtime_readiness_probe(
+                    contract,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    true,
+                    None,
+                    interrupt_epoch,
+                );
+                let status = wait_for_child_with_runtime_readiness_budget(
+                    &mut child,
+                    readiness_probe.as_ref(),
+                    |child| {
+                        let _ = child.kill();
+                        let _ = cleanup_interrupted_native_service_workload_and_note(
+                            task_name,
+                            runtime_spec,
+                        );
+                    },
+                )
+                .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
@@ -7602,16 +7686,34 @@ fn execute_native_launch_command(
                         task: task_name.to_string(),
                         source,
                     })?;
-                let exit_code = status.code().unwrap_or(1);
+                let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
+                let readiness_outcome = collect_runtime_readiness_after_command_exit(
+                    contract,
+                    task,
+                    Backend::Native,
+                    readiness_probe,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                );
+                let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                    task,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                    readiness_outcome,
+                );
                 Ok(TaskCommandOutput {
                     exit_code,
                     stdout,
                     stderr,
                     target: None,
-                    runtime,
+                    runtime: resolved_runtime,
                     service_termination: None,
-                    execution_note: interruption_execution_note(interrupted, exit_code),
+                    execution_note,
                     interrupted,
                 })
             }
@@ -7633,8 +7735,28 @@ fn execute_native_launch_command(
             let stderr_handle = child.stderr.take().map(|stderr| {
                 thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
             });
-            let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
-            let status = child.wait().map_err(|source| RunError::SpawnFailed {
+            let resolved_runtime =
+                resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
+            let readiness_probe = start_runtime_readiness_probe(
+                contract,
+                runtime_spec,
+                resolved_runtime.as_ref(),
+                false,
+                None,
+                interrupt_epoch,
+            );
+            let status = wait_for_child_with_runtime_readiness_budget(
+                &mut child,
+                readiness_probe.as_ref(),
+                |child| {
+                    let _ = child.kill();
+                    let _ = cleanup_interrupted_native_service_workload_and_note(
+                        task_name,
+                        runtime_spec,
+                    );
+                },
+            )
+            .map_err(|source| RunError::SpawnFailed {
                 task: task_name.to_string(),
                 source,
             })?;
@@ -7648,16 +7770,34 @@ fn execute_native_launch_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let exit_code = status.code().unwrap_or(1);
+            let command_exit_code = status.code().unwrap_or(1);
             let interrupted = interruption_observed_since(interrupt_epoch);
+            let readiness_outcome = collect_runtime_readiness_after_command_exit(
+                contract,
+                task,
+                Backend::Native,
+                readiness_probe,
+                runtime_spec,
+                resolved_runtime.as_ref(),
+                command_exit_code,
+                interrupted,
+            );
+            let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                task,
+                runtime_spec,
+                resolved_runtime.as_ref(),
+                command_exit_code,
+                interrupted,
+                readiness_outcome,
+            );
             Ok(TaskCommandOutput {
                 exit_code,
                 stdout,
                 stderr,
                 target: None,
-                runtime,
+                runtime: resolved_runtime,
                 service_termination: None,
-                execution_note: interruption_execution_note(interrupted, exit_code),
+                execution_note,
                 interrupted,
             })
         }
@@ -9678,6 +9818,8 @@ fn execute_task_command(
                 runtime_bind_env_for_native(effective_runtime),
             );
             let result = execute_native_launch_command(
+                contract,
+                task,
                 task_name,
                 effective_runtime,
                 exe,
@@ -13974,6 +14116,7 @@ fn wrap_container_command_for_corepack_activation(
         selected_task_context_for_backend(contract, task_name, Backend::Container)
             .map(|(name, _)| name);
     let mut command_parts = Vec::new();
+    let mut uses_corepack = false;
     for toolchain_name in contract
         .task_toolchain_names_for_execution(task, Backend::Container, selected_container_context)
         .into_iter()
@@ -13987,6 +14130,7 @@ fn wrap_container_command_for_corepack_activation(
         {
             continue;
         }
+        uses_corepack = true;
         for (package_name, version) in toolchain.package_managers_for_os("linux") {
             command_parts.push(format!(
                 "corepack prepare {package_name}@{version} --activate"
@@ -13998,6 +14142,16 @@ fn wrap_container_command_for_corepack_activation(
     }
     if command_parts.is_empty() {
         return command.to_string();
+    }
+    if uses_corepack {
+        // Container tasks run as the workspace user. Keep Corepack's cache off the root-owned
+        // image filesystem while preserving the container-scoped activation across commands.
+        command_parts.insert(
+            0,
+            String::from(
+                "export COREPACK_HOME=\"${COREPACK_HOME:-/tmp/ota-corepack}\"; mkdir -p \"$COREPACK_HOME\"",
+            ),
+        );
     }
     command_parts.push(command.to_string());
 
@@ -20838,7 +20992,7 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
             .execution
             .as_ref()
             .is_some_and(|execution| execution.modes.any())
-        && task.mode_default_backend() != Some(override_backend)
+        && task.workflow_backend(contract.execution.as_ref()) != override_backend
         && task.mode_execution_branch(override_backend).is_none()
     {
         let supported_modes = task
@@ -21996,10 +22150,10 @@ fn execute_native_task_command(
                 let resolved_runtime =
                     resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
                 let readiness_probe = start_runtime_readiness_probe(
-                    None,
+                    contract,
                     runtime_spec,
                     resolved_runtime.as_ref(),
-                    false,
+                    true,
                     None,
                     interrupt_epoch,
                 );
@@ -22104,10 +22258,10 @@ fn execute_native_task_command(
                 let resolved_runtime =
                     resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
                 let readiness_probe = start_runtime_readiness_probe(
-                    None,
+                    contract,
                     runtime_spec,
                     resolved_runtime.as_ref(),
-                    false,
+                    true,
                     None,
                     interrupt_epoch,
                 );
@@ -42648,6 +42802,61 @@ tasks:
         }));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn native_service_observes_readiness_from_attached_surface() {
+        let _guard = env_mutex_lock();
+        if !Command::new("sh")
+            .args(["-c", "command -v python3 >/dev/null 2>&1"])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            return;
+        }
+
+        let reserved = TcpListener::bind("127.0.0.1:0").expect("should reserve free port");
+        let port = reserved
+            .local_addr()
+            .expect("reserved socket should expose local address")
+            .port();
+        drop(reserved);
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  site:
+    kind: http
+    port: {port}
+    path: /
+    readiness:
+      kind: http
+      path: /
+      interval: 50ms
+      timeout: 100ms
+      retries: 10
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: python3
+      args:
+        - -c
+        - "import http.server, socketserver, threading, time; s=socketserver.TCPServer(('127.0.0.1',{port}), http.server.SimpleHTTPRequestHandler); t=threading.Thread(target=s.serve_forever, daemon=True); t.start(); time.sleep(1); s.shutdown(); s.server_close()"
+    runtime:
+      kind: service
+      surfaces: [site]
+"#
+        ));
+
+        let outcome =
+            super::run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+                .expect("native surface-backed service should run");
+
+        assert_eq!(outcome.exit_code, 0);
+    }
+
     #[test]
     fn native_external_state_starter_clean_exit_before_readiness_stays_successful() {
         let _guard = env_mutex_lock();
@@ -51645,6 +51854,56 @@ tasks:
     }
 
     #[test]
+    fn run_task_allows_explicit_base_context_backend_alongside_mode_specialization() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: host
+    run: printf native > mode-output.txt
+    execution:
+      modes:
+        container:
+          context: app
+          run: printf container > mode-output.txt
+"#,
+        );
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("mode-output.txt")).unwrap(),
+            "native"
+        );
+    }
+
+    #[test]
     fn run_task_refuses_unsupported_task_in_selected_dependency_closure_before_execution() {
         let unsupported = if current_os() == "windows" {
             "linux"
@@ -54061,6 +54320,97 @@ exit 125
                 .join("state")
                 .join(super::OTA_MANAGED_ENGINES_FILE)
                 .exists()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_prunes_unreachable_stale_engine_when_current_engine_is_healthy() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines: [docker]
+tasks:
+  dev:
+    context: app
+    run: printf ready
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+exit 125
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\npodman\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .queried_engines
+                .iter()
+                .any(|engine| engine == "docker")
+        );
+        assert!(
+            !ota_dir
+                .join("state")
+                .join(super::OTA_MANAGED_ENGINES_FILE)
+                .exists(),
+            "unreachable stale engine metadata should not survive a healthy current-engine cleanup"
         );
     }
 
@@ -64758,6 +65108,7 @@ tasks:
             "corepack pnpm install",
         );
 
+        assert!(wrapped.contains("export COREPACK_HOME=\"${COREPACK_HOME:-/tmp/ota-corepack}\""));
         assert!(wrapped.contains("corepack prepare pnpm@10.24.0 --activate"));
         assert!(wrapped.contains("pnpm() { corepack pnpm \"$@\"; }"));
         assert!(wrapped.ends_with("corepack pnpm install"));

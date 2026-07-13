@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- native `launch.kind: command` service tasks now use the same contract-owned readiness and
+  endpoint-publication path as native shell and container service tasks. A declared attached
+  surface can therefore publish its resolved external/internal endpoint once its readiness gate
+  passes instead of leaving native structured launches silent.
+
+- `ota validate` and `ota doctor` now flag a host-projected runtime readiness listener that is
+  not attached to `runtime.surfaces`. The advisory directs authors to promote the listener to a
+  named top-level surface so endpoint publication, readiness, and runtime projection share one
+  canonical contract owner.
+
 - added workflow-owned runtime-proof negative controls. Declare a separate finite task under
   `workflows.<name>.proof.negative_controls`, then run
   `ota proof runtime --workflow <name> --negative-control <id>` to require its non-zero exit.

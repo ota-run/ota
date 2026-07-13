@@ -9567,6 +9567,7 @@ pub enum ContractAdvisory {
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
     AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
     MissingIntegrationTestNetworkKind(MissingIntegrationTestNetworkKindAdvisory),
+    PublishedReadinessListenerNotSurface(PublishedReadinessListenerNotSurfaceAdvisory),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9822,6 +9823,13 @@ pub struct MissingIntegrationTestNetworkKindAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedReadinessListenerNotSurfaceAdvisory {
+    pub task_name: String,
+    pub listener_name: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskExecutionBoundary {
     pub context_name: Option<String>,
     pub backend: Backend,
@@ -9951,6 +9959,9 @@ impl ContractAdvisory {
             }
             ContractAdvisory::MissingIntegrationTestNetworkKind(_) => {
                 "OTA_CONTRACT_ADVISORY_MISSING_INTEGRATION_TEST_NETWORK_KIND"
+            }
+            ContractAdvisory::PublishedReadinessListenerNotSurface(_) => {
+                "OTA_CONTRACT_ADVISORY_PUBLISHED_READINESS_LISTENER_NOT_SURFACE"
             }
         }
     }
@@ -10136,6 +10147,10 @@ impl ContractAdvisory {
                 "test task `{}` uses real service verification without `effects.network_kind: integration_test`",
                 advisory.task_name
             ),
+            ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
+                "task `{}` publishes readiness listener `{}` without a named runtime surface",
+                advisory.task_name, advisory.listener_name
+            ),
         }
     }
 
@@ -10317,6 +10332,10 @@ impl ContractAdvisory {
                 "task `{}` is a test lane that depends on declared services or external state, but its effects do not classify that path as `integration_test`; this weakens Ota's ability to distinguish real service-backed verification from generic network usage",
                 advisory.task_name
             ),
+            ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
+                "`{}` proves readiness through host-projected listener `{}`, but that listener is not attached to a named contract surface; endpoint publication and reusable readiness truth can therefore drift apart",
+                advisory.location, advisory.listener_name
+            ),
         }
     }
 
@@ -10358,7 +10377,8 @@ impl ContractAdvisory {
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_)
-            | ContractAdvisory::MissingIntegrationTestNetworkKind(_) => None,
+            | ContractAdvisory::MissingIntegrationTestNetworkKind(_)
+            | ContractAdvisory::PublishedReadinessListenerNotSurface(_) => None,
         }
     }
 
@@ -10400,7 +10420,8 @@ impl ContractAdvisory {
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_)
-            | ContractAdvisory::MissingIntegrationTestNetworkKind(_) => None,
+            | ContractAdvisory::MissingIntegrationTestNetworkKind(_)
+            | ContractAdvisory::PublishedReadinessListenerNotSurface(_) => None,
         }
     }
 
@@ -10443,7 +10464,8 @@ impl ContractAdvisory {
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_)
-            | ContractAdvisory::MissingIntegrationTestNetworkKind(_) => None,
+            | ContractAdvisory::MissingIntegrationTestNetworkKind(_)
+            | ContractAdvisory::PublishedReadinessListenerNotSurface(_) => None,
         }
     }
 
@@ -10630,6 +10652,10 @@ impl ContractAdvisory {
                 "declare `effects.network: true` with `effects.network_kind: integration_test` for `{}`, and keep `requires_services`, `requirements.env`, and `effects.external_state` explicit on that verification lane",
                 advisory.task_name
             ),
+            ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
+                "promote `{}` to a top-level `surfaces.{}` declaration, attach it under `{}.surfaces`, and let that surface own protocol, port, path, and readiness",
+                advisory.listener_name, advisory.listener_name, advisory.location
+            ),
         }
     }
 }
@@ -10785,6 +10811,9 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories.extend(collect_missing_integration_test_network_kind_advisories(
+        contract,
+    ));
+    advisories.extend(collect_published_readiness_listener_not_surface_advisories(
         contract,
     ));
     advisories
@@ -13824,6 +13853,92 @@ fn collect_missing_integration_test_network_kind_advisories(
         ));
     }
     advisories
+}
+
+fn collect_published_readiness_listener_not_surface_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        collect_published_readiness_listener_not_surface_advisory(
+            &mut advisories,
+            task_name,
+            "runtime",
+            task.runtime.as_ref(),
+        );
+
+        let Some(execution) = task.execution.as_ref() else {
+            continue;
+        };
+        for (mode, runtime) in [
+            (
+                "native",
+                execution
+                    .modes
+                    .native
+                    .as_ref()
+                    .and_then(|branch| branch.runtime.as_ref()),
+            ),
+            (
+                "container",
+                execution
+                    .modes
+                    .container
+                    .as_ref()
+                    .and_then(|branch| branch.runtime.as_ref()),
+            ),
+            (
+                "remote",
+                execution
+                    .modes
+                    .remote
+                    .as_ref()
+                    .and_then(|branch| branch.runtime.as_ref()),
+            ),
+        ] {
+            collect_published_readiness_listener_not_surface_advisory(
+                &mut advisories,
+                task_name,
+                &format!("execution.modes.{mode}.runtime"),
+                runtime,
+            );
+        }
+    }
+    advisories
+}
+
+fn collect_published_readiness_listener_not_surface_advisory(
+    advisories: &mut Vec<ContractAdvisory>,
+    task_name: &str,
+    location: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+) {
+    let Some(runtime) = runtime else {
+        return;
+    };
+    let Some(listener_name) = runtime
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.listener.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return;
+    };
+    let Some(listener) = runtime.listeners.get(listener_name) else {
+        return;
+    };
+    if listener.project.host.is_none() || runtime.surfaces.contains_name(listener_name) {
+        return;
+    }
+
+    advisories.push(ContractAdvisory::PublishedReadinessListenerNotSurface(
+        PublishedReadinessListenerNotSurfaceAdvisory {
+            task_name: task_name.to_string(),
+            listener_name: listener_name.to_string(),
+            location: format!("tasks.{task_name}.{location}"),
+        },
+    ));
 }
 
 fn posture_allows_sensitive_agent_writable_category(posture: AgentPosture, category: &str) -> bool {
@@ -17690,7 +17805,7 @@ fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<Vali
         && !task_declares_container_image_hydration_owner(task)
     {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` declares `effects.network_kind: container_image_hydration`, but must own `prepare.medium: container_images`, structured `compose.kind: up`, or `launch.kind: compose`"
+            "task `{task_name}` declares `effects.network_kind: container_image_hydration`, but must own `prepare.medium: container_images`, structured `compose.kind: build` or `up`, or `launch.kind: compose`"
         )));
     }
 
@@ -17806,7 +17921,11 @@ fn task_body_declares_container_image_hydration_owner(
 ) -> bool {
     prepare.is_some_and(prepare_declares_container_image_hydration)
         || compose.is_some_and(|compose| {
-            compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Up
+            matches!(
+                compose.invocation.kind,
+                crate::schema::TaskComposeExecutionKind::Build
+                    | crate::schema::TaskComposeExecutionKind::Up
+            )
         })
         || matches!(launch, Some(crate::schema::TaskLaunchSpec::Compose(_)))
 }
@@ -27672,8 +27791,34 @@ tasks:
 
         let errors = validate_contract(&contract).expect_err("task should be rejected");
         assert!(errors.to_string().contains(
-            "must own `prepare.medium: container_images`, structured `compose.kind: up`, or `launch.kind: compose`"
+            "must own `prepare.medium: container_images`, structured `compose.kind: build` or `up`, or `launch.kind: compose`"
         ));
+    }
+
+    #[test]
+    fn accepts_container_image_hydration_for_structured_compose_build() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    compose:
+      kind: build
+      services: [web]
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: container_image_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("compose image build should validate");
     }
 
     #[test]
@@ -37700,6 +37845,52 @@ tasks:
             advisory,
             ContractAdvisory::MissingIntegrationTestNetworkKind(value)
                 if value.task_name == "test"
+        )));
+    }
+
+    #[test]
+    fn collects_published_readiness_listener_not_surface_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args: [dev]
+    runtime:
+      kind: service
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+      readiness:
+        kind: http
+        listener: web
+        path: /
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::PublishedReadinessListenerNotSurface(value)
+                if value.task_name == "dev" && value.listener_name == "web"
         )));
     }
 
