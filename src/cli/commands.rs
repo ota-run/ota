@@ -57607,6 +57607,63 @@ workflows:
     }
 
     #[test]
+    fn render_proof_runtime_text_keeps_caller_side_attempt_bounded() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("app"),
+            Path::new("./ota.yaml"),
+            "post-up diagnosis",
+            "READY",
+            "passed_with_unproven_boundaries",
+            &summary,
+            None,
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            &[crate::output::ProofRuntimeDependencyEvidence {
+                dependency_id: String::from("service:postgres"),
+                level: None,
+                interaction_attempted: true,
+                observation: crate::output::ProofRuntimeDependencyObservation {
+                    origin: String::from("caller_side"),
+                    evidence_class: ExecutionEvidenceClass::Derived,
+                },
+                declared_by_tasks: vec![String::from("verify")],
+                declared_by_workflows: vec![String::from("app")],
+            }],
+            &[crate::output::ProofRuntimeNotProved {
+                kind: String::from("dependency_exercise_not_proved"),
+                relative_to: String::from("runtime_path"),
+                source: String::from("contract_lane"),
+                dependency_id: Some(String::from("service:postgres")),
+                reason: Some(String::from("caller_side_only_evidence")),
+                declared_by_tasks: vec![String::from("verify")],
+                declared_by_workflows: vec![String::from("app")],
+            }],
+            None,
+            &[],
+            None,
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains(
+            "`service:postgres`: interaction attempted only (derived, caller_side; not independently exercised)"
+        ));
+        assert!(rendered.contains(
+            "dependency exercise not proved for `service:postgres` via task `verify` (caller_side_only_evidence)"
+        ));
+    }
+
+    #[test]
     fn proof_runtime_status_json_includes_dependency_evidence() {
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
