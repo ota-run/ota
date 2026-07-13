@@ -16834,6 +16834,24 @@ fn validate_workflow_negative_controls(
                 control.id, control.dependency
             )));
         }
+        let Some(obligation) = workflow
+            .proof
+            .seam_observations
+            .iter()
+            .find(|observation| observation.id == control.obligation)
+        else {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.obligation` must reference a declared workflow seam observation `{}`",
+                control.id, control.obligation
+            )));
+            continue;
+        };
+        if obligation.dependency != control.dependency {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.obligation` must observe the same dependency `{}`",
+                control.id, control.dependency
+            )));
+        }
         let Some(task) = contract.tasks.get(control.task.trim()) else {
             errors.push(ValidationError::new(format!(
                 "`{prefix}.{}.task` references unknown task `{}`",
@@ -18928,6 +18946,12 @@ services:
 tasks:
   serve:
     run: echo serve
+    requires_services:
+      - postgres
+  observe:
+    run: echo observe
+    requires_services:
+      - postgres
   postgres-down:
     run: "exit 1"
 workflows:
@@ -18936,10 +18960,18 @@ workflows:
     run:
       task: serve
     proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          producer_task: serve
+          task: observe
+          marker_env: OTA_PROOF_POSTGRES_MARKER
       negative_controls:
         - id: postgres-down
           dependency: postgres
+          obligation: postgres-marker
           task: postgres-down
+          expected_failure: dependency_unavailable
 "#,
         )
         .unwrap();
@@ -18965,16 +18997,30 @@ services:
 tasks:
   serve:
     run: echo serve
+    requires_services:
+      - postgres
+  observe:
+    run: echo observe
+    requires_services:
+      - postgres
 workflows:
   default: app
   app:
     run:
       task: serve
     proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          producer_task: serve
+          task: observe
+          marker_env: OTA_PROOF_POSTGRES_MARKER
       negative_controls:
         - id: postgres-down
           dependency: postgres
+          obligation: postgres-marker
           task: serve
+          expected_failure: dependency_unavailable
 "#,
         )
         .unwrap();
@@ -19005,6 +19051,12 @@ services:
 tasks:
   serve:
     run: echo serve
+    requires_services:
+      - postgres
+  observe:
+    run: echo observe
+    requires_services:
+      - postgres
   postgres-down:
     run: "exit 1"
     requires_services:
@@ -19015,10 +19067,18 @@ workflows:
     run:
       task: serve
     proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          producer_task: serve
+          task: observe
+          marker_env: OTA_PROOF_POSTGRES_MARKER
       negative_controls:
         - id: postgres-down
           dependency: postgres
+          obligation: postgres-marker
           task: postgres-down
+          expected_failure: dependency_unavailable
 "#,
         )
         .unwrap();

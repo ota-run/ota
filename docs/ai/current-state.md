@@ -45,18 +45,18 @@ durable agent workflow belongs in the canonical Ota skill.
   dependency-resolution, or presentation anchor rather than over-reading same-contract reruns as
   hermetic; hidden-input replay failure now emits ordered `hidden_input_candidates` so operators
   can promote the next likely ambient class instead of reading one generic suspicion bucket
-- active implementation and proof slice: `V11.11` seam evidence. Runtime proof now keeps ordinary
-  reachability and caller-side attempts distinct from a separately selected, boundary-attested
-  workflow negative control; `ota proof runtime --negative-control <id>` requires the declared
-  finite control task to fail but records that outcome separately rather than over-claiming causal
-  dependency exercise. Text output now mirrors JSON `dependency_evidence[]` before proof
-  boundaries, preserving the evidence level, origin, and authority class for human operators.
-- completed V11.11 pressure gate: Athena API now declares a finite Rails/PostgreSQL refusal control
-  that redirects only the control task to an unreachable loopback port. The `app` runtime proof
-  passed with `nonzero_exit_observed` across the green native macOS/Ubuntu, Windows-static,
-  and container Ubuntu matrix. The next seam-evidence widening must use an independently observed
-  dependency-side or round-trip artifact; a successful task that merely declares
-  `requires_services` is not sufficient evidence of interaction.
+- active implementation and proof slice: `V11.11` seam and negative-control evidence. Runtime
+  proof now keeps ordinary reachability and caller-side attempts distinct from marker-bound seam
+  exercise. A selected negative control names one observed seam obligation and typed expected
+  failure; only a runner-verified, transaction-bound failure attestation can validate the control
+  and promote that exact record to `fault_tested`. Generic non-zero exits remain `invalid`, while
+  exercised seams without a validated control carry `dependency_causality_not_proved`. Text and
+  JSON preserve the evidence level, origin, authority class, and control status for operators.
+- active V11.11 pressure gate: Athena API carries the first Rails/PostgreSQL fault-attested
+  control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
+  is historical evidence only; the new transaction-bound `fault_tested` matrix is pending source
+  push and Ubuntu execution. Local macOS proof remains host-blocked by Brew `libpq` fulfillment,
+  so it must not be mistaken for a negative-control result.
 
 ## Recent Completed Slice
 

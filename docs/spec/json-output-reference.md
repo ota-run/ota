@@ -848,20 +848,23 @@ Notes:
 - Text output renders the same `Dependency Evidence` before `Proof Boundaries`, including the
   level, observation origin, and authority class. A caller-side-only attempt is rendered as not
   independently exercised; it does not become a green seam claim in human output.
-- `negative_control` is optional boundary-attested evidence from one explicitly selected
-  `workflows.<name>.proof.negative_controls[]` task. `nonzero_exit_observed` means only that the
-  selected control task exited non-zero; it is not evidence that the declared dependency caused
-  the failure. `unexpected_success` and `control_could_not_run` fail the proof. This record is
-  separate from ordinary `dependency_evidence[]` and does not remove the matching
-  `dependency_exercise_not_proved` boundary. A control that is not run because the ordinary proof
-  already failed retains the primary proof failure and records a runner-authored `detail` instead
-  of replacing the original diagnosis.
+- `negative_control` is optional canonical boundary-attested evidence from one explicitly selected
+  `workflows.<name>.proof.negative_controls[]` task. It names its green `obligation_id`, carries
+  the matching proof `transaction_id`, and publishes `status: unrun | invalid | validated`.
+  `nonzero_exit_observed` alone is not evidence that the declared dependency caused the failure.
+  Only `validated` carries a matching expected failure attestation digest and may promote the
+  exact `dependency_evidence[].proof_obligation_id` record to `fault_tested`. The nested
+  `dependency_evidence[].negative_control` object is a derived projection of this canonical record,
+  never a second source of truth. `unexpected_success`, `control_could_not_run`, stale evidence,
+  and unrelated non-zero exits are `invalid` or `unrun` and fail the selected control proof.
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
   Ota emits `functional_runtime_not_proved` when proof fell back to a setup-only lane,
   `dependency_exercise_not_proved` for each declared service seam in the selected closure when
   Ota has not independently observed a contract-specific interaction across it,
   `external_network_path_not_proved` when an adjacent declared workflow owns an explicit external
   integration-test path for the selected lane's declared external state, and
+  `dependency_causality_not_proved` when a seam was exercised but no matching negative control
+  validated causal dependency necessity, and
   `broader_repo_completion_not_proved` as the scope-derived remainder outside this runtime slice
 - `not_proved[].declared_by_workflows` names the adjacent contract workflows that establish a
   contract-derived exclusion; scope-derived exclusions omit it
@@ -945,13 +948,19 @@ Success:
   "dependency_evidence": [
     {
       "dependency_id": "service:postgres",
-      "level": "reachable",
+      "proof_obligation_id": "postgres-marker",
+      "level": "fault_tested",
       "observation": {
-        "origin": "dependency_side",
-        "evidence_class": "derived"
+        "origin": "round_trip_effect",
+        "evidence_class": "attested"
       },
       "declared_by_tasks": ["serve"],
-      "declared_by_workflows": ["app"]
+      "declared_by_workflows": ["app"],
+      "negative_control": {
+        "status": "validated",
+        "same_obligation": true,
+        "failure_attestation_digest": "sha256:..."
+      }
     },
     {
       "dependency_id": "service:postgres",
@@ -967,10 +976,15 @@ Success:
   "negative_control": {
     "id": "postgres-unavailable",
     "dependency_id": "service:postgres",
+    "obligation_id": "postgres-marker",
+    "transaction_id": "sha256:...",
     "control_task": "verify:postgres-unavailable",
+    "expected_failure": "dependency_unavailable",
     "outcome": "nonzero_exit_observed",
+    "status": "validated",
     "proof_scope_ref": "workflow:app/negative_control:postgres-unavailable",
     "evidence_class": "attested",
+    "failure_attestation_digest": "sha256:...",
     "exit_code": 1
   },
   "not_proved": [

@@ -645,8 +645,10 @@ Current behavior:
 - supports `--ready-timeout <DURATION>` to cap the runtime-proof readiness wait budget with
   explicit values such as `90s`, `5m`, or `1h`
 - supports `--negative-control <id>` for a workflow-declared finite control task; Ota runs the
-  selected task only after the ordinary proof path has passed and requires the control task to
-  exit non-zero, then emits the runner-observed control outcome as separate proof evidence
+  selected task only after the ordinary proof path and its declared green seam obligation have
+  passed. The task must exit non-zero and write a matching transaction-bound failure attestation
+  for the contract-declared expected failure; only then does Ota validate the control and promote
+  that exact dependency evidence to `fault_tested`
 - runs declared `workflows.<name>.proof.seam_observations[]` after readiness and before teardown;
   Ota injects one opaque marker into the declared producer task, never the finite observer. The
   observer must recover it through the declared dependency and write a runner-owned transaction

@@ -3820,9 +3820,10 @@ Current behavior:
 - use `workflows.<name>.proof.negative_controls` when one declared service seam has a separate,
   finite failure-control task that should run only when explicitly selected by
   `ota proof runtime --negative-control <id>`; the task must remain outside the normal workflow
-  closure and must not require the controlled service, so Ota can record its observed non-zero
-  exit as separate boundary-attested control evidence without recreating the seam first; it does
-  not by itself prove causal dependency exercise or remove the matching `not_proved` boundary
+  closure and must not require the controlled service. It names the marker-bound seam obligation
+  it negates and the expected typed failure. Ota records a validated control only when the task
+  writes a matching transaction-bound failure attestation after the expected failure; a generic
+  non-zero exit remains invalid evidence and does not itself prove causality
 - keep workflow-instance runtime specialization on the task runtime boundary: override existing listener bind/project ports or readiness fields there instead of inventing a separate workflow-level listener model
 - workflow-instance task runtime overlays currently merge onto an existing top-level task `runtime`; they do not invent new listeners or replace runtime ownership from scratch
 - `runtime_boundary` follows the same selected-path precedence ladder: `execution.runtime_boundary`
@@ -3872,16 +3873,28 @@ workflows:
     run:
       task: serve
     proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          producer_task: write-proof-marker
+          task: observe-proof-marker
+          marker_env: OTA_PROOF_SEAM_MARKER
       negative_controls:
         - id: postgres-unavailable
           dependency: postgres
+          obligation: postgres-marker
           task: verify:postgres-unavailable
+          expected_failure: dependency_unavailable
 ```
 
-The contract declares the controlled dependency and the separate task only. Ota executes that
-task when selected and records whether its non-zero exit was observed. A successful control task
-is an `unexpected_success`, and a task that cannot run is not a passing control. This first
-surface does not infer disruption from prose or fabricate a generic fault injector.
+The contract declares the controlled dependency, the already-observed green seam obligation, the
+separate task, and a typed expected failure. Ota executes the task only when selected. It supplies
+the active transaction, control, obligation, and transient attestation coordinates; the control
+must write a matching `dependency_unavailable` attestation after that failure is actually caught.
+A successful control task, an unrelated non-zero exit, or a stale/mismatched attestation is
+`invalid`, not a fault test. This surface does not infer disruption from prose or fabricate a
+generic fault injector. Until a matching control validates, an otherwise exercised seam retains
+the machine-readable `dependency_causality_not_proved` boundary.
 
 Seam-observation shape:
 
@@ -3897,7 +3910,7 @@ workflows:
           marker_env: OTA_PROOF_SEAM_MARKER
 ```
 
-Ota issues one opaque marker for the proof, injects it into the selected workflow path, and then
+Ota issues one opaque marker for the proof, injects it into the declared producer task, and then
 runs the finite observer before cleanup. The observer never receives the marker directly. It
 receives a transaction identifier and runner-owned transient attestation path, and must recover
 the marker through the declared dependency before writing its JSON attestation. Ota verifies the

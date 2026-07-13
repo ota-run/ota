@@ -675,6 +675,9 @@ pub struct ProofRuntimeDependencyObservation {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProofRuntimeDependencyEvidence {
     pub dependency_id: String,
+    /// Runner-owned identity of the marker-bound seam obligation when this evidence came from one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_obligation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -684,6 +687,18 @@ pub struct ProofRuntimeDependencyEvidence {
     pub declared_by_tasks: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub declared_by_workflows: Vec<String>,
+    /// Derived projection of the canonical standalone negative-control record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negative_control: Option<ProofRuntimeDependencyNegativeControl>,
+}
+
+/// Derived dependency-level projection of a canonical negative-control execution record.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeDependencyNegativeControl {
+    pub status: ProofRuntimeNegativeControlStatus,
+    pub same_obligation: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_attestation_digest: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -721,10 +736,17 @@ pub enum ProofRuntimeSeamObservationOutcome {
 pub struct ProofRuntimeNegativeControl {
     pub id: String,
     pub dependency_id: String,
+    pub obligation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<String>,
     pub control_task: String,
+    pub expected_failure: String,
     pub outcome: ProofRuntimeNegativeControlOutcome,
+    pub status: ProofRuntimeNegativeControlStatus,
     pub proof_scope_ref: String,
     pub evidence_class: ExecutionEvidenceClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_attestation_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -737,6 +759,15 @@ pub enum ProofRuntimeNegativeControlOutcome {
     NonzeroExitObserved,
     UnexpectedSuccess,
     ControlCouldNotRun,
+}
+
+/// Whether Ota could validate a selected negative control against its declared green obligation.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofRuntimeNegativeControlStatus {
+    Unrun,
+    Invalid,
+    Validated,
 }
 
 /// Contract-declared lineage for a generated artifact consumed by the selected execution path.

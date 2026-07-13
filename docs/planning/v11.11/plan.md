@@ -328,8 +328,9 @@ The promotion rule is deliberately strict:
   `reachable` or promote a dependency to `exercised`; either level needs its own observed evidence
 - every caller-side-only `interaction_attempted` observation must pair with a contract-derived
   `not_proved` entry for dependency exercise on that same dependency seam
-- dependency-side evidence may support `exercised` when the evidence maps to the declared
-  dependency seam and interaction without heuristic inference
+- dependency-side evidence may support `exercised` only when it is bound to the selected proof
+  transaction or to a dependency-owned causal token that Ota can verify; seam mapping alone is
+  insufficient
 - round-trip-effect evidence may support `exercised` only when Ota records why an inert stand-in
   could not satisfy the same assertion for this interaction, or when the same transaction also
   carries runner-verified seam attestation that binds the observed effect back to the declared
@@ -468,22 +469,33 @@ Rules:
 - the separate negative-control record remains canonical for intervention, transaction binding, and
   observed failure outcome; the dependency-level qualifier is a consumer-facing projection derived
   from that canonical record and must not drift from it
+- an `exercised` seam without a `validated` qualifier must retain the machine-readable
+  `dependency_causality_not_proved` boundary; absence of a selected control is not permission for
+  consumers to infer causal necessity
 
 The first machine-readable shape should be additive:
 
 ```json
 {
   "negative_control": {
+    "id": "postgres-unavailable",
     "dependency_id": "service:postgres",
-    "intervention": "dependency_down",
+    "obligation_id": "postgres-marker",
+    "transaction_id": "sha256:...",
+    "control_task": "proof:postgres-unavailable",
+    "expected_failure": "dependency_unavailable",
     "outcome": "nonzero_exit_observed",
-    "proof_scope_ref": "workflow:app/runtime:web"
+    "status": "validated",
+    "failure_attestation_digest": "sha256:...",
+    "proof_scope_ref": "workflow:app-proof/negative_control:postgres-unavailable"
   }
 }
 ```
 
-This is boundary-attested execution evidence. A caller-provided reason or contract declaration can
-request the control lane but cannot substitute for its recorded outcome.
+This standalone record is the canonical, boundary-attested control result. The matching
+`dependency_evidence[].negative_control` record is a derived projection only. A caller-provided
+reason or contract declaration can request the control lane but cannot substitute for its recorded
+outcome, obligation binding, or failure attestation.
 
 ### 3c. Qualified top-level proof verdict
 
@@ -548,7 +560,8 @@ V11.11 is complete when:
   and leaves unobserved interactions as `not_proved`
 - caller-side-only evidence records `interaction_attempted` but cannot publish `exercised`; a
   fixture proves it always pairs with a contract-derived `dependency_exercise_not_proved` entry
-  and that dependency-side or round-trip-effect evidence is required for ordinary seam exercise
+  and that transaction-bound dependency-side or inert-double-resistant round-trip evidence is
+  required for ordinary seam exercise
 - each seam observation nests runner-derived `observation.origin` with the V11.9
   `observation.evidence_class`; the latter is authoritative for downstream policy/UX while the
   former controls evidence-level promotion and is never caller-selected prose
@@ -557,7 +570,10 @@ V11.11 is complete when:
   or a generic non-zero control exit never implies it
 - a negative-control qualifier is consumer-visible under the same dependency record, has only
   `unrun`, `invalid`, or runner-verified `validated` status, and never creates a composite evidence
-  level
+  level; it is derived from the canonical standalone control record rather than a second source of
+  truth
+- an exercised seam without a validated control carries `dependency_causality_not_proved`, so
+  causal necessity cannot disappear merely because no control was selected
 - marker-bound seam observers run before teardown, prove their producer and observer closures are
   owned by the selected workflow, and only a runner-verified transaction attestation removes the
   matching `dependency_exercise_not_proved` boundary

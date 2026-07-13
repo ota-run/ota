@@ -771,13 +771,31 @@ impl WorkflowProofSpec {
     }
 }
 
-/// A finite task whose non-zero exit is the observed negative-control outcome.
+/// A finite task that proves one observed seam obligation fails under a declared intervention.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowNegativeControlSpec {
     pub id: String,
     pub dependency: String,
+    /// The marker-bound seam observation whose green obligation this control must negate.
+    pub obligation: String,
     pub task: String,
+    pub expected_failure: WorkflowNegativeControlFailureKind,
+}
+
+/// The first typed failure family Ota can verify from a negative-control attestation.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowNegativeControlFailureKind {
+    DependencyUnavailable,
+}
+
+impl WorkflowNegativeControlFailureKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DependencyUnavailable => "dependency_unavailable",
+        }
+    }
 }
 
 /// A finite post-readiness task that confirms a runner-issued marker crossed one declared seam.

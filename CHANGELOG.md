@@ -53,12 +53,12 @@
   named top-level surface so endpoint publication, readiness, and runtime projection share one
   canonical contract owner.
 
-- added workflow-owned runtime-proof negative controls. Declare a separate finite task under
-  `workflows.<name>.proof.negative_controls`, then run
-  `ota proof runtime --workflow <name> --negative-control <id>` to require its non-zero exit.
-  JSON emits a boundary-attested `negative_control` record with `nonzero_exit_observed`,
-  `unexpected_success`, or `control_could_not_run`. The observed control outcome remains separate
-  from ordinary dependency evidence and does not itself close a dependency-exercise boundary.
+- added transaction-bound workflow runtime-proof negative controls. Declare a separate finite
+  task under `workflows.<name>.proof.negative_controls` with one observed seam `obligation` and
+  typed `expected_failure`, then run
+  `ota proof runtime --workflow <name> --negative-control <id>`. A generic non-zero exit is now
+  `invalid`; only a matching control failure attestation for the same proof transaction can become
+  `validated` and promote that exact seam evidence to `fault_tested`.
 
 - `ota proof runtime --json` now distinguishes caller-side dependency attempts from proved seam
   reachability. `dependency_evidence[]` can publish additive `interaction_attempted: true` with
