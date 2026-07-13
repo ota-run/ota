@@ -37569,6 +37569,61 @@ tasks:
     }
 
     #[test]
+    fn render_up_replay_text_surfaces_artifact_trust_groups() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![
+                crate::output::ReceiptDiffArtifactTrust {
+                    id: String::from("semantic_contract_snapshot"),
+                    kind: String::from("semantic_contract_snapshot"),
+                    input_classes: vec![ReplayInputClass::ContractTruth],
+                    trust_role: crate::output::ReceiptDiffArtifactTrustRole::Acquitting,
+                    baseline_identity: String::from("a"),
+                    current_identity: String::from("a"),
+                    comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+                },
+                crate::output::ReceiptDiffArtifactTrust {
+                    id: String::from("replay_input:verify:equivalence"),
+                    kind: String::from("comparator_profile"),
+                    input_classes: vec![ReplayInputClass::ComparatorSemantics],
+                    trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                    baseline_identity: String::from("b"),
+                    current_identity: String::from("b"),
+                    comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+                },
+                crate::output::ReceiptDiffArtifactTrust {
+                    id: String::from("generated_artifact:sdk"),
+                    kind: String::from("generated_source"),
+                    input_classes: vec![ReplayInputClass::GeneratedArtifactLineage],
+                    trust_role: crate::output::ReceiptDiffArtifactTrustRole::PointerOnly,
+                    baseline_identity: String::from("c"),
+                    current_identity: String::from("c"),
+                    comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+                },
+                crate::output::ReceiptDiffArtifactTrust {
+                    id: String::from("env_source:dotenv:.env"),
+                    kind: String::from("env_source_identity"),
+                    input_classes: vec![ReplayInputClass::DeclaredEnvSourceIdentity],
+                    trust_role: crate::output::ReceiptDiffArtifactTrustRole::Acquitting,
+                    baseline_identity: String::from("d"),
+                    current_identity: String::from("e"),
+                    comparison: crate::output::ReceiptDiffArtifactComparison::Changed,
+                },
+            ],
+            true,
+            true,
+            0,
+            0,
+            Some(true),
+            false,
+        ));
+        let text = super::render_up_replay_text(&replay);
+        assert!(text.contains("Acquitting Evidence: semantic_contract_snapshot"));
+        assert!(text.contains("Narrowing Evidence: replay_input:verify:equivalence"));
+        assert!(text.contains("Pointer-only Evidence: generated_artifact:sdk"));
+        assert!(text.contains("Changed Inputs: env_source:dotenv:.env"));
+    }
+
+    #[test]
     fn receipt_captures_declared_frozen_pnpm_lockfile_identity() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let lockfile = "lockfileVersion: '9.0'\n";
@@ -52500,6 +52555,45 @@ fn render_up_replay_text(replay: &UpReplayExecution) -> String {
         .filter(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Changed)
         .map(|artifact| artifact.id.as_str())
         .collect::<Vec<_>>();
+    let matched_acquitting = replay_artifact_ids_by_role_and_comparison(
+        &replay.comparison.artifact_trust,
+        ReceiptDiffArtifactTrustRole::Acquitting,
+        ReceiptDiffArtifactComparison::Matched,
+    );
+    let matched_narrowing = replay_artifact_ids_by_role_and_comparison(
+        &replay.comparison.artifact_trust,
+        ReceiptDiffArtifactTrustRole::Narrowing,
+        ReceiptDiffArtifactComparison::Matched,
+    );
+    let matched_pointer_only = replay_artifact_ids_by_role_and_comparison(
+        &replay.comparison.artifact_trust,
+        ReceiptDiffArtifactTrustRole::PointerOnly,
+        ReceiptDiffArtifactComparison::Matched,
+    );
+    if !matched_acquitting.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Acquitting Evidence:"),
+            matched_acquitting.join(", ")
+        ));
+    }
+    if !matched_narrowing.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Narrowing Evidence:"),
+            matched_narrowing.join(", ")
+        ));
+    }
+    if !matched_pointer_only.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Pointer-only Evidence:"),
+            matched_pointer_only.join(", ")
+        ));
+    }
     if !changed_artifacts.is_empty() {
         stdout.push_str(&format!(
             "\n {}  {} {}",
@@ -52509,6 +52603,18 @@ fn render_up_replay_text(replay: &UpReplayExecution) -> String {
         ));
     }
     stdout
+}
+
+fn replay_artifact_ids_by_role_and_comparison(
+    artifacts: &[ReceiptDiffArtifactTrust],
+    role: ReceiptDiffArtifactTrustRole,
+    comparison: ReceiptDiffArtifactComparison,
+) -> Vec<&str> {
+    artifacts
+        .iter()
+        .filter(|artifact| artifact.trust_role == role && artifact.comparison == comparison)
+        .map(|artifact| artifact.id.as_str())
+        .collect()
 }
 
 fn replay_posture_label(posture: ReceiptDiffReplayPostureKind) -> &'static str {

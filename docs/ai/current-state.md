@@ -39,7 +39,9 @@ durable agent workflow belongs in the canonical Ota skill.
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt
   `evaluated_inputs[]` and Bedrock-style historical query traces stay separate as attested
-  `witnessed_observations.query_traces[]`
+  `witnessed_observations.query_traces[]`; plain-text replay output now mirrors the same trust
+  split by rendering matched acquitting, narrowing, and pointer-only evidence separately from
+  changed inputs
 - queued design refinement: `V11.11` seam-evidence provenance, which keeps caller-side attempts,
   dependency-side or round-trip exercise, and separately recorded negative controls distinct on
   the existing proof carrier

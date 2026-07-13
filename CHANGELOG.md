@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- `ota up --replay-baseline ...` text output now surfaces replay evidence groups directly:
+  matched `acquitting`, `narrowing`, and `pointer_only` artifacts are rendered before changed
+  inputs, so operators can see which artifacts actually cleared a class and which only narrowed
+  the remaining search without digging into JSON output
+
 - `ota receipt` and `ota up --replay-baseline ... --json` now distinguish generic task replay
   files from declared `presentation_profile` and `comparator_profile` replay inputs. Matching
   presentation profiles acquit only the named execution-presentation class for the selected lane,
