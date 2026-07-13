@@ -142,6 +142,11 @@ durable agent workflow belongs in the canonical Ota skill.
 - The next `V11.11` refinement makes those proof boundaries machine-actionable too: each
   `not_proved` entry now carries an explicit `reason`, and the human proof render includes the
   same reason label for seam, adjacent-lane, and broader-scope exclusions.
+- The current follow-on `V11.11` cut starts the first positive seam-evidence carrier on
+  `ota proof runtime --json`: `dependency_evidence[]` now publishes runner-derived
+  `level: reachable` only for declared service seams that are also on the selected
+  workflow-owned required-service path and have structured readiness Ota actually owns. This
+  keeps selected service reachability distinct from still-unproved exercised interaction.
 - The same commit fixes detached native proof lifecycle ownership: nested `ota up --detach` leaves
   the service running for the outer proof to observe and clean up, preventing recursive teardown.
 - V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching

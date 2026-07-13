@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- `ota proof runtime --json` now carries additive `dependency_evidence[]` for selected declared
+  service seams when Ota can honestly prove only reachability, not exercised interaction. The
+  first shipped carrier publishes runner-derived `reachable` evidence from structured service
+  readiness on the selected workflow-owned required-service path and leaves stronger seam
+  exercise in `not_proved`
+
 - `ota proof runtime` now emits explicit `reason` values on `not_proved` entries and mirrors them
   in text output, so qualified proof boundaries distinguish missing independent seam evidence,
   adjacent external paths not selected, and broader proof-scope exclusions instead of publishing

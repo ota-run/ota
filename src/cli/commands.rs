@@ -101,30 +101,31 @@ use crate::output::{
     InitPackSeeds, InitSelectedPackOptions, InitSuccess, ListedWorkflowSummary,
     MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
     PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
-    ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
-    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffReplayHermeticity,
-    ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind, ReceiptDiffReplayScope,
-    ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
-    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
-    ReceiptPromotedBaseline, ReceiptSnapshotContract, ReceiptSnapshotSuccess,
-    ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass, RunPreviewPlan, RunPreviewSuccess,
-    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayBaselineStatus,
-    UpReplayExecution, UpReplayFailureKind, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskHydrationProvenanceSummary, WorkspaceTaskHydrationSourceIdentity,
-    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess, execution_receipt_conflict,
+    ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
+    ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
+    ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture,
+    ReceiptDiffReplayPostureKind, ReceiptDiffReplayScope, ReceiptDiffSide, ReceiptDiffSuccess,
+    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
+    ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass,
+    RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
+    ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpReplayBaseline, UpReplayBaselineStatus, UpReplayExecution, UpReplayFailureKind, UpStatus,
+    ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
+    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
+    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
+    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskHydrationProvenanceSummary,
+    WorkspaceTaskHydrationSourceIdentity, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    execution_receipt_conflict,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -2662,6 +2663,14 @@ pub fn proof_runtime(
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
                 );
+                let dependency_evidence = if ok {
+                    proof_runtime_dependency_evidence(
+                        &target.contract,
+                        effective_workflow_selector.as_deref(),
+                    )
+                } else {
+                    Vec::new()
+                };
                 let not_proved = proof_runtime_not_proved(
                     &target.contract,
                     &target.contract_path,
@@ -2702,6 +2711,7 @@ pub fn proof_runtime(
                             phase: json_phase,
                             stage_family: "proof",
                             proof_scope,
+                            dependency_evidence,
                             not_proved,
                             summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
@@ -37878,8 +37888,7 @@ tasks:
       exe: true
 "#;
         fs::write(&contract_path, contract_yaml).expect("write contract");
-        let contract = parse_contract_str(&contract_path, contract_yaml)
-        .expect("parse contract");
+        let contract = parse_contract_str(&contract_path, contract_yaml).expect("parse contract");
 
         let inputs = super::receipt_evaluated_inputs(
             &contract,
@@ -38365,8 +38374,7 @@ tasks:
         );
         let mut changed_policy = policy.clone();
         changed_policy.identity = String::from("policy-hash-b");
-        let changed =
-            super::receipt_diff_artifact_trust(None, None, &[policy], &[changed_policy]);
+        let changed = super::receipt_diff_artifact_trust(None, None, &[policy], &[changed_policy]);
         assert_eq!(
             serde_json::to_value(&changed[0]).unwrap()["comparison"],
             "changed"
@@ -38395,12 +38403,8 @@ tasks:
         );
         let mut changed_env_source = env_source.clone();
         changed_env_source.identity = String::from("env-source-hash-b");
-        let changed = super::receipt_diff_artifact_trust(
-            None,
-            None,
-            &[env_source],
-            &[changed_env_source],
-        );
+        let changed =
+            super::receipt_diff_artifact_trust(None, None, &[env_source], &[changed_env_source]);
         assert_eq!(
             serde_json::to_value(&changed[0]).unwrap()["comparison"],
             "changed"
@@ -38729,17 +38733,18 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     };
     let hermeticity = if posture == ReceiptDiffReplayPostureKind::ReplayUnavailable {
         ReceiptDiffReplayHermeticity::Unassessed
-    } else if matched_artifacts.iter().all(|artifact| {
-        artifact.trust_role == ReceiptDiffArtifactTrustRole::Acquitting
-    }) && matched_artifacts.iter().any(|artifact| {
-        artifact
-            .input_classes
-            .iter()
-            .any(|class| replay_input_class_closes_hermetic_replay(*class))
-    }) {
-        ReceiptDiffReplayHermeticity::Hermetic
-    } else if !has_non_baseline_replay_artifact
+    } else if matched_artifacts
+        .iter()
+        .all(|artifact| artifact.trust_role == ReceiptDiffArtifactTrustRole::Acquitting)
+        && matched_artifacts.iter().any(|artifact| {
+            artifact
+                .input_classes
+                .iter()
+                .any(|class| replay_input_class_closes_hermetic_replay(*class))
+        })
     {
+        ReceiptDiffReplayHermeticity::Hermetic
+    } else if !has_non_baseline_replay_artifact {
         ReceiptDiffReplayHermeticity::AmbientFreshDerivation
     } else {
         ReceiptDiffReplayHermeticity::PartlyAmbient
@@ -38825,9 +38830,7 @@ fn receipt_diff_artifact_trust(
             // A matching policy pack clears only the named policy/ruleset class for this witness.
             ReplayInputClass::PolicyRulesetIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching declared env source clears only the named env-source file class.
-            ReplayInputClass::DeclaredEnvSourceIdentity => {
-                ReceiptDiffArtifactTrustRole::Acquitting
-            }
+            ReplayInputClass::DeclaredEnvSourceIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching lockfile clears only the named dependency-resolution class.
             ReplayInputClass::DeclaredDependencyResolution => {
                 ReceiptDiffArtifactTrustRole::Acquitting
@@ -53293,6 +53296,7 @@ impl Drop for PlainModeGuard {
 
 #[cfg(test)]
 mod tests {
+    use crate::output::ExecutionEvidenceClass;
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs;
@@ -57269,6 +57273,84 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_emits_reachable_dependency_evidence_for_selected_structured_service() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: proof-seam
+services:
+  postgres:
+    manager:
+      kind: compose
+      service: postgres
+    readiness:
+      kind: compose_health
+tasks:
+  verify:
+    run: "true"
+    requires_services:
+      - postgres
+workflows:
+  default: verify
+  verify:
+    services:
+      required:
+        - postgres
+    run:
+      task: verify
+"#,
+        )
+        .expect("parse proof seam contract");
+
+        let evidence = super::proof_runtime_dependency_evidence(&contract, Some("verify"));
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].dependency_id, "service:postgres");
+        assert_eq!(evidence[0].level, "reachable");
+        assert_eq!(evidence[0].observation.origin, "dependency_side");
+        assert_eq!(
+            evidence[0].observation.evidence_class,
+            ExecutionEvidenceClass::Derived
+        );
+        assert_eq!(evidence[0].declared_by_tasks, ["verify"]);
+        assert_eq!(evidence[0].declared_by_workflows, ["verify"]);
+    }
+
+    #[test]
+    fn proof_runtime_omits_dependency_evidence_without_selected_required_service_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: proof-seam
+services:
+  postgres:
+    manager:
+      kind: compose
+      service: postgres
+    readiness:
+      kind: compose_health
+tasks:
+  verify:
+    run: "true"
+    requires_services:
+      - postgres
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("parse proof seam contract");
+
+        let evidence = super::proof_runtime_dependency_evidence(&contract, Some("verify"));
+        assert!(evidence.is_empty());
+    }
+
+    #[test]
     fn render_proof_runtime_text_surfaces_not_proved_boundaries() {
         let summary = crate::output::DoctorSummary {
             verdict: DoctorVerdict::Ready,
@@ -57308,6 +57390,78 @@ workflows:
         assert!(rendered.contains("Proof Boundaries"));
         assert!(rendered.contains("dependency exercise not proved for `service:postgres` via task `verify` (no_independent_dependency_evidence)"));
         assert!(rendered.contains("Proof Verdict: passed_with_unproven_boundaries"));
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_dependency_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: true,
+                proof_verdict: "passed_with_unproven_boundaries",
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                stage_family: "proof",
+                proof_scope: crate::output::ProofRuntimeScope {
+                    kind: String::from("runtime_path"),
+                    proof_class: String::from("slice_proof"),
+                    workflow: Some(String::from("app")),
+                    task: Some(String::from("serve")),
+                    intent: None,
+                },
+                dependency_evidence: vec![crate::output::ProofRuntimeDependencyEvidence {
+                    dependency_id: String::from("service:postgres"),
+                    level: String::from("reachable"),
+                    observation: crate::output::ProofRuntimeDependencyObservation {
+                        origin: String::from("dependency_side"),
+                        evidence_class: ExecutionEvidenceClass::Derived,
+                    },
+                    declared_by_tasks: vec![String::from("serve")],
+                    declared_by_workflows: vec![String::from("app")],
+                }],
+                not_proved: vec![crate::output::ProofRuntimeNotProved {
+                    kind: String::from("dependency_exercise_not_proved"),
+                    relative_to: String::from("runtime_path"),
+                    source: String::from("contract_lane"),
+                    dependency_id: Some(String::from("service:postgres")),
+                    reason: Some(String::from("no_independent_dependency_evidence")),
+                    declared_by_tasks: vec![String::from("serve")],
+                    declared_by_workflows: vec![String::from("app")],
+                }],
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
+                failure_class: None,
+                error: None,
+                cleanup_failure: None,
+                likely_cause: None,
+                likely_cause_evidence: None,
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["dependency_evidence"][0]["dependency_id"].as_str(),
+            Some("service:postgres")
+        );
+        assert_eq!(
+            body["dependency_evidence"][0]["level"].as_str(),
+            Some("reachable")
+        );
+        assert_eq!(
+            body["dependency_evidence"][0]["observation"]["origin"].as_str(),
+            Some("dependency_side")
+        );
+        assert_eq!(
+            body["dependency_evidence"][0]["observation"]["evidence_class"].as_str(),
+            Some("derived")
+        );
     }
 
     #[test]
@@ -57364,6 +57518,7 @@ workflows:
                     task: Some(String::from("build")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57423,6 +57578,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57491,6 +57647,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57642,6 +57799,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57709,6 +57867,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57776,6 +57935,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57840,6 +58000,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57907,6 +58068,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -58191,6 +58353,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                dependency_evidence: Vec::new(),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -95052,12 +95215,7 @@ fn receipt_evaluated_inputs(
     let mut inputs = BTreeMap::new();
     collect_receipt_source_identity_input(root, &mut inputs);
     collect_receipt_policy_ruleset_identity_input(contract_path, root, &mut inputs);
-    collect_receipt_declared_env_source_inputs(
-        contract,
-        contract_path,
-        &task_names,
-        &mut inputs,
-    );
+    collect_receipt_declared_env_source_inputs(contract, contract_path, &task_names, &mut inputs);
     for task_name in task_names {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
@@ -95280,7 +95438,11 @@ fn replay_hidden_input_candidates(
         .witnessed_observations
         .query_traces
         .is_empty()
-        || !report.current.witnessed_observations.query_traces.is_empty();
+        || !report
+            .current
+            .witnessed_observations
+            .query_traces
+            .is_empty();
 
     let mut candidates = Vec::new();
     if !has_dependency_resolution {
@@ -98799,6 +98961,75 @@ fn proof_runtime_not_proved(
     entries
 }
 
+fn proof_runtime_dependency_evidence(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Vec<ProofRuntimeDependencyEvidence> {
+    let Some(selected_workflow_name) = contract
+        .selected_workflow(workflow_name)
+        .map(|(name, _)| name.to_string())
+    else {
+        return Vec::new();
+    };
+    let selected_required_services =
+        selected_workflow_required_service_closure(contract, Some(selected_workflow_name.as_str()));
+    if selected_required_services.is_empty() {
+        return Vec::new();
+    }
+
+    let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
+    for task_name in
+        contract.selected_workflow_task_closure_names(Some(selected_workflow_name.as_str()))
+    {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        for service_name in &task.requires_services {
+            if selected_required_services.contains(service_name) {
+                owners
+                    .entry(service_name.clone())
+                    .or_default()
+                    .insert(task_name.clone());
+            }
+        }
+    }
+
+    let mut evidence = Vec::new();
+    for (service_name, tasks) in owners {
+        let Some(origin) = contract
+            .services
+            .get(service_name.as_str())
+            .and_then(|service| service.readiness.as_ref())
+            .and_then(proof_runtime_dependency_observation_origin)
+        else {
+            continue;
+        };
+        evidence.push(ProofRuntimeDependencyEvidence {
+            dependency_id: format!("service:{service_name}"),
+            level: String::from("reachable"),
+            observation: ProofRuntimeDependencyObservation {
+                origin: origin.to_string(),
+                evidence_class: ExecutionEvidenceClass::Derived,
+            },
+            declared_by_tasks: tasks.into_iter().collect(),
+            declared_by_workflows: vec![selected_workflow_name.clone()],
+        });
+    }
+    evidence.sort_by(|left, right| left.dependency_id.cmp(&right.dependency_id));
+    evidence
+}
+
+fn proof_runtime_dependency_observation_origin(
+    readiness: &ServiceReadinessSpec,
+) -> Option<&'static str> {
+    match readiness.structured_kind()? {
+        ServiceReadinessKind::ComposeHealth | ServiceReadinessKind::SystemdActive => {
+            Some("dependency_side")
+        }
+        ServiceReadinessKind::Http | ServiceReadinessKind::Tcp => Some("round_trip_effect"),
+    }
+}
+
 fn proof_runtime_not_proved_order_key(entry: &crate::output::ProofRuntimeNotProved) -> u8 {
     if entry.dependency_id.is_some() && !entry.declared_by_tasks.is_empty() {
         0
@@ -101164,9 +101395,9 @@ fn render_proof_runtime_not_proved_text(entry: &crate::output::ProofRuntimeNotPr
                 )
             }
         }
-        "functional_runtime_not_proved" => String::from(
-            "functional runtime behavior stays outside this runtime-proof slice",
-        ),
+        "functional_runtime_not_proved" => {
+            String::from("functional runtime behavior stays outside this runtime-proof slice")
+        }
         "broader_repo_completion_not_proved" => {
             String::from("broader repo completion stays outside this runtime-proof slice")
         }

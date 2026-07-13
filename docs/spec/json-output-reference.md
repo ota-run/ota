@@ -823,6 +823,17 @@ Notes:
   execution or readiness evaluation failed; parse/load failures do not enter this carrier
 - `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
+- `dependency_evidence[]` is additive positive seam evidence for the selected runtime path.
+  The current first carrier is intentionally narrow: Ota emits `level: reachable` only when a
+  declared service seam is also part of the selected workflow's required-service closure and Ota
+  has a structured readiness owner for that selected service. This is runner-derived reachability
+  evidence, not proof of exercised interaction across the seam.
+- `dependency_evidence[].observation.origin` names where the seam evidence came from. Current
+  shipped reachable records use `dependency_side` for manager-owned readiness such as
+  `compose_health` and `systemd_active`, and `round_trip_effect` for probe-owned readiness such as
+  `http` and `tcp`.
+- `dependency_evidence[].observation.evidence_class` is the V11.9 authority class for the
+  observation itself. Current shipped reachable records are `derived`.
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
   Ota emits `functional_runtime_not_proved` when proof fell back to a setup-only lane,
   `dependency_exercise_not_proved` for each declared service seam in the selected closure when
@@ -907,6 +918,18 @@ Success:
     "task": "serve",
     "intent": "packaged_runtime"
   },
+  "dependency_evidence": [
+    {
+      "dependency_id": "service:postgres",
+      "level": "reachable",
+      "observation": {
+        "origin": "dependency_side",
+        "evidence_class": "derived"
+      },
+      "declared_by_tasks": ["serve"],
+      "declared_by_workflows": ["app"]
+    }
+  ],
   "not_proved": [
     {
       "kind": "broader_repo_completion_not_proved",

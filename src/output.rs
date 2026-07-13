@@ -663,6 +663,24 @@ pub struct ExecutionReceiptQueryTraceDivergence {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionEvidenceClass {
     Attested,
+    Derived,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeDependencyObservation {
+    pub origin: String,
+    pub evidence_class: ExecutionEvidenceClass,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeDependencyEvidence {
+    pub dependency_id: String,
+    pub level: String,
+    pub observation: ProofRuntimeDependencyObservation,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declared_by_tasks: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declared_by_workflows: Vec<String>,
 }
 
 /// Contract-declared lineage for a generated artifact consumed by the selected execution path.
@@ -2999,6 +3017,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub phase: &'a str,
     pub stage_family: &'a str,
     pub proof_scope: ProofRuntimeScope,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependency_evidence: Vec<ProofRuntimeDependencyEvidence>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_proved: Vec<ProofRuntimeNotProved>,
     pub summary: DoctorSummary,
