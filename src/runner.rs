@@ -2600,6 +2600,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     if let Some(host_gid) = host_gid {
         env.insert(String::from("OTA_HOST_GID"), host_gid);
     }
+    apply_runner_owned_proof_env(&mut env, std::env::vars());
     env
 }
 
@@ -2707,7 +2708,21 @@ pub(crate) fn effective_task_env_for_selection(
     if let Some(host_gid) = host_gid {
         env.insert(String::from("OTA_HOST_GID"), host_gid);
     }
+    apply_runner_owned_proof_env(&mut env, std::env::vars());
     Some(env)
+}
+
+/// Proof transactions reserve `OTA_PROOF_*` for runner-issued values. Apply them after all
+/// contract and env-file resolution so task configuration cannot replace the active proof nonce.
+fn apply_runner_owned_proof_env<I>(task_env: &mut BTreeMap<String, String>, process_env: I)
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    task_env.extend(
+        process_env
+            .into_iter()
+            .filter(|(name, _)| name.starts_with("OTA_PROOF_")),
+    );
 }
 
 fn load_task_env_file_values(
@@ -32316,6 +32331,38 @@ tasks:
         } else {
             assert!(!env.contains_key("DATABASE_URL"));
         }
+    }
+
+    #[test]
+    fn runner_owned_proof_env_overrides_contract_resolved_values() {
+        let mut task_env = BTreeMap::from([
+            (
+                String::from("OTA_PROOF_SEAM_MARKER"),
+                String::from("contract-value"),
+            ),
+            (String::from("APP_MODE"), String::from("development")),
+        ]);
+
+        super::apply_runner_owned_proof_env(
+            &mut task_env,
+            vec![
+                (
+                    String::from("OTA_PROOF_SEAM_MARKER"),
+                    String::from("runner-value"),
+                ),
+                (String::from("UNRELATED"), String::from("ignored")),
+            ],
+        );
+
+        assert_eq!(
+            task_env.get("OTA_PROOF_SEAM_MARKER").map(String::as_str),
+            Some("runner-value")
+        );
+        assert_eq!(
+            task_env.get("APP_MODE").map(String::as_str),
+            Some("development")
+        );
+        assert!(!task_env.contains_key("UNRELATED"));
     }
 
     #[test]

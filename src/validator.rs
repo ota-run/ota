@@ -16306,6 +16306,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             )));
         }
         validate_workflow_negative_controls(contract, name, workflow, errors);
+        validate_workflow_seam_observations(contract, name, workflow, errors);
         if let Some(runtime_boundary) = workflow.runtime_boundary.as_ref() {
             validate_runtime_boundary(
                 &format!("workflows.{name}.runtime_boundary"),
@@ -16860,6 +16861,98 @@ fn validate_workflow_negative_controls(
             errors.push(ValidationError::new(format!(
                 "`{prefix}.{}.task` must not require the controlled service `{}` or runner readiness may recreate the seam before the control executes",
                 control.id, control.dependency
+            )));
+        }
+    }
+}
+
+fn validate_workflow_seam_observations(
+    contract: &Contract,
+    workflow_name: &str,
+    workflow: &crate::schema::WorkflowSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let normal_closure = contract
+        .selected_workflow_task_closure_names(Some(workflow_name))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut ids = BTreeSet::new();
+    for observation in &workflow.proof.seam_observations {
+        let prefix = format!("workflows.{workflow_name}.proof.seam_observations");
+        if observation.id.trim().is_empty() || !ids.insert(observation.id.trim().to_string()) {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}` must declare unique non-empty observation ids"
+            )));
+        }
+        if !contract
+            .services
+            .contains_key(observation.dependency.trim())
+        {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.dependency` references unknown service `{}`",
+                observation.id, observation.dependency
+            )));
+        }
+        let Some(task) = contract.tasks.get(observation.task.trim()) else {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` references unknown task `{}`",
+                observation.id, observation.task
+            )));
+            continue;
+        };
+        if normal_closure.contains(observation.task.trim()) {
+            errors.push(ValidationError::new(format!("`{prefix}.{}.task` must stay outside the normal workflow closure so Ota executes it after readiness", observation.id)));
+        }
+        if task.has_any_service_runtime() {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` must be finite, not a service runtime",
+                observation.id
+            )));
+        }
+        if !task
+            .requires_services
+            .iter()
+            .any(|service| service == &observation.dependency)
+        {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` must require observed service `{}`",
+                observation.id, observation.dependency
+            )));
+        }
+        let dependency_is_in_normal_scope = normal_closure.iter().any(|task_name| {
+            contract.tasks.get(task_name).is_some_and(|normal_task| {
+                normal_task
+                    .requires_services
+                    .iter()
+                    .any(|service| service == &observation.dependency)
+            })
+        });
+        if !dependency_is_in_normal_scope {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.dependency` must be required by the normal workflow closure so an observer cannot claim exercise outside the selected runtime path",
+                observation.id
+            )));
+        }
+        // The runtime proof invokes observers without dependencies so it cannot repeat setup
+        // after readiness. Require their full prerequisite closure to be owned by the workflow.
+        for prerequisite in contract
+            .task_dependency_closure_names([observation.task.clone()])
+            .into_iter()
+            .filter(|task_name| task_name != &observation.task)
+        {
+            if !normal_closure.contains(&prerequisite) {
+                errors.push(ValidationError::new(format!(
+                    "`{prefix}.{}.task` depends on `{prerequisite}`, which must be in the normal workflow closure because seam observers run with dependencies skipped",
+                    observation.id
+                )));
+            }
+        }
+        if observation.marker_env.trim().is_empty()
+            || !observation.marker_env.starts_with("OTA_PROOF_")
+        {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.marker_env` must be an Ota-owned `OTA_PROOF_*` environment name",
+                observation.id
             )));
         }
     }
@@ -18912,6 +19005,55 @@ workflows:
             errors
                 .to_string()
                 .contains("must not require the controlled service `postgres`")
+        );
+    }
+
+    #[test]
+    fn rejects_seam_observer_with_prerequisites_outside_normal_workflow_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: seam-observation
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+tasks:
+  serve:
+    run: echo serve
+  setup-marker:
+    run: echo setup
+  observe-marker:
+    run: echo observe
+    depends_on:
+      - setup-marker
+    requires_services:
+      - postgres
+workflows:
+  default: app
+  app:
+    run:
+      task: serve
+    proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          task: observe-marker
+          marker_env: OTA_PROOF_SEAM_MARKER
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("observer setup must be owned");
+        assert!(
+            errors.to_string().contains(
+                "depends on `setup-marker`, which must be in the normal workflow closure"
+            )
         );
     }
 

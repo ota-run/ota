@@ -3882,6 +3882,33 @@ The contract declares the controlled dependency and the separate task only. Ota 
 task when selected and records whether its non-zero exit was observed. A successful control task
 is an `unexpected_success`, and a task that cannot run is not a passing control. This first
 surface does not infer disruption from prose or fabricate a generic fault injector.
+
+Seam-observation shape:
+
+```yaml
+workflows:
+  app:
+    proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          task: proof:postgres-marker
+          marker_env: OTA_PROOF_SEAM_MARKER
+```
+
+Ota issues one opaque marker for the proof, injects it into the runtime path and then runs the
+finite observer before cleanup. The observer must confirm that exact marker through the declared
+dependency seam. Only an observed marker promotes that dependency to `exercised`; failed or
+ambiguous observations retain `dependency_exercise_not_proved`.
+
+The observer is deliberately narrow: it must be finite, remain outside the normal workflow
+closure, require the named service, and have every prerequisite already owned by the normal
+workflow closure. The observed service must also be part of that normal closure. This prevents a
+proof-only task from silently repeating setup or minting an `exercised` claim for a service outside
+the selected runtime path. The marker value is runner-issued and never rendered in output.
+`OTA_PROOF_*` values are reserved for the active proof transaction and are applied after task and
+env-file resolution, so contract-owned environment defaults cannot replace the marker at execution
+time.
 - if `setup.task` already depends on the same action task, direct task execution still follows the task graph while workflow `ota up` avoids running the same prepare action twice
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness

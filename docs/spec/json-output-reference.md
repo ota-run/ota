@@ -838,6 +838,11 @@ Notes:
   `http` and `tcp`; current shipped attempted records use `caller_side`.
 - `dependency_evidence[].observation.evidence_class` is the V11.9 authority class for the
   observation itself. Current shipped reachable records are `derived`.
+- `seam_observations[]` records each declared marker-bound observer. Ota issues the marker,
+  injects it into the runtime path, and runs the finite observer before teardown. Only
+  `outcome: observed` emits an attested `dependency_evidence[].level: exercised` record with
+  `observation.origin: round_trip_effect`; failures leave the seam explicitly not proved. The
+  marker itself is never emitted.
 - Text output renders the same `Dependency Evidence` before `Proof Boundaries`, including the
   level, observation origin, and authority class. A caller-side-only attempt is rendered as not
   independently exercised; it does not become a green seam claim in human output.

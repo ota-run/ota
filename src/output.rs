@@ -686,6 +686,29 @@ pub struct ProofRuntimeDependencyEvidence {
     pub declared_by_workflows: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ProofRuntimeSeamObservation {
+    pub id: String,
+    pub dependency_id: String,
+    pub observer_task: String,
+    pub marker_env: String,
+    pub outcome: ProofRuntimeSeamObservationOutcome,
+    pub proof_scope_ref: String,
+    pub evidence_class: ExecutionEvidenceClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofRuntimeSeamObservationOutcome {
+    Observed,
+    ObservationFailed,
+    ObservationCouldNotRun,
+}
+
 /// Boundary-attested result of one workflow-declared negative-control task.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProofRuntimeNegativeControl {
@@ -3045,6 +3068,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub proof_scope: ProofRuntimeScope,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_evidence: Vec<ProofRuntimeDependencyEvidence>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub seam_observations: Vec<ProofRuntimeSeamObservation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub negative_control: Option<ProofRuntimeNegativeControl>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

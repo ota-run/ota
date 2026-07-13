@@ -344,6 +344,30 @@ Downstream policy and UX consume the level plus `observation.evidence_class` as 
 boundary. `observation.origin` explains the evidence's location and controls promotion to
 `exercised`; it is not a second authority taxonomy.
 
+#### First executable seam-observer transaction
+
+The first implementation should stay deliberately strict and runner-owned:
+
+1. the workflow declares `proof.seam_observations[]` with an observer id, one existing dependency,
+   one finite observer task, and an Ota-owned marker environment name
+2. Ota issues one opaque marker per proof transaction and injects it into both the selected runtime
+   path and each declared observer
+3. after readiness succeeds but before Ota tears down the runtime, Ota invokes each observer on the
+   same execution mode with prerequisites skipped
+4. validation requires the observer to stay outside the normal workflow closure, require the named
+   dependency, and have every prerequisite already owned by that normal closure; the dependency
+   itself must also be part of the selected runtime path
+5. only an observer exit that confirms the runner-issued marker records `outcome: observed` and
+   promotes the matching dependency to attested `exercised` evidence with
+   `observation.origin: round_trip_effect`
+6. observer failure, inability to run, or a failed ordinary runtime proof retains the matching
+   `dependency_exercise_not_proved` boundary and fails the proof carrier when ordinary proof had
+   otherwise passed
+
+The marker is never emitted. Ota cannot infer that arbitrary application code consumed it; the
+declared finite observer is the contract-owned assertion point, while the runner owns issuance,
+injection, execution order, outcome, and evidence publication.
+
 The first machine-readable shape should stay narrow:
 
 ```json
@@ -485,6 +509,9 @@ V11.11 is complete when:
   former controls evidence-level promotion and is never caller-selected prose
 - `fault_tested` appears only on a separately recorded negative-control run with an observed
   expected failure; ordinary green proof, fingerprint, or caller-side trace never implies it
+- marker-bound seam observers run before teardown, prove their prerequisite closure is already
+  owned by the selected workflow, and only `outcome: observed` removes the matching
+  `dependency_exercise_not_proved` boundary
 - engineering notes no longer need to carry the only truthful statement of proof scope
 - downstream consumers can distinguish a green narrow proof from a broader runtime or repo proof
   without relying on narrative prose

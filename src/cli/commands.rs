@@ -2442,6 +2442,28 @@ pub fn proof_runtime(
                         Ok(control) => control,
                         Err(error) => return CommandOutput::failure_with_code(error, 2),
                     };
+                let selected_seam_observations =
+                    proof_runtime_seam_observations(contract, workflow_name);
+                let seam_marker = if selected_seam_observations.is_empty() {
+                    None
+                } else {
+                    match proof_runtime_seam_marker() {
+                        Ok(marker) => Some(marker),
+                        Err(error) => return CommandOutput::failure(error),
+                    }
+                };
+                let seam_markers = selected_seam_observations
+                    .iter()
+                    .map(|observation| {
+                        (
+                            observation.marker_env.clone(),
+                            seam_marker
+                                .as_ref()
+                                .expect("marker exists for declared observer")
+                                .clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 let artifact_dir = proof_runtime_artifact_dir(
                     contract_working_dir(&target.contract_path),
                     member,
@@ -2487,6 +2509,7 @@ pub fn proof_runtime(
                     member,
                     file_override,
                     overrides,
+                    &seam_markers,
                     &up_log_artifact_path,
                 ) {
                     Ok(child) => child,
@@ -2514,6 +2537,24 @@ pub fn proof_runtime(
                     crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
                 );
                 let up_process_failure = up_process_failure.as_deref();
+
+                let seam_observations = selected_seam_observations
+                    .iter()
+                    .map(|observation| {
+                        proof_runtime_execute_seam_observation(
+                            &target.contract_path,
+                            observation,
+                            effective_workflow_selector.as_deref(),
+                            overrides,
+                            up_process.id(),
+                            seam_marker
+                                .as_deref()
+                                .expect("marker exists for declared observer"),
+                            proof_summary.verdict == DoctorVerdict::Ready
+                                && up_process_failure.is_none(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
 
                 let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
                     .err()
@@ -2632,6 +2673,16 @@ pub fn proof_runtime(
                     proof_runtime_phase_label(refined_proof_phase.as_str())
                 };
                 let base_ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
+                if base_ok
+                    && seam_observations.iter().any(|observation| {
+                        observation.outcome
+                            != crate::output::ProofRuntimeSeamObservationOutcome::Observed
+                    })
+                {
+                    proof_error = Some(String::from(
+                        "one or more declared seam observations did not confirm the runner-issued marker",
+                    ));
+                }
                 let negative_control = selected_negative_control.as_ref().map(|control| {
                     proof_runtime_execute_negative_control(
                         contract,
@@ -2646,6 +2697,7 @@ pub fn proof_runtime(
                     && let Some(control) = negative_control.as_ref()
                     && control.outcome
                         != ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+                    && proof_error.is_none()
                 {
                     proof_error = Some(format!(
                         "negative control `{}` did not observe the expected task failure",
@@ -2678,8 +2730,17 @@ pub fn proof_runtime(
                         control.outcome
                             != ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
                     })
+                    && proof_failure_class.is_none()
                 {
                     proof_failure_class = Some(String::from("negative_control_failed"));
+                }
+                if base_ok
+                    && seam_observations.iter().any(|observation| {
+                        observation.outcome
+                            != crate::output::ProofRuntimeSeamObservationOutcome::Observed
+                    })
+                {
+                    proof_failure_class = Some(String::from("seam_observation_failed"));
                 }
                 let doctor_artifact_json = match proof_runtime_doctor_artifact_json(
                     contract,
@@ -2721,6 +2782,26 @@ pub fn proof_runtime(
                     ok,
                     proof_likely_cause.as_ref(),
                 );
+                let mut dependency_evidence = dependency_evidence;
+                for observation in seam_observations.iter().filter(|observation| {
+                    observation.outcome
+                        == crate::output::ProofRuntimeSeamObservationOutcome::Observed
+                }) {
+                    dependency_evidence.push(ProofRuntimeDependencyEvidence {
+                        dependency_id: observation.dependency_id.clone(),
+                        level: Some(String::from("exercised")),
+                        interaction_attempted: false,
+                        observation: crate::output::ProofRuntimeDependencyObservation {
+                            origin: String::from("round_trip_effect"),
+                            evidence_class: ExecutionEvidenceClass::Attested,
+                        },
+                        declared_by_tasks: vec![observation.observer_task.clone()],
+                        declared_by_workflows: effective_workflow_selector
+                            .as_deref()
+                            .map(|workflow| vec![workflow.to_string()])
+                            .unwrap_or_default(),
+                    });
+                }
                 let not_proved = proof_runtime_not_proved(
                     &target.contract,
                     &target.contract_path,
@@ -2744,6 +2825,7 @@ pub fn proof_runtime(
                             &doctor_artifact_display,
                             &up_log_artifact_display,
                             &dependency_evidence,
+                            &seam_observations,
                             &not_proved,
                             negative_control.as_ref(),
                             &workflow_env_artifacts,
@@ -2765,6 +2847,7 @@ pub fn proof_runtime(
                             stage_family: "proof",
                             proof_scope,
                             dependency_evidence,
+                            seam_observations,
                             negative_control,
                             not_proved,
                             summary: proof_summary_for_output,
@@ -55841,6 +55924,7 @@ workflows:
             "up.log",
             &[],
             &[],
+            &[],
             None,
             &[],
             None,
@@ -55876,6 +55960,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             &[],
             &[],
             None,
@@ -55990,6 +56075,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             &[],
             &[],
             None,
@@ -57551,6 +57637,61 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_marker_observation_removes_only_that_seam_boundary() {
+        let contract_path = Path::new("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path,
+            r#"
+version: 1
+project:
+  name: proof-seam
+services:
+  postgres:
+    manager:
+      kind: compose
+      service: postgres
+    readiness:
+      kind: compose_health
+tasks:
+  verify:
+    run: "true"
+    requires_services:
+      - postgres
+workflows:
+  default: verify
+  verify:
+    services:
+      required:
+        - postgres
+    run:
+      task: verify
+"#,
+        )
+        .expect("parse proof seam contract");
+        let evidence = vec![crate::output::ProofRuntimeDependencyEvidence {
+            dependency_id: String::from("service:postgres"),
+            level: Some(String::from("exercised")),
+            interaction_attempted: false,
+            observation: crate::output::ProofRuntimeDependencyObservation {
+                origin: String::from("round_trip_effect"),
+                evidence_class: ExecutionEvidenceClass::Attested,
+            },
+            declared_by_tasks: vec![String::from("observe-marker")],
+            declared_by_workflows: vec![String::from("verify")],
+        }];
+
+        let not_proved =
+            super::proof_runtime_not_proved(&contract, contract_path, Some("verify"), &evidence);
+        assert!(
+            !not_proved.iter().any(|entry| {
+                entry.kind == "dependency_exercise_not_proved"
+                    && entry.dependency_id.as_deref() == Some("service:postgres")
+            }),
+            "an attested marker observation must close only its declared seam boundary"
+        );
+    }
+
+    #[test]
     fn render_proof_runtime_text_surfaces_not_proved_boundaries() {
         let summary = crate::output::DoctorSummary {
             verdict: DoctorVerdict::Ready,
@@ -57583,6 +57724,7 @@ workflows:
                 declared_by_tasks: vec![String::from("verify")],
                 declared_by_workflows: vec![String::from("app")],
             }],
+            &[],
             &[crate::output::ProofRuntimeNotProved {
                 kind: String::from("dependency_exercise_not_proved"),
                 relative_to: String::from("runtime_path"),
@@ -57639,6 +57781,7 @@ workflows:
                 declared_by_tasks: vec![String::from("verify")],
                 declared_by_workflows: vec![String::from("app")],
             }],
+            &[],
             &[crate::output::ProofRuntimeNotProved {
                 kind: String::from("dependency_exercise_not_proved"),
                 relative_to: String::from("runtime_path"),
@@ -57691,6 +57834,17 @@ workflows:
                     },
                     declared_by_tasks: vec![String::from("serve")],
                     declared_by_workflows: vec![String::from("app")],
+                }],
+                seam_observations: vec![crate::output::ProofRuntimeSeamObservation {
+                    id: String::from("postgres-marker"),
+                    dependency_id: String::from("service:postgres"),
+                    observer_task: String::from("proof:postgres-marker"),
+                    marker_env: String::from("OTA_PROOF_SEAM_MARKER"),
+                    outcome: crate::output::ProofRuntimeSeamObservationOutcome::Observed,
+                    proof_scope_ref: String::from("workflow:app/seam_observation:postgres-marker"),
+                    evidence_class: ExecutionEvidenceClass::Attested,
+                    exit_code: Some(0),
+                    detail: None,
                 }],
                 negative_control: Some(crate::output::ProofRuntimeNegativeControl {
                     id: String::from("postgres-unavailable"),
@@ -57756,9 +57910,55 @@ workflows:
             Some("attested")
         );
         assert_eq!(
+            body["seam_observations"][0]["outcome"].as_str(),
+            Some("observed")
+        );
+        assert_eq!(
             body["not_proved"][0]["dependency_id"].as_str(),
             Some("service:postgres"),
             "a passing control task result remains separate from causal seam proof"
+        );
+    }
+
+    #[test]
+    fn render_proof_runtime_text_surfaces_marker_observation() {
+        let summary = crate::output::DoctorSummary::default();
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("app"),
+            Path::new("./ota.yaml"),
+            "post-up diagnosis",
+            "READY",
+            "passed",
+            &summary,
+            None,
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            &[],
+            &[crate::output::ProofRuntimeSeamObservation {
+                id: String::from("postgres-marker"),
+                dependency_id: String::from("service:postgres"),
+                observer_task: String::from("proof:postgres-marker"),
+                marker_env: String::from("OTA_PROOF_SEAM_MARKER"),
+                outcome: crate::output::ProofRuntimeSeamObservationOutcome::Observed,
+                proof_scope_ref: String::from("workflow:app/seam_observation:postgres-marker"),
+                evidence_class: ExecutionEvidenceClass::Attested,
+                exit_code: Some(0),
+                detail: None,
+            }],
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains("Seam Observations"));
+        assert!(
+            rendered
+                .contains("`proof:postgres-marker` against `service:postgres`: marker observed")
         );
     }
 
@@ -57864,6 +58064,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -57925,6 +58126,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -57995,6 +58197,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -58148,6 +58351,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -58217,6 +58421,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -58286,6 +58491,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -58352,6 +58558,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -58421,6 +58628,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -58707,6 +58915,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                seam_observations: Vec::new(),
                 negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
@@ -98885,6 +99094,7 @@ fn spawn_proof_runtime_up_process(
     member: Option<&str>,
     file_override: Option<&Path>,
     overrides: ExecutionOverrides,
+    seam_markers: &[(String, String)],
     up_log_artifact_path: &Path,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
@@ -98902,6 +99112,9 @@ fn spawn_proof_runtime_up_process(
         .current_dir(working_dir)
         .args(proof_runtime_up_args(overrides));
     command.envs(runtime_proof_child_env());
+    for (name, value) in seam_markers {
+        command.env(name, value);
+    }
 
     if let Some(workflow_name) = workflow_name {
         command.arg("--workflow").arg(workflow_name);
@@ -99321,6 +99534,110 @@ fn proof_runtime_negative_control(
         })
 }
 
+fn proof_runtime_seam_observations(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Vec<crate::schema::WorkflowSeamObservationSpec> {
+    contract
+        .selected_workflow(workflow_name)
+        .map(|(_, workflow)| workflow.proof.seam_observations.clone())
+        .unwrap_or_default()
+}
+
+fn proof_runtime_seam_marker() -> Result<String, String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|error| format!("could not generate runtime proof seam marker: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn proof_runtime_execute_seam_observation(
+    contract_path: &Path,
+    observation: &crate::schema::WorkflowSeamObservationSpec,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    runtime_up_pid: u32,
+    marker: &str,
+    primary_proof_ok: bool,
+) -> crate::output::ProofRuntimeSeamObservation {
+    use crate::output::ProofRuntimeSeamObservationOutcome;
+
+    let proof_scope_ref = workflow_name
+        .map(|workflow| format!("workflow:{workflow}/seam_observation:{}", observation.id))
+        .unwrap_or_else(|| format!("workflow:default/seam_observation:{}", observation.id));
+    let base = || crate::output::ProofRuntimeSeamObservation {
+        id: observation.id.clone(),
+        dependency_id: format!("service:{}", observation.dependency),
+        observer_task: observation.task.clone(),
+        marker_env: observation.marker_env.clone(),
+        outcome: ProofRuntimeSeamObservationOutcome::ObservationCouldNotRun,
+        proof_scope_ref: proof_scope_ref.clone(),
+        evidence_class: ExecutionEvidenceClass::Attested,
+        exit_code: None,
+        detail: None,
+    };
+    if !primary_proof_ok {
+        let mut record = base();
+        record.detail = Some(String::from(
+            "ordinary runtime proof did not pass, so the seam observer was not executed",
+        ));
+        return record;
+    }
+    let exe = match env::current_exe() {
+        Ok(exe) => exe,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(format!("could not resolve ota executable: {error}"));
+            return record;
+        }
+    };
+    let mut command = Command::new(exe);
+    command
+        .current_dir(contract_working_dir(contract_path))
+        .env("OTA_FILE", contract_path)
+        .env(
+            "OTA_ACTIVE_EXECUTION_PARENT_PID",
+            runtime_up_pid.to_string(),
+        )
+        .env(&observation.marker_env, marker)
+        .arg("run")
+        .arg(&observation.task)
+        .arg("--skip-deps");
+    if let Some(backend) = overrides.backend {
+        command.arg("--mode").arg(match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        });
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        command.arg("--lifecycle").arg(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        });
+    }
+    command.arg(".").stdin(Stdio::null());
+    match command.output() {
+        Ok(output) if output.status.success() => crate::output::ProofRuntimeSeamObservation {
+            outcome: ProofRuntimeSeamObservationOutcome::Observed,
+            exit_code: output.status.code(),
+            ..base()
+        },
+        Ok(output) => crate::output::ProofRuntimeSeamObservation {
+            outcome: ProofRuntimeSeamObservationOutcome::ObservationFailed,
+            exit_code: output.status.code(),
+            detail: Some(String::from_utf8_lossy(&output.stderr).trim().to_string())
+                .filter(|detail| !detail.is_empty()),
+            ..base()
+        },
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error.to_string());
+            record
+        }
+    }
+}
+
 fn proof_runtime_execute_negative_control(
     contract: &Contract,
     contract_path: &Path,
@@ -99461,10 +99778,18 @@ fn proof_runtime_not_proved(
         .filter(|entry| entry.interaction_attempted && entry.observation.origin == "caller_side")
         .map(|entry| entry.dependency_id.clone())
         .collect::<BTreeSet<_>>();
+    let exercised_dependencies = dependency_evidence
+        .iter()
+        .filter(|entry| entry.level.as_deref() == Some("exercised"))
+        .map(|entry| entry.dependency_id.clone())
+        .collect::<BTreeSet<_>>();
     let declared_service_seams = selected_workflow_name
         .map(|workflow_name| proof_runtime_declared_service_seam_owners(contract, workflow_name))
         .unwrap_or_default();
     for (service_name, tasks) in declared_service_seams {
+        if exercised_dependencies.contains(&format!("service:{service_name}")) {
+            continue;
+        }
         entries.push(crate::output::ProofRuntimeNotProved {
             kind: String::from("dependency_exercise_not_proved"),
             relative_to: String::from("runtime_path"),
@@ -101797,6 +102122,7 @@ fn render_proof_runtime_text(
     doctor_artifact: &str,
     up_log_artifact: &str,
     dependency_evidence: &[ProofRuntimeDependencyEvidence],
+    seam_observations: &[crate::output::ProofRuntimeSeamObservation],
     not_proved: &[crate::output::ProofRuntimeNotProved],
     negative_control: Option<&ProofRuntimeNegativeControl>,
     workflow_env_artifacts: &[EnvRenderedArtifactEntry],
@@ -101925,6 +102251,30 @@ fn render_proof_runtime_text(
                 "\n  {} {}",
                 next_bullet(),
                 render_proof_runtime_dependency_evidence_text(entry)
+            ));
+        }
+    }
+
+    if !seam_observations.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{} {}",
+            info_bullet(),
+            paint_section_title("Seam Observations")
+        ));
+        for observation in seam_observations {
+            stdout.push_str(&format!(
+                "\n  {} {} against {}: {}",
+                next_bullet(),
+                paint_backticked_code(&observation.observer_task),
+                paint_backticked_code(&observation.dependency_id),
+                match observation.outcome {
+                    crate::output::ProofRuntimeSeamObservationOutcome::Observed =>
+                        "marker observed",
+                    crate::output::ProofRuntimeSeamObservationOutcome::ObservationFailed =>
+                        "marker observation failed",
+                    crate::output::ProofRuntimeSeamObservationOutcome::ObservationCouldNotRun =>
+                        "marker observation could not run",
+                }
             ));
         }
     }

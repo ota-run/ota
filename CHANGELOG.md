@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker,
+  run a finite declared observer before teardown, and emit attested `exercised` dependency
+  evidence only when that observer confirms the marker across the declared seam. Runner-owned
+  `OTA_PROOF_*` values now override task and env-file resolution so the active proof marker cannot
+  be replaced by contract environment defaults.
+
 - `ota proof runtime` text output now renders the same runner-derived `Dependency Evidence` as
   JSON before proof boundaries. It preserves the evidence level, observation origin, and authority
   class, so `reachable` and caller-side-only interaction attempts cannot be over-read from a green

@@ -761,11 +761,13 @@ pub struct WorkflowSpec {
 pub struct WorkflowProofSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub negative_controls: Vec<WorkflowNegativeControlSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seam_observations: Vec<WorkflowSeamObservationSpec>,
 }
 
 impl WorkflowProofSpec {
     pub fn is_empty(&self) -> bool {
-        self.negative_controls.is_empty()
+        self.negative_controls.is_empty() && self.seam_observations.is_empty()
     }
 }
 
@@ -776,6 +778,16 @@ pub struct WorkflowNegativeControlSpec {
     pub id: String,
     pub dependency: String,
     pub task: String,
+}
+
+/// A finite post-readiness task that confirms a runner-issued marker crossed one declared seam.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSeamObservationSpec {
+    pub id: String,
+    pub dependency: String,
+    pub task: String,
+    pub marker_env: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
