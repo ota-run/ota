@@ -1937,12 +1937,40 @@ Fields:
   must directly depend on the named artifact's producer task
 - `replay_inputs`: optional repo-owned replay identity artifacts captured before the selected task
   or workflow closure begins; each entry declares `id`, a repo-relative `path`, and one of:
-  - `kind: static_file` for generic named replay inputs; these are narrowing replay evidence
-  - `kind: presentation_profile` for a declared execution-presentation profile file; matching
-    identity closes only the named presentation-semantics class for that lane
-  - `kind: comparator_profile` for declared comparison semantics such as equivalence or tolerance;
-    matching identity narrows comparator drift but does not by itself make the lane hermetic
+  - `kind: static_file` for a generic immutable repo file the deterministic lane consumes directly,
+    such as a frozen fixture, SQLite store, lockfile-shaped baseline, or other named replay input;
+    these are narrowing replay evidence
+  - `kind: presentation_profile` for a declared execution-presentation profile file when the lane's
+    output shape depends on a named rendering or normalization policy; matching identity closes only
+    the named presentation-semantics class for that lane
+  - `kind: comparator_profile` for declared comparison semantics such as equivalence, tolerance,
+    ignored labels, or threshold posture; matching identity narrows comparator drift but does not
+    by itself make the lane hermetic
   replay inputs cannot overlap declared closure writes
+- replay-input kind guide:
+  - use `static_file` when the file is part of the deterministic selected-lane input set
+  - use `presentation_profile` when the file controls how runtime output is shaped or normalized
+    before comparison
+  - use `comparator_profile` when the file controls how Ota should compare or judge the result
+- example:
+
+  ```yaml
+  verify:
+    replay_inputs:
+      - id: recorded_sql
+        kind: static_file
+        path: data/fixture.jsonl
+      - id: frozen_store
+        kind: static_file
+        path: data/store.db
+      - id: runtime-presentation
+        kind: presentation_profile
+        path: replay/presentation-profile.yaml
+      - id: equivalence
+        kind: comparator_profile
+        path: replay/comparator-profile.yaml
+  ```
+
 - `witnessed_observations.query_traces`: optional JSONL query-trace artifacts emitted by a prior
   or external execution; each entry declares an `id` and repo-relative `path`. Ota preserves
   these as attested observations in the receipt rather than treating per-query identities as
