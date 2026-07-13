@@ -349,24 +349,27 @@ boundary. `observation.origin` explains the evidence's location and controls pro
 The first implementation should stay deliberately strict and runner-owned:
 
 1. the workflow declares `proof.seam_observations[]` with an observer id, one existing dependency,
-   one finite observer task, and an Ota-owned marker environment name
-2. Ota issues one opaque marker per proof transaction and injects it into both the selected runtime
-   path and each declared observer
+   one normal-closure producer task, one finite observer task, and an Ota-owned marker environment
+   name
+2. Ota issues one opaque marker per proof transaction, carries its binding internally, and injects
+   it only into the declared producer task. It never passes that marker to the observer.
 3. after readiness succeeds but before Ota tears down the runtime, Ota invokes each observer on the
-   same execution mode with prerequisites skipped
+   same execution mode with prerequisites skipped, giving it only a non-secret transaction id,
+   observation id, and runner-owned transient attestation path
 4. validation requires the observer to stay outside the normal workflow closure, require the named
-   dependency, and have every prerequisite already owned by that normal closure; the dependency
-   itself must also be part of the selected runtime path
-5. only an observer exit that confirms the runner-issued marker records `outcome: observed` and
-   promotes the matching dependency to attested `exercised` evidence with
+   dependency, and have every prerequisite already owned by that normal closure; the declared
+   producer must be in that closure and require the same dependency
+5. only an observer that writes a valid attestation containing the exact runner-issued marker for
+   this transaction and observation records `outcome: observed` and promotes the matching
+   dependency to attested `exercised` evidence with
    `observation.origin: round_trip_effect`
 6. observer failure, inability to run, or a failed ordinary runtime proof retains the matching
    `dependency_exercise_not_proved` boundary and fails the proof carrier when ordinary proof had
    otherwise passed
 
-The marker is never emitted. Ota cannot infer that arbitrary application code consumed it; the
-declared finite observer is the contract-owned assertion point, while the runner owns issuance,
-injection, execution order, outcome, and evidence publication.
+The marker is never emitted. Ota consumes and removes the transient attestation after validating
+it, retaining only non-secret transaction and attestation digests. This makes a successful but
+inert observer fail: it cannot reproduce an opaque marker it never recovered from the dependency.
 
 The first machine-readable shape should stay narrow:
 
@@ -417,8 +420,10 @@ Direction:
   introduce a generic fault-injection executor in this slice
 - link the control record to the same selected proof scope and dependency identity, while keeping
   its intervention and observed outcome explicit
-- publish `fault_tested` only when the control executed and the selected lane failed in the
-  declared expected way
+- treat a plain control non-zero exit as a bounded `nonzero_exit_observed` result, not as evidence
+  of expected dependency failure
+- publish `fault_tested` only after a later structured failure attestation binds the control to the
+  same green obligation and proves the expected obligation failed under the intervention
 - publish an unexpected control success or an invalid control setup as evidence that the seam is
   not yet proven, never as a passing fault test
 - never derive `fault_tested` from a fingerprint, ordinary execution log, or successful selected
@@ -431,7 +436,7 @@ The first machine-readable shape should be additive:
   "negative_control": {
     "dependency_id": "service:postgres",
     "intervention": "dependency_down",
-    "outcome": "expected_failure_observed",
+    "outcome": "nonzero_exit_observed",
     "proof_scope_ref": "workflow:app/runtime:web"
   }
 }
@@ -507,11 +512,12 @@ V11.11 is complete when:
 - each seam observation nests runner-derived `observation.origin` with the V11.9
   `observation.evidence_class`; the latter is authoritative for downstream policy/UX while the
   former controls evidence-level promotion and is never caller-selected prose
-- `fault_tested` appears only on a separately recorded negative-control run with an observed
-  expected failure; ordinary green proof, fingerprint, or caller-side trace never implies it
-- marker-bound seam observers run before teardown, prove their prerequisite closure is already
-  owned by the selected workflow, and only `outcome: observed` removes the matching
-  `dependency_exercise_not_proved` boundary
+- `fault_tested` appears only on a separately recorded negative-control run with a bound failure
+  attestation for the same green obligation; ordinary green proof, fingerprint, caller-side trace,
+  or a generic non-zero control exit never implies it
+- marker-bound seam observers run before teardown, prove their producer and observer closures are
+  owned by the selected workflow, and only a runner-verified transaction attestation removes the
+  matching `dependency_exercise_not_proved` boundary
 - engineering notes no longer need to carry the only truthful statement of proof scope
 - downstream consumers can distinguish a green narrow proof from a broader runtime or repo proof
   without relying on narrative prose

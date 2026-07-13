@@ -26,11 +26,13 @@
 
 ## Unreleased
 
-- Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker,
-  run a finite declared observer before teardown, and emit attested `exercised` dependency
-  evidence only when that observer confirms the marker across the declared seam. Runner-owned
-  `OTA_PROOF_*` values now override task and env-file resolution so the active proof marker cannot
-  be replaced by contract environment defaults.
+- Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker to
+  a declared workflow producer, run a finite observer before teardown, and emit attested
+  `exercised` dependency evidence only after Ota verifies a transaction-bound observer attestation
+  that recovered the marker through the declared seam. The observer never receives the marker;
+  receipts retain only transaction and attestation digests. Runner-owned `OTA_PROOF_*` values now
+  override task and env-file resolution so active proof values cannot be replaced by contract
+  environment defaults.
 
 - `ota proof runtime` text output now renders the same runner-derived `Dependency Evidence` as
   JSON before proof boundaries. It preserves the evidence level, observation origin, and authority
@@ -54,7 +56,7 @@
 - added workflow-owned runtime-proof negative controls. Declare a separate finite task under
   `workflows.<name>.proof.negative_controls`, then run
   `ota proof runtime --workflow <name> --negative-control <id>` to require its non-zero exit.
-  JSON emits a boundary-attested `negative_control` record with `expected_failure_observed`,
+  JSON emits a boundary-attested `negative_control` record with `nonzero_exit_observed`,
   `unexpected_success`, or `control_could_not_run`. The observed control outcome remains separate
   from ordinary dependency evidence and does not itself close a dependency-exercise boundary.
 

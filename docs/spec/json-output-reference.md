@@ -838,20 +838,22 @@ Notes:
   `http` and `tcp`; current shipped attempted records use `caller_side`.
 - `dependency_evidence[].observation.evidence_class` is the V11.9 authority class for the
   observation itself. Current shipped reachable records are `derived`.
-- `seam_observations[]` records each declared marker-bound observer. Ota issues the marker,
-  injects it into the runtime path, and runs the finite observer before teardown. Only
-  `outcome: observed` emits an attested `dependency_evidence[].level: exercised` record with
-  `observation.origin: round_trip_effect`; failures leave the seam explicitly not proved. The
-  marker itself is never emitted.
+- `seam_observations[]` records each declared marker-bound producer/observer pair. Ota injects the opaque marker
+  into the declared producer task, but never passes it to the observer. The observer must write a
+  transient JSON attestation after recovering that marker through the dependency. Only a matching
+  transaction id, observation id, and marker emits an attested
+  `dependency_evidence[].level: exercised` record with `observation.origin: round_trip_effect`.
+  Receipts retain non-secret transaction and attestation digests; the marker and transient
+  attestation are removed after verification. Failures leave the seam explicitly not proved.
 - Text output renders the same `Dependency Evidence` before `Proof Boundaries`, including the
   level, observation origin, and authority class. A caller-side-only attempt is rendered as not
   independently exercised; it does not become a green seam claim in human output.
 - `negative_control` is optional boundary-attested evidence from one explicitly selected
-  `workflows.<name>.proof.negative_controls[]` task. `expected_failure_observed` is the only
-  passing control outcome; `unexpected_success` and `control_could_not_run` fail the proof. This
-  record is separate from ordinary `dependency_evidence[]` and does not remove the matching
-  `dependency_exercise_not_proved` boundary: an observed task failure is not sufficient to infer
-  that the declared dependency caused it. A control that is not run because the ordinary proof
+  `workflows.<name>.proof.negative_controls[]` task. `nonzero_exit_observed` means only that the
+  selected control task exited non-zero; it is not evidence that the declared dependency caused
+  the failure. `unexpected_success` and `control_could_not_run` fail the proof. This record is
+  separate from ordinary `dependency_evidence[]` and does not remove the matching
+  `dependency_exercise_not_proved` boundary. A control that is not run because the ordinary proof
   already failed retains the primary proof failure and records a runner-authored `detail` instead
   of replacing the original diagnosis.
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
@@ -966,7 +968,7 @@ Success:
     "id": "postgres-unavailable",
     "dependency_id": "service:postgres",
     "control_task": "verify:postgres-unavailable",
-    "outcome": "expected_failure_observed",
+    "outcome": "nonzero_exit_observed",
     "proof_scope_ref": "workflow:app/negative_control:postgres-unavailable",
     "evidence_class": "attested",
     "exit_code": 1

@@ -16893,6 +16893,29 @@ fn validate_workflow_seam_observations(
                 observation.id, observation.dependency
             )));
         }
+        let Some(producer) = contract.tasks.get(observation.producer_task.trim()) else {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.producer_task` references unknown task `{}`",
+                observation.id, observation.producer_task
+            )));
+            continue;
+        };
+        if !normal_closure.contains(observation.producer_task.trim()) {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.producer_task` must be in the normal workflow closure so the marker belongs to the selected proof transaction",
+                observation.id
+            )));
+        }
+        if !producer
+            .requires_services
+            .iter()
+            .any(|service| service == &observation.dependency)
+        {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.producer_task` must require observed service `{}`",
+                observation.id, observation.dependency
+            )));
+        }
         let Some(task) = contract.tasks.get(observation.task.trim()) else {
             errors.push(ValidationError::new(format!(
                 "`{prefix}.{}.task` references unknown task `{}`",
@@ -19026,6 +19049,12 @@ services:
 tasks:
   serve:
     run: echo serve
+    requires_services:
+      - postgres
+  write-marker:
+    run: echo marker
+    requires_services:
+      - postgres
   setup-marker:
     run: echo setup
   observe-marker:
@@ -19043,6 +19072,7 @@ workflows:
       seam_observations:
         - id: postgres-marker
           dependency: postgres
+          producer_task: write-marker
           task: observe-marker
           marker_env: OTA_PROOF_SEAM_MARKER
 "#,
@@ -19054,6 +19084,58 @@ workflows:
             errors.to_string().contains(
                 "depends on `setup-marker`, which must be in the normal workflow closure"
             )
+        );
+    }
+
+    #[test]
+    fn rejects_seam_producer_outside_normal_workflow_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: seam-producer
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+tasks:
+  serve:
+    run: echo serve
+    requires_services:
+      - postgres
+  write-marker:
+    run: echo marker
+    requires_services:
+      - postgres
+  observe-marker:
+    run: echo observe
+    requires_services:
+      - postgres
+workflows:
+  default: app
+  app:
+    run:
+      task: serve
+    proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          producer_task: write-marker
+          task: observe-marker
+          marker_env: OTA_PROOF_SEAM_MARKER
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("producer must belong to proof lane");
+        assert!(
+            errors
+                .to_string()
+                .contains("producer_task` must be in the normal workflow closure")
         );
     }
 

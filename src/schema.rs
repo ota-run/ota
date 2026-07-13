@@ -786,6 +786,9 @@ pub struct WorkflowNegativeControlSpec {
 pub struct WorkflowSeamObservationSpec {
     pub id: String,
     pub dependency: String,
+    /// A task in the selected workflow closure that receives the runner-issued marker.
+    pub producer_task: String,
+    /// A finite post-readiness task that recovers the marker through the declared dependency.
     pub task: String,
     pub marker_env: String,
 }

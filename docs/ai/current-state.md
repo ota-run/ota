@@ -53,7 +53,7 @@ durable agent workflow belongs in the canonical Ota skill.
   boundaries, preserving the evidence level, origin, and authority class for human operators.
 - completed V11.11 pressure gate: Athena API now declares a finite Rails/PostgreSQL refusal control
   that redirects only the control task to an unreachable loopback port. The `app` runtime proof
-  passed with `expected_failure_observed` across the green native macOS/Ubuntu, Windows-static,
+  passed with `nonzero_exit_observed` across the green native macOS/Ubuntu, Windows-static,
   and container Ubuntu matrix. The next seam-evidence widening must use an independently observed
   dependency-side or round-trip artifact; a successful task that merely declares
   `requires_services` is not sufficient evidence of interaction.

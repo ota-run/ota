@@ -2529,7 +2529,14 @@ pub(crate) fn effective_task_env_for_backend(
     backend: &ResolvedExecutionBackend,
     working_dir: &Path,
 ) -> BTreeMap<String, String> {
-    effective_task_env_for_backend_with_resolved_env(contract, task, backend, working_dir, None)
+    effective_task_env_for_backend_with_resolved_env(
+        contract,
+        task,
+        backend,
+        working_dir,
+        None,
+        None,
+    )
 }
 
 fn effective_task_env_for_backend_with_resolved_env(
@@ -2538,6 +2545,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     backend: &ResolvedExecutionBackend,
     working_dir: &Path,
     password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
+    task_name: Option<&str>,
 ) -> BTreeMap<String, String> {
     let ota_workspace = ota_workspace_for_backend(working_dir, backend);
     let host_workspace = host_workspace_template_value(working_dir);
@@ -2600,7 +2608,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     if let Some(host_gid) = host_gid {
         env.insert(String::from("OTA_HOST_GID"), host_gid);
     }
-    apply_runner_owned_proof_env(&mut env, std::env::vars());
+    apply_runner_owned_proof_env(&mut env, std::env::vars(), task_name);
     env
 }
 
@@ -2708,21 +2716,52 @@ pub(crate) fn effective_task_env_for_selection(
     if let Some(host_gid) = host_gid {
         env.insert(String::from("OTA_HOST_GID"), host_gid);
     }
-    apply_runner_owned_proof_env(&mut env, std::env::vars());
+    apply_runner_owned_proof_env(&mut env, std::env::vars(), Some(task_name));
     Some(env)
 }
 
 /// Proof transactions reserve `OTA_PROOF_*` for runner-issued values. Apply them after all
 /// contract and env-file resolution so task configuration cannot replace the active proof nonce.
-fn apply_runner_owned_proof_env<I>(task_env: &mut BTreeMap<String, String>, process_env: I)
-where
+const OTA_PROOF_MARKER_BINDINGS_ENV: &str = "OTA_PROOF_MARKER_BINDINGS";
+
+#[derive(Deserialize)]
+struct RunnerProofMarkerBinding {
+    name: String,
+    task: String,
+    value: String,
+}
+
+fn apply_runner_owned_proof_env<I>(
+    task_env: &mut BTreeMap<String, String>,
+    process_env: I,
+    task_name: Option<&str>,
+) where
     I: IntoIterator<Item = (String, String)>,
 {
+    let process_env = process_env.into_iter().collect::<BTreeMap<_, _>>();
     task_env.extend(
         process_env
-            .into_iter()
-            .filter(|(name, _)| name.starts_with("OTA_PROOF_")),
+            .iter()
+            .filter(|(name, _)| {
+                name.starts_with("OTA_PROOF_") && name.as_str() != OTA_PROOF_MARKER_BINDINGS_ENV
+            })
+            .map(|(name, value)| (name.clone(), value.clone())),
     );
+    let Some(task_name) = task_name else {
+        return;
+    };
+    let Some(bindings) = process_env
+        .get(OTA_PROOF_MARKER_BINDINGS_ENV)
+        .and_then(|raw| serde_json::from_str::<Vec<RunnerProofMarkerBinding>>(raw).ok())
+    else {
+        return;
+    };
+    for binding in bindings
+        .into_iter()
+        .filter(|binding| binding.task == task_name)
+    {
+        task_env.insert(binding.name, binding.value);
+    }
 }
 
 fn load_task_env_file_values(
@@ -8611,6 +8650,7 @@ fn execute_task_with_hooks(
         &backend,
         working_dir,
         Some(&initial_env_details),
+        Some(task_name),
     );
     let env_details = resolve_task_env_details_for_task_with_policy(
         contract,
@@ -32352,6 +32392,7 @@ tasks:
                 ),
                 (String::from("UNRELATED"), String::from("ignored")),
             ],
+            Some("verify"),
         );
 
         assert_eq!(
@@ -32363,6 +32404,38 @@ tasks:
             Some("development")
         );
         assert!(!task_env.contains_key("UNRELATED"));
+    }
+
+    #[test]
+    fn runner_owned_proof_marker_is_scoped_to_declared_producer_task() {
+        let bindings =
+            r#"[{"name":"OTA_PROOF_SEAM_MARKER","task":"write-marker","value":"runner-value"}]"#;
+        let mut producer_env = BTreeMap::new();
+        super::apply_runner_owned_proof_env(
+            &mut producer_env,
+            vec![(
+                String::from("OTA_PROOF_MARKER_BINDINGS"),
+                String::from(bindings),
+            )],
+            Some("write-marker"),
+        );
+        assert_eq!(
+            producer_env
+                .get("OTA_PROOF_SEAM_MARKER")
+                .map(String::as_str),
+            Some("runner-value")
+        );
+
+        let mut observer_env = BTreeMap::new();
+        super::apply_runner_owned_proof_env(
+            &mut observer_env,
+            vec![(
+                String::from("OTA_PROOF_MARKER_BINDINGS"),
+                String::from(bindings),
+            )],
+            Some("observe-marker"),
+        );
+        assert!(!observer_env.contains_key("OTA_PROOF_SEAM_MARKER"));
     }
 
     #[test]

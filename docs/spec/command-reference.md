@@ -648,8 +648,9 @@ Current behavior:
   selected task only after the ordinary proof path has passed and requires the control task to
   exit non-zero, then emits the runner-observed control outcome as separate proof evidence
 - runs declared `workflows.<name>.proof.seam_observations[]` after readiness and before teardown;
-  Ota injects one opaque marker into both the runtime path and finite observer, and only an
-  observer-confirmed marker becomes `exercised` dependency evidence
+  Ota injects one opaque marker into the declared producer task, never the finite observer. The
+  observer must recover it through the declared dependency and write a runner-owned transaction
+  attestation; only a verified attestation becomes `exercised` dependency evidence
 - renders `Dependency Evidence` before proof boundaries when Ota has runner-derived service
   reachability or caller-side attempt evidence; the render keeps its level, origin, and authority
   class visible instead of collapsing it into the proof verdict

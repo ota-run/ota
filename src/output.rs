@@ -690,11 +690,18 @@ pub struct ProofRuntimeDependencyEvidence {
 pub struct ProofRuntimeSeamObservation {
     pub id: String,
     pub dependency_id: String,
+    pub producer_task: String,
+    /// Non-secret identity derived from the runner-issued marker for this proof transaction.
+    pub transaction_id: String,
     pub observer_task: String,
     pub marker_env: String,
     pub outcome: ProofRuntimeSeamObservationOutcome,
     pub proof_scope_ref: String,
     pub evidence_class: ExecutionEvidenceClass,
+    /// Digest of the transient observer attestation. The attestation and raw marker are removed
+    /// after verification, so the receipt can bind the result without exposing either value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attestation_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -727,7 +734,7 @@ pub struct ProofRuntimeNegativeControl {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofRuntimeNegativeControlOutcome {
-    ExpectedFailureObserved,
+    NonzeroExitObserved,
     UnexpectedSuccess,
     ControlCouldNotRun,
 }

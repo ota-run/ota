@@ -3892,23 +3892,27 @@ workflows:
       seam_observations:
         - id: postgres-marker
           dependency: postgres
-          task: proof:postgres-marker
+          producer_task: write-proof-marker
+          task: observe-proof-marker
           marker_env: OTA_PROOF_SEAM_MARKER
 ```
 
-Ota issues one opaque marker for the proof, injects it into the runtime path and then runs the
-finite observer before cleanup. The observer must confirm that exact marker through the declared
-dependency seam. Only an observed marker promotes that dependency to `exercised`; failed or
-ambiguous observations retain `dependency_exercise_not_proved`.
+Ota issues one opaque marker for the proof, injects it into the selected workflow path, and then
+runs the finite observer before cleanup. The observer never receives the marker directly. It
+receives a transaction identifier and runner-owned transient attestation path, and must recover
+the marker through the declared dependency before writing its JSON attestation. Ota verifies the
+transaction id, observation id, and marker before promoting the dependency to `exercised`; failed
+or ambiguous observations retain `dependency_exercise_not_proved`.
 
 The observer is deliberately narrow: it must be finite, remain outside the normal workflow
 closure, require the named service, and have every prerequisite already owned by the normal
 workflow closure. The observed service must also be part of that normal closure. This prevents a
 proof-only task from silently repeating setup or minting an `exercised` claim for a service outside
-the selected runtime path. The marker value is runner-issued and never rendered in output.
-`OTA_PROOF_*` values are reserved for the active proof transaction and are applied after task and
-env-file resolution, so contract-owned environment defaults cannot replace the marker at execution
-time.
+the selected runtime path. `producer_task` must be in the selected workflow closure and require
+the observed service. The marker value and transient attestation are never rendered in output;
+the receipt retains only transaction and attestation digests. Ota carries marker bindings internally
+and injects the raw marker only into `producer_task`; contract-owned environment defaults cannot
+replace it at execution time.
 - if `setup.task` already depends on the same action task, direct task execution still follows the task graph while workflow `ota up` avoids running the same prepare action twice
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness

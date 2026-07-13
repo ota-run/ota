@@ -2457,6 +2457,7 @@ pub fn proof_runtime(
                     .map(|observation| {
                         (
                             observation.marker_env.clone(),
+                            observation.producer_task.clone(),
                             seam_marker
                                 .as_ref()
                                 .expect("marker exists for declared observer")
@@ -2464,6 +2465,9 @@ pub fn proof_runtime(
                         )
                     })
                     .collect::<Vec<_>>();
+                let seam_transaction_id = seam_marker
+                    .as_deref()
+                    .map(proof_runtime_seam_transaction_id);
                 let artifact_dir = proof_runtime_artifact_dir(
                     contract_working_dir(&target.contract_path),
                     member,
@@ -2547,6 +2551,10 @@ pub fn proof_runtime(
                             effective_workflow_selector.as_deref(),
                             overrides,
                             up_process.id(),
+                            &artifact_dir,
+                            seam_transaction_id
+                                .as_deref()
+                                .expect("transaction identity exists for declared observer"),
                             seam_marker
                                 .as_deref()
                                 .expect("marker exists for declared observer"),
@@ -2695,12 +2703,11 @@ pub fn proof_runtime(
                 });
                 if base_ok
                     && let Some(control) = negative_control.as_ref()
-                    && control.outcome
-                        != ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+                    && control.outcome != ProofRuntimeNegativeControlOutcome::NonzeroExitObserved
                     && proof_error.is_none()
                 {
                     proof_error = Some(format!(
-                        "negative control `{}` did not observe the expected task failure",
+                        "negative control `{}` did not observe a non-zero task exit",
                         control.id
                     ));
                 }
@@ -2727,8 +2734,7 @@ pub fn proof_runtime(
                 );
                 if base_ok
                     && negative_control.as_ref().is_some_and(|control| {
-                        control.outcome
-                            != ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+                        control.outcome != ProofRuntimeNegativeControlOutcome::NonzeroExitObserved
                     })
                     && proof_failure_class.is_none()
                 {
@@ -57692,6 +57698,72 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_verdict_cannot_collapse_a_remaining_boundary_into_passed() {
+        let boundary = crate::output::ProofRuntimeNotProved {
+            kind: String::from("dependency_exercise_not_proved"),
+            relative_to: String::from("runtime_path"),
+            source: String::from("contract_lane"),
+            dependency_id: Some(String::from("service:postgres")),
+            reason: Some(String::from("no_independent_dependency_evidence")),
+            declared_by_tasks: vec![String::from("serve")],
+            declared_by_workflows: vec![String::from("app")],
+        };
+        assert_eq!(
+            super::proof_runtime_verdict(true, &[boundary]),
+            "passed_with_unproven_boundaries"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_seam_attestation_rejects_inert_or_mismatched_observers() {
+        let fixture = TempDir::new().unwrap();
+        let attestation_path = fixture.path().join("seam.json");
+
+        let missing = super::proof_runtime_read_seam_attestation(
+            &attestation_path,
+            "sha256:transaction",
+            "postgres-marker",
+            "opaque-marker",
+        )
+        .expect_err("a successful observer without an attestation is inert");
+        assert!(missing.contains("did not write its attestation"));
+
+        fs::write(
+            &attestation_path,
+            r#"{"transaction_id":"sha256:transaction","observation_id":"postgres-marker","marker":"wrong-marker"}"#,
+        )
+        .unwrap();
+        let mismatched = super::proof_runtime_read_seam_attestation(
+            &attestation_path,
+            "sha256:transaction",
+            "postgres-marker",
+            "opaque-marker",
+        )
+        .expect_err("a stale or guessed marker must not promote exercised evidence");
+        assert!(mismatched.contains("did not attest the marker"));
+    }
+
+    #[test]
+    fn proof_runtime_seam_attestation_binds_observed_marker_to_transaction() {
+        let fixture = TempDir::new().unwrap();
+        let attestation_path = fixture.path().join("seam.json");
+        fs::write(
+            &attestation_path,
+            r#"{"transaction_id":"sha256:transaction","observation_id":"postgres-marker","marker":"opaque-marker"}"#,
+        )
+        .unwrap();
+
+        let digest = super::proof_runtime_read_seam_attestation(
+            &attestation_path,
+            "sha256:transaction",
+            "postgres-marker",
+            "opaque-marker",
+        )
+        .expect("matching runner transaction attestation should be accepted");
+        assert!(digest.starts_with("sha256:"));
+    }
+
+    #[test]
     fn render_proof_runtime_text_surfaces_not_proved_boundaries() {
         let summary = crate::output::DoctorSummary {
             verdict: DoctorVerdict::Ready,
@@ -57838,11 +57910,14 @@ workflows:
                 seam_observations: vec![crate::output::ProofRuntimeSeamObservation {
                     id: String::from("postgres-marker"),
                     dependency_id: String::from("service:postgres"),
+                    producer_task: String::from("write-marker"),
+                    transaction_id: String::from("sha256:transaction"),
                     observer_task: String::from("proof:postgres-marker"),
                     marker_env: String::from("OTA_PROOF_SEAM_MARKER"),
                     outcome: crate::output::ProofRuntimeSeamObservationOutcome::Observed,
                     proof_scope_ref: String::from("workflow:app/seam_observation:postgres-marker"),
                     evidence_class: ExecutionEvidenceClass::Attested,
+                    attestation_digest: Some(String::from("sha256:attestation")),
                     exit_code: Some(0),
                     detail: None,
                 }],
@@ -57850,8 +57925,7 @@ workflows:
                     id: String::from("postgres-unavailable"),
                     dependency_id: String::from("service:postgres"),
                     control_task: String::from("verify:postgres-unavailable"),
-                    outcome:
-                        crate::output::ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved,
+                    outcome: crate::output::ProofRuntimeNegativeControlOutcome::NonzeroExitObserved,
                     proof_scope_ref: String::from(
                         "workflow:app/negative_control:postgres-unavailable",
                     ),
@@ -57903,7 +57977,7 @@ workflows:
         );
         assert_eq!(
             body["negative_control"]["outcome"].as_str(),
-            Some("expected_failure_observed")
+            Some("nonzero_exit_observed")
         );
         assert_eq!(
             body["negative_control"]["evidence_class"].as_str(),
@@ -57912,6 +57986,10 @@ workflows:
         assert_eq!(
             body["seam_observations"][0]["outcome"].as_str(),
             Some("observed")
+        );
+        assert_eq!(
+            body["seam_observations"][0]["producer_task"].as_str(),
+            Some("write-marker")
         );
         assert_eq!(
             body["not_proved"][0]["dependency_id"].as_str(),
@@ -57939,11 +58017,14 @@ workflows:
             &[crate::output::ProofRuntimeSeamObservation {
                 id: String::from("postgres-marker"),
                 dependency_id: String::from("service:postgres"),
+                producer_task: String::from("write-marker"),
+                transaction_id: String::from("sha256:transaction"),
                 observer_task: String::from("proof:postgres-marker"),
                 marker_env: String::from("OTA_PROOF_SEAM_MARKER"),
                 outcome: crate::output::ProofRuntimeSeamObservationOutcome::Observed,
                 proof_scope_ref: String::from("workflow:app/seam_observation:postgres-marker"),
                 evidence_class: ExecutionEvidenceClass::Attested,
+                attestation_digest: Some(String::from("sha256:attestation")),
                 exit_code: Some(0),
                 detail: None,
             }],
@@ -57956,14 +58037,13 @@ workflows:
         ));
 
         assert!(rendered.contains("Seam Observations"));
-        assert!(
-            rendered
-                .contains("`proof:postgres-marker` against `service:postgres`: marker observed")
-        );
+        assert!(rendered.contains(
+            "`write-marker` -> `proof:postgres-marker` against `service:postgres`: marker observed"
+        ));
     }
 
     #[test]
-    fn proof_runtime_negative_control_records_observed_expected_failure() {
+    fn proof_runtime_negative_control_records_nonzero_exit_without_causal_promotion() {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
         fs::write(
@@ -57998,7 +58078,7 @@ tasks:
 
         assert_eq!(
             record.outcome,
-            crate::output::ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+            crate::output::ProofRuntimeNegativeControlOutcome::NonzeroExitObserved
         );
         assert_eq!(record.dependency_id, "service:postgres");
         assert_eq!(record.exit_code, Some(1));
@@ -99094,7 +99174,7 @@ fn spawn_proof_runtime_up_process(
     member: Option<&str>,
     file_override: Option<&Path>,
     overrides: ExecutionOverrides,
-    seam_markers: &[(String, String)],
+    seam_markers: &[(String, String, String)],
     up_log_artifact_path: &Path,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
@@ -99112,8 +99192,15 @@ fn spawn_proof_runtime_up_process(
         .current_dir(working_dir)
         .args(proof_runtime_up_args(overrides));
     command.envs(runtime_proof_child_env());
-    for (name, value) in seam_markers {
-        command.env(name, value);
+    if !seam_markers.is_empty() {
+        let bindings = serde_json::to_string(
+            &seam_markers
+                .iter()
+                .map(|(name, task, value)| json!({ "name": name, "task": task, "value": value }))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| format!("could not serialize proof marker bindings: {error}"))?;
+        command.env("OTA_PROOF_MARKER_BINDINGS", bindings);
     }
 
     if let Some(workflow_name) = workflow_name {
@@ -99551,12 +99638,76 @@ fn proof_runtime_seam_marker() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn proof_runtime_seam_transaction_id(marker: &str) -> String {
+    proof_runtime_attestation_digest(marker.as_bytes())
+}
+
+fn proof_runtime_attestation_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    format!("sha256:{hex}")
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProofRuntimeSeamAttestation {
+    transaction_id: String,
+    observation_id: String,
+    marker: String,
+}
+
+fn proof_runtime_seam_attestation_path(
+    artifact_dir: &Path,
+    observation: &crate::schema::WorkflowSeamObservationSpec,
+) -> PathBuf {
+    artifact_dir.join(format!("seam-observation-{}.json", observation.id))
+}
+
+fn proof_runtime_seam_attestation_env_path(contract_path: &Path, path: &Path) -> String {
+    path.strip_prefix(contract_working_dir(contract_path))
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn proof_runtime_read_seam_attestation(
+    path: &Path,
+    transaction_id: &str,
+    observation_id: &str,
+    marker: &str,
+) -> Result<String, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("observer did not write its attestation: {error}"))?;
+    let attestation: ProofRuntimeSeamAttestation = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("observer attestation is not valid JSON: {error}"))?;
+    if attestation.transaction_id != transaction_id {
+        return Err(String::from(
+            "observer attestation belongs to a different proof transaction",
+        ));
+    }
+    if attestation.observation_id != observation_id {
+        return Err(String::from(
+            "observer attestation belongs to a different seam observation",
+        ));
+    }
+    if attestation.marker != marker {
+        return Err(String::from(
+            "observer did not attest the marker issued for this proof transaction",
+        ));
+    }
+    Ok(proof_runtime_attestation_digest(&bytes))
+}
+
 fn proof_runtime_execute_seam_observation(
     contract_path: &Path,
     observation: &crate::schema::WorkflowSeamObservationSpec,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     runtime_up_pid: u32,
+    artifact_dir: &Path,
+    transaction_id: &str,
     marker: &str,
     primary_proof_ok: bool,
 ) -> crate::output::ProofRuntimeSeamObservation {
@@ -99568,11 +99719,14 @@ fn proof_runtime_execute_seam_observation(
     let base = || crate::output::ProofRuntimeSeamObservation {
         id: observation.id.clone(),
         dependency_id: format!("service:{}", observation.dependency),
+        producer_task: observation.producer_task.clone(),
+        transaction_id: transaction_id.to_string(),
         observer_task: observation.task.clone(),
         marker_env: observation.marker_env.clone(),
         outcome: ProofRuntimeSeamObservationOutcome::ObservationCouldNotRun,
         proof_scope_ref: proof_scope_ref.clone(),
         evidence_class: ExecutionEvidenceClass::Attested,
+        attestation_digest: None,
         exit_code: None,
         detail: None,
     };
@@ -99592,6 +99746,8 @@ fn proof_runtime_execute_seam_observation(
         }
     };
     let mut command = Command::new(exe);
+    let attestation_path = proof_runtime_seam_attestation_path(artifact_dir, observation);
+    let _ = fs::remove_file(&attestation_path);
     command
         .current_dir(contract_working_dir(contract_path))
         .env("OTA_FILE", contract_path)
@@ -99599,7 +99755,15 @@ fn proof_runtime_execute_seam_observation(
             "OTA_ACTIVE_EXECUTION_PARENT_PID",
             runtime_up_pid.to_string(),
         )
-        .env(&observation.marker_env, marker)
+        .env("OTA_PROOF_TRANSACTION_ID", transaction_id)
+        .env("OTA_PROOF_OBSERVATION_ID", &observation.id)
+        .env(
+            "OTA_PROOF_ATTESTATION_FILE",
+            proof_runtime_seam_attestation_env_path(contract_path, &attestation_path),
+        )
+        // The observer must recover the opaque marker through the declared dependency. Passing
+        // it directly would let an inert observer self-attest a seam it never exercised.
+        .env_remove(&observation.marker_env)
         .arg("run")
         .arg(&observation.task)
         .arg("--skip-deps");
@@ -99618,11 +99782,29 @@ fn proof_runtime_execute_seam_observation(
     }
     command.arg(".").stdin(Stdio::null());
     match command.output() {
-        Ok(output) if output.status.success() => crate::output::ProofRuntimeSeamObservation {
-            outcome: ProofRuntimeSeamObservationOutcome::Observed,
-            exit_code: output.status.code(),
-            ..base()
-        },
+        Ok(output) if output.status.success() => {
+            let attestation = proof_runtime_read_seam_attestation(
+                &attestation_path,
+                transaction_id,
+                &observation.id,
+                marker,
+            );
+            let _ = fs::remove_file(&attestation_path);
+            match attestation {
+                Ok(attestation_digest) => crate::output::ProofRuntimeSeamObservation {
+                    outcome: ProofRuntimeSeamObservationOutcome::Observed,
+                    attestation_digest: Some(attestation_digest),
+                    exit_code: output.status.code(),
+                    ..base()
+                },
+                Err(detail) => crate::output::ProofRuntimeSeamObservation {
+                    outcome: ProofRuntimeSeamObservationOutcome::ObservationFailed,
+                    exit_code: output.status.code(),
+                    detail: Some(detail),
+                    ..base()
+                },
+            }
+        }
         Ok(output) => crate::output::ProofRuntimeSeamObservation {
             outcome: ProofRuntimeSeamObservationOutcome::ObservationFailed,
             exit_code: output.status.code(),
@@ -99675,7 +99857,7 @@ fn proof_runtime_execute_negative_control(
             id: control.id.clone(),
             dependency_id: format!("service:{}", control.dependency),
             control_task: control.task.clone(),
-            outcome: ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved,
+            outcome: ProofRuntimeNegativeControlOutcome::NonzeroExitObserved,
             proof_scope_ref,
             evidence_class: ExecutionEvidenceClass::Attested,
             exit_code: Some(outcome.exit_code),
@@ -102263,8 +102445,9 @@ fn render_proof_runtime_text(
         ));
         for observation in seam_observations {
             stdout.push_str(&format!(
-                "\n  {} {} against {}: {}",
+                "\n  {} {} -> {} against {}: {}",
                 next_bullet(),
+                paint_backticked_code(&observation.producer_task),
                 paint_backticked_code(&observation.observer_task),
                 paint_backticked_code(&observation.dependency_id),
                 match observation.outcome {
@@ -102306,8 +102489,7 @@ fn render_proof_runtime_text(
             paint_backticked_code(&control.control_task),
             paint_backticked_code(&control.dependency_id),
             match control.outcome {
-                ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved =>
-                    "expected failure observed",
+                ProofRuntimeNegativeControlOutcome::NonzeroExitObserved => "non-zero exit observed",
                 ProofRuntimeNegativeControlOutcome::UnexpectedSuccess => "unexpected success",
                 ProofRuntimeNegativeControlOutcome::ControlCouldNotRun => "control could not run",
             }
