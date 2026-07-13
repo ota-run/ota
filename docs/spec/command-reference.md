@@ -647,6 +647,9 @@ Current behavior:
 - supports `--negative-control <id>` for a workflow-declared finite control task; Ota runs the
   selected task only after the ordinary proof path has passed and requires the control task to
   exit non-zero, then emits the runner-observed control outcome as separate proof evidence
+- renders `Dependency Evidence` before proof boundaries when Ota has runner-derived service
+  reachability or caller-side attempt evidence; the render keeps its level, origin, and authority
+  class visible instead of collapsing it into the proof verdict
 - uses the same backend/lifecycle override rules as `ota doctor` and `ota up`
 - attempts repo-scoped runtime cleanup after capturing artifacts so proof does not leave
   persistent Ota-managed runtime state behind

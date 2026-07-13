@@ -49,9 +49,14 @@ durable agent workflow belongs in the canonical Ota skill.
   reachability and caller-side attempts distinct from a separately selected, boundary-attested
   workflow negative control; `ota proof runtime --negative-control <id>` requires the declared
   finite control task to fail but records that outcome separately rather than over-claiming causal
-  dependency exercise.
-- immediate proof gate: pressure the negative-control carrier on a real service repo before
-  widening seam evidence to richer dependency-side or round-trip exercised observations.
+  dependency exercise. Text output now mirrors JSON `dependency_evidence[]` before proof
+  boundaries, preserving the evidence level, origin, and authority class for human operators.
+- completed V11.11 pressure gate: Athena API now declares a finite Rails/PostgreSQL refusal control
+  that redirects only the control task to an unreachable loopback port. The `app` runtime proof
+  passed with `expected_failure_observed` across the green native macOS/Ubuntu, Windows-static,
+  and container Ubuntu matrix. The next seam-evidence widening must use an independently observed
+  dependency-side or round-trip artifact; a successful task that merely declares
+  `requires_services` is not sufficient evidence of interaction.
 
 ## Recent Completed Slice
 

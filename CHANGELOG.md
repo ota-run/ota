@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- `ota proof runtime` text output now renders the same runner-derived `Dependency Evidence` as
+  JSON before proof boundaries. It preserves the evidence level, observation origin, and authority
+  class, so `reachable` and caller-side-only interaction attempts cannot be over-read from a green
+  runtime proof.
+
 - fixed user-initiated interruption classification for long-running tasks. When Ota observes an
   interrupt, it now returns the stable interrupt exit code (`130`) and renders an `interrupted`
   receipt/summary even if the child application exits with its own non-zero shutdown code.

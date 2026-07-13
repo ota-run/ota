@@ -2743,6 +2743,7 @@ pub fn proof_runtime(
                             &topology_artifact_display,
                             &doctor_artifact_display,
                             &up_log_artifact_display,
+                            &dependency_evidence,
                             &not_proved,
                             negative_control.as_ref(),
                             &workflow_env_artifacts,
@@ -55839,6 +55840,7 @@ workflows:
             "doctor.json",
             "up.log",
             &[],
+            &[],
             None,
             &[],
             None,
@@ -55874,6 +55876,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             &[],
             None,
             &[],
@@ -55987,6 +55990,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             &[],
             None,
             &[],
@@ -57568,6 +57572,17 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[crate::output::ProofRuntimeDependencyEvidence {
+                dependency_id: String::from("service:postgres"),
+                level: Some(String::from("reachable")),
+                interaction_attempted: false,
+                observation: crate::output::ProofRuntimeDependencyObservation {
+                    origin: String::from("round_trip_effect"),
+                    evidence_class: ExecutionEvidenceClass::Derived,
+                },
+                declared_by_tasks: vec![String::from("verify")],
+                declared_by_workflows: vec![String::from("app")],
+            }],
             &[crate::output::ProofRuntimeNotProved {
                 kind: String::from("dependency_exercise_not_proved"),
                 relative_to: String::from("runtime_path"),
@@ -57584,6 +57599,8 @@ workflows:
             None,
         ));
 
+        assert!(rendered.contains("Dependency Evidence"));
+        assert!(rendered.contains("`service:postgres`: reachable (derived, round_trip_effect)"));
         assert!(rendered.contains("Proof Boundaries"));
         assert!(rendered.contains("dependency exercise not proved for `service:postgres` via task `verify` (no_independent_dependency_evidence)"));
         assert!(rendered.contains("Proof Verdict: passed_with_unproven_boundaries"));
@@ -101722,6 +101739,7 @@ fn render_proof_runtime_text(
     topology_artifact: &str,
     doctor_artifact: &str,
     up_log_artifact: &str,
+    dependency_evidence: &[ProofRuntimeDependencyEvidence],
     not_proved: &[crate::output::ProofRuntimeNotProved],
     negative_control: Option<&ProofRuntimeNegativeControl>,
     workflow_env_artifacts: &[EnvRenderedArtifactEntry],
@@ -101839,6 +101857,21 @@ fn render_proof_runtime_text(
         }
     }
 
+    if !dependency_evidence.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{} {}",
+            info_bullet(),
+            paint_section_title("Dependency Evidence")
+        ));
+        for entry in dependency_evidence {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                next_bullet(),
+                render_proof_runtime_dependency_evidence_text(entry)
+            ));
+        }
+    }
+
     if !not_proved.is_empty() {
         stdout.push_str(&format!(
             "\n\n{} {}",
@@ -101922,6 +101955,28 @@ fn render_proof_runtime_text(
     }
 
     stdout
+}
+
+fn render_proof_runtime_dependency_evidence_text(entry: &ProofRuntimeDependencyEvidence) -> String {
+    let dependency = paint_backticked_code(&entry.dependency_id);
+    let authority = match entry.observation.evidence_class {
+        ExecutionEvidenceClass::Attested => "attested",
+        ExecutionEvidenceClass::Derived => "derived",
+    };
+    match (entry.level.as_deref(), entry.interaction_attempted) {
+        (Some(level), _) => format!(
+            "{dependency}: {level} ({authority}, {})",
+            entry.observation.origin
+        ),
+        (None, true) => format!(
+            "{dependency}: interaction attempted only ({authority}, {}; not independently exercised)",
+            entry.observation.origin
+        ),
+        (None, false) => format!(
+            "{dependency}: observed ({authority}, {})",
+            entry.observation.origin
+        ),
+    }
 }
 
 fn render_proof_runtime_not_proved_text(entry: &crate::output::ProofRuntimeNotProved) -> String {

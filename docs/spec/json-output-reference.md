@@ -838,6 +838,9 @@ Notes:
   `http` and `tcp`; current shipped attempted records use `caller_side`.
 - `dependency_evidence[].observation.evidence_class` is the V11.9 authority class for the
   observation itself. Current shipped reachable records are `derived`.
+- Text output renders the same `Dependency Evidence` before `Proof Boundaries`, including the
+  level, observation origin, and authority class. A caller-side-only attempt is rendered as not
+  independently exercised; it does not become a green seam claim in human output.
 - `negative_control` is optional boundary-attested evidence from one explicitly selected
   `workflows.<name>.proof.negative_controls[]` task. `expected_failure_observed` is the only
   passing control outcome; `unexpected_success` and `control_could_not_run` fail the proof. This
