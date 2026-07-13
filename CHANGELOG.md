@@ -64,6 +64,11 @@
   no longer suppresses a declared seam observer when `ota up` is ready and Doctor reports no
   errors; advisory warnings remain evidence, not proof blockers.
 
+- fixed runtime-proof seam callbacks under `ota up --detach`. The active-execution registry now
+  recognizes proof callbacks and the selected runtime as coordinated children of the same
+  orchestrator, while unrelated executions retain normal write, service, and environment conflict
+  protection.
+
 - `ota proof runtime --json` now distinguishes caller-side dependency attempts from proved seam
   reachability. `dependency_evidence[]` can publish additive `interaction_attempted: true` with
   `observation.origin: caller_side` when proof-derived failure evidence shows the selected lane

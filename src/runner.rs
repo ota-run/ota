@@ -28962,7 +28962,7 @@ fn execution_conflict_reasons_with_active_owner(
     candidate: &RepoExecutionLockOwner,
     active: &RepoExecutionLockOwner,
 ) -> Vec<RepoExecutionConflictReason> {
-    if active_execution_is_direct_parent_child_pair(candidate, active) {
+    if active_execution_is_related_orchestration_pair(candidate, active) {
         return Vec::new();
     }
     let mut reasons = Vec::new();
@@ -29008,11 +29008,19 @@ fn execution_conflict_reasons_with_active_owner(
     reasons
 }
 
-fn active_execution_is_direct_parent_child_pair(
+fn active_execution_is_related_orchestration_pair(
     candidate: &RepoExecutionLockOwner,
     active: &RepoExecutionLockOwner,
 ) -> bool {
-    candidate.parent_pid == Some(active.pid) || active.parent_pid == Some(candidate.pid)
+    candidate.parent_pid == Some(active.pid)
+        || active.parent_pid == Some(candidate.pid)
+        // `ota up --detach` owns both the long-running service and finite proof callbacks. They
+        // are siblings under the same orchestrator rather than direct parent/child processes.
+        // Treat that one execution plane as coordinated, while unrelated active owners still use
+        // the normal conflict matrix below.
+        || candidate
+            .parent_pid
+            .is_some_and(|parent_pid| active.parent_pid == Some(parent_pid))
 }
 
 fn execution_conflicts_with_active_owner(
@@ -30335,7 +30343,7 @@ mod tests {
     }
 
     #[test]
-    fn active_repo_execution_allows_direct_child_of_active_owner() {
+    fn active_repo_execution_allows_related_orchestration_children() {
         let fixture = tempdir().expect("tempdir");
         let parent_owner = super::RepoExecutionLockOwner {
             task: String::from("up"),
@@ -30374,6 +30382,15 @@ mod tests {
             .expect("parent owner should register");
         let _child_guard = register_active_repo_execution("app:up", fixture.path(), &child_owner)
             .expect("direct child owner should register");
+        let sibling_owner = super::RepoExecutionLockOwner {
+            task: String::from("proof:observe"),
+            pid: 42002,
+            started_at: String::from("2026-06-05T22:14:05Z"),
+            ..child_owner.clone()
+        };
+        let _sibling_guard =
+            register_active_repo_execution("proof:observe", fixture.path(), &sibling_owner)
+                .expect("same-orchestrator proof callback should register");
     }
 
     #[test]

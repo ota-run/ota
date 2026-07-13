@@ -56,10 +56,13 @@ durable agent workflow belongs in the canonical Ota skill.
   control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
   is historical evidence only. Its first Ubuntu gate showed `ota up` ready with advisory warnings
   but the proof admission path still treated the detached runtime exit as blocking and withheld the
-  observer. The core decision owner now treats warning-only readiness as non-blocking; rerun the
-  transaction-bound `fault_tested` matrix after the source push. Local macOS proof remains
-  host-blocked by Brew `libpq` fulfillment, so it must not be mistaken for a negative-control
-  result.
+  observer. The core decision owner now treats warning-only readiness as non-blocking. The second
+  Ubuntu gate then exposed the next true runner gap: the seam callback and detached runtime are
+  sibling children of the same `ota up` process, but the active-execution registry admitted only
+  direct parent-child pairs. Same-orchestrator sibling admission is now covered by a runner
+  regression; rerun the transaction-bound `fault_tested` matrix after the source push. Local
+  macOS proof remains host-blocked by Brew `libpq` fulfillment, so it must not be mistaken for a
+  negative-control result.
 
 ## Recent Completed Slice
 
