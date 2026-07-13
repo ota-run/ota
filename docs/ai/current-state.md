@@ -139,6 +139,9 @@ durable agent workflow belongs in the canonical Ota skill.
   `ota proof runtime` now renders concrete `Proof Boundaries` entries whenever `not_proved[]`
   exists, so external-network and broader-scope exclusions travel with the green proof instead of
   living only in JSON.
+- The next `V11.11` refinement makes those proof boundaries machine-actionable too: each
+  `not_proved` entry now carries an explicit `reason`, and the human proof render includes the
+  same reason label for seam, adjacent-lane, and broader-scope exclusions.
 - The same commit fixes detached native proof lifecycle ownership: nested `ota up --detach` leaves
   the service running for the outer proof to observe and clean up, preventing recursive teardown.
 - V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching

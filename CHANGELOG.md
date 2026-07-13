@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- `ota proof runtime` now emits explicit `reason` values on `not_proved` entries and mirrors them
+  in text output, so qualified proof boundaries distinguish missing independent seam evidence,
+  adjacent external paths not selected, and broader proof-scope exclusions instead of publishing
+  only boundary kinds
+
 - hidden-input replay failures now publish an ordered `hidden_input_candidates` set in JSON and
   mirror it in `ota up --replay-baseline ...` text output, so hidden-input suspicion points
   operators toward the next promotion order instead of staying one generic failure bucket:

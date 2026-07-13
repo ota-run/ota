@@ -57255,6 +57255,10 @@ workflows:
             .find(|entry| entry.kind == "dependency_exercise_not_proved")
             .expect("declared service seam stays unproved without observed interaction");
         assert_eq!(seam.dependency_id.as_deref(), Some("service:postgres"));
+        assert_eq!(
+            seam.reason.as_deref(),
+            Some("no_independent_dependency_evidence")
+        );
         assert_eq!(seam.declared_by_tasks, ["verify"]);
         assert_eq!(seam.declared_by_workflows, ["verify"]);
         assert_eq!(
@@ -57291,6 +57295,7 @@ workflows:
                 relative_to: String::from("runtime_path"),
                 source: String::from("contract_lane"),
                 dependency_id: Some(String::from("service:postgres")),
+                reason: Some(String::from("no_independent_dependency_evidence")),
                 declared_by_tasks: vec![String::from("verify")],
                 declared_by_workflows: vec![String::from("app")],
             }],
@@ -57301,7 +57306,7 @@ workflows:
         ));
 
         assert!(rendered.contains("Proof Boundaries"));
-        assert!(rendered.contains("dependency exercise not proved for `service:postgres` via task `verify`"));
+        assert!(rendered.contains("dependency exercise not proved for `service:postgres` via task `verify` (no_independent_dependency_evidence)"));
         assert!(rendered.contains("Proof Verdict: passed_with_unproven_boundaries"));
     }
 
@@ -57364,6 +57369,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57422,6 +57428,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57489,6 +57496,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57639,6 +57647,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57705,6 +57714,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57771,6 +57781,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57834,6 +57845,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -57900,6 +57912,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -58183,6 +58196,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 }],
@@ -98690,6 +98704,7 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: None,
+            reason: Some(String::from("narrow_runtime_proof_scope")),
             declared_by_tasks: Vec::new(),
             declared_by_workflows: Vec::new(),
         });
@@ -98732,6 +98747,7 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: None,
+            reason: Some(String::from("adjacent_external_path_not_selected")),
             declared_by_tasks: Vec::new(),
             declared_by_workflows: external_network_workflows,
         });
@@ -98759,6 +98775,7 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: Some(format!("service:{service_name}")),
+            reason: Some(String::from("no_independent_dependency_evidence")),
             declared_by_tasks: tasks.into_iter().collect(),
             declared_by_workflows: selected_workflow_name
                 .map(|name| vec![name.to_string()])
@@ -98770,6 +98787,7 @@ fn proof_runtime_not_proved(
         relative_to: String::from("runtime_path"),
         source: String::from("proof_scope"),
         dependency_id: None,
+        reason: Some(String::from("broader_repo_scope_not_selected")),
         declared_by_tasks: Vec::new(),
         declared_by_workflows: Vec::new(),
     });
@@ -101106,7 +101124,7 @@ fn render_proof_runtime_text(
 }
 
 fn render_proof_runtime_not_proved_text(entry: &crate::output::ProofRuntimeNotProved) -> String {
-    match entry.kind.as_str() {
+    let base = match entry.kind.as_str() {
         "dependency_exercise_not_proved" => {
             let dependency = entry
                 .dependency_id
@@ -101153,6 +101171,10 @@ fn render_proof_runtime_not_proved_text(entry: &crate::output::ProofRuntimeNotPr
             String::from("broader repo completion stays outside this runtime-proof slice")
         }
         _ => format!("{} not proved", entry.kind.replace('_', " ")),
+    };
+    match entry.reason.as_deref() {
+        Some(reason) => format!("{base} ({reason})"),
+        None => base,
     }
 }
 
