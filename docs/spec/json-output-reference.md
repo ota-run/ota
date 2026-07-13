@@ -4428,7 +4428,8 @@ Optional fields:
   recover writable-path and outbound-target posture directly from the selected `up` lane
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
 - `replay`: present when `ota up` was invoked with `--replay-baseline <selection>`; this carries
-  the resolved baseline pointer (`source`, `selection_path`, `archive_path`, `promoted_at`, `ok`),
+  the resolved baseline pointer (`source`, `selection_path`, `archive_path`, `promoted_at`, `ok`,
+  `last_known_good`),
   the selected lane scope, execution-authored replay posture (`replay_verified`,
   `replay_failed`, or `replay_unavailable`), hermeticity, optional `failure_kind`, a concise
   reason, the same compact comparison block used by receipt diff, and grouped
@@ -4463,6 +4464,10 @@ Replay notes:
   - `named_input_drift`
   - `hidden_input_suspicion`
   - `witness_mismatch`
+- `replay.baseline.last_known_good` is the replay-derived status of the selected baseline:
+  - `replay_verified`
+  - `stale_witness`
+  - `unavailable`
 
 Phase values:
 

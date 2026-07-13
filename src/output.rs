@@ -2481,6 +2481,15 @@ pub struct UpReplayBaseline {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promoted_at: Option<String>,
     pub ok: bool,
+    pub last_known_good: UpReplayBaselineStatus,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpReplayBaselineStatus {
+    ReplayVerified,
+    StaleWitness,
+    Unavailable,
 }
 
 #[derive(Debug, Serialize)]

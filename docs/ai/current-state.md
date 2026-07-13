@@ -35,15 +35,17 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
-- active implementation and proof slice: `V11.10` witnessed query-identity evidence; declared
-  static replay inputs remain receipt `evaluated_inputs[]`, while Bedrock-style historical query
-  traces are emitted separately as attested `witnessed_observations.query_traces[]`
+- active implementation and proof slice: `V11.10` replay trust refinement; `ota up
+  --replay-baseline ... --json` now carries replay-authored baseline posture directly through
+  `replay.baseline.last_known_good`, while declared static replay inputs remain receipt
+  `evaluated_inputs[]` and Bedrock-style historical query traces stay separate as attested
+  `witnessed_observations.query_traces[]`
 - queued design refinement: `V11.11` seam-evidence provenance, which keeps caller-side attempts,
   dependency-side or round-trip exercise, and separately recorded negative controls distinct on
   the existing proof carrier
-- immediate proof gate: review this receipt-carrier widening, then publish the Bedrock matrix on
-  the active branch. Continue V11.13 generated-artifact pressure only after the query observation
-  carrier is proven across the advertised OS lanes.
+- immediate proof gate: finish the remaining `V11.10` replay-trust carriers before widening
+  further: fuller pinned-input identity, presentation-profile ownership, and hidden-input
+  hardening. Continue `V11.11` seam evidence only after that replay posture is stable.
 
 ## Recent Completed Slice
 
@@ -104,6 +106,11 @@ durable agent workflow belongs in the canonical Ota skill.
   live recording lane remains intentionally outside that claim because it reaches Claude, rewrites
   the fixture, and depends on an unpinned generic-pip requirements path that Ota does not yet own
   through typed dependency hydration.
+- The current V11.10 replay carrier now distinguishes whether the selected baseline is still the
+  last known good witness. `ota up --replay-baseline ... --json` adds
+  `replay.baseline.last_known_good` with `replay_verified`, `stale_witness`, or `unavailable`
+  derived from the replay result itself, so promoted archives no longer all read as equally
+  current after drift or unavailable-baseline failures.
 
 - The uncommitted task-discovery UX batch renders closure-aware `Human Run`, `Agent Run`, and
   `Agent Policy` sections in `ota tasks` and `ota tasks --use`. It keeps the `ota-site` internal

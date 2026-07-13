@@ -112,10 +112,10 @@ use crate::output::{
     ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass, RunPreviewPlan, RunPreviewSuccess,
     ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
     TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayExecution,
-    UpReplayFailureKind, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
-    ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayBaselineStatus,
+    UpReplayExecution, UpReplayFailureKind, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
     WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
@@ -37459,6 +37459,10 @@ tasks:
             crate::output::ReceiptDiffReplayPostureKind::ReplayVerified
         );
         assert!(replay.failure_kind.is_none());
+        assert_eq!(
+            replay.baseline.last_known_good,
+            crate::output::UpReplayBaselineStatus::ReplayVerified
+        );
     }
 
     #[test]
@@ -37496,6 +37500,10 @@ tasks:
             replay.failure_kind,
             Some(crate::output::UpReplayFailureKind::NamedInputDrift)
         );
+        assert_eq!(
+            replay.baseline.last_known_good,
+            crate::output::UpReplayBaselineStatus::StaleWitness
+        );
     }
 
     #[test]
@@ -37528,6 +37536,35 @@ tasks:
         assert!(
             replay.reason.contains("still-unnamed ambient input moved"),
             "reason should call out hidden-input suspicion"
+        );
+        assert_eq!(
+            replay.baseline.last_known_good,
+            crate::output::UpReplayBaselineStatus::StaleWitness
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_marks_unready_baseline_as_not_last_known_good() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            Vec::new(),
+            false,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayUnavailable
+        );
+        assert_eq!(
+            replay.failure_kind,
+            Some(crate::output::UpReplayFailureKind::BaselineUnavailable)
+        );
+        assert_eq!(
+            replay.baseline.last_known_good,
+            crate::output::UpReplayBaselineStatus::Unavailable
         );
     }
 
@@ -38335,6 +38372,16 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
             archive_path: report.baseline.archive_path.clone(),
             promoted_at: report.baseline.promoted_at.clone(),
             ok: report.baseline.ok,
+            last_known_good: match posture {
+                ReceiptDiffReplayPostureKind::ReplayVerified => {
+                    UpReplayBaselineStatus::ReplayVerified
+                }
+                ReceiptDiffReplayPostureKind::ReplayFailed => UpReplayBaselineStatus::StaleWitness,
+                ReceiptDiffReplayPostureKind::WitnessOnly => UpReplayBaselineStatus::Unavailable,
+                ReceiptDiffReplayPostureKind::ReplayUnavailable => {
+                    UpReplayBaselineStatus::Unavailable
+                }
+            },
         },
         scope: comparison.replay.scope.clone(),
         posture,
@@ -52195,6 +52242,16 @@ fn render_up_replay_text(replay: &UpReplayExecution) -> String {
         summary_bullet(),
         paint_key("Baseline:"),
         replay.baseline.source
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Last Known Good:"),
+        match replay.baseline.last_known_good {
+            UpReplayBaselineStatus::ReplayVerified => "replay_verified",
+            UpReplayBaselineStatus::StaleWitness => "stale_witness",
+            UpReplayBaselineStatus::Unavailable => "unavailable",
+        }
     ));
     if let Some(selection_path) = replay.baseline.selection_path.as_deref() {
         stdout.push_str(&format!(
