@@ -113,18 +113,18 @@ use crate::output::{
     ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
     TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
     UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayExecution,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
-    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
-    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
-    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskHydrationProvenanceSummary,
-    WorkspaceTaskHydrationSourceIdentity, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
-    execution_receipt_conflict,
+    UpReplayFailureKind, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
+    ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskHydrationProvenanceSummary, WorkspaceTaskHydrationSourceIdentity,
+    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess, execution_receipt_conflict,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -37275,6 +37275,59 @@ tasks:
             serde_json::to_value(&runtime_change[0]).unwrap()["comparison"],
             "changed"
         );
+
+        let source = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("source:git_head"),
+            kind: String::from("source_identity"),
+            input_class: ReplayInputClass::SourceIdentity,
+            identity: String::from("git:abc123"),
+            artifact_lineage: None,
+        };
+        let source_trust =
+            super::receipt_diff_artifact_trust(None, None, &[source.clone()], &[source.clone()]);
+        assert_eq!(source_trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&source_trust[0]).unwrap()["trust_role"],
+            "acquitting"
+        );
+
+        let presentation = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("replay_input:gate:runtime-profile"),
+            kind: String::from("presentation_profile"),
+            input_class: ReplayInputClass::ExecutionPresentationProfile,
+            identity: String::from("sha256:baseline"),
+            artifact_lineage: None,
+        };
+        let presentation_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[presentation.clone()],
+            &[presentation.clone()],
+        );
+        assert_eq!(presentation_trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&presentation_trust[0]).unwrap()["trust_role"],
+            "acquitting"
+        );
+
+        let comparator = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("replay_input:gate:equivalence"),
+            kind: String::from("comparator_profile"),
+            input_class: ReplayInputClass::ComparatorSemantics,
+            identity: String::from("sha256:baseline"),
+            artifact_lineage: None,
+        };
+        let comparator_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[comparator.clone()],
+            &[comparator.clone()],
+        );
+        assert_eq!(comparator_trust.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&comparator_trust[0]).unwrap()["trust_role"],
+            "narrowing"
+        );
     }
 
     fn sample_up_replay_report(
@@ -37405,6 +37458,7 @@ tasks:
             replay.comparison.replay.posture,
             crate::output::ReceiptDiffReplayPostureKind::ReplayVerified
         );
+        assert!(replay.failure_kind.is_none());
     }
 
     #[test]
@@ -37437,6 +37491,43 @@ tasks:
         assert_eq!(
             replay.comparison.replay.posture,
             crate::output::ReceiptDiffReplayPostureKind::ReplayFailed
+        );
+        assert_eq!(
+            replay.failure_kind,
+            Some(crate::output::UpReplayFailureKind::NamedInputDrift)
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_surfaces_hidden_input_suspicion_after_narrowing_match() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("replay_input:gate:equivalence"),
+                kind: String::from("comparator_profile"),
+                input_classes: vec![ReplayInputClass::ComparatorSemantics],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:baseline"),
+                current_identity: String::from("sha256:baseline"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            false,
+            1,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayFailed
+        );
+        assert_eq!(
+            replay.failure_kind,
+            Some(crate::output::UpReplayFailureKind::HiddenInputSuspicion)
+        );
+        assert!(
+            replay.reason.contains("still-unnamed ambient input moved"),
+            "reason should call out hidden-input suspicion"
         );
     }
 
@@ -37492,6 +37583,95 @@ tasks:
     }
 
     #[test]
+    fn receipt_captures_clean_git_head_source_identity() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo.path())
+            .status()
+            .expect("git init")
+            .success()
+            .then_some(())
+            .expect("git init succeeds");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "ota@example.com"])
+            .current_dir(repo.path())
+            .status()
+            .expect("git config email")
+            .success()
+            .then_some(())
+            .expect("git config email succeeds");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Ota Tests"])
+            .current_dir(repo.path())
+            .status()
+            .expect("git config name")
+            .success()
+            .then_some(())
+            .expect("git config name succeeds");
+        fs::write(repo.path().join("tracked.txt"), "hello\n").expect("write tracked file");
+        std::process::Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(repo.path())
+            .status()
+            .expect("git add")
+            .success()
+            .then_some(())
+            .expect("git add succeeds");
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(repo.path())
+            .status()
+            .expect("git commit")
+            .success()
+            .then_some(())
+            .expect("git commit succeeds");
+
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-source-identity
+tasks:
+  verify:
+    command:
+      exe: true
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("verify")],
+            ExecutionOverrides::default(),
+        );
+        let source = inputs
+            .iter()
+            .find(|input| input.id == "source:git_head")
+            .expect("captured git head");
+        assert_eq!(source.kind, "source_identity");
+        assert_eq!(source.input_class, ReplayInputClass::SourceIdentity);
+        assert!(source.identity.starts_with("git:"));
+
+        fs::write(repo.path().join("tracked.txt"), "changed\n").expect("mutate tracked file");
+        let dirty_inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("verify")],
+            ExecutionOverrides::default(),
+        );
+        assert!(
+            dirty_inputs
+                .iter()
+                .all(|input| input.id != "source:git_head"),
+            "dirty worktree should not claim replay-grade source identity"
+        );
+    }
+
+    #[test]
     fn receipt_captures_generated_artifact_lineage_at_issue_time() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -37541,6 +37721,75 @@ tasks:
         assert_eq!(lineage.producer, "generate");
         assert_eq!(lineage.paths, ["sdk/client.gen.ts"]);
         assert_eq!(lineage.inputs, ["schema/api.graphql"]);
+    }
+
+    #[test]
+    fn receipt_captures_declared_presentation_and_comparator_profiles() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("replay")).expect("create replay directory");
+        let profile = "ordering: multiset\nnulls: distinct\n";
+        let comparator_profile = "mode: equivalence\nlabels_ignored: true\n";
+        fs::write(repo.path().join("replay/presentation.yaml"), profile)
+            .expect("write presentation profile");
+        fs::write(
+            repo.path().join("replay/comparator.yaml"),
+            comparator_profile,
+        )
+        .expect("write comparator profile");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-replay-profiles
+tasks:
+  verify:
+    replay_inputs:
+      - id: runtime-profile
+        kind: presentation_profile
+        path: replay/presentation.yaml
+      - id: equivalence
+        kind: comparator_profile
+        path: replay/comparator.yaml
+    command:
+      exe: true
+"#,
+        )
+        .expect("parse contract");
+
+        let inputs = super::capture_replay_inputs_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("verify")],
+        )
+        .expect("capture replay inputs");
+        let presentation = inputs
+            .iter()
+            .find(|input| input.id == "replay_input:verify:runtime-profile")
+            .expect("captured presentation profile");
+        assert_eq!(presentation.kind, "presentation_profile");
+        assert_eq!(
+            presentation.input_class,
+            ReplayInputClass::ExecutionPresentationProfile
+        );
+        assert_eq!(
+            presentation.identity,
+            super::contract_snapshot_hash(profile.as_bytes())
+        );
+        let comparator = inputs
+            .iter()
+            .find(|input| input.id == "replay_input:verify:equivalence")
+            .expect("captured comparator profile");
+        assert_eq!(comparator.kind, "comparator_profile");
+        assert_eq!(
+            comparator.input_class,
+            ReplayInputClass::ComparatorSemantics
+        );
+        assert_eq!(
+            comparator.identity,
+            super::contract_snapshot_hash(comparator_profile.as_bytes())
+        );
     }
 
     #[test]
@@ -38002,13 +38251,18 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
         .artifact_trust
         .iter()
         .any(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Changed);
+    let matched_narrowing_artifact = comparison.artifact_trust.iter().any(|artifact| {
+        artifact.comparison == ReceiptDiffArtifactComparison::Matched
+            && artifact.trust_role == ReceiptDiffArtifactTrustRole::Narrowing
+    });
     let findings_drifted =
         summary.introduced.count > 0 || summary.resolved.count > 0 || !report.current.ok;
     let contract_changed =
         comparison.contract_snapshot_changed.unwrap_or(false) || comparison.identity_changed;
-    let (posture, reason) = if !report.baseline.ok {
+    let (posture, failure_kind, reason) = if !report.baseline.ok {
         (
             ReceiptDiffReplayPostureKind::ReplayUnavailable,
+            Some(UpReplayFailureKind::BaselineUnavailable),
             String::from(
                 "the selected baseline witness was not ready, so replay could not prove a last-known-good lane",
             ),
@@ -38016,6 +38270,7 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     } else if contract_changed {
         (
             ReceiptDiffReplayPostureKind::ReplayFailed,
+            Some(UpReplayFailureKind::SemanticContractDrift),
             String::from(
                 "the selected lane executed against a different contract witness than the archived baseline",
             ),
@@ -38023,6 +38278,7 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     } else if input_changed {
         (
             ReceiptDiffReplayPostureKind::ReplayFailed,
+            Some(UpReplayFailureKind::NamedInputDrift),
             String::from(
                 "one or more replay-grade inputs changed between the archived baseline and the current execution",
             ),
@@ -38030,13 +38286,25 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     } else if findings_drifted {
         (
             ReceiptDiffReplayPostureKind::ReplayFailed,
-            String::from(
-                "the selected lane did not reproduce the archived witness outcome cleanly",
-            ),
+            Some(if matched_narrowing_artifact {
+                UpReplayFailureKind::HiddenInputSuspicion
+            } else {
+                UpReplayFailureKind::WitnessMismatch
+            }),
+            if matched_narrowing_artifact {
+                String::from(
+                    "the selected lane did not reproduce the archived witness outcome cleanly, and the remaining replay evidence suggests a still-unnamed ambient input moved",
+                )
+            } else {
+                String::from(
+                    "the selected lane did not reproduce the archived witness outcome cleanly",
+                )
+            },
         )
     } else {
         (
             ReceiptDiffReplayPostureKind::ReplayVerified,
+            None,
             String::from(
                 "the selected lane reproduced the archived witness against the same named contract and captured replay inputs",
             ),
@@ -38071,6 +38339,7 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
         scope: comparison.replay.scope.clone(),
         posture,
         hermeticity,
+        failure_kind,
         reason,
         comparison,
         introduced: summary.introduced.clone(),
@@ -38115,6 +38384,8 @@ fn receipt_diff_artifact_trust(
             continue;
         };
         let trust_role = match baseline.input_class {
+            // A clean git HEAD clears only the named source-identity class for this witness.
+            ReplayInputClass::SourceIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching lockfile clears only the named dependency-resolution class.
             ReplayInputClass::DeclaredDependencyResolution => {
                 ReceiptDiffArtifactTrustRole::Acquitting
@@ -38124,6 +38395,14 @@ fn receipt_diff_artifact_trust(
             ReplayInputClass::SelectedRuntimeVersion => ReceiptDiffArtifactTrustRole::Narrowing,
             // A static digest-pinned Compose image identifies the selected runtime artifact.
             ReplayInputClass::SelectedRuntimeArtifact => ReceiptDiffArtifactTrustRole::Acquitting,
+            // A declared content-addressed presentation profile closes only the named execution
+            // presentation semantics the lane says it depends on.
+            ReplayInputClass::ExecutionPresentationProfile => {
+                ReceiptDiffArtifactTrustRole::Acquitting
+            }
+            // A comparator profile pins comparison semantics, but does not prove raw runtime
+            // presentation identity or make an ambient lane hermetic by itself.
+            ReplayInputClass::ComparatorSemantics => ReceiptDiffArtifactTrustRole::Narrowing,
             // A declared static file proves only that this named input held still.
             ReplayInputClass::DeclaredReplayInput => ReceiptDiffArtifactTrustRole::Narrowing,
             // Declared lineage points to the producer and paths; it never proves artifact freshness.
@@ -94201,6 +94480,7 @@ fn receipt_evaluated_inputs(
 ) -> Vec<ExecutionReceiptEvaluatedInput> {
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut inputs = BTreeMap::new();
+    collect_receipt_source_identity_input(root, &mut inputs);
     for task_name in task_names {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
@@ -94213,6 +94493,56 @@ fn receipt_evaluated_inputs(
         collect_receipt_generated_artifact_inputs(contract, task, &mut inputs);
     }
     inputs.into_values().collect()
+}
+
+// Clean git HEAD is the first honest source-identity carrier. Dirty trees and non-git directories
+// remain outside the replay-grade claim rather than pretending HEAD alone pinned the source.
+fn collect_receipt_source_identity_input(
+    root: &Path,
+    inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
+) {
+    let Ok(head) = git_head_identity(root) else {
+        return;
+    };
+    inputs.insert(
+        String::from("source:git_head"),
+        ExecutionReceiptEvaluatedInput {
+            id: String::from("source:git_head"),
+            kind: String::from("source_identity"),
+            input_class: ReplayInputClass::SourceIdentity,
+            identity: head,
+            artifact_lineage: None,
+        },
+    );
+}
+
+fn git_head_identity(root: &Path) -> Result<String, String> {
+    let status = run_git_command(
+        &["status", "--porcelain"],
+        Some(root),
+        RepoExecutionMode::Capture,
+    )
+    .map_err(|error| error.to_string())?;
+    if status.exit_code != 0 {
+        return Err(status.stderr.trim().to_string());
+    }
+    if !status.stdout.trim().is_empty() {
+        return Err(String::from("working tree is dirty"));
+    }
+    let head = run_git_command(
+        &["rev-parse", "HEAD"],
+        Some(root),
+        RepoExecutionMode::Capture,
+    )
+    .map_err(|error| error.to_string())?;
+    if head.exit_code != 0 {
+        return Err(head.stderr.trim().to_string());
+    }
+    let identity = head.stdout.trim();
+    if identity.is_empty() {
+        return Err(String::from("HEAD is empty"));
+    }
+    Ok(format!("git:{identity}"))
 }
 
 fn capture_replay_inputs_before_execution(
@@ -94234,13 +94564,14 @@ fn capture_replay_inputs_before_execution(
                     input.id
                 )
             })?;
+            let (kind, input_class) = replay_input_capture_surface(input.kind);
             let id = format!("replay_input:{task_name}:{}", input.id.trim());
             captured.insert(
                 id.clone(),
                 ExecutionReceiptEvaluatedInput {
                     id,
-                    kind: String::from("static_file"),
-                    input_class: ReplayInputClass::DeclaredReplayInput,
+                    kind: kind.to_string(),
+                    input_class,
                     identity: contract_snapshot_hash(&bytes),
                     artifact_lineage: None,
                 },
@@ -94248,6 +94579,23 @@ fn capture_replay_inputs_before_execution(
         }
     }
     Ok(captured.into_values().collect())
+}
+
+fn replay_input_capture_surface(
+    kind: crate::schema::TaskReplayInputKind,
+) -> (&'static str, ReplayInputClass) {
+    match kind {
+        crate::schema::TaskReplayInputKind::StaticFile => {
+            ("static_file", ReplayInputClass::DeclaredReplayInput)
+        }
+        crate::schema::TaskReplayInputKind::PresentationProfile => (
+            "presentation_profile",
+            ReplayInputClass::ExecutionPresentationProfile,
+        ),
+        crate::schema::TaskReplayInputKind::ComparatorProfile => {
+            ("comparator_profile", ReplayInputClass::ComparatorSemantics)
+        }
+    }
 }
 
 // Query traces are attested observations from a recorded run. Capture their immutable source

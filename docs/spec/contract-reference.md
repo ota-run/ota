@@ -1935,10 +1935,14 @@ Fields:
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `requires_artifacts`: optional list of named generated artifacts the task consumes; each consumer
   must directly depend on the named artifact's producer task
-- `replay_inputs`: optional static repo files consumed by this task and captured before the selected
-  task or workflow closure begins; each entry declares `id`, `kind: static_file`, and a
-  repo-relative `path`; these are narrowing replay evidence and cannot overlap declared closure
-  writes
+- `replay_inputs`: optional repo-owned replay identity artifacts captured before the selected task
+  or workflow closure begins; each entry declares `id`, a repo-relative `path`, and one of:
+  - `kind: static_file` for generic named replay inputs; these are narrowing replay evidence
+  - `kind: presentation_profile` for a declared execution-presentation profile file; matching
+    identity closes only the named presentation-semantics class for that lane
+  - `kind: comparator_profile` for declared comparison semantics such as equivalence or tolerance;
+    matching identity narrows comparator drift but does not by itself make the lane hermetic
+  replay inputs cannot overlap declared closure writes
 - `witnessed_observations.query_traces`: optional JSONL query-trace artifacts emitted by a prior
   or external execution; each entry declares an `id` and repo-relative `path`. Ota preserves
   these as attested observations in the receipt rather than treating per-query identities as

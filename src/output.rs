@@ -679,9 +679,12 @@ pub struct ExecutionReceiptArtifactLineage {
 #[serde(rename_all = "snake_case")]
 pub enum ReplayInputClass {
     ContractTruth,
+    SourceIdentity,
     DeclaredDependencyResolution,
     SelectedRuntimeVersion,
     SelectedRuntimeArtifact,
+    ExecutionPresentationProfile,
+    ComparatorSemantics,
     GeneratedArtifactLineage,
     DeclaredReplayInput,
 }
@@ -2449,11 +2452,23 @@ pub struct UpReplayExecution {
     pub scope: ReceiptDiffReplayScope,
     pub posture: ReceiptDiffReplayPostureKind,
     pub hermeticity: ReceiptDiffReplayHermeticity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<UpReplayFailureKind>,
     pub reason: String,
     pub comparison: ReceiptDiffComparison,
     pub introduced: ReceiptDiffCounts,
     pub resolved: ReceiptDiffCounts,
     pub unchanged: ReceiptDiffCounts,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpReplayFailureKind {
+    BaselineUnavailable,
+    SemanticContractDrift,
+    NamedInputDrift,
+    HiddenInputSuspicion,
+    WitnessMismatch,
 }
 
 #[derive(Debug, Serialize)]

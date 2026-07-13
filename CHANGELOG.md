@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- `ota receipt` and `ota up --replay-baseline ... --json` now distinguish generic task replay
+  files from declared `presentation_profile` and `comparator_profile` replay inputs. Matching
+  presentation profiles acquit only the named execution-presentation class for the selected lane,
+  while matching comparator profiles remain narrowing evidence for comparator drift rather than a
+  full hermetic replay claim.
+- replay-capable receipts now capture clean git HEAD as `source:git_head` when the selected repo
+  worktree is clean. Receipt comparison treats a matching source identity as `acquitting` only
+  for the named `source_identity` class; dirty or non-git worktrees stay outside the claim.
+- `ota up --replay-baseline ... --json` now classifies replay misses with machine-readable
+  `failure_kind`, separating baseline unavailability, semantic contract drift, named replay-input
+  drift, hidden-input suspicion, and plain witness mismatch.
+
 - added first-class replay execution for repo `ota up`: `ota up --replay-baseline <latest|promoted|archive>`
   now resolves an archived baseline witness before execution, runs the selected workflow lane,
   and emits machine-readable `replay_verified`, `replay_failed`, or `replay_unavailable` posture

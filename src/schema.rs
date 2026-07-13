@@ -8530,6 +8530,8 @@ pub struct TaskReplayInputSpec {
 #[serde(rename_all = "snake_case")]
 pub enum TaskReplayInputKind {
     StaticFile,
+    PresentationProfile,
+    ComparatorProfile,
 }
 
 /// Execution evidence declared by a task but observed from a prior or external run.

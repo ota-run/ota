@@ -4430,8 +4430,9 @@ Optional fields:
 - `replay`: present when `ota up` was invoked with `--replay-baseline <selection>`; this carries
   the resolved baseline pointer (`source`, `selection_path`, `archive_path`, `promoted_at`, `ok`),
   the selected lane scope, execution-authored replay posture (`replay_verified`,
-  `replay_failed`, or `replay_unavailable`), hermeticity, a concise reason, the same compact
-  comparison block used by receipt diff, and grouped introduced/resolved/unchanged counts
+  `replay_failed`, or `replay_unavailable`), hermeticity, optional `failure_kind`, a concise
+  reason, the same compact comparison block used by receipt diff, and grouped
+  introduced/resolved/unchanged counts
 - `plan.dependency_steps[]`: additive selected setup/dependency-plane preview for the chosen `up`
   path; when a planned step is a structured hydration lane, `prepare.declared_hydration_provenance`
   and `prepare.resolved_hydration_provenance` publish the selected source posture on the same
@@ -4456,6 +4457,12 @@ Replay notes:
 - matching `semantic_contract_snapshot` is acquitting for contract truth only
 - matching task-declared `replay_inputs` remain narrowing evidence, so replay may be
   `replay_verified` with `hermeticity: partly_ambient`
+- `replay.failure_kind` is emitted only when replay is not verified:
+  - `baseline_unavailable`
+  - `semantic_contract_drift`
+  - `named_input_drift`
+  - `hidden_input_suspicion`
+  - `witness_mismatch`
 
 Phase values:
 
@@ -4679,11 +4686,15 @@ The nested `receipt` object can also include:
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file
 - `evaluated_inputs[]` with execution inputs captured while Ota authored the receipt.
-  Shipped records include declared Node lockfile identities: `pnpm-lock.yaml` for frozen pnpm and
-  `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`; `runtime:node` command
-  version evidence for those selected typed lanes; and static digest-pinned Compose images for
+  Shipped records include clean git HEAD source identity as `source:git_head` when the selected
+  repo worktree is inside git and has no uncommitted changes; declared Node lockfile identities:
+  `pnpm-lock.yaml` for frozen pnpm and `package-lock.json` or authoritative `npm-shrinkwrap.json`
+  for `npm ci`; `runtime:node` command version evidence for those selected typed lanes; and static
+  digest-pinned Compose images for
   explicitly selected services and their declared `depends_on` closure in explicitly declared
-  Compose files. Ota never re-reads these identities later. Mutable tags, interpolated image
+  Compose files. It also includes task-declared replay inputs with distinct machine classes:
+  generic `static_file`, `presentation_profile`, and `comparator_profile`. Ota never re-reads
+  these identities later. Mutable tags, interpolated image
   references, inferred Compose files, unrelated stack services, ambient environment, and
   external-world inputs remain outside this evidence.
 - `witnessed_observations.query_traces[]` when a selected task closure declares a JSONL query
@@ -4969,11 +4980,17 @@ Current receipt diff JSON fields:
   its input class, immutable identities, comparison state, and runner-derived trust role. The
   first shipped record is `semantic_contract_snapshot`, which is `acquitting` only for the named
   `contract_truth` class when its identities match, never for dependency, environment, runtime,
-  or external-world inputs that the receipts did not capture. A matching captured
+  or external-world inputs that the receipts did not capture. A matching clean `source:git_head`
+  record is `acquitting` only for the named `source_identity` class; dirty or non-git worktrees
+  do not emit that record. A matching captured
   typed Node lockfile is likewise `acquitting` only for `declared_dependency_resolution`. A
   matching static digest-pinned Compose image is `acquitting` only for the named
   `selected_runtime_artifact` input; it does not clear other runtime, environment, or external
   state classes.
+  A matching `presentation_profile` replay input is `acquitting` only for the declared
+  `execution_presentation_profile` class on that lane. A matching `comparator_profile` replay
+  input is `narrowing` for `comparator_semantics`: it proves the comparator definition held still,
+  but not that the whole runtime presentation was hermetic.
   A matching `runtime:node` record is `narrowing` for `selected_runtime_version`: it rules out a
   reported Node version change, but does not prove binary, image, host, environment, or external
   state identity.
