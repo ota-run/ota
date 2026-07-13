@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- added first-class replay execution for repo `ota up`: `ota up --replay-baseline <latest|promoted|archive>`
+  now resolves an archived baseline witness before execution, runs the selected workflow lane,
+  and emits machine-readable `replay_verified`, `replay_failed`, or `replay_unavailable` posture
+  from the execution-authored receipt instead of reconstructing replay from a later compare step;
+  archived `ota receipt --workflow ... --archive` baselines now also carry declared
+  `replay_inputs` and witnessed query-trace observations so replay compares named inputs honestly
+
 - fixed native shell task execution after source-managed tool fulfillment: release-asset and
   other managed tool PATH exports now reach the task shell itself, so a fulfilled contract-owned
   tool remains callable for the task that required it instead of only for Ota's fulfillment probe

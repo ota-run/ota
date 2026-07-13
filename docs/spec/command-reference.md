@@ -1930,6 +1930,7 @@ ota up --dry-run [PATH]
 ota up --dry-run --json [PATH]
 ota up --mode container --ephemeral [PATH]
 ota up --effect-override network:broad=allow [PATH]
+ota up --workflow verify --replay-baseline promoted [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ota up --agent [PATH]
@@ -2009,6 +2010,12 @@ Current behavior:
 - can override execution mode and lifecycle for the selected workflow setup/run phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this `ota up` invocation only using the same selectors as `ota run`
+- `--replay-baseline <latest|promoted|archive-path>` resolves an archived repo receipt baseline
+  before execution, runs the selected workflow lane, and publishes replay posture from the
+  execution-authored receipt as `replay_verified`, `replay_failed`, or `replay_unavailable`
+- replay execution is intentionally narrower than general receipt comparison today: it is only
+  supported for mutating single-repo `ota up` lanes and is rejected for `--dry-run`, `--stream`,
+  `--member`, and monorepo-root aggregate `ota up`
 - the current workflow-task backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the selected workflow task uses backend-backed execution
 - reruns readiness diagnosis
@@ -2033,6 +2040,9 @@ Current behavior:
   toolchain mismatches block preview instead of being silently described as runnable
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
+- replay baselines are honest only for what the archived witness actually carried: matching
+  `semantic_contract_snapshot` acquits contract drift, while matched `declared_replay_input`
+  records remain narrowing evidence and keep replay hermeticity at `partly_ambient`
 - the detailed preview contract lives in [up-preview.md](up-preview.md)
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.

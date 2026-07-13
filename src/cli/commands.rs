@@ -112,18 +112,19 @@ use crate::output::{
     ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass, RunPreviewPlan, RunPreviewSuccess,
     ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
     TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskHydrationProvenanceSummary, WorkspaceTaskHydrationSourceIdentity,
-    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess, execution_receipt_conflict,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayExecution,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
+    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
+    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
+    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskHydrationProvenanceSummary,
+    WorkspaceTaskHydrationSourceIdentity, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    execution_receipt_conflict,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -25597,6 +25598,29 @@ pub fn receipt(
                     selected_workflow_name,
                     &report,
                 );
+                let captured_replay_inputs = match capture_replay_inputs_before_execution(
+                    contract,
+                    &target.contract_path,
+                    contract.selected_workflow_task_closure_names(selected_workflow_name),
+                ) {
+                    Ok(inputs) if !inputs.is_empty() => Some(inputs),
+                    Ok(_) => None,
+                    Err(error) => return CommandOutput::failure(error),
+                };
+                if let Some(inputs) = captured_replay_inputs.as_ref() {
+                    attach_pre_execution_replay_inputs(&mut receipt, inputs);
+                }
+                match capture_witnessed_observations_before_execution(
+                    contract,
+                    &target.contract_path,
+                    contract.selected_workflow_task_closure_names(selected_workflow_name),
+                ) {
+                    Ok(observations) if !observations.is_empty() => {
+                        attach_witnessed_observations(&mut receipt, &observations);
+                    }
+                    Ok(_) => {}
+                    Err(error) => return CommandOutput::failure(error),
+                }
                 receipt.next = receipt
                     .next
                     .as_deref()
@@ -27572,6 +27596,7 @@ pub fn up(
         dry_run,
         stream,
         show_receipt,
+        None,
         attach,
         detach,
         ready_timeout,
@@ -27610,6 +27635,7 @@ pub(crate) fn up_with_agent(
         dry_run,
         stream,
         show_receipt,
+        None,
         attach,
         detach,
         ready_timeout,
@@ -27630,6 +27656,7 @@ pub(crate) fn up_with_agent_reason(
     dry_run: bool,
     stream: bool,
     show_receipt: bool,
+    replay_baseline: Option<&str>,
     attach: bool,
     detach: bool,
     ready_timeout: Option<&str>,
@@ -27679,6 +27706,45 @@ pub(crate) fn up_with_agent_reason(
                 String::from("DEBUG command=up"),
                 String::from("DEBUG stream=true"),
                 String::from("DEBUG dry_run=true"),
+            ],
+        );
+    }
+    if replay_baseline.is_some() && dry_run {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--replay-baseline` is only supported for mutating `ota up`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=up"),
+                String::from("DEBUG dry_run=true"),
+            ],
+        );
+    }
+    if replay_baseline.is_some() && stream {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--replay-baseline` is not supported with `--stream`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=up"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+    if replay_baseline.is_some() && !members.is_empty() {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--replay-baseline` is not supported with `--member`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=up"),
+                format!("DEBUG members={}", members.len()),
             ],
         );
     }
@@ -27746,6 +27812,9 @@ pub(crate) fn up_with_agent_reason(
     if let Some(reason) = reason {
         debug_lines.push(format!("DEBUG reason={reason}"));
     }
+    if let Some(baseline) = replay_baseline {
+        debug_lines.push(format!("DEBUG replay_baseline={baseline}"));
+    }
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
@@ -27794,6 +27863,14 @@ pub(crate) fn up_with_agent_reason(
                             workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                         })
                     {
+                        if replay_baseline.is_some() {
+                            return CommandOutput::failure_with_code(
+                                String::from(
+                                    "`--replay-baseline` is not supported for monorepo root `ota up`; select a concrete repo contract or member lane first",
+                                ),
+                                2,
+                            );
+                        }
                         let mut root_result = match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
@@ -27931,6 +28008,21 @@ pub(crate) fn up_with_agent_reason(
                             }
                         }
                     } else {
+                        let replay_baseline = match replay_baseline {
+                            Some(selection) => {
+                                let root = contract_working_dir(&target.contract_path);
+                                match load_repo_receipt_baseline(
+                                    root,
+                                    &target.contract_path,
+                                    workflow_name,
+                                    selection,
+                                ) {
+                                    Ok(baseline) => Some(baseline),
+                                    Err(error) => return CommandOutput::failure(error),
+                                }
+                            }
+                            None => None,
+                        };
                         match execute_repo_up_with_behavior_with_agent(
                             &target.contract,
                             &target.contract_path,
@@ -27944,6 +28036,13 @@ pub(crate) fn up_with_agent_reason(
                             ready_timeout,
                         ) {
                             Ok(mut result) => {
+                                if let Err(error) = attach_repo_contract_snapshot_to_receipt(
+                                    &target.contract_path,
+                                    &target.contract,
+                                    &mut result.receipt,
+                                ) {
+                                    return CommandOutput::failure(error);
+                                }
                                 attach_crossing_to_up_result(
                                     &mut result,
                                     &target.contract,
@@ -27953,13 +28052,39 @@ pub(crate) fn up_with_agent_reason(
                                     agent,
                                     reason,
                                 );
-                                render_up_result(
-                                    &path_display,
-                                    &text_path_display,
-                                    result,
-                                    format,
-                                    show_receipt,
-                                )
+                                if let Some(baseline) = replay_baseline {
+                                    let current_contract_identity = repo_receipt_contract_identity(
+                                        contract_working_dir(&target.contract_path),
+                                        &target.contract_path,
+                                        workflow_name,
+                                    );
+                                    match build_repo_receipt_diff_report(
+                                        baseline,
+                                        &target.contract,
+                                        current_contract_identity,
+                                        &result.receipt,
+                                        &result.report.findings,
+                                        workflow_name,
+                                    ) {
+                                        Ok(report) => render_up_replay_result(
+                                            &path_display,
+                                            &text_path_display,
+                                            result,
+                                            format,
+                                            show_receipt,
+                                            build_up_replay_execution(report),
+                                        ),
+                                        Err(error) => CommandOutput::failure(error),
+                                    }
+                                } else {
+                                    render_up_result(
+                                        &path_display,
+                                        &text_path_display,
+                                        result,
+                                        format,
+                                        show_receipt,
+                                    )
+                                }
                             }
                             Err(error) => CommandOutput::failure(error),
                         }
@@ -37152,6 +37277,169 @@ tasks:
         );
     }
 
+    fn sample_up_replay_report(
+        artifact_trust: Vec<crate::output::ReceiptDiffArtifactTrust>,
+        baseline_ok: bool,
+        current_ok: bool,
+        introduced_count: usize,
+        resolved_count: usize,
+        contract_snapshot_changed: Option<bool>,
+        identity_changed: bool,
+    ) -> super::RepoReceiptDiffReport {
+        let comparison = crate::output::ReceiptDiffComparison {
+            baseline_identity_label: String::from("baseline"),
+            current_identity_label: String::from("current"),
+            identity_changed,
+            readiness_change: crate::output::ReceiptDiffReadinessChange::Unchanged,
+            contract_snapshot_changed,
+            artifact_trust,
+            replay: crate::output::ReceiptDiffReplayPosture {
+                scope: crate::output::ReceiptDiffReplayScope {
+                    workflow: Some(String::from("verify")),
+                    backend: Some(String::from("native")),
+                    provider: None,
+                    lifecycle: Some(String::from("ephemeral")),
+                },
+                posture: crate::output::ReceiptDiffReplayPostureKind::WitnessOnly,
+                hermeticity: crate::output::ReceiptDiffReplayHermeticity::Unassessed,
+                reason: String::from("receipt diff only"),
+            },
+            correlation: crate::output::ReceiptDiffCorrelation::NoClearCorrelation,
+        };
+        let counts = |count| crate::output::ReceiptDiffCounts {
+            count,
+            error_count: count,
+            warn_count: 0,
+            info_count: 0,
+        };
+        super::RepoReceiptDiffReport {
+            baseline: crate::output::ReceiptDiffBaseline {
+                source: String::from("promoted"),
+                selection_path: Some(String::from(".ota/receipts/promoted.json")),
+                archive_path: Some(String::from(".ota/receipts/archive.json")),
+                archived_at: None,
+                promoted_at: Some(String::from("2026-07-13T00:00:00Z")),
+                contract_identity: Some(String::from("baseline")),
+                contract_identity_details: None,
+                contract_snapshot_hash: Some(String::from("sha256:baseline")),
+                contract_snapshot_ref: None,
+                assumption_set_hash: None,
+                evaluated_inputs: Vec::new(),
+                witnessed_observations:
+                    crate::output::ExecutionReceiptWitnessedObservations::default(),
+                ok: baseline_ok,
+                contract: String::from("ota.yaml"),
+                status: Some(String::from("READY")),
+                backend: Some(String::from("native")),
+                target: None,
+                provider: None,
+                context: None,
+                lifecycle: Some(String::from("ephemeral")),
+                cwd: None,
+                summary: super::execution_receipt_summary(&[], 1, None, None, None),
+            },
+            current: crate::output::ReceiptDiffSide {
+                ok: current_ok,
+                contract: String::from("ota.yaml"),
+                contract_identity: Some(String::from("current")),
+                contract_identity_details: None,
+                contract_snapshot_hash: Some(String::from("sha256:baseline")),
+                contract_snapshot_ref: None,
+                assumption_set_hash: None,
+                evaluated_inputs: Vec::new(),
+                witnessed_observations:
+                    crate::output::ExecutionReceiptWitnessedObservations::default(),
+                status: Some(String::from("READY")),
+                backend: Some(String::from("native")),
+                target: None,
+                provider: None,
+                context: None,
+                lifecycle: Some(String::from("ephemeral")),
+                cwd: None,
+                summary: super::execution_receipt_summary(&[], 1, None, None, None),
+            },
+            summary: crate::output::ReceiptDiffSummary {
+                baseline_ok,
+                current_ok,
+                comparison,
+                introduced: counts(introduced_count),
+                resolved: counts(resolved_count),
+                unchanged: counts(1),
+            },
+            contract_changes: Vec::new(),
+            likely_related_changes: Vec::new(),
+            introduced: Vec::new(),
+            resolved: Vec::new(),
+            unchanged: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn up_replay_execution_is_verified_when_named_inputs_and_findings_match() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("semantic_contract_snapshot"),
+                kind: String::from("semantic_contract_snapshot"),
+                input_classes: vec![ReplayInputClass::ContractTruth],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Acquitting,
+                baseline_identity: String::from("sha256:baseline"),
+                current_identity: String::from("sha256:baseline"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayVerified
+        );
+        assert_eq!(
+            replay.hermeticity,
+            crate::output::ReceiptDiffReplayHermeticity::Hermetic
+        );
+        assert_eq!(
+            replay.comparison.replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayVerified
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_fails_when_replay_inputs_change() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("data/baseline.json"),
+                kind: String::from("replay_input"),
+                input_classes: vec![ReplayInputClass::DeclaredReplayInput],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:baseline"),
+                current_identity: String::from("sha256:current"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Changed,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayFailed
+        );
+        assert_eq!(
+            replay.hermeticity,
+            crate::output::ReceiptDiffReplayHermeticity::PartlyAmbient
+        );
+        assert_eq!(
+            replay.comparison.replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayFailed
+        );
+    }
+
     #[test]
     fn receipt_captures_declared_frozen_pnpm_lockfile_identity() {
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -37688,6 +37976,107 @@ fn build_repo_receipt_diff_report(
         resolved,
         unchanged,
     })
+}
+
+fn attach_repo_contract_snapshot_to_receipt(
+    contract_path: &Path,
+    contract: &Contract,
+    receipt: &mut ExecutionReceipt,
+) -> Result<(), String> {
+    let root = contract_working_dir(contract_path);
+    let snapshot = build_contract_snapshot_artifact(root, contract, false)?;
+    let normalized_snapshot = normalized_contract_snapshot_value(contract)?;
+    receipt.contract_snapshot_hash = Some(snapshot.hash);
+    receipt.contract_snapshot_ref = snapshot
+        .archive_path
+        .as_deref()
+        .map(receipt_storage_path_display);
+    receipt.assumption_set_hash = Some(assumption_set_hash_from_snapshot(&normalized_snapshot)?);
+    Ok(())
+}
+
+fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution {
+    let summary = &report.summary;
+    let comparison = &summary.comparison;
+    let input_changed = comparison
+        .artifact_trust
+        .iter()
+        .any(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Changed);
+    let findings_drifted =
+        summary.introduced.count > 0 || summary.resolved.count > 0 || !report.current.ok;
+    let contract_changed =
+        comparison.contract_snapshot_changed.unwrap_or(false) || comparison.identity_changed;
+    let (posture, reason) = if !report.baseline.ok {
+        (
+            ReceiptDiffReplayPostureKind::ReplayUnavailable,
+            String::from(
+                "the selected baseline witness was not ready, so replay could not prove a last-known-good lane",
+            ),
+        )
+    } else if contract_changed {
+        (
+            ReceiptDiffReplayPostureKind::ReplayFailed,
+            String::from(
+                "the selected lane executed against a different contract witness than the archived baseline",
+            ),
+        )
+    } else if input_changed {
+        (
+            ReceiptDiffReplayPostureKind::ReplayFailed,
+            String::from(
+                "one or more replay-grade inputs changed between the archived baseline and the current execution",
+            ),
+        )
+    } else if findings_drifted {
+        (
+            ReceiptDiffReplayPostureKind::ReplayFailed,
+            String::from(
+                "the selected lane did not reproduce the archived witness outcome cleanly",
+            ),
+        )
+    } else {
+        (
+            ReceiptDiffReplayPostureKind::ReplayVerified,
+            String::from(
+                "the selected lane reproduced the archived witness against the same named contract and captured replay inputs",
+            ),
+        )
+    };
+    let hermeticity = if posture == ReceiptDiffReplayPostureKind::ReplayUnavailable {
+        ReceiptDiffReplayHermeticity::Unassessed
+    } else if comparison.artifact_trust.iter().all(|artifact| {
+        artifact.comparison == ReceiptDiffArtifactComparison::Matched
+            && artifact.trust_role == ReceiptDiffArtifactTrustRole::Acquitting
+    }) {
+        ReceiptDiffReplayHermeticity::Hermetic
+    } else {
+        ReceiptDiffReplayHermeticity::PartlyAmbient
+    };
+    let mut comparison = comparison.clone();
+    comparison.replay = ReceiptDiffReplayPosture {
+        scope: comparison.replay.scope.clone(),
+        posture,
+        hermeticity,
+        reason: reason.clone(),
+    };
+
+    UpReplayExecution {
+        baseline: UpReplayBaseline {
+            source: report.baseline.source.clone(),
+            selection_path: report.baseline.selection_path.clone(),
+            archive_path: report.baseline.archive_path.clone(),
+            promoted_at: report.baseline.promoted_at.clone(),
+            ok: report.baseline.ok,
+        },
+        scope: comparison.replay.scope.clone(),
+        posture,
+        hermeticity,
+        reason,
+        comparison,
+        introduced: summary.introduced.clone(),
+        resolved: summary.resolved.clone(),
+        unchanged: summary.unchanged.clone(),
+    }
 }
 
 // This first carrier is intentionally narrow: receipts already archive immutable semantic
@@ -51476,6 +51865,113 @@ fn render_up_result(
             false,
             format,
         ),
+    }
+}
+
+fn render_up_replay_result(
+    path: &str,
+    text_path: &str,
+    result: RepoUpResult,
+    format: OutputFormat,
+    show_receipt: bool,
+    replay: UpReplayExecution,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            let mut output = render_up_result(path, text_path, result, format, show_receipt);
+            output.stdout.push_str(&render_up_replay_text(&replay));
+            output
+        }
+        OutputFormat::Json => {
+            let mut root = up_result_json_value(path, &result);
+            root["replay"] =
+                serde_json::to_value(&replay).expect("up replay execution should serialize");
+            CommandOutput {
+                stdout: to_json_value(root),
+                stderr: None,
+                exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+            }
+        }
+    }
+}
+
+fn render_up_replay_text(replay: &UpReplayExecution) -> String {
+    let mut stdout = String::new();
+    stdout.push_str("\n\n");
+    stdout.push_str(&paint_section_title("REPLAY"));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Posture:"),
+        replay_posture_label(replay.posture)
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Hermeticity:"),
+        replay_hermeticity_label(replay.hermeticity)
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Baseline:"),
+        replay.baseline.source
+    ));
+    if let Some(selection_path) = replay.baseline.selection_path.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Selection:"),
+            compact_path(Path::new(selection_path), ".")
+        ));
+    }
+    if let Some(archive_path) = replay.baseline.archive_path.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Archive:"),
+            compact_path(Path::new(archive_path), ".")
+        ));
+    }
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Reason:"),
+        replay.reason
+    ));
+    let changed_artifacts = replay
+        .comparison
+        .artifact_trust
+        .iter()
+        .filter(|artifact| artifact.comparison == ReceiptDiffArtifactComparison::Changed)
+        .map(|artifact| artifact.id.as_str())
+        .collect::<Vec<_>>();
+    if !changed_artifacts.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Changed Inputs:"),
+            changed_artifacts.join(", ")
+        ));
+    }
+    stdout
+}
+
+fn replay_posture_label(posture: ReceiptDiffReplayPostureKind) -> &'static str {
+    match posture {
+        ReceiptDiffReplayPostureKind::WitnessOnly => "witness_only",
+        ReceiptDiffReplayPostureKind::ReplayVerified => "replay_verified",
+        ReceiptDiffReplayPostureKind::ReplayFailed => "replay_failed",
+        ReceiptDiffReplayPostureKind::ReplayUnavailable => "replay_unavailable",
+    }
+}
+
+fn replay_hermeticity_label(hermeticity: ReceiptDiffReplayHermeticity) -> &'static str {
+    match hermeticity {
+        ReceiptDiffReplayHermeticity::Unassessed => "unassessed",
+        ReceiptDiffReplayHermeticity::Hermetic => "hermetic",
+        ReceiptDiffReplayHermeticity::PartlyAmbient => "partly_ambient",
+        ReceiptDiffReplayHermeticity::AmbientFreshDerivation => "ambient_fresh_derivation",
     }
 }
 

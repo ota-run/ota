@@ -567,6 +567,9 @@ enum Commands {
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
+        /// Execute the selected workflow against an archived baseline witness and publish replay posture.
+        #[arg(long, value_name = "SELECTION", conflicts_with_all = ["dry_run", "stream", "member"])]
+        replay_baseline: Option<String>,
         /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:container_image_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
@@ -5202,6 +5205,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ephemeral,
             host_port,
             receipt,
+            replay_baseline,
             effect_override,
             reason,
             member,
@@ -5231,6 +5235,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     dry_run,
                     stream,
                     receipt,
+                    replay_baseline.as_deref(),
                     attach,
                     detach,
                     ready_timeout.as_deref(),
@@ -5250,6 +5255,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     dry_run,
                     stream,
                     receipt,
+                    replay_baseline.as_deref(),
                     attach,
                     detach,
                     ready_timeout.as_deref(),
@@ -18755,6 +18761,7 @@ tasks:
             ephemeral: false,
             host_port: None,
             receipt: false,
+            replay_baseline: None,
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
@@ -18782,6 +18789,7 @@ tasks:
             ephemeral: false,
             host_port: None,
             receipt: false,
+            replay_baseline: None,
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
@@ -18839,6 +18847,7 @@ tasks:
                 ephemeral: false,
                 host_port: None,
                 receipt: false,
+                replay_baseline: None,
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
@@ -18872,6 +18881,7 @@ tasks:
                 ephemeral: false,
                 host_port: None,
                 receipt: false,
+                replay_baseline: None,
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
@@ -19326,6 +19336,7 @@ tasks:
                     ephemeral: false,
                     host_port: None,
                     receipt: false,
+                    replay_baseline: None,
                     member: Vec::new(),
                     effect_override: Vec::new(),
                     reason: None,
@@ -28003,6 +28014,51 @@ policies:
     fn run_shortcut_mode_flags_conflict() {
         let parsed = try_parse_cli_on_test_stack(&["ota", "run", "dev", "--native", "--container"]);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn up_replay_baseline_parses_for_a_mutating_repo_lane() {
+        let cli = try_parse_cli_on_test_stack(&[
+            "ota",
+            "up",
+            "--workflow",
+            "verify",
+            "--replay-baseline",
+            "promoted",
+        ])
+        .expect("replay baseline should parse for a mutating repo lane");
+        match cli.command {
+            Commands::Up {
+                workflow,
+                replay_baseline,
+                ..
+            } => {
+                assert_eq!(workflow.as_deref(), Some("verify"));
+                assert_eq!(replay_baseline.as_deref(), Some("promoted"));
+            }
+            command => panic!("expected up command, received {command:?}"),
+        }
+    }
+
+    #[test]
+    fn up_replay_baseline_rejects_non_execution_scopes() {
+        for args in [
+            vec!["ota", "up", "--replay-baseline", "promoted", "--dry-run"],
+            vec!["ota", "up", "--replay-baseline", "promoted", "--stream"],
+            vec![
+                "ota",
+                "up",
+                "--replay-baseline",
+                "promoted",
+                "--member",
+                "api",
+            ],
+        ] {
+            assert!(
+                try_parse_cli_on_test_stack(&args).is_err(),
+                "replay baseline should reject {args:?}"
+            );
+        }
     }
 
     #[test]

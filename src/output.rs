@@ -2337,7 +2337,7 @@ pub struct ReceiptSnapshotSuccess<'a> {
     pub snapshot: JsonValue,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ReceiptDiffCounts {
     pub count: usize,
     pub error_count: usize,
@@ -2345,7 +2345,7 @@ pub struct ReceiptDiffCounts {
     pub info_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ReceiptDiffComparison {
     pub baseline_identity_label: String,
     pub current_identity_label: String,
@@ -2361,7 +2361,7 @@ pub struct ReceiptDiffComparison {
 }
 
 /// The exact lane and trust boundary for replay-related receipt comparison output.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ReceiptDiffReplayPosture {
     pub scope: ReceiptDiffReplayScope,
     pub posture: ReceiptDiffReplayPostureKind,
@@ -2369,7 +2369,7 @@ pub struct ReceiptDiffReplayPosture {
     pub reason: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ReceiptDiffReplayScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<String>,
@@ -2401,7 +2401,7 @@ pub enum ReceiptDiffReplayHermeticity {
 
 /// Trust posture for a comparison artifact that was actually captured by both receipts.
 /// `acquitting` applies only to the named input class, never to the entire execution outcome.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ReceiptDiffArtifactTrust {
     pub id: String,
     pub kind: String,
@@ -2441,6 +2441,31 @@ pub enum ReceiptDiffCorrelation {
     LikelyRelated,
     PossiblyRelated,
     NoClearCorrelation,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpReplayExecution {
+    pub baseline: UpReplayBaseline,
+    pub scope: ReceiptDiffReplayScope,
+    pub posture: ReceiptDiffReplayPostureKind,
+    pub hermeticity: ReceiptDiffReplayHermeticity,
+    pub reason: String,
+    pub comparison: ReceiptDiffComparison,
+    pub introduced: ReceiptDiffCounts,
+    pub resolved: ReceiptDiffCounts,
+    pub unchanged: ReceiptDiffCounts,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpReplayBaseline {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promoted_at: Option<String>,
+    pub ok: bool,
 }
 
 #[derive(Debug, Serialize)]

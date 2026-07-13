@@ -4427,6 +4427,11 @@ Optional fields:
   `codex_local` sandbox target shape used by task and workflow discovery so preview consumers can
   recover writable-path and outbound-target posture directly from the selected `up` lane
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
+- `replay`: present when `ota up` was invoked with `--replay-baseline <selection>`; this carries
+  the resolved baseline pointer (`source`, `selection_path`, `archive_path`, `promoted_at`, `ok`),
+  the selected lane scope, execution-authored replay posture (`replay_verified`,
+  `replay_failed`, or `replay_unavailable`), hermeticity, a concise reason, the same compact
+  comparison block used by receipt diff, and grouped introduced/resolved/unchanged counts
 - `plan.dependency_steps[]`: additive selected setup/dependency-plane preview for the chosen `up`
   path; when a planned step is a structured hydration lane, `prepare.declared_hydration_provenance`
   and `prepare.resolved_hydration_provenance` publish the selected source posture on the same
@@ -4443,6 +4448,14 @@ Optional fields:
 - `task`: present when a task failure is reported
 - `exit_code`: present when a child command failure is reported
 - `members`: present on monorepo-root aggregate output with grouped member readiness results
+
+Replay notes:
+
+- `replay.comparison.artifact_trust[]` only covers artifacts captured by both the archived
+  baseline and the current execution receipt
+- matching `semantic_contract_snapshot` is acquitting for contract truth only
+- matching task-declared `replay_inputs` remain narrowing evidence, so replay may be
+  `replay_verified` with `hermeticity: partly_ambient`
 
 Phase values:
 
