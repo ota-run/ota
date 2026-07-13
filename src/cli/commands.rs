@@ -2663,18 +2663,17 @@ pub fn proof_runtime(
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
                 );
-                let dependency_evidence = if ok {
-                    proof_runtime_dependency_evidence(
-                        &target.contract,
-                        effective_workflow_selector.as_deref(),
-                    )
-                } else {
-                    Vec::new()
-                };
+                let dependency_evidence = proof_runtime_dependency_evidence(
+                    &target.contract,
+                    effective_workflow_selector.as_deref(),
+                    ok,
+                    proof_likely_cause.as_ref(),
+                );
                 let not_proved = proof_runtime_not_proved(
                     &target.contract,
                     &target.contract_path,
                     effective_workflow_selector.as_deref(),
+                    &dependency_evidence,
                 );
                 let proof_verdict = proof_runtime_verdict(ok, &not_proved);
 
@@ -57253,7 +57252,8 @@ workflows:
         )
         .expect("parse proof seam contract");
 
-        let not_proved = super::proof_runtime_not_proved(&contract, contract_path, Some("verify"));
+        let not_proved =
+            super::proof_runtime_not_proved(&contract, contract_path, Some("verify"), &[]);
         let seam = not_proved
             .iter()
             .find(|entry| entry.kind == "dependency_exercise_not_proved")
@@ -57304,10 +57304,12 @@ workflows:
         )
         .expect("parse proof seam contract");
 
-        let evidence = super::proof_runtime_dependency_evidence(&contract, Some("verify"));
+        let evidence =
+            super::proof_runtime_dependency_evidence(&contract, Some("verify"), true, None);
         assert_eq!(evidence.len(), 1);
         assert_eq!(evidence[0].dependency_id, "service:postgres");
-        assert_eq!(evidence[0].level, "reachable");
+        assert_eq!(evidence[0].level.as_deref(), Some("reachable"));
+        assert!(!evidence[0].interaction_attempted);
         assert_eq!(evidence[0].observation.origin, "dependency_side");
         assert_eq!(
             evidence[0].observation.evidence_class,
@@ -57346,8 +57348,69 @@ workflows:
         )
         .expect("parse proof seam contract");
 
-        let evidence = super::proof_runtime_dependency_evidence(&contract, Some("verify"));
+        let evidence =
+            super::proof_runtime_dependency_evidence(&contract, Some("verify"), true, None);
         assert!(evidence.is_empty());
+    }
+
+    #[test]
+    fn proof_runtime_marks_caller_side_service_attempt_without_exercised_evidence() {
+        let contract_path = Path::new("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path,
+            r#"
+version: 1
+project:
+  name: proof-seam
+services:
+  postgres:
+    manager:
+      kind: compose
+      service: postgres
+    readiness:
+      kind: compose_health
+tasks:
+  verify:
+    run: "true"
+    requires_services:
+      - postgres
+workflows:
+  default: verify
+  verify:
+    services:
+      required:
+        - postgres
+    run:
+      task: verify
+"#,
+        )
+        .expect("parse proof seam contract");
+
+        let evidence = super::proof_runtime_dependency_evidence(
+            &contract,
+            Some("verify"),
+            false,
+            Some(
+                &super::ProofRuntimeLikelyCause::DnsServiceNameResolutionFailure {
+                    artifact: PathBuf::from("./.ota/proof/verify/up.log"),
+                    host: Some(String::from("postgres")),
+                    signal: String::from("getaddrinfo ENOTFOUND postgres"),
+                },
+            ),
+        );
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].dependency_id, "service:postgres");
+        assert_eq!(evidence[0].level, None);
+        assert!(evidence[0].interaction_attempted);
+        assert_eq!(evidence[0].observation.origin, "caller_side");
+
+        let not_proved =
+            super::proof_runtime_not_proved(&contract, contract_path, Some("verify"), &evidence);
+        let seam = not_proved
+            .iter()
+            .find(|entry| entry.kind == "dependency_exercise_not_proved")
+            .expect("declared seam should remain not proved");
+        assert_eq!(seam.reason.as_deref(), Some("caller_side_only_evidence"));
     }
 
     #[test]
@@ -57412,7 +57475,8 @@ workflows:
                 },
                 dependency_evidence: vec![crate::output::ProofRuntimeDependencyEvidence {
                     dependency_id: String::from("service:postgres"),
-                    level: String::from("reachable"),
+                    level: Some(String::from("reachable")),
+                    interaction_attempted: false,
                     observation: crate::output::ProofRuntimeDependencyObservation {
                         origin: String::from("dependency_side"),
                         evidence_class: ExecutionEvidenceClass::Derived,
@@ -98850,6 +98914,7 @@ fn proof_runtime_not_proved(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
+    dependency_evidence: &[ProofRuntimeDependencyEvidence],
 ) -> Vec<crate::output::ProofRuntimeNotProved> {
     let workflow_summary =
         resolve_selected_workflow_summary(contract, contract_path, workflow_name)
@@ -98914,22 +98979,13 @@ fn proof_runtime_not_proved(
             declared_by_workflows: external_network_workflows,
         });
     }
+    let caller_side_only_dependencies = dependency_evidence
+        .iter()
+        .filter(|entry| entry.interaction_attempted && entry.observation.origin == "caller_side")
+        .map(|entry| entry.dependency_id.clone())
+        .collect::<BTreeSet<_>>();
     let declared_service_seams = selected_workflow_name
-        .map(|workflow_name| {
-            let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
-            for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
-                let Some(task) = contract.tasks.get(task_name.as_str()) else {
-                    continue;
-                };
-                for service_name in &task.requires_services {
-                    owners
-                        .entry(service_name.clone())
-                        .or_default()
-                        .insert(task_name.clone());
-                }
-            }
-            owners
-        })
+        .map(|workflow_name| proof_runtime_declared_service_seam_owners(contract, workflow_name))
         .unwrap_or_default();
     for (service_name, tasks) in declared_service_seams {
         entries.push(crate::output::ProofRuntimeNotProved {
@@ -98937,7 +98993,13 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: Some(format!("service:{service_name}")),
-            reason: Some(String::from("no_independent_dependency_evidence")),
+            reason: Some(
+                if caller_side_only_dependencies.contains(&format!("service:{service_name}")) {
+                    String::from("caller_side_only_evidence")
+                } else {
+                    String::from("no_independent_dependency_evidence")
+                },
+            ),
             declared_by_tasks: tasks.into_iter().collect(),
             declared_by_workflows: selected_workflow_name
                 .map(|name| vec![name.to_string()])
@@ -98964,6 +99026,8 @@ fn proof_runtime_not_proved(
 fn proof_runtime_dependency_evidence(
     contract: &Contract,
     workflow_name: Option<&str>,
+    ok: bool,
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
 ) -> Vec<ProofRuntimeDependencyEvidence> {
     let Some(selected_workflow_name) = contract
         .selected_workflow(workflow_name)
@@ -98977,25 +99041,14 @@ fn proof_runtime_dependency_evidence(
         return Vec::new();
     }
 
-    let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
-    for task_name in
-        contract.selected_workflow_task_closure_names(Some(selected_workflow_name.as_str()))
-    {
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
-            continue;
-        };
-        for service_name in &task.requires_services {
-            if selected_required_services.contains(service_name) {
-                owners
-                    .entry(service_name.clone())
-                    .or_default()
-                    .insert(task_name.clone());
-            }
-        }
-    }
+    let owners =
+        proof_runtime_declared_service_seam_owners(contract, selected_workflow_name.as_str());
 
     let mut evidence = Vec::new();
-    for (service_name, tasks) in owners {
+    for (service_name, tasks) in &owners {
+        if !selected_required_services.contains(service_name) {
+            continue;
+        }
         let Some(origin) = contract
             .services
             .get(service_name.as_str())
@@ -99004,19 +99057,112 @@ fn proof_runtime_dependency_evidence(
         else {
             continue;
         };
+        if !ok {
+            continue;
+        }
         evidence.push(ProofRuntimeDependencyEvidence {
             dependency_id: format!("service:{service_name}"),
-            level: String::from("reachable"),
+            level: Some(String::from("reachable")),
+            interaction_attempted: false,
             observation: ProofRuntimeDependencyObservation {
                 origin: origin.to_string(),
                 evidence_class: ExecutionEvidenceClass::Derived,
             },
-            declared_by_tasks: tasks.into_iter().collect(),
+            declared_by_tasks: tasks.iter().cloned().collect(),
             declared_by_workflows: vec![selected_workflow_name.clone()],
         });
     }
+    if let Some((service_name, origin)) =
+        proof_runtime_attempted_service_seam(contract, &owners, likely_cause)
+    {
+        if selected_required_services.contains(service_name.as_str()) {
+            evidence.push(ProofRuntimeDependencyEvidence {
+                dependency_id: format!("service:{service_name}"),
+                level: None,
+                interaction_attempted: true,
+                observation: ProofRuntimeDependencyObservation {
+                    origin: origin.to_string(),
+                    evidence_class: ExecutionEvidenceClass::Derived,
+                },
+                declared_by_tasks: owners
+                    .get(service_name.as_str())
+                    .map(|tasks| tasks.iter().cloned().collect())
+                    .unwrap_or_default(),
+                declared_by_workflows: vec![selected_workflow_name.clone()],
+            });
+        }
+    }
     evidence.sort_by(|left, right| left.dependency_id.cmp(&right.dependency_id));
     evidence
+}
+
+fn proof_runtime_declared_service_seam_owners(
+    contract: &Contract,
+    workflow_name: &str,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
+    for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        for service_name in &task.requires_services {
+            owners
+                .entry(service_name.clone())
+                .or_default()
+                .insert(task_name.clone());
+        }
+    }
+    owners
+}
+
+fn proof_runtime_attempted_service_seam(
+    contract: &Contract,
+    owners: &BTreeMap<String, BTreeSet<String>>,
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
+) -> Option<(String, &'static str)> {
+    let cause = likely_cause?;
+    match cause {
+        ProofRuntimeLikelyCause::DnsServiceNameResolutionFailure { host, .. } => host
+            .as_deref()
+            .and_then(|host| proof_runtime_match_declared_service(contract, owners, host))
+            .map(|service| (service, "caller_side")),
+        ProofRuntimeLikelyCause::AuthCredentialFailure { service, host, .. } => host
+            .as_deref()
+            .and_then(|host| proof_runtime_match_declared_service(contract, owners, host))
+            .or_else(|| {
+                service.as_deref().and_then(|service| {
+                    proof_runtime_match_declared_service(contract, owners, service)
+                })
+            })
+            .map(|service| (service, "caller_side")),
+        ProofRuntimeLikelyCause::LoopbackServiceDrift { service, .. } => {
+            proof_runtime_match_declared_service(contract, owners, service)
+                .map(|service| (service, "caller_side"))
+        }
+        _ => None,
+    }
+}
+
+fn proof_runtime_match_declared_service(
+    contract: &Contract,
+    owners: &BTreeMap<String, BTreeSet<String>>,
+    candidate: &str,
+) -> Option<String> {
+    let normalized = candidate.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    owners
+        .keys()
+        .find(|name| name.eq_ignore_ascii_case(&normalized))
+        .cloned()
+        .or_else(|| {
+            contract
+                .services
+                .keys()
+                .find(|name| owners.contains_key(*name) && name.eq_ignore_ascii_case(&normalized))
+                .cloned()
+        })
 }
 
 fn proof_runtime_dependency_observation_origin(

@@ -828,10 +828,14 @@ Notes:
   declared service seam is also part of the selected workflow's required-service closure and Ota
   has a structured readiness owner for that selected service. This is runner-derived reachability
   evidence, not proof of exercised interaction across the seam.
+- `dependency_evidence[].interaction_attempted` is additive caller-side-only seam evidence. Ota
+  emits it when the selected proof lane clearly attempted the dependency interaction from the
+  caller side, but still lacks independent dependency-side or round-trip evidence to promote that
+  seam beyond `not_proved`.
 - `dependency_evidence[].observation.origin` names where the seam evidence came from. Current
   shipped reachable records use `dependency_side` for manager-owned readiness such as
   `compose_health` and `systemd_active`, and `round_trip_effect` for probe-owned readiness such as
-  `http` and `tcp`.
+  `http` and `tcp`; current shipped attempted records use `caller_side`.
 - `dependency_evidence[].observation.evidence_class` is the V11.9 authority class for the
   observation itself. Current shipped reachable records are `derived`.
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
@@ -846,6 +850,8 @@ Notes:
 - `not_proved[].dependency_id` and `not_proved[].declared_by_tasks` identify a declared service
   seam that remains unproved. This is deliberately not evidence that the service is unused or
   unreachable; it prevents a green runtime proof from being over-read as an exercised dependency.
+- when Ota has only caller-side seam evidence, the paired `dependency_exercise_not_proved`
+  boundary tightens `reason` from generic missing evidence to `caller_side_only_evidence`
 - `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as
   `proof_runtime_json`, `proof_topology`, `proof_doctor`, and `proof_up_log`
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
@@ -924,6 +930,16 @@ Success:
       "level": "reachable",
       "observation": {
         "origin": "dependency_side",
+        "evidence_class": "derived"
+      },
+      "declared_by_tasks": ["serve"],
+      "declared_by_workflows": ["app"]
+    },
+    {
+      "dependency_id": "service:postgres",
+      "interaction_attempted": true,
+      "observation": {
+        "origin": "caller_side",
         "evidence_class": "derived"
       },
       "declared_by_tasks": ["serve"],

@@ -147,6 +147,11 @@ durable agent workflow belongs in the canonical Ota skill.
   `level: reachable` only for declared service seams that are also on the selected
   workflow-owned required-service path and have structured readiness Ota actually owns. This
   keeps selected service reachability distinct from still-unproved exercised interaction.
+- The next `V11.11` refinement keeps caller-side seam attempts separate from proved reachability:
+  proof-derived DNS, auth, and loopback service failure signals can now publish additive
+  `interaction_attempted: true` with `observation.origin: caller_side`, while the paired
+  `dependency_exercise_not_proved` boundary tightens to `caller_side_only_evidence` instead of
+  generic missing evidence.
 - The same commit fixes detached native proof lifecycle ownership: nested `ota up --detach` leaves
   the service running for the outer proof to observe and clean up, preventing recursive teardown.
 - V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching

@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- `ota proof runtime --json` now distinguishes caller-side dependency attempts from proved seam
+  reachability. `dependency_evidence[]` can publish additive `interaction_attempted: true` with
+  `observation.origin: caller_side` when proof-derived failure evidence shows the selected lane
+  reached for a declared dependency without independent dependency-side or round-trip proof; the
+  paired `dependency_exercise_not_proved` boundary now tightens to
+  `reason: caller_side_only_evidence` instead of generic missing evidence
+
 - `ota proof runtime --json` now carries additive `dependency_evidence[]` for selected declared
   service seams when Ota can honestly prove only reachability, not exercised interaction. The
   first shipped carrier publishes runner-derived `reachable` evidence from structured service

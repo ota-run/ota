@@ -675,7 +675,10 @@ pub struct ProofRuntimeDependencyObservation {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProofRuntimeDependencyEvidence {
     pub dependency_id: String,
-    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub interaction_attempted: bool,
     pub observation: ProofRuntimeDependencyObservation,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub declared_by_tasks: Vec<String>,
