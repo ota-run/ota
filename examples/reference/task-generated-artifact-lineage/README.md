@@ -32,3 +32,33 @@ consumer runs.
 
 This declares presence and lineage, not freshness. Do not use timestamps or a passing consumer to
 claim that a generated artifact reflects every current source input.
+
+## Replay inputs and witnessed observations
+
+Use `replay_inputs` for immutable deterministic lane inputs and
+`witnessed_observations.query_traces` for prior-run query evidence that must remain runner-witnessed
+output instead of current-run input truth.
+
+```yaml
+tasks:
+  sdk:verify:
+    replay_inputs:
+      - id: api_schema
+        kind: static_file
+        path: schema/api.graphql
+      - id: runtime-presentation
+        kind: presentation_profile
+        path: replay/presentation-profile.yaml
+      - id: equivalence
+        kind: comparator_profile
+        path: replay/comparator-profile.yaml
+    witnessed_observations:
+      query_traces:
+        - id: recorded_queries
+          path: evidence/sdk-queries.jsonl
+```
+
+Use `static_file` for generic immutable repo files, `presentation_profile` for declared
+output-shaping or normalization policy, and `comparator_profile` for declared equivalence or
+tolerance policy. Keep the query trace separate: Ota emits it under receipt
+`witnessed_observations`, not `evaluated_inputs`.

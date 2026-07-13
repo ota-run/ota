@@ -51,6 +51,20 @@ tasks:
 
   sdk:verify:
     description: Verify the generated TypeScript SDK after its producer materializes it
+    replay_inputs:
+      - id: api_schema
+        kind: static_file
+        path: schema/api.graphql
+      - id: runtime-presentation
+        kind: presentation_profile
+        path: replay/presentation-profile.yaml
+      - id: equivalence
+        kind: comparator_profile
+        path: replay/comparator-profile.yaml
+    witnessed_observations:
+      query_traces:
+        - id: recorded_queries
+          path: evidence/sdk-queries.jsonl
     command:
       exe: npm
       args:

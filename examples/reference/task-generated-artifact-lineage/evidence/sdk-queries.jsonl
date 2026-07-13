@@ -1,0 +1,2 @@
+{"id":"health","run":0,"sql":"SELECT 'ok' AS health"}
+{"id":"health","run":1,"sql":"SELECT 'ok' AS health"}
