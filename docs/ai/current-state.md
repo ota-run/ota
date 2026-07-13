@@ -45,12 +45,13 @@ durable agent workflow belongs in the canonical Ota skill.
   dependency-resolution, or presentation anchor rather than over-reading same-contract reruns as
   hermetic; hidden-input replay failure now emits ordered `hidden_input_candidates` so operators
   can promote the next likely ambient class instead of reading one generic suspicion bucket
-- queued design refinement: `V11.11` seam-evidence provenance, which keeps caller-side attempts,
-  dependency-side or round-trip exercise, and separately recorded negative controls distinct on
-  the existing proof carrier
-- immediate proof gate: finish the remaining `V11.10` replay-trust carriers before widening
-  further: fuller pinned-input identity, presentation-profile ownership, and hidden-input
-  hardening. Continue `V11.11` seam evidence only after that replay posture is stable.
+- active implementation and proof slice: `V11.11` seam evidence. Runtime proof now keeps ordinary
+  reachability and caller-side attempts distinct from a separately selected, boundary-attested
+  workflow negative control; `ota proof runtime --negative-control <id>` requires the declared
+  finite control task to fail but records that outcome separately rather than over-claiming causal
+  dependency exercise.
+- immediate proof gate: pressure the negative-control carrier on a real service repo before
+  widening seam evidence to richer dependency-side or round-trip exercised observations.
 
 ## Recent Completed Slice
 

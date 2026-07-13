@@ -838,6 +838,14 @@ Notes:
   `http` and `tcp`; current shipped attempted records use `caller_side`.
 - `dependency_evidence[].observation.evidence_class` is the V11.9 authority class for the
   observation itself. Current shipped reachable records are `derived`.
+- `negative_control` is optional boundary-attested evidence from one explicitly selected
+  `workflows.<name>.proof.negative_controls[]` task. `expected_failure_observed` is the only
+  passing control outcome; `unexpected_success` and `control_could_not_run` fail the proof. This
+  record is separate from ordinary `dependency_evidence[]` and does not remove the matching
+  `dependency_exercise_not_proved` boundary: an observed task failure is not sufficient to infer
+  that the declared dependency caused it. A control that is not run because the ordinary proof
+  already failed retains the primary proof failure and records a runner-authored `detail` instead
+  of replacing the original diagnosis.
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
   Ota emits `functional_runtime_not_proved` when proof fell back to a setup-only lane,
   `dependency_exercise_not_proved` for each declared service seam in the selected closure when
@@ -946,7 +954,25 @@ Success:
       "declared_by_workflows": ["app"]
     }
   ],
+  "negative_control": {
+    "id": "postgres-unavailable",
+    "dependency_id": "service:postgres",
+    "control_task": "verify:postgres-unavailable",
+    "outcome": "expected_failure_observed",
+    "proof_scope_ref": "workflow:app/negative_control:postgres-unavailable",
+    "evidence_class": "attested",
+    "exit_code": 1
+  },
   "not_proved": [
+    {
+      "kind": "dependency_exercise_not_proved",
+      "relative_to": "runtime_path",
+      "source": "contract_lane",
+      "dependency_id": "service:postgres",
+      "reason": "caller_side_only_evidence",
+      "declared_by_tasks": ["serve"],
+      "declared_by_workflows": ["app"]
+    },
     {
       "kind": "broader_repo_completion_not_proved",
       "relative_to": "runtime_path",

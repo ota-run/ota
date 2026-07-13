@@ -686,6 +686,29 @@ pub struct ProofRuntimeDependencyEvidence {
     pub declared_by_workflows: Vec<String>,
 }
 
+/// Boundary-attested result of one workflow-declared negative-control task.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeNegativeControl {
+    pub id: String,
+    pub dependency_id: String,
+    pub control_task: String,
+    pub outcome: ProofRuntimeNegativeControlOutcome,
+    pub proof_scope_ref: String,
+    pub evidence_class: ExecutionEvidenceClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofRuntimeNegativeControlOutcome {
+    ExpectedFailureObserved,
+    UnexpectedSuccess,
+    ControlCouldNotRun,
+}
+
 /// Contract-declared lineage for a generated artifact consumed by the selected execution path.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptArtifactLineage {
@@ -3022,6 +3045,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub proof_scope: ProofRuntimeScope,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_evidence: Vec<ProofRuntimeDependencyEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negative_control: Option<ProofRuntimeNegativeControl>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_proved: Vec<ProofRuntimeNotProved>,
     pub summary: DoctorSummary,

@@ -102,7 +102,8 @@ use crate::output::{
     MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
     PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
     ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
+    ProofRuntimeNegativeControlOutcome, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
     ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
     ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
     ReceiptDiffReadinessChange, ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture,
@@ -2311,6 +2312,7 @@ pub fn proof_runtime(
     file_override: Option<&Path>,
     member: Option<&str>,
     workflow_name: Option<&str>,
+    negative_control: Option<&str>,
     ready_timeout: Option<&str>,
     overrides: ExecutionOverrides,
     format: OutputFormat,
@@ -2372,6 +2374,9 @@ pub fn proof_runtime(
     if let Some(workflow_name) = workflow_name {
         debug_lines.push(format!("DEBUG workflow={workflow_name}"));
     }
+    if let Some(negative_control) = negative_control {
+        debug_lines.push(format!("DEBUG negative_control={negative_control}"));
+    }
     if let Some(timeout) = ready_timeout {
         debug_lines.push(format!("DEBUG ready_timeout_secs={}", timeout.as_secs()));
     }
@@ -2419,6 +2424,12 @@ pub fn proof_runtime(
                     .as_ref()
                     .map(workflow_selector_from_summary)
                     .or_else(|| workflow_name.map(str::to_string));
+                let selected_negative_control =
+                    match proof_runtime_negative_control(contract, workflow_name, negative_control)
+                    {
+                        Ok(control) => control,
+                        Err(error) => return CommandOutput::failure_with_code(error, 2),
+                    };
                 let artifact_dir = proof_runtime_artifact_dir(
                     contract_working_dir(&target.contract_path),
                     member,
@@ -2567,7 +2578,7 @@ pub fn proof_runtime(
                     .map(|blocker| blocker.summary.clone());
                 let primary_blocker_next =
                     primary_blocker.as_ref().map(|blocker| blocker.next.clone());
-                let proof_error = cleanup_error
+                let mut proof_error = cleanup_error
                     .clone()
                     .or(primary_blocker_error)
                     .or_else(|| up_process_failure.map(str::to_string));
@@ -2608,6 +2619,27 @@ pub fn proof_runtime(
                 } else {
                     proof_runtime_phase_label(refined_proof_phase.as_str())
                 };
+                let base_ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
+                let negative_control = selected_negative_control.as_ref().map(|control| {
+                    proof_runtime_execute_negative_control(
+                        contract,
+                        &target.contract_path,
+                        control,
+                        effective_workflow_selector.as_deref(),
+                        overrides,
+                        base_ok,
+                    )
+                });
+                if base_ok
+                    && let Some(control) = negative_control.as_ref()
+                    && control.outcome
+                        != ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+                {
+                    proof_error = Some(format!(
+                        "negative control `{}` did not observe the expected task failure",
+                        control.id
+                    ));
+                }
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
                 let raw_status = proof_runtime_status_word(
                     proof_summary_for_output.verdict,
@@ -2621,7 +2653,7 @@ pub fn proof_runtime(
                 } else {
                     raw_status
                 };
-                let proof_failure_class = proof_runtime_failure_class(
+                let mut proof_failure_class = proof_runtime_failure_class(
                     &proof_summary_for_output,
                     refined_proof_phase.as_str(),
                     cleanup_error.as_deref(),
@@ -2629,6 +2661,14 @@ pub fn proof_runtime(
                     proof_likely_cause.as_ref(),
                     &up_log_artifact_path,
                 );
+                if base_ok
+                    && negative_control.as_ref().is_some_and(|control| {
+                        control.outcome
+                            != ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+                    })
+                {
+                    proof_failure_class = Some(String::from("negative_control_failed"));
+                }
                 let doctor_artifact_json = match proof_runtime_doctor_artifact_json(
                     contract,
                     &target.contract_path,
@@ -2692,6 +2732,7 @@ pub fn proof_runtime(
                             &doctor_artifact_display,
                             &up_log_artifact_display,
                             &not_proved,
+                            negative_control.as_ref(),
                             &workflow_env_artifacts,
                             proof_likely_cause_text.as_deref(),
                             cleanup_error.as_deref(),
@@ -2711,6 +2752,7 @@ pub fn proof_runtime(
                             stage_family: "proof",
                             proof_scope,
                             dependency_evidence,
+                            negative_control,
                             not_proved,
                             summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
@@ -55709,6 +55751,7 @@ workflows:
             "doctor.json",
             "up.log",
             &[],
+            None,
             &[],
             None,
             None,
@@ -55744,6 +55787,7 @@ workflows:
             "doctor.json",
             "up.log",
             &[],
+            None,
             &[],
             None,
             None,
@@ -55856,6 +55900,7 @@ workflows:
             "doctor.json",
             "up.log",
             &[],
+            None,
             &[],
             None,
             None,
@@ -57444,6 +57489,7 @@ workflows:
                 declared_by_tasks: vec![String::from("verify")],
                 declared_by_workflows: vec![String::from("app")],
             }],
+            None,
             &[],
             None,
             None,
@@ -57484,6 +57530,19 @@ workflows:
                     declared_by_tasks: vec![String::from("serve")],
                     declared_by_workflows: vec![String::from("app")],
                 }],
+                negative_control: Some(crate::output::ProofRuntimeNegativeControl {
+                    id: String::from("postgres-unavailable"),
+                    dependency_id: String::from("service:postgres"),
+                    control_task: String::from("verify:postgres-unavailable"),
+                    outcome:
+                        crate::output::ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved,
+                    proof_scope_ref: String::from(
+                        "workflow:app/negative_control:postgres-unavailable",
+                    ),
+                    evidence_class: ExecutionEvidenceClass::Attested,
+                    exit_code: Some(1),
+                    detail: None,
+                }),
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("dependency_exercise_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57525,6 +57584,66 @@ workflows:
         assert_eq!(
             body["dependency_evidence"][0]["observation"]["evidence_class"].as_str(),
             Some("derived")
+        );
+        assert_eq!(
+            body["negative_control"]["outcome"].as_str(),
+            Some("expected_failure_observed")
+        );
+        assert_eq!(
+            body["negative_control"]["evidence_class"].as_str(),
+            Some("attested")
+        );
+        assert_eq!(
+            body["not_proved"][0]["dependency_id"].as_str(),
+            Some("service:postgres"),
+            "a passing control task result remains separate from causal seam proof"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_negative_control_records_observed_expected_failure() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: negative-control
+tasks:
+  control:
+    run: "exit 1"
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let control = crate::schema::WorkflowNegativeControlSpec {
+            id: String::from("postgres-down"),
+            dependency: String::from("postgres"),
+            task: String::from("control"),
+        };
+
+        let record = super::proof_runtime_execute_negative_control(
+            &contract,
+            &contract_path,
+            &control,
+            Some("app"),
+            ExecutionOverrides::default(),
+            true,
+        );
+
+        assert_eq!(
+            record.outcome,
+            crate::output::ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved
+        );
+        assert_eq!(record.dependency_id, "service:postgres");
+        assert_eq!(record.exit_code, Some(1));
+        assert_eq!(record.evidence_class, ExecutionEvidenceClass::Attested);
+        assert_eq!(
+            record.proof_scope_ref,
+            "workflow:app/negative_control:postgres-down"
         );
     }
 
@@ -57583,6 +57702,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57643,6 +57763,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57712,6 +57833,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57864,6 +57986,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -57932,6 +58055,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -58000,6 +58124,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -58065,6 +58190,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -58133,6 +58259,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -58418,6 +58545,7 @@ workflows:
                     intent: None,
                 },
                 dependency_evidence: Vec::new(),
+                negative_control: None,
                 not_proved: vec![crate::output::ProofRuntimeNotProved {
                     kind: String::from("broader_repo_completion_not_proved"),
                     relative_to: String::from("runtime_path"),
@@ -88905,6 +89033,7 @@ workflows:
             None,
             Some("app"),
             None,
+            None,
             ExecutionOverrides::default(),
             OutputFormat::Json,
             false,
@@ -98910,6 +99039,97 @@ fn proof_runtime_scope(
     }
 }
 
+fn proof_runtime_negative_control(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    control_id: Option<&str>,
+) -> Result<Option<crate::schema::WorkflowNegativeControlSpec>, String> {
+    let Some(control_id) = control_id else {
+        return Ok(None);
+    };
+    let Some((workflow_name, workflow)) = contract.selected_workflow(workflow_name) else {
+        return Err(String::from(
+            "`ota proof runtime --negative-control` requires a declared workflow",
+        ));
+    };
+    workflow
+        .proof
+        .negative_controls
+        .iter()
+        .find(|control| control.id == control_id)
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| {
+            format!("workflow `{workflow_name}` does not declare negative control `{control_id}`")
+        })
+}
+
+fn proof_runtime_execute_negative_control(
+    contract: &Contract,
+    contract_path: &Path,
+    control: &crate::schema::WorkflowNegativeControlSpec,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    primary_proof_ok: bool,
+) -> ProofRuntimeNegativeControl {
+    let proof_scope_ref = workflow_name
+        .map(|workflow| format!("workflow:{workflow}/negative_control:{}", control.id))
+        .unwrap_or_else(|| format!("workflow:default/negative_control:{}", control.id));
+    if !primary_proof_ok {
+        return ProofRuntimeNegativeControl {
+            id: control.id.clone(),
+            dependency_id: format!("service:{}", control.dependency),
+            control_task: control.task.clone(),
+            outcome: ProofRuntimeNegativeControlOutcome::ControlCouldNotRun,
+            proof_scope_ref,
+            evidence_class: ExecutionEvidenceClass::Attested,
+            exit_code: None,
+            detail: Some(String::from(
+                "ordinary runtime proof did not pass, so the control was not executed",
+            )),
+        };
+    }
+    match run_task_captured_with_args_with_overrides_with_policy(
+        contract,
+        contract_path,
+        &control.task,
+        &[],
+        overrides,
+        None,
+    ) {
+        Ok(outcome) if outcome.exit_code != 0 => ProofRuntimeNegativeControl {
+            id: control.id.clone(),
+            dependency_id: format!("service:{}", control.dependency),
+            control_task: control.task.clone(),
+            outcome: ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved,
+            proof_scope_ref,
+            evidence_class: ExecutionEvidenceClass::Attested,
+            exit_code: Some(outcome.exit_code),
+            detail: None,
+        },
+        Ok(outcome) => ProofRuntimeNegativeControl {
+            id: control.id.clone(),
+            dependency_id: format!("service:{}", control.dependency),
+            control_task: control.task.clone(),
+            outcome: ProofRuntimeNegativeControlOutcome::UnexpectedSuccess,
+            proof_scope_ref,
+            evidence_class: ExecutionEvidenceClass::Attested,
+            exit_code: Some(outcome.exit_code),
+            detail: None,
+        },
+        Err(error) => ProofRuntimeNegativeControl {
+            id: control.id.clone(),
+            dependency_id: format!("service:{}", control.dependency),
+            control_task: control.task.clone(),
+            outcome: ProofRuntimeNegativeControlOutcome::ControlCouldNotRun,
+            proof_scope_ref,
+            evidence_class: ExecutionEvidenceClass::Attested,
+            exit_code: None,
+            detail: Some(error.to_string()),
+        },
+    }
+}
+
 fn proof_runtime_not_proved(
     contract: &Contract,
     contract_path: &Path,
@@ -101320,6 +101540,7 @@ fn render_proof_runtime_text(
     doctor_artifact: &str,
     up_log_artifact: &str,
     not_proved: &[crate::output::ProofRuntimeNotProved],
+    negative_control: Option<&ProofRuntimeNegativeControl>,
     workflow_env_artifacts: &[EnvRenderedArtifactEntry],
     likely_cause: Option<&str>,
     cleanup_error: Option<&str>,
@@ -101448,6 +101669,26 @@ fn render_proof_runtime_text(
                 render_proof_runtime_not_proved_text(entry)
             ));
         }
+    }
+
+    if let Some(control) = negative_control {
+        stdout.push_str(&format!(
+            "\n\n{} {}",
+            info_bullet(),
+            paint_section_title("Negative Control")
+        ));
+        stdout.push_str(&format!(
+            "\n  {} {} against {}: {}",
+            next_bullet(),
+            paint_backticked_code(&control.control_task),
+            paint_backticked_code(&control.dependency_id),
+            match control.outcome {
+                ProofRuntimeNegativeControlOutcome::ExpectedFailureObserved =>
+                    "expected failure observed",
+                ProofRuntimeNegativeControlOutcome::UnexpectedSuccess => "unexpected success",
+                ProofRuntimeNegativeControlOutcome::ControlCouldNotRun => "control could not run",
+            }
+        ));
     }
 
     stdout.push_str(&format!(

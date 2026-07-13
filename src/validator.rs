@@ -16190,6 +16190,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`workflows.{name}.intent` must not be empty"
             )));
         }
+        validate_workflow_negative_controls(contract, name, workflow, errors);
         if let Some(runtime_boundary) = workflow.runtime_boundary.as_ref() {
             validate_runtime_boundary(
                 &format!("workflows.{name}.runtime_boundary"),
@@ -16689,6 +16690,62 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     )));
                 }
             }
+        }
+    }
+}
+
+fn validate_workflow_negative_controls(
+    contract: &Contract,
+    workflow_name: &str,
+    workflow: &crate::schema::WorkflowSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let normal_closure = contract
+        .selected_workflow_task_closure_names(Some(workflow_name))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut ids = BTreeSet::new();
+    for control in &workflow.proof.negative_controls {
+        let prefix = format!("workflows.{workflow_name}.proof.negative_controls");
+        if control.id.trim().is_empty() || !ids.insert(control.id.trim().to_string()) {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}` must declare unique non-empty control ids"
+            )));
+        }
+        if !contract.services.contains_key(control.dependency.trim()) {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.dependency` references unknown service `{}`",
+                control.id, control.dependency
+            )));
+        }
+        let Some(task) = contract.tasks.get(control.task.trim()) else {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` references unknown task `{}`",
+                control.id, control.task
+            )));
+            continue;
+        };
+        if normal_closure.contains(control.task.trim()) {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` must stay outside the normal workflow closure so the control is executed only when requested",
+                control.id
+            )));
+        }
+        if task.has_any_service_runtime() {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` must be a finite control task, not a service runtime",
+                control.id
+            )));
+        }
+        if task
+            .requires_services
+            .iter()
+            .any(|service| service == &control.dependency)
+        {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.{}.task` must not require the controlled service `{}` or runner readiness may recreate the seam before the control executes",
+                control.id, control.dependency
+            )));
         }
     }
 }
@@ -18616,6 +18673,127 @@ workflows:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_workflow_negative_control_as_a_separate_finite_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: control
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+tasks:
+  serve:
+    run: echo serve
+  postgres-down:
+    run: "exit 1"
+workflows:
+  default: app
+  app:
+    run:
+      task: serve
+    proof:
+      negative_controls:
+        - id: postgres-down
+          dependency: postgres
+          task: postgres-down
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_workflow_negative_control_inside_normal_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: control
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+tasks:
+  serve:
+    run: echo serve
+workflows:
+  default: app
+  app:
+    run:
+      task: serve
+    proof:
+      negative_controls:
+        - id: postgres-down
+          dependency: postgres
+          task: serve
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("control should stay separate");
+        assert!(
+            errors
+                .to_string()
+                .contains("outside the normal workflow closure")
+        );
+    }
+
+    #[test]
+    fn rejects_workflow_negative_control_that_requires_the_controlled_service() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: control
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+tasks:
+  serve:
+    run: echo serve
+  postgres-down:
+    run: "exit 1"
+    requires_services:
+      - postgres
+workflows:
+  default: app
+  app:
+    run:
+      task: serve
+    proof:
+      negative_controls:
+        - id: postgres-down
+          dependency: postgres
+          task: postgres-down
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("control must not recreate seam");
+        assert!(
+            errors
+                .to_string()
+                .contains("must not require the controlled service `postgres`")
+        );
     }
 
     #[test]

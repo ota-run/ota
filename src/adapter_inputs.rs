@@ -1818,6 +1818,7 @@ mod tests {
             attach: None,
             services: WorkflowServicesSpec::default(),
             readiness: WorkflowReadinessSpec::default(),
+            proof: crate::schema::WorkflowProofSpec::default(),
             exposes: Vec::new(),
         };
 

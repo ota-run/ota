@@ -878,6 +878,9 @@ enum ProofCommands {
         /// Prove one declared repo workflow instead of the default workflow.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
         workflow: Option<String>,
+        /// Execute one declared negative-control task and require it to fail.
+        #[arg(long, value_name = "ID")]
+        negative_control: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -4757,6 +4760,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     host_port,
                     member,
                     workflow,
+                    negative_control,
                     path,
                 },
         } => commands::proof_runtime(
@@ -4764,6 +4768,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
+            negative_control.as_deref(),
             ready_timeout.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
@@ -18813,6 +18818,7 @@ tasks:
                 host_port: None,
                 member: None,
                 workflow: None,
+                negative_control: None,
                 path: None,
             },
         }));
@@ -18926,6 +18932,7 @@ tasks:
                     host_port: None,
                     member: None,
                     workflow: None,
+                    negative_control: None,
                     path: None,
                 },
             }),
@@ -19078,6 +19085,7 @@ tasks:
                         host_port: None,
                         member: None,
                         workflow: None,
+                        negative_control: None,
                         path: None,
                     },
                 },
@@ -27791,6 +27799,8 @@ policies:
             "runtime",
             "--workflow",
             "app",
+            "--negative-control",
+            "postgres-unavailable",
             "--container",
             "--persistent",
             "--host-port",
@@ -27818,6 +27828,7 @@ policies:
                         host_port,
                         member,
                         workflow,
+                        negative_control,
                         path,
                     },
             } => {
@@ -27832,6 +27843,7 @@ policies:
                 assert_eq!(*host_port, Some(43000));
                 assert!(member.is_none());
                 assert_eq!(workflow.as_deref(), Some("app"));
+                assert_eq!(negative_control.as_deref(), Some("postgres-unavailable"));
                 assert_eq!(path.as_deref(), Some(Path::new("./ota.yaml")));
             }
             other => panic!("unexpected command parsed: {other:?}"),

@@ -619,6 +619,7 @@ ota proof runtime --ready-timeout 10m --workflow app [PATH]
 ota proof runtime --mode container --persistent [PATH]
 ota proof runtime --member api --workflow backend [PATH]
 ota proof runtime --json --workflow app [PATH]
+ota proof runtime --workflow app --negative-control postgres-unavailable [PATH]
 ```
 
 Current behavior:
@@ -643,6 +644,9 @@ Current behavior:
   readiness budget expires instead of treating the launcher exit itself as a readiness failure
 - supports `--ready-timeout <DURATION>` to cap the runtime-proof readiness wait budget with
   explicit values such as `90s`, `5m`, or `1h`
+- supports `--negative-control <id>` for a workflow-declared finite control task; Ota runs the
+  selected task only after the ordinary proof path has passed and requires the control task to
+  exit non-zero, then emits the runner-observed control outcome as separate proof evidence
 - uses the same backend/lifecycle override rules as `ota doctor` and `ota up`
 - attempts repo-scoped runtime cleanup after capturing artifacts so proof does not leave
   persistent Ota-managed runtime state behind

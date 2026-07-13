@@ -749,8 +749,33 @@ pub struct WorkflowSpec {
     pub services: WorkflowServicesSpec,
     #[serde(default)]
     pub readiness: WorkflowReadinessSpec,
+    #[serde(default, skip_serializing_if = "WorkflowProofSpec::is_empty")]
+    pub proof: WorkflowProofSpec,
     #[serde(default)]
     pub exposes: Vec<WorkflowExposeSpec>,
+}
+
+/// Optional workflow-owned tasks that attest a declared failure-control outcome.
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowProofSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_controls: Vec<WorkflowNegativeControlSpec>,
+}
+
+impl WorkflowProofSpec {
+    pub fn is_empty(&self) -> bool {
+        self.negative_controls.is_empty()
+    }
+}
+
+/// A finite task whose non-zero exit is the observed negative-control outcome.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowNegativeControlSpec {
+    pub id: String,
+    pub dependency: String,
+    pub task: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
