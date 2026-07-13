@@ -2541,6 +2541,8 @@ pub fn proof_runtime(
                     crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
                 );
                 let up_process_failure = up_process_failure.as_deref();
+                let ordinary_up_process_failure =
+                    proof_runtime_effective_up_process_failure(&proof_summary, up_process_failure);
 
                 let seam_observations = selected_seam_observations
                     .iter()
@@ -2558,8 +2560,7 @@ pub fn proof_runtime(
                             seam_marker
                                 .as_deref()
                                 .expect("marker exists for declared observer"),
-                            proof_summary.verdict == DoctorVerdict::Ready
-                                && up_process_failure.is_none(),
+                            proof_runtime_ok(&proof_summary, ordinary_up_process_failure),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -56002,19 +56003,19 @@ workflows:
     }
 
     #[test]
-    fn proof_runtime_effective_up_process_failure_ignores_non_blocking_ready_exit() {
+    fn proof_runtime_effective_up_process_failure_ignores_warning_only_ready_exit() {
         let summary = crate::output::DoctorSummary {
-            verdict: DoctorVerdict::Ready,
+            verdict: DoctorVerdict::Risky,
             agent_verdict: DoctorVerdict::Ready,
             error_count: 0,
-            warn_count: 0,
-            info_count: 1,
+            warn_count: 1,
+            info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
                 code: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Container readiness does not include host-only checks"),
-                why: String::from("container mode excludes host checks"),
-                next: String::from("run `ota doctor --mode native`"),
+                severity: FindingSeverity::Warn,
+                summary: String::from("Selected task path mutates external state: postgres"),
+                why: String::from("selected path mutates postgres"),
+                next: String::from("keep the effect explicit"),
                 provenance: Some(String::from("repo contract")),
                 provenance_key: Some(String::from("repo_contract")),
             }),
@@ -101153,9 +101154,7 @@ fn proof_runtime_effective_up_process_failure<'a>(
     up_process_failure: Option<&'a str>,
 ) -> Option<&'a str> {
     let failure = up_process_failure?;
-    if summary.verdict == DoctorVerdict::Ready
-        && proof_runtime_blocking_primary_blocker(summary).is_none()
-    {
+    if summary.error_count == 0 && proof_runtime_blocking_primary_blocker(summary).is_none() {
         None
     } else {
         Some(failure)

@@ -60,6 +60,10 @@
   `invalid`; only a matching control failure attestation for the same proof transaction can become
   `validated` and promote that exact seam evidence to `fault_tested`.
 
+- fixed `ota proof runtime` admission for warning-only readiness. A detached runtime process exit
+  no longer suppresses a declared seam observer when `ota up` is ready and Doctor reports no
+  errors; advisory warnings remain evidence, not proof blockers.
+
 - `ota proof runtime --json` now distinguishes caller-side dependency attempts from proved seam
   reachability. `dependency_evidence[]` can publish additive `interaction_attempted: true` with
   `observation.origin: caller_side` when proof-derived failure evidence shows the selected lane

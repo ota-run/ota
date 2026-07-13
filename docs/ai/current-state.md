@@ -54,9 +54,12 @@ durable agent workflow belongs in the canonical Ota skill.
   JSON preserve the evidence level, origin, authority class, and control status for operators.
 - active V11.11 pressure gate: Athena API carries the first Rails/PostgreSQL fault-attested
   control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
-  is historical evidence only; the new transaction-bound `fault_tested` matrix is pending source
-  push and Ubuntu execution. Local macOS proof remains host-blocked by Brew `libpq` fulfillment,
-  so it must not be mistaken for a negative-control result.
+  is historical evidence only. Its first Ubuntu gate showed `ota up` ready with advisory warnings
+  but the proof admission path still treated the detached runtime exit as blocking and withheld the
+  observer. The core decision owner now treats warning-only readiness as non-blocking; rerun the
+  transaction-bound `fault_tested` matrix after the source push. Local macOS proof remains
+  host-blocked by Brew `libpq` fulfillment, so it must not be mistaken for a negative-control
+  result.
 
 ## Recent Completed Slice
 
