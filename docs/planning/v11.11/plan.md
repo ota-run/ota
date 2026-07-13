@@ -298,6 +298,9 @@ Direction:
   - `exercised`: Ota observed a contract-specific interaction across the declared dependency seam
   - `fault_tested`: a separate negative-control proof run disrupted or substituted the dependency
     and recorded the expected selected-lane failure
+- keep this ladder closed. Do not add composite levels such as
+  `exercised_with_negative_control`; negative-control validation strengthens the evidence attached
+  to `exercised` and is the sole promotion path to `fault_tested`
 - keep `reachable` and `exercised` as ordinary selected-proof evidence; neither alone claims
   causal dependency necessity
 - permit a non-secret dependency fingerprint to strengthen an `exercised` record when it was
@@ -325,8 +328,12 @@ The promotion rule is deliberately strict:
   `reachable` or promote a dependency to `exercised`; either level needs its own observed evidence
 - every caller-side-only `interaction_attempted` observation must pair with a contract-derived
   `not_proved` entry for dependency exercise on that same dependency seam
-- dependency-side and round-trip-effect evidence may support `exercised` when the evidence maps to
-  the declared dependency seam and interaction without heuristic inference
+- dependency-side evidence may support `exercised` when the evidence maps to the declared
+  dependency seam and interaction without heuristic inference
+- round-trip-effect evidence may support `exercised` only when Ota records why an inert stand-in
+  could not satisfy the same assertion for this interaction, or when the same transaction also
+  carries runner-verified seam attestation that binds the observed effect back to the declared
+  dependency; seam mapping alone is not sufficient
 - a non-secret fingerprint strengthens its observed provenance; it does not change the evidence
   level by itself
 - missing, ambiguous, or caller-side-only evidence must remain an explicit `not_proved` boundary
@@ -429,6 +436,39 @@ Direction:
 - never derive `fault_tested` from a fingerprint, ordinary execution log, or successful selected
   lane; the negative-control record is the only authority for that level
 
+#### Negative-control validation is evidence, not a fourth verdict
+
+`negative_control` is an additive structured qualifier on the dependency evidence record. It is a
+derived projection of the separate negative-control record above, not a second authority surface.
+It must not create another top-level dependency level or let a caller-selected label change
+promotion.
+
+```json
+{
+  "level": "exercised",
+  "negative_control": {
+    "status": "unrun | invalid | validated",
+    "same_obligation": true,
+    "failure_attestation_digest": "sha256:..."
+  }
+}
+```
+
+Rules:
+
+- `unrun` means no selected control transaction exists; it adds no causal claim
+- `invalid` means the control was unable to prove the expected missing-effect failure, including
+  an unrelated non-zero exit, a setup failure, missing correlation, or a mismatched obligation;
+  it must preserve `not_proved` for causal dependency necessity
+- `validated` requires runner-verified correlation to the selected green obligation and a
+  non-secret digest of the structured failure attestation from that same control transaction
+- only `validated` may promote the record from `exercised` to `fault_tested`
+- `negative_control_present` alone is never a promotion input; consumers must use `status`, not a
+  boolean presence check
+- the separate negative-control record remains canonical for intervention, transaction binding, and
+  observed failure outcome; the dependency-level qualifier is a consumer-facing projection derived
+  from that canonical record and must not drift from it
+
 The first machine-readable shape should be additive:
 
 ```json
@@ -515,6 +555,9 @@ V11.11 is complete when:
 - `fault_tested` appears only on a separately recorded negative-control run with a bound failure
   attestation for the same green obligation; ordinary green proof, fingerprint, caller-side trace,
   or a generic non-zero control exit never implies it
+- a negative-control qualifier is consumer-visible under the same dependency record, has only
+  `unrun`, `invalid`, or runner-verified `validated` status, and never creates a composite evidence
+  level
 - marker-bound seam observers run before teardown, prove their producer and observer closures are
   owned by the selected workflow, and only a runner-verified transaction attestation removes the
   matching `dependency_exercise_not_proved` boundary
