@@ -2683,6 +2683,7 @@ pub fn proof_runtime(
                             &topology_artifact_display,
                             &doctor_artifact_display,
                             &up_log_artifact_display,
+                            &not_proved,
                             &workflow_env_artifacts,
                             proof_likely_cause_text.as_deref(),
                             cleanup_error.as_deref(),
@@ -55660,6 +55661,7 @@ workflows:
             "doctor.json",
             "up.log",
             &[],
+            &[],
             None,
             None,
             None,
@@ -55693,6 +55695,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             &[],
             None,
             None,
@@ -55804,6 +55807,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             &[],
             None,
             None,
@@ -57213,6 +57217,47 @@ workflows:
             Some("dependency_exercise_not_proved"),
             "a direct declared seam must outrank the generic proof remainder"
         );
+    }
+
+    #[test]
+    fn render_proof_runtime_text_surfaces_not_proved_boundaries() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("app"),
+            Path::new("./ota.yaml"),
+            "post-up diagnosis",
+            "READY",
+            "passed_with_unproven_boundaries",
+            &summary,
+            None,
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            &[crate::output::ProofRuntimeNotProved {
+                kind: String::from("dependency_exercise_not_proved"),
+                relative_to: String::from("runtime_path"),
+                source: String::from("contract_lane"),
+                dependency_id: Some(String::from("service:postgres")),
+                declared_by_tasks: vec![String::from("verify")],
+                declared_by_workflows: vec![String::from("app")],
+            }],
+            &[],
+            None,
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains("Proof Boundaries"));
+        assert!(rendered.contains("dependency exercise not proved for `service:postgres` via task `verify`"));
+        assert!(rendered.contains("Proof Verdict: passed_with_unproven_boundaries"));
     }
 
     #[test]
@@ -100788,6 +100833,7 @@ fn render_proof_runtime_text(
     topology_artifact: &str,
     doctor_artifact: &str,
     up_log_artifact: &str,
+    not_proved: &[crate::output::ProofRuntimeNotProved],
     workflow_env_artifacts: &[EnvRenderedArtifactEntry],
     likely_cause: Option<&str>,
     cleanup_error: Option<&str>,
@@ -100903,6 +100949,21 @@ fn render_proof_runtime_text(
         }
     }
 
+    if !not_proved.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{} {}",
+            info_bullet(),
+            paint_section_title("Proof Boundaries")
+        ));
+        for entry in not_proved {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                next_bullet(),
+                render_proof_runtime_not_proved_text(entry)
+            ));
+        }
+    }
+
     stdout.push_str(&format!(
         "\n\n{} {}",
         info_bullet(),
@@ -100951,6 +101012,57 @@ fn render_proof_runtime_text(
     }
 
     stdout
+}
+
+fn render_proof_runtime_not_proved_text(entry: &crate::output::ProofRuntimeNotProved) -> String {
+    match entry.kind.as_str() {
+        "dependency_exercise_not_proved" => {
+            let dependency = entry
+                .dependency_id
+                .as_deref()
+                .unwrap_or("declared dependency path");
+            let task_scope = if entry.declared_by_tasks.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " via task {}",
+                    entry
+                        .declared_by_tasks
+                        .iter()
+                        .map(|task| paint_backticked_code(task))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            format!(
+                "dependency exercise not proved for {}{}",
+                paint_backticked_code(dependency),
+                task_scope
+            )
+        }
+        "external_network_path_not_proved" => {
+            if entry.declared_by_workflows.is_empty() {
+                String::from("external network path not proved")
+            } else {
+                format!(
+                    "external network path not proved for workflow {}",
+                    entry
+                        .declared_by_workflows
+                        .iter()
+                        .map(|workflow| paint_backticked_code(workflow))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        "functional_runtime_not_proved" => String::from(
+            "functional runtime behavior stays outside this runtime-proof slice",
+        ),
+        "broader_repo_completion_not_proved" => {
+            String::from("broader repo completion stays outside this runtime-proof slice")
+        }
+        _ => format!("{} not proved", entry.kind.replace('_', " ")),
+    }
 }
 
 fn render_up_preview_text(

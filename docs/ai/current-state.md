@@ -134,6 +134,10 @@ durable agent workflow belongs in the canonical Ota skill.
 - `V11.11` contract-derived proof boundaries is implemented in Ota commit `e3bbdf02`.
   `ota proof runtime --json` now emits terminal `proof_verdict`, and Lead Quorum pressure proved
   `passed_with_unproven_boundaries` on the app lane across Ubuntu and macOS.
+- The next `V11.11` tightening keeps that qualified proof boundary visible in human output too:
+  `ota proof runtime` now renders concrete `Proof Boundaries` entries whenever `not_proved[]`
+  exists, so external-network and broader-scope exclusions travel with the green proof instead of
+  living only in JSON.
 - The same commit fixes detached native proof lifecycle ownership: nested `ota up --detach` leaves
   the service running for the outer proof to observe and clean up, preventing recursive teardown.
 - V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching

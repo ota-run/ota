@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- `ota proof runtime` text output now carries qualified proof boundaries inline: when
+  `proof_verdict` is `passed_with_unproven_boundaries`, the human render lists the concrete
+  `not_proved` entries before artifacts, so a green runtime-proof lane cannot silently swallow
+  unproved external or broader-scope boundaries
+
 - replay hermeticity is now stricter: a same-contract rerun no longer reads as `hermetic`
   unless replay also matched at least one material runtime, dependency, or presentation anchor;
   pure contract/source/policy/env-source matches now fall to `ambient_fresh_derivation`, while
