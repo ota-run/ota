@@ -43,7 +43,8 @@ durable agent workflow belongs in the canonical Ota skill.
   split by rendering matched acquitting, narrowing, and pointer-only evidence separately from
   changed inputs, and hermeticity now requires at least one matched material runtime,
   dependency-resolution, or presentation anchor rather than over-reading same-contract reruns as
-  hermetic
+  hermetic; hidden-input replay failure now emits ordered `hidden_input_candidates` so operators
+  can promote the next likely ambient class instead of reading one generic suspicion bucket
 - queued design refinement: `V11.11` seam-evidence provenance, which keeps caller-side attempts,
   dependency-side or round-trip exercise, and separately recorded negative controls distinct on
   the existing proof carrier

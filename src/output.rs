@@ -2456,6 +2456,8 @@ pub struct UpReplayExecution {
     pub hermeticity: ReceiptDiffReplayHermeticity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_kind: Option<UpReplayFailureKind>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_input_candidates: Vec<String>,
     pub reason: String,
     pub comparison: ReceiptDiffComparison,
     pub introduced: ReceiptDiffCounts,

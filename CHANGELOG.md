@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- hidden-input replay failures now publish an ordered `hidden_input_candidates` set in JSON and
+  mirror it in `ota up --replay-baseline ...` text output, so hidden-input suspicion points
+  operators toward the next promotion order instead of staying one generic failure bucket:
+  dependency resolution, runtime or machine, execution presentation, ambient environment, then
+  live external state
+
 - `ota proof runtime` text output now carries qualified proof boundaries inline: when
   `proof_verdict` is `passed_with_unproven_boundaries`, the human render lists the concrete
   `not_proved` entries before artifacts, so a green runtime-proof lane cannot silently swallow

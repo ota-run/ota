@@ -37600,6 +37600,16 @@ tasks:
             "reason should call out hidden-input suspicion"
         );
         assert_eq!(
+            replay.hidden_input_candidates,
+            vec![
+                String::from("dependency_resolution"),
+                String::from("runtime_or_machine"),
+                String::from("execution_presentation"),
+                String::from("ambient_environment"),
+                String::from("live_external_state"),
+            ]
+        );
+        assert_eq!(
             replay.baseline.last_known_good,
             crate::output::UpReplayBaselineStatus::StaleWitness
         );
@@ -37683,6 +37693,31 @@ tasks:
         assert!(text.contains("Narrowing Evidence: replay_input:verify:equivalence"));
         assert!(text.contains("Pointer-only Evidence: generated_artifact:sdk"));
         assert!(text.contains("Changed Inputs: env_source:dotenv:.env"));
+    }
+
+    #[test]
+    fn render_up_replay_text_surfaces_hidden_input_candidates() {
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("replay_input:gate:equivalence"),
+                kind: String::from("comparator_profile"),
+                input_classes: vec![ReplayInputClass::ComparatorSemantics],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:baseline"),
+                current_identity: String::from("sha256:baseline"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            false,
+            1,
+            0,
+            Some(false),
+            false,
+        ));
+        let text = super::render_up_replay_text(&replay);
+        assert!(text.contains(
+            "Likely Hidden Inputs: dependency_resolution, runtime_or_machine, execution_presentation, ambient_environment, live_external_state"
+        ));
     }
 
     #[test]
@@ -38709,6 +38744,7 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
     } else {
         ReceiptDiffReplayHermeticity::PartlyAmbient
     };
+    let hidden_input_candidates = replay_hidden_input_candidates(&report, failure_kind);
     let mut comparison = comparison.clone();
     comparison.replay = ReceiptDiffReplayPosture {
         scope: comparison.replay.scope.clone(),
@@ -38739,6 +38775,7 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
         posture,
         hermeticity,
         failure_kind,
+        hidden_input_candidates,
         reason,
         comparison,
         introduced: summary.introduced.clone(),
@@ -52633,6 +52670,14 @@ fn render_up_replay_text(replay: &UpReplayExecution) -> String {
         paint_key("Reason:"),
         replay.reason
     ));
+    if !replay.hidden_input_candidates.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Likely Hidden Inputs:"),
+            replay.hidden_input_candidates.join(", ")
+        ));
+    }
     let changed_artifacts = replay
         .comparison
         .artifact_trust
@@ -95194,6 +95239,52 @@ fn replay_input_class_closes_hermetic_replay(class: ReplayInputClass) -> bool {
             | ReplayInputClass::SelectedRuntimeArtifact
             | ReplayInputClass::ExecutionPresentationProfile
     )
+}
+
+fn replay_hidden_input_candidates(
+    report: &RepoReceiptDiffReport,
+    failure_kind: Option<UpReplayFailureKind>,
+) -> Vec<String> {
+    if failure_kind != Some(UpReplayFailureKind::HiddenInputSuspicion) {
+        return Vec::new();
+    }
+    let artifacts = &report.summary.comparison.artifact_trust;
+    let has_class = |target: ReplayInputClass| {
+        artifacts
+            .iter()
+            .any(|artifact| artifact.input_classes.contains(&target))
+    };
+    let has_dependency_resolution = has_class(ReplayInputClass::DeclaredDependencyResolution);
+    let has_runtime_identity = has_class(ReplayInputClass::SelectedRuntimeVersion)
+        || has_class(ReplayInputClass::SelectedRuntimeArtifact);
+    let has_presentation_profile = has_class(ReplayInputClass::ExecutionPresentationProfile);
+    let has_env_identity = has_class(ReplayInputClass::DeclaredEnvSourceIdentity);
+    let has_comparator = has_class(ReplayInputClass::ComparatorSemantics);
+    let has_static_replay_input = has_class(ReplayInputClass::DeclaredReplayInput);
+    let has_witnessed_query_output = !report
+        .baseline
+        .witnessed_observations
+        .query_traces
+        .is_empty()
+        || !report.current.witnessed_observations.query_traces.is_empty();
+
+    let mut candidates = Vec::new();
+    if !has_dependency_resolution {
+        candidates.push(String::from("dependency_resolution"));
+    }
+    if !has_runtime_identity {
+        candidates.push(String::from("runtime_or_machine"));
+    }
+    if !has_presentation_profile
+        && (has_comparator || has_static_replay_input || has_witnessed_query_output)
+    {
+        candidates.push(String::from("execution_presentation"));
+    }
+    if !has_env_identity {
+        candidates.push(String::from("ambient_environment"));
+    }
+    candidates.push(String::from("live_external_state"));
+    candidates
 }
 
 fn replay_input_capture_surface(
