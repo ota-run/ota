@@ -68,6 +68,11 @@
   `fault_tested`. Unclassified non-zero exits remain invalid and retain the causality boundary;
   fault-tested seams now retain `dependency_output_shaping_not_proved`, so seam causality cannot
   be read as broader application-output proof.
+- tightened marker-bound seam proof boundaries. Every exercised or fault-tested seam now emits
+  `dependency_output_shaping_not_proved`; its absence is reserved for a future explicit
+  output-proof carrier. Nested dependency-level negative-control projections now self-identify as
+  `evidence_class: derived`, and proof-runtime JSON documents that `ok` is execution success only:
+  consumers must read `proof_verdict` with `not_proved` before interpreting proof breadth.
 
 - Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker to
   a declared workflow producer, run a finite observer before teardown, and emit attested

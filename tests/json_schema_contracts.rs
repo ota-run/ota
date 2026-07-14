@@ -375,6 +375,23 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
         .expect("proof boundary kinds");
     assert!(kinds.contains(&serde_json::json!("dependency_causality_not_proved")));
     assert!(kinds.contains(&serde_json::json!("dependency_output_shaping_not_proved")));
+    assert_eq!(
+        success["ok"]["description"].as_str(),
+        Some(
+            "Execution/readiness success only. Consumers must use proof_verdict together with not_proved to interpret proof breadth."
+        )
+    );
+    let dependency_negative_control = &schema["$defs"]["dependencyNegativeControl"];
+    assert_eq!(
+        dependency_negative_control["properties"]["evidence_class"]["const"],
+        serde_json::json!("derived")
+    );
+    assert!(
+        dependency_negative_control["required"]
+            .as_array()
+            .expect("negative-control required fields")
+            .contains(&serde_json::json!("evidence_class"))
+    );
 }
 
 #[test]

@@ -58728,8 +58728,11 @@ tasks:
             validated[0]
                 .negative_control
                 .as_ref()
-                .map(|value| value.status),
-            Some(crate::output::ProofRuntimeNegativeControlStatus::Validated)
+                .map(|value| (value.status, value.evidence_class)),
+            Some((
+                crate::output::ProofRuntimeNegativeControlStatus::Validated,
+                ExecutionEvidenceClass::Derived
+            ))
         );
         let mut fault_tested_boundaries = Vec::new();
         super::proof_runtime_append_dependency_scope_boundaries(
@@ -58782,6 +58785,10 @@ tasks:
             entry.kind == "dependency_causality_not_proved"
                 && entry.reason.as_deref() == Some("negative_control_invalid")
         }));
+        assert!(boundaries.iter().any(|entry| {
+            entry.kind == "dependency_output_shaping_not_proved"
+                && entry.reason.as_deref() == Some("seam_evidence_scoped_to_declared_obligation")
+        }));
 
         let mut malformed_validated =
             control(crate::output::ProofRuntimeNegativeControlStatus::Validated);
@@ -58810,6 +58817,10 @@ tasks:
             entry.kind == "dependency_causality_not_proved"
                 && entry.reason.as_deref() == Some("negative_control_invalid")
         }));
+        assert!(malformed_boundaries.iter().any(|entry| {
+            entry.kind == "dependency_output_shaping_not_proved"
+                && entry.reason.as_deref() == Some("seam_evidence_scoped_to_declared_obligation")
+        }));
 
         let mut unselected_boundaries = Vec::new();
         super::proof_runtime_append_dependency_scope_boundaries(
@@ -58820,6 +58831,10 @@ tasks:
         assert!(unselected_boundaries.iter().any(|entry| {
             entry.kind == "dependency_causality_not_proved"
                 && entry.reason.as_deref() == Some("no_negative_control_selected")
+        }));
+        assert!(unselected_boundaries.iter().any(|entry| {
+            entry.kind == "dependency_output_shaping_not_proved"
+                && entry.reason.as_deref() == Some("seam_evidence_scoped_to_declared_obligation")
         }));
     }
 
@@ -101079,21 +101094,27 @@ fn proof_runtime_append_dependency_scope_boundaries(
                 Some("exercised") | Some("fault_tested")
             )
     }) {
+        let output_shaping_reason = if evidence.level.as_deref() == Some("fault_tested") {
+            "causal_evidence_scoped_to_declared_seam_obligation"
+        } else {
+            "seam_evidence_scoped_to_declared_obligation"
+        };
+        // Every marker-bound seam remains bounded below broader application-output shaping.
+        // Absence is reserved for a future explicit output-proof carrier, never inferred from a
+        // stronger seam level or a validated control.
+        entries.push(crate::output::ProofRuntimeNotProved {
+            kind: String::from("dependency_output_shaping_not_proved"),
+            relative_to: String::from("runtime_path"),
+            source: String::from("contract_lane"),
+            dependency_id: Some(evidence.dependency_id.clone()),
+            proof_obligation_id: evidence.proof_obligation_id.clone(),
+            reason: Some(String::from(output_shaping_reason)),
+            declared_by_tasks: evidence.declared_by_tasks.clone(),
+            declared_by_workflows: workflow_name
+                .map(|workflow| vec![workflow.to_string()])
+                .unwrap_or_default(),
+        });
         if evidence.level.as_deref() == Some("fault_tested") {
-            entries.push(crate::output::ProofRuntimeNotProved {
-                kind: String::from("dependency_output_shaping_not_proved"),
-                relative_to: String::from("runtime_path"),
-                source: String::from("contract_lane"),
-                dependency_id: Some(evidence.dependency_id.clone()),
-                proof_obligation_id: evidence.proof_obligation_id.clone(),
-                reason: Some(String::from(
-                    "causal_evidence_scoped_to_declared_seam_obligation",
-                )),
-                declared_by_tasks: evidence.declared_by_tasks.clone(),
-                declared_by_workflows: workflow_name
-                    .map(|workflow| vec![workflow.to_string()])
-                    .unwrap_or_default(),
-            });
             continue;
         }
         let control = evidence.negative_control.as_ref();
@@ -101142,6 +101163,7 @@ fn proof_runtime_apply_negative_control_projection(
             && evidence.proof_obligation_id.as_deref() == Some(control.obligation_id.as_str())
     }) {
         evidence.negative_control = Some(crate::output::ProofRuntimeDependencyNegativeControl {
+            evidence_class: ExecutionEvidenceClass::Derived,
             status: control.status,
             // This is an attested equivalence claim, not merely evidence that a green transaction
             // existed. Invalid controls may carry a transaction id but did not verify the same

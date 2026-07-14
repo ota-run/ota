@@ -729,6 +729,9 @@ pub struct ProofRuntimeDependencyEvidence {
 /// Derived dependency-level projection of a canonical negative-control execution record.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProofRuntimeDependencyNegativeControl {
+    /// This is a runner-derived projection of the canonical control record, not a second
+    /// attestation authority.
+    pub evidence_class: ExecutionEvidenceClass,
     pub status: ProofRuntimeNegativeControlStatus,
     pub same_obligation: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

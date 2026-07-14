@@ -410,6 +410,7 @@ workflows:
                 "evidence_class": "attested"
             },
             "negative_control": {
+                "evidence_class": "derived",
                 "status": "validated",
                 "same_obligation": true,
                 "failure_mode": "expected_missing_effect",

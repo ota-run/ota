@@ -17,7 +17,10 @@
         "summary"
       ],
       "properties": {
-        "ok": { "type": "boolean" },
+        "ok": {
+          "type": "boolean",
+          "description": "Execution/readiness success only. Consumers must use proof_verdict together with not_proved to interpret proof breadth."
+        },
         "proof_verdict": {
           "type": "string",
           "enum": ["passed", "passed_with_unproven_boundaries", "failed"]
@@ -192,8 +195,12 @@
     "dependencyNegativeControl": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "same_obligation"],
+      "required": ["evidence_class", "status", "same_obligation"],
       "properties": {
+        "evidence_class": {
+          "const": "derived",
+          "description": "Runner-derived projection of the canonical top-level negative_control record."
+        },
         "status": { "type": "string", "enum": ["unrun", "invalid", "validated"] },
         "same_obligation": { "type": "boolean" },
         "failure_mode": { "$ref": "#/$defs/negativeControlFailureMode" },

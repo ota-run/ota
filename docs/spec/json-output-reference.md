@@ -817,6 +817,9 @@ Notes:
   `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`
 - `stage_family` is always `proof`, so CI and agents can classify this wrapper without inferring
   from proof phase names
+- `ok` is execution/readiness success only. It is necessary but insufficient for a proof claim:
+  consumers must interpret `proof_verdict` together with `not_proved[]` before treating a selected
+  lane as a proof result.
 - `proof_verdict` is the terminal evaluation of this proof carrier: `passed` means the selected
   runtime path passed with no declared boundary, `passed_with_unproven_boundaries` means the path
   passed but must not be over-read beyond its published boundary, and `failed` means selected-lane
@@ -857,8 +860,9 @@ Notes:
   the failure. Only `validated` with `outcome: expected_obligation_failed`,
   `failure_mode: expected_missing_effect`, and a matching failure-attestation digest may promote
   the exact `dependency_evidence[].proof_obligation_id` record to `fault_tested`. The nested
-  `dependency_evidence[].negative_control` object is a derived projection of this canonical record,
-  never a second source of truth. `unexpected_success`, `control_could_not_run`, stale evidence,
+  `dependency_evidence[].negative_control` object carries `evidence_class: derived` as a
+  self-describing projection of this canonical record, never a second source of truth.
+  `unexpected_success`, `control_could_not_run`, stale evidence,
   and unrelated non-zero exits are `invalid` or `unrun` and fail the selected control proof.
 - `not_proved[]` is relative to that declared runtime-path scope, not free-floating commentary;
   Ota emits `functional_runtime_not_proved` when proof fell back to a setup-only lane,
@@ -868,18 +872,20 @@ Notes:
   integration-test path for the selected lane's declared external state, and
   `dependency_causality_not_proved` when a seam was exercised but no matching negative control
   validated causal dependency necessity, and
-  `dependency_output_shaping_not_proved` when a validated control proved causality only for its
-  declared seam obligation rather than for a broader application output, and
+  `dependency_output_shaping_not_proved` for every marker-bound seam obligation: an exercised or
+  fault-tested seam proves only its declared seam obligation, never broader application-output
+  shaping, and
   `broader_repo_completion_not_proved` as the scope-derived remainder outside this runtime slice
 - `not_proved[].declared_by_workflows` names the adjacent contract workflows that establish a
   contract-derived exclusion; scope-derived exclusions omit it
 - `not_proved[].dependency_id` and `not_proved[].declared_by_tasks` identify a declared service
   seam that remains unproved. This is deliberately not evidence that the service is unused or
   unreachable; it prevents a green runtime proof from being over-read as an exercised dependency.
-- `not_proved[].proof_obligation_id` appears when a boundary is narrower than its dependency. In
-  particular, a `fault_tested` seam retains `dependency_output_shaping_not_proved` for the same
-  obligation: Ota proved dependency necessity for that seam, not that the dependency shaped a
-  broader application output.
+- `not_proved[].proof_obligation_id` appears when a boundary is narrower than its dependency. Every
+  marker-bound seam retains `dependency_output_shaping_not_proved` for the same obligation;
+  absence is reserved for a future explicit output-proof carrier. Ota may prove dependency
+  exercise or necessity for that seam, not that the dependency shaped a broader application
+  output.
 - when Ota has only caller-side seam evidence, the paired `dependency_exercise_not_proved`
   boundary tightens `reason` from generic missing evidence to `caller_side_only_evidence`
 - `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as

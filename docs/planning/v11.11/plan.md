@@ -472,9 +472,11 @@ Rules:
   non-secret digest of the structured failure attestation from that same control transaction, with
   runner-derived `failure_mode: expected_missing_effect`
 - only `validated` may promote the record from `exercised` to `fault_tested`
-- a validated control removes only `dependency_causality_not_proved`. It must retain a separate
-  `dependency_output_shaping_not_proved` entry keyed to the same dependency and seam obligation:
-  causal evidence for marker recovery does not prove that the dependency shaped a broader
+- every marker-bound seam obligation must retain a separate
+  `dependency_output_shaping_not_proved` entry keyed to the same dependency and seam obligation,
+  whether it is `exercised` or `fault_tested`. Absence is reserved for a future explicit
+  output-proof carrier, never inferred from stronger seam evidence or a validated control.
+  Causal evidence for marker recovery does not prove that the dependency shaped a broader
   application output
 - `negative_control_present` alone is never a promotion input; consumers must use `status`, not a
   boolean presence check
@@ -513,7 +515,8 @@ The first machine-readable shape should be additive:
 ```
 
 This standalone record is the canonical, boundary-attested control result. The matching
-`dependency_evidence[].negative_control` record is a derived projection only. A caller-provided
+`dependency_evidence[].negative_control` record is a derived projection only and carries
+`evidence_class: derived` explicitly. A caller-provided
 reason or contract declaration can request the control lane but cannot substitute for its recorded
 outcome, runner-derived failure classification, obligation binding, or failure attestation. A
 control with no structured attestation remains `invalid` with
@@ -596,8 +599,9 @@ V11.11 is complete when:
   truth
 - an exercised seam without a validated control carries `dependency_causality_not_proved`, so
   causal necessity cannot disappear merely because no control was selected
-- a fault-tested seam retains `dependency_output_shaping_not_proved` keyed to its declared
-  obligation, so seam causality cannot be over-read as broader application-output causality
+- every marker-bound seam retains `dependency_output_shaping_not_proved` keyed to its declared
+  obligation, so seam exercise or causality cannot be over-read as broader application-output
+  causality; absence is reserved for a future explicit output-proof carrier
 - marker-bound seam observers run before teardown, prove their producer and observer closures are
   owned by the selected workflow, and only a runner-verified transaction attestation removes the
   matching `dependency_exercise_not_proved` boundary

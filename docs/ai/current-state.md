@@ -60,8 +60,9 @@ durable agent workflow belongs in the canonical Ota skill.
   contract-declared intervention identity and runner-derived failure mode: only
   `expected_obligation_failed` with `expected_missing_effect` validates; generic non-zero exits
   remain `invalid`. Exercised seams without a validated control carry
-  `dependency_causality_not_proved`, while fault-tested seams retain
-  `dependency_output_shaping_not_proved` keyed to the declared seam obligation. Text and JSON
+  `dependency_causality_not_proved`; every marker-bound seam retains
+  `dependency_output_shaping_not_proved` keyed to the declared seam obligation, reserving its
+  absence for a future explicit output-proof carrier. Text and JSON
   preserve the evidence level, origin, authority class, control status, failure classification,
   and causal-depth boundary for operators.
 - active V11.11 carrier propagation: the published `proof-runtime.json` now describes the full
