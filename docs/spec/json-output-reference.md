@@ -2062,7 +2062,9 @@ detail retains the contract-owned declared posture separately from the execution
 posture. For `.NET restore`, the resolved record may include parsed `source_identities[]`, or an
 explicit unavailable resolution when source selection would require ambient configuration.
 Consumers must not replace this captured input with a later config-file read when evaluating the
-execution receipt.
+execution receipt. During replay, an unavailable hydration resolution remains `narrowing` evidence
+and cannot make a lane hermetic; only a matching resolved source identity can acquit the named
+dependency-resolution class.
 - unavailable local planes remain explicit with `availability: "unavailable"` and
   `reason: "not_supported_by_task"`; this describes contract support, not current machine
   readiness, which remains the responsibility of `ota doctor` and `ota run --dry-run`

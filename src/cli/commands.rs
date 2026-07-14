@@ -37588,6 +37588,82 @@ tasks:
         );
     }
 
+    #[test]
+    fn receipt_diff_hydration_provenance_requires_resolved_feed_identity_to_acquit() {
+        let unresolved = crate::output::ExecutionReceiptEvaluatedInput {
+            id: String::from("hydration:setup:dotnet_restore:sha256:ambient"),
+            kind: String::from("hydration_provenance"),
+            input_class: ReplayInputClass::DeclaredDependencyResolution,
+            identity: String::from("sha256:ambient"),
+            hydration_provenance: Some(crate::output::ExecutionReceiptHydrationProvenance {
+                task: String::from("setup"),
+                source_kind: String::from("dotnet_restore"),
+                declared: crate::output::ExecutionReceiptHydrationSourcePosture {
+                    source_posture: String::from("config_file"),
+                    config_file: Some(String::from("NuGet.Config")),
+                    sources: Vec::new(),
+                    source_identities: Vec::new(),
+                    resolution: None,
+                    resolution_error: None,
+                },
+                resolved: crate::output::ExecutionReceiptHydrationSourcePosture {
+                    source_posture: String::from("config_file"),
+                    config_file: Some(String::from("NuGet.Config")),
+                    sources: Vec::new(),
+                    source_identities: Vec::new(),
+                    resolution: Some(String::from("unavailable")),
+                    resolution_error: Some(String::from("requires ambient environment")),
+                },
+            }),
+            artifact_lineage: None,
+        };
+
+        let unresolved_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[unresolved.clone()],
+            &[unresolved.clone()],
+        );
+        assert_eq!(unresolved_trust.len(), 1);
+        assert_eq!(
+            unresolved_trust[0].trust_role,
+            crate::output::ReceiptDiffArtifactTrustRole::Narrowing
+        );
+        let replay = super::build_up_replay_execution(sample_up_replay_report(
+            unresolved_trust,
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        ));
+        assert_eq!(
+            replay.hermeticity,
+            crate::output::ReceiptDiffReplayHermeticity::PartlyAmbient
+        );
+
+        let mut resolved = unresolved;
+        let resolved_posture = &mut resolved
+            .hydration_provenance
+            .as_mut()
+            .expect("hydration provenance")
+            .resolved;
+        resolved_posture.resolution = Some(String::from("resolved"));
+        resolved_posture.resolution_error = None;
+        resolved_posture.source_identities =
+            vec![crate::output::ExecutionReceiptHydrationSourceIdentity {
+                name: Some(String::from("public")),
+                url: String::from("https://api.nuget.org/v3/index.json"),
+            }];
+        let resolved_trust =
+            super::receipt_diff_artifact_trust(None, None, &[resolved.clone()], &[resolved]);
+        assert_eq!(
+            resolved_trust[0].trust_role,
+            crate::output::ReceiptDiffArtifactTrustRole::Acquitting
+        );
+    }
+
     fn sample_up_replay_report(
         artifact_trust: Vec<crate::output::ReceiptDiffArtifactTrust>,
         baseline_ok: bool,
@@ -39267,9 +39343,27 @@ fn receipt_diff_artifact_trust(
             ReplayInputClass::PolicyRulesetIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching declared env source clears only the named env-source file class.
             ReplayInputClass::DeclaredEnvSourceIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
-            // A matching lockfile clears only the named dependency-resolution class.
+            // A matching lockfile clears its named dependency-resolution class. A hydration
+            // record can do the same only when both receipt captures resolved its source rather
+            // than leaving feed selection ambient.
             ReplayInputClass::DeclaredDependencyResolution => {
-                ReceiptDiffArtifactTrustRole::Acquitting
+                if baseline
+                    .hydration_provenance
+                    .as_ref()
+                    .is_some_and(hydration_provenance_is_resolved)
+                    && current
+                        .hydration_provenance
+                        .as_ref()
+                        .is_some_and(hydration_provenance_is_resolved)
+                {
+                    ReceiptDiffArtifactTrustRole::Acquitting
+                } else if baseline.hydration_provenance.is_some()
+                    || current.hydration_provenance.is_some()
+                {
+                    ReceiptDiffArtifactTrustRole::Narrowing
+                } else {
+                    ReceiptDiffArtifactTrustRole::Acquitting
+                }
             }
             // A command-reported version is useful but not a binary or image digest. It narrows
             // runtime-version drift without claiming the full runtime artifact is identical.
@@ -39305,6 +39399,10 @@ fn receipt_diff_artifact_trust(
         });
     }
     artifacts
+}
+
+fn hydration_provenance_is_resolved(provenance: &ExecutionReceiptHydrationProvenance) -> bool {
+    provenance.resolved.resolution.as_deref() == Some("resolved")
 }
 
 fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {

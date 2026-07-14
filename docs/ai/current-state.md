@@ -35,7 +35,7 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.24-implementation`
 - released baseline: `v1.6.23`
-- active implementation and proof slice: `V11.10` replay trust refinement; `ota up
+- completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt
   `evaluated_inputs[]` and Bedrock-style historical query traces stay separate as attested
@@ -45,12 +45,13 @@ durable agent workflow belongs in the canonical Ota skill.
   dependency-resolution, or presentation anchor rather than over-reading same-contract reruns as
   hermetic; hidden-input replay failure now emits ordered `hidden_input_candidates` so operators
   can promote the next likely ambient class instead of reading one generic suspicion bucket
-- active V11.12 hydration provenance carrier: successful `ota up --json` now records selected
+- completed V11.12 first hydration-provenance carrier: successful `ota up --json` now records selected
   structured hydration lanes through typed `receipt.evaluated_inputs[]` hydration records. The
   record captures contract-declared source posture and runner-resolved feed identity before
   execution, preserving explicit `resolution: unavailable` when NuGet source choice remains
   ambient. Azure SDK for .NET proves the same config-backed source identity on native and
-  container lanes locally; the next proof gate is the branch matrix.
+  container lanes across Ubuntu, macOS, and Windows. Replay now treats unavailable hydration
+  resolution as narrowing evidence, never as a hermetic dependency-resolution anchor.
 - active implementation and proof slice: `V11.11` seam and negative-control evidence. Runtime
   proof now keeps ordinary reachability and caller-side attempts distinct from marker-bound seam
   exercise. A selected negative control names one observed seam obligation and typed expected
@@ -63,6 +64,10 @@ durable agent workflow belongs in the canonical Ota skill.
   `dependency_output_shaping_not_proved` keyed to the declared seam obligation. Text and JSON
   preserve the evidence level, origin, authority class, control status, failure classification,
   and causal-depth boundary for operators.
+- active V11.11 carrier propagation: the published `proof-runtime.json` now describes the full
+  emitted seam-evidence and negative-control shape, including obligation-scoped causality
+  boundaries; this keeps the machine contract aligned with the runtime proof output rather than
+  relying on the prose reference alone.
 - active lifecycle hardening: native commands and persistent-service wrappers now forward
   interruption only into their owned child tree. This removes inherited-process-group signalling
   from runtime-proof teardown, which previously could cancel the surrounding GitHub Actions shell

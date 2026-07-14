@@ -396,6 +396,73 @@ workflows:
         "broader_repo_completion_not_proved"
     );
     assert_eq!(json["not_proved"][2]["source"], "proof_scope");
+
+    // The proof carrier must validate the stronger V11.11 evidence shape as well as the
+    // ordinary narrow-proof result above.
+    let mut seam_proof = json.clone();
+    seam_proof["dependency_evidence"] = serde_json::json!([
+        {
+            "dependency_id": "service:postgres",
+            "proof_obligation_id": "proof:postgres-round-trip",
+            "level": "fault_tested",
+            "observation": {
+                "origin": "round_trip_effect",
+                "evidence_class": "attested"
+            },
+            "negative_control": {
+                "status": "validated",
+                "same_obligation": true,
+                "failure_mode": "expected_missing_effect",
+                "failure_attestation_digest": "sha256:control"
+            }
+        }
+    ]);
+    seam_proof["seam_observations"] = serde_json::json!([
+        {
+            "id": "proof:postgres-round-trip",
+            "dependency_id": "service:postgres",
+            "producer_task": "app",
+            "transaction_id": "transaction-1",
+            "observer_task": "observe-postgres",
+            "marker_env": "OTA_SEAM_MARKER",
+            "outcome": "observed",
+            "proof_scope_ref": "workflow:app",
+            "evidence_class": "attested",
+            "attestation_digest": "sha256:attestation"
+        }
+    ]);
+    seam_proof["negative_control"] = serde_json::json!({
+        "id": "postgres-down",
+        "dependency_id": "service:postgres",
+        "obligation_id": "proof:postgres-round-trip",
+        "transaction_id": "transaction-1",
+        "control_task": "verify-with-postgres-down",
+        "intervention": { "kind": "service_unavailable", "id": "postgres" },
+        "expected_failure": "round_trip_missing",
+        "outcome": "expected_obligation_failed",
+        "status": "validated",
+        "failure_mode": "expected_missing_effect",
+        "proof_scope_ref": "workflow:app",
+        "evidence_class": "attested",
+        "failure_attestation_digest": "sha256:control"
+    });
+    seam_proof["not_proved"] = serde_json::json!([
+        {
+            "kind": "dependency_output_shaping_not_proved",
+            "relative_to": "runtime_path",
+            "source": "contract_lane",
+            "dependency_id": "service:postgres",
+            "proof_obligation_id": "proof:postgres-round-trip",
+            "reason": "seam_causality_does_not_prove_broader_output_shaping"
+        },
+        {
+            "kind": "broader_repo_completion_not_proved",
+            "relative_to": "runtime_path",
+            "source": "proof_scope"
+        }
+    ]);
+    assert_matches_schema("proof-runtime.json", &seam_proof);
+
     let up_log = fixture
         .path()
         .join(".ota")

@@ -24,8 +24,8 @@
 
 # V11.10 Plan
 
-Status: active implementation slice. The first receipt-authoring cut captures declared
-lockfile-strict pnpm and npm dependency identity; broader replay posture remains planned.
+Status: implementation and first Bedrock pressure target complete. Broader provider-backed replay
+and baseline-promotion policy remain follow-on work, not implicit extensions of this slice.
 
 Release target:
 
@@ -697,6 +697,9 @@ V11.10 is complete when:
 - static replay-input identities are captured before selected execution begins, never reconstructed
   from a later filesystem read, and remain `narrowing` unless Ota has stronger input-specific
   semantics
+- hydration provenance with `resolution: unavailable` remains `narrowing`, even though it belongs
+  to the dependency-resolution family; it must not close hermetic replay until both receipts carry
+  matching runner-resolved source identity
 - replay inputs declared by any reachable dependency task are aggregated into the selected lane's
   receipt with task-qualified identity; final-task declarations are never treated as the whole
   input set by default

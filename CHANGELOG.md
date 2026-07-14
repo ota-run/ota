@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- fixed V11.11 proof-runtime schema drift. The published `ota proof runtime --json` schema now
+  covers dependency evidence, marker-bound seam observations, canonical negative controls, and
+  the causal-depth `not_proved` boundaries that the runner already emits.
+
+- fixed replay trust for typed hydration provenance. A `.NET restore` source that remains
+  `resolution: unavailable` is now narrowing evidence rather than an acquitting dependency input,
+  so ambient feed selection cannot promote a receipt-to-baseline replay to hermetic.
+
 - fixed the first V11.12 hydration-provenance carrier. Successful `ota up --json` now records
   selected structured hydration source posture in
   typed `receipt.evaluated_inputs[]` `hydration_provenance` record, preserving the contract-declared

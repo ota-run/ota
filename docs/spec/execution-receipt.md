@@ -162,6 +162,9 @@ For selected structured hydration lanes, `ota up --json` also adds a typed
 contract-declared source posture separately from the runner-resolved source identity captured
 before execution. A resolution that would depend on ambient configuration remains explicitly
 unavailable rather than being reconstructed from a later config-file read.
+During receipt-to-baseline replay, an unavailable hydration resolution is narrowing evidence only:
+it cannot close dependency-resolution trust or promote the lane to hermetic replay. A matching
+resolved source identity can acquit only that named dependency-resolution class.
 Each `steps[]` entry also carries additive `stage_family` truth using the execution-governance
 families `prepare`, `setup`, `verify`, `proof`, or `receipt`, so machine consumers do not need to
 infer broad stage ownership from free-form labels alone.

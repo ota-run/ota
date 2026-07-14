@@ -28,6 +28,15 @@
         "phase": { "type": "string" },
         "stage_family": { "const": "proof" },
         "proof_scope": { "$ref": "#/$defs/proofScope" },
+        "dependency_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dependencyEvidence" }
+        },
+        "seam_observations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/seamObservation" }
+        },
+        "negative_control": { "$ref": "#/$defs/negativeControl" },
         "not_proved": {
           "type": "array",
           "items": { "$ref": "#/$defs/proofNotProved" }
@@ -110,6 +119,8 @@
           "enum": [
             "functional_runtime_not_proved",
             "dependency_exercise_not_proved",
+            "dependency_causality_not_proved",
+            "dependency_output_shaping_not_proved",
             "external_network_path_not_proved",
             "broader_repo_completion_not_proved"
           ]
@@ -132,8 +143,156 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string" }
+        },
+        "proof_obligation_id": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "dependencyEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dependency_id", "observation"],
+      "properties": {
+        "dependency_id": { "type": "string" },
+        "proof_obligation_id": { "type": "string" },
+        "level": {
+          "type": "string",
+          "enum": ["reachable", "exercised", "fault_tested"]
+        },
+        "interaction_attempted": { "const": true },
+        "observation": { "$ref": "#/$defs/dependencyObservation" },
+        "declared_by_tasks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "declared_by_workflows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "negative_control": { "$ref": "#/$defs/dependencyNegativeControl" }
+      }
+    },
+    "dependencyObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "evidence_class"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "enum": ["caller_side", "dependency_side", "round_trip_effect"]
+        },
+        "evidence_class": {
+          "type": "string",
+          "enum": ["derived", "attested"]
         }
       }
+    },
+    "dependencyNegativeControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "same_obligation"],
+      "properties": {
+        "status": { "type": "string", "enum": ["unrun", "invalid", "validated"] },
+        "same_obligation": { "type": "boolean" },
+        "failure_mode": { "$ref": "#/$defs/negativeControlFailureMode" },
+        "failure_attestation_digest": { "type": "string" }
+      }
+    },
+    "seamObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dependency_id",
+        "producer_task",
+        "transaction_id",
+        "observer_task",
+        "marker_env",
+        "outcome",
+        "proof_scope_ref",
+        "evidence_class"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "dependency_id": { "type": "string" },
+        "producer_task": { "type": "string" },
+        "transaction_id": { "type": "string" },
+        "observer_task": { "type": "string" },
+        "marker_env": { "type": "string" },
+        "outcome": {
+          "type": "string",
+          "enum": ["observed", "observation_failed", "observation_could_not_run"]
+        },
+        "proof_scope_ref": { "type": "string" },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
+        "attestation_digest": { "type": "string" },
+        "exit_code": { "type": "integer" },
+        "detail": { "type": "string" }
+      }
+    },
+    "negativeControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dependency_id",
+        "obligation_id",
+        "control_task",
+        "intervention",
+        "expected_failure",
+        "outcome",
+        "status",
+        "proof_scope_ref",
+        "evidence_class"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "dependency_id": { "type": "string" },
+        "obligation_id": { "type": "string" },
+        "transaction_id": { "type": "string" },
+        "control_task": { "type": "string" },
+        "intervention": { "$ref": "#/$defs/negativeControlIntervention" },
+        "expected_failure": { "type": "string" },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "expected_obligation_failed",
+            "nonzero_exit_observed",
+            "unexpected_success",
+            "control_could_not_run"
+          ]
+        },
+        "status": { "type": "string", "enum": ["unrun", "invalid", "validated"] },
+        "failure_mode": { "$ref": "#/$defs/negativeControlFailureMode" },
+        "proof_scope_ref": { "type": "string" },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
+        "failure_attestation_digest": { "type": "string" },
+        "exit_code": { "type": "integer" },
+        "detail": { "type": "string" }
+      }
+    },
+    "negativeControlIntervention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string" },
+        "id": { "type": "string" }
+      }
+    },
+    "negativeControlFailureMode": {
+      "type": "string",
+      "enum": [
+        "expected_missing_effect",
+        "setup_failure",
+        "timeout",
+        "crash",
+        "transport_failure",
+        "wrong_assertion",
+        "unclassified_nonzero"
+      ]
     },
     "cleanupFailure": {
       "type": "object",

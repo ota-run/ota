@@ -355,6 +355,9 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(success.get("workflow").is_some());
     assert!(success.get("phase").is_some());
     assert!(success.get("summary").is_some());
+    assert!(success.get("dependency_evidence").is_some());
+    assert!(success.get("seam_observations").is_some());
+    assert!(success.get("negative_control").is_some());
     assert!(success.get("workflow_env_artifacts").is_some());
     assert!(success.get("artifacts").is_some());
     assert!(success.get("failure_class").is_some());
@@ -364,6 +367,14 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(artifacts.get("topology").is_some());
     assert!(artifacts.get("doctor").is_some());
     assert!(artifacts.get("up_log").is_some());
+    let not_proved = &schema["$defs"]["proofNotProved"]["properties"];
+    assert!(not_proved.get("proof_obligation_id").is_some());
+    assert!(not_proved.get("reason").is_some());
+    let kinds = not_proved["kind"]["enum"]
+        .as_array()
+        .expect("proof boundary kinds");
+    assert!(kinds.contains(&serde_json::json!("dependency_causality_not_proved")));
+    assert!(kinds.contains(&serde_json::json!("dependency_output_shaping_not_proved")));
 }
 
 #[test]

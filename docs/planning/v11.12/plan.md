@@ -24,11 +24,13 @@
 
 # V11.12 Plan
 
-Status: active implementation and pressure slice.
+Status: first ecosystem implementation and pressure target complete. Future ecosystem widening
+remains a follow-on decision, not an implicit generalization from `.NET restore`.
 
 Release target:
 
-- follow-on slice after `v11.11`
+- secondary trust slice that depends on V11.11's consumer-visible proof-boundary model, without
+  claiming that every V11.11 follow-on carrier must ship before the first hydration target
 
 Source direction:
 
