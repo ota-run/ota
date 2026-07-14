@@ -626,16 +626,17 @@ fn wait_for_child_with_runtime_readiness_budget<F>(
 where
     F: FnMut(&mut Child),
 {
-    let mut handled_budget_exhaustion = false;
+    let mut stop_requested = false;
     loop {
         if let Some(status) = child.try_wait()? {
             return Ok(status);
         }
-        if !handled_budget_exhaustion
-            && readiness_probe.is_some_and(RuntimeReadinessProbe::budget_exhausted)
+        if !stop_requested
+            && (RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed)
+                || readiness_probe.is_some_and(RuntimeReadinessProbe::budget_exhausted))
         {
             on_budget_exhausted(child);
-            handled_budget_exhaustion = true;
+            stop_requested = true;
         }
         thread::sleep(Duration::from_millis(25));
     }
@@ -6023,11 +6024,20 @@ fn persistent_cleanup_targets(
             if context.backend != Backend::Container {
                 continue;
             }
-            let Some(container) = context.container.as_ref() else {
-                return Err(RunError::MissingContainerImage {
+            // Contexts own lifecycle and attachment scope; the shared backend owns the reusable
+            // container baseline unless a context explicitly specializes it.
+            let container = context
+                .container
+                .as_ref()
+                .or_else(|| {
+                    execution
+                        .backends
+                        .as_ref()
+                        .and_then(|backends| backends.container.as_ref())
+                })
+                .ok_or_else(|| RunError::MissingContainerImage {
                     task: format!("context:{name}"),
-                });
-            };
+                })?;
             let engine =
                 selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
                     RunError::MissingContainerBackendCli {
@@ -6041,7 +6051,11 @@ fn persistent_cleanup_targets(
                 for publications in
                     task_container_publication_sets_for_context(contract, Some(name))
                 {
-                    let memory_field_prefix = format!("execution.contexts.{name}.container");
+                    let memory_field_prefix = context
+                        .container
+                        .as_ref()
+                        .map(|_| format!("execution.contexts.{name}.container"))
+                        .unwrap_or_else(|| String::from("execution.backends.container"));
                     let memory_bytes = container_memory_override_or_default(
                         "clean",
                         container,
@@ -6060,7 +6074,11 @@ fn persistent_cleanup_targets(
                     ));
                 }
             } else if !dependency_isolation_paths.is_empty() {
-                let memory_field_prefix = format!("execution.contexts.{name}.container");
+                let memory_field_prefix = context
+                    .container
+                    .as_ref()
+                    .map(|_| format!("execution.contexts.{name}.container"))
+                    .unwrap_or_else(|| String::from("execution.backends.container"));
                 let memory_bytes = container_memory_override_or_default(
                     "clean",
                     container,
@@ -7183,6 +7201,7 @@ fn run_task_internal(
     let current_os = current_os();
     let mut state = TaskRunState::default();
     state.execution_note = preflight_execution_note;
+    let execution_interrupt_epoch = current_run_interrupt_epoch();
     let execute_result = execute_task_with_hooks(
         contract,
         contract_path,
@@ -7198,7 +7217,29 @@ fn run_task_internal(
         0,
         &mut state,
     );
+    // Some adapters report Ctrl+C teardown as an ordinary non-zero process exit. Only an
+    // interrupt observed during this active execution boundary can normalize that result.
+    if interruption_observed_since(execution_interrupt_epoch) {
+        state.interrupted = true;
+    }
     if state.interrupted {
+        // Startup/readiness notes may have been recorded while the adapter was being torn down.
+        // They describe shutdown artifacts, not the authoritative runner outcome, so do not
+        // carry them into an interrupted execution receipt or summary.
+        state.execution_note = None;
+        if let Some(service_termination) = state.service_termination.as_mut() {
+            service_termination.cause = ServiceTerminationCause::Interrupted;
+        }
+        for step in &mut state.task_steps {
+            if step.exit_code != 0
+                || step.execution_note.as_deref().is_some_and(|note| {
+                    note.contains("service failed to start")
+                        || note.contains("service workload in persistent container exited")
+                })
+            {
+                step.execution_note = Some(String::from("task interrupted by user"));
+            }
+        }
         state.execution_note = merge_execution_note(
             state.execution_note.take(),
             cleanup_interrupted_requested_task_service_workload_and_note(&mut state),
@@ -25504,6 +25545,13 @@ fn execute_persistent_container_task_command(
         &container_name,
         readiness_probe.as_ref(),
     )?;
+    cleanup_interrupted_non_service_persistent_container_exec(
+        task_name,
+        runtime,
+        engine,
+        &container_name,
+        &mut output,
+    );
     let readiness_outcome = readiness_probe
         .map(RuntimeReadinessProbe::stop_and_collect)
         .unwrap_or(RuntimeReadinessProbeOutcome {
@@ -25605,6 +25653,13 @@ fn execute_persistent_container_task_command(
             &container_name,
             readiness_probe.as_ref(),
         )?;
+        cleanup_interrupted_non_service_persistent_container_exec(
+            task_name,
+            runtime,
+            engine,
+            &container_name,
+            &mut output,
+        );
         let readiness_outcome = readiness_probe
             .map(RuntimeReadinessProbe::stop_and_collect)
             .unwrap_or(RuntimeReadinessProbeOutcome {
@@ -27866,6 +27921,35 @@ fn persistent_container_exists(
 
 fn persistent_container_exec_hit_stopped_container(stderr: &str) -> bool {
     stderr.contains("cannot exec in a stopped container")
+}
+
+fn cleanup_interrupted_non_service_persistent_container_exec(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    engine: &str,
+    container_name: &str,
+    output: &mut TaskCommandOutput,
+) {
+    let interrupted = output.interrupted || RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed);
+    if !interrupted || runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service) {
+        return;
+    }
+
+    output.interrupted = true;
+
+    let note = match remove_persistent_container(engine, container_name, task_name) {
+        Ok(remove) if remove.exit_code == 0 => format!(
+            "persistent container `{container_name}` removed after user interrupted task execution"
+        ),
+        Ok(remove) => format!(
+            "user interrupted task execution, but persistent container `{container_name}` cleanup exited with code {}",
+            remove.exit_code
+        ),
+        Err(error) => format!(
+            "user interrupted task execution, but persistent container `{container_name}` cleanup failed: {error}"
+        ),
+    };
+    output.execution_note = merge_execution_note(output.execution_note.take(), Some(note));
 }
 
 fn container_command_failure(
@@ -41461,7 +41545,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn observed_interrupt_normalizes_nonzero_child_exit() {
+    fn observed_interrupt_normalizes_nonzero_dependency_exit() {
         let _guard = env_mutex_lock();
         let repo = tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -41472,11 +41556,14 @@ version: 1
 project:
   name: interrupt-demo
 tasks:
-  dev:
+  setup:
     launch:
       kind: command
       exe: sh
       args: [-c, 'touch started; sleep 1; exit 1']
+  dev:
+    depends_on: [setup]
+    run: echo should-not-run
 "#,
         )
         .expect("write contract");
@@ -41488,7 +41575,7 @@ tasks:
             while !started_marker.exists() && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(10));
             }
-            assert!(started_marker.exists(), "structured launch should start");
+            assert!(started_marker.exists(), "dependency launch should start");
             super::simulate_run_interrupt_for_test();
         });
         let outcome = run_task_captured_with_args_with_overrides(
@@ -41503,6 +41590,8 @@ tasks:
 
         assert!(outcome.interrupted);
         assert_eq!(outcome.exit_code, 130);
+        assert_eq!(outcome.task_steps.len(), 1);
+        assert_eq!(outcome.task_steps[0].name, "setup");
         assert_eq!(outcome.task_steps[0].exit_code, 1);
     }
 
@@ -51661,14 +51750,15 @@ project:
   name: ota
 execution:
   default_context: host
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
   contexts:
     host:
       backend: native
     app:
       backend: container
       lifecycle: persistent
-      container:
-        image: ghcr.io/ota/test:latest
 tasks:
   start:
     context: host
@@ -52747,7 +52837,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn cleans_persistent_named_container_context_backend() {
+    fn cleans_persistent_context_with_shared_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_mutex_lock();

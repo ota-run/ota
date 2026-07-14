@@ -85028,6 +85028,7 @@ tasks:
             &mut receipt,
             service_termination.as_ref(),
             false,
+            130,
         );
 
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
@@ -85108,7 +85109,7 @@ tasks:
             },
             next: None,
         };
-        super::apply_interrupted_run_classification(&mut receipt, None, false);
+        super::apply_interrupted_run_classification(&mut receipt, None, false, 130);
 
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
@@ -85181,7 +85182,7 @@ tasks:
             next: None,
         };
 
-        super::apply_interrupted_run_classification(&mut receipt, None, true);
+        super::apply_interrupted_run_classification(&mut receipt, None, true, 130);
 
         assert!(!receipt.ok);
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
@@ -85256,7 +85257,7 @@ tasks:
             next: None,
         };
 
-        super::apply_interrupted_run_classification(&mut receipt, None, false);
+        super::apply_interrupted_run_classification(&mut receipt, None, false, 1);
 
         assert_eq!(receipt.steps[0].status, "FAILED");
         assert_eq!(receipt.summary.error_count, 1);
@@ -85325,7 +85326,7 @@ tasks:
             next: None,
         };
 
-        super::apply_interrupted_run_classification(&mut receipt, None, true);
+        super::apply_interrupted_run_classification(&mut receipt, None, true, 1);
 
         assert_eq!(receipt.steps[0].status, "FAILED");
         assert_eq!(receipt.summary.error_count, 1);
@@ -85333,7 +85334,7 @@ tasks:
     }
 
     #[test]
-    fn interrupted_signal_does_not_reclassify_nonzero_service_termination_in_receipt() {
+    fn runner_observed_interrupt_reclassifies_nonzero_service_termination_in_receipt() {
         let mut receipt = ExecutionReceipt {
             ok: false,
             path: String::from("./ota.yaml"),
@@ -85400,15 +85401,16 @@ tasks:
             &mut receipt,
             service_termination.as_ref(),
             true,
+            130,
         );
 
-        assert_eq!(receipt.steps[0].status, "FAILED");
-        assert_eq!(receipt.summary.error_count, 1);
-        assert_eq!(receipt.summary.info_count, 0);
+        assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.summary.error_count, 0);
+        assert_eq!(receipt.summary.info_count, 1);
     }
 
     #[test]
-    fn interrupted_signal_does_not_reclassify_clean_service_exit_in_receipt() {
+    fn runner_observed_interrupt_reclassifies_clean_service_exit_in_receipt() {
         let mut receipt = ExecutionReceipt {
             ok: false,
             path: String::from("./ota.yaml"),
@@ -85475,11 +85477,12 @@ tasks:
             &mut receipt,
             service_termination.as_ref(),
             true,
+            130,
         );
 
-        assert_eq!(receipt.steps[0].status, "FAILED");
-        assert_eq!(receipt.summary.error_count, 1);
-        assert_eq!(receipt.summary.info_count, 0);
+        assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.summary.error_count, 0);
+        assert_eq!(receipt.summary.info_count, 1);
     }
 
     #[test]
@@ -92396,6 +92399,7 @@ fn run_single_contract_target_streaming(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
                 outcome.interrupted,
+                outcome.exit_code,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
@@ -92480,6 +92484,7 @@ fn run_single_contract_target_streaming(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
                 outcome.interrupted,
+                outcome.exit_code,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
@@ -92719,6 +92724,7 @@ fn run_single_contract_target_captured(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
                 outcome.interrupted,
+                outcome.exit_code,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
@@ -92801,6 +92807,7 @@ fn run_single_contract_target_captured(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
                 outcome.interrupted,
+                outcome.exit_code,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
@@ -92983,6 +92990,12 @@ fn receipt_reports_user_interruption(
     service_termination: Option<&ServiceTermination>,
     interrupted: bool,
 ) -> bool {
+    // A runner-observed interrupt is decision-time execution evidence. Adapter termination
+    // inspection can explain shutdown details, but must not relabel that boundary event later.
+    if interrupted {
+        return true;
+    }
+
     if let Some(service_termination) = service_termination {
         return service_termination_reports_user_interruption(service_termination);
     }
@@ -93007,9 +93020,7 @@ fn receipt_reports_user_interruption(
         return true;
     }
 
-    // A signal observed after an otherwise clean completion is enough to preserve the user's
-    // interrupt. It is not enough to overwrite an already-established non-interrupt failure.
-    interrupted && receipt.ok
+    false
 }
 
 fn service_termination_reports_user_interruption(service_termination: &ServiceTermination) -> bool {
@@ -93027,8 +93038,13 @@ fn apply_interrupted_run_classification(
     receipt: &mut ExecutionReceipt,
     service_termination: Option<&ServiceTermination>,
     interrupted: bool,
+    outcome_exit_code: i32,
 ) {
-    if !receipt_reports_user_interruption(receipt, service_termination, interrupted) {
+    if !receipt_reports_user_interruption(
+        receipt,
+        service_termination,
+        interrupted && exit_code_indicates_user_interruption(outcome_exit_code),
+    ) {
         return;
     }
 
@@ -93163,6 +93179,20 @@ fn render_run_captured_failure_text(
     receipt_text: Option<&str>,
     summary: &str,
 ) -> String {
+    // A Ctrl+C observed while the runner owns this execution is authoritative. Container
+    // shutdown inspection can explain the interruption, but must not relabel it as a startup
+    // failure simply because the workload exited non-zero during teardown.
+    if run_failure_reports_user_interruption(interrupted, exit_code, summary, receipt_text) {
+        return render_task_interrupted_text(
+            where_value,
+            task_name,
+            requested_task_name,
+            member,
+            overrides,
+            summary,
+            receipt_text,
+        );
+    }
     if let Some(service_termination) = service_termination {
         if service_termination_reports_user_interruption(service_termination) {
             return render_service_interrupted_text(
@@ -93204,17 +93234,6 @@ fn render_run_captured_failure_text(
             overrides,
             service_termination,
             runtime,
-            summary,
-            receipt_text,
-        );
-    }
-    if run_failure_reports_user_interruption(interrupted, exit_code, summary, receipt_text) {
-        return render_task_interrupted_text(
-            where_value,
-            task_name,
-            requested_task_name,
-            member,
-            overrides,
             summary,
             receipt_text,
         );
@@ -93393,7 +93412,7 @@ fn run_failure_reports_user_interruption(
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> bool {
-    if interrupted {
+    if interrupted && exit_code_indicates_user_interruption(exit_code) {
         return true;
     }
 
