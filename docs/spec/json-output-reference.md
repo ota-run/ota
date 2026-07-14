@@ -850,10 +850,13 @@ Notes:
   independently exercised; it does not become a green seam claim in human output.
 - `negative_control` is optional canonical boundary-attested evidence from one explicitly selected
   `workflows.<name>.proof.negative_controls[]` task. It names its green `obligation_id`, carries
-  the matching proof `transaction_id`, and publishes `status: unrun | invalid | validated`.
-  `nonzero_exit_observed` alone is not evidence that the declared dependency caused the failure.
-  Only `validated` carries a matching expected failure attestation digest and may promote the
-  exact `dependency_evidence[].proof_obligation_id` record to `fault_tested`. The nested
+  the matching proof `transaction_id`, contract-declared `intervention`, and publishes
+  `status: unrun | invalid | validated`. Failed controls also carry a runner-derived
+  `failure_mode` when Ota can classify one. `nonzero_exit_observed` and
+  `unclassified_nonzero` are bounded evidence, not evidence that the declared dependency caused
+  the failure. Only `validated` with `outcome: expected_obligation_failed`,
+  `failure_mode: expected_missing_effect`, and a matching failure-attestation digest may promote
+  the exact `dependency_evidence[].proof_obligation_id` record to `fault_tested`. The nested
   `dependency_evidence[].negative_control` object is a derived projection of this canonical record,
   never a second source of truth. `unexpected_success`, `control_could_not_run`, stale evidence,
   and unrelated non-zero exits are `invalid` or `unrun` and fail the selected control proof.
@@ -959,6 +962,7 @@ Success:
       "negative_control": {
         "status": "validated",
         "same_obligation": true,
+        "failure_mode": "expected_missing_effect",
         "failure_attestation_digest": "sha256:..."
       }
     },
@@ -979,9 +983,14 @@ Success:
     "obligation_id": "postgres-marker",
     "transaction_id": "sha256:...",
     "control_task": "verify:postgres-unavailable",
+    "intervention": {
+      "kind": "dependency_endpoint_override",
+      "id": "postgres-unavailable"
+    },
     "expected_failure": "dependency_unavailable",
-    "outcome": "nonzero_exit_observed",
+    "outcome": "expected_obligation_failed",
     "status": "validated",
+    "failure_mode": "expected_missing_effect",
     "proof_scope_ref": "workflow:app/negative_control:postgres-unavailable",
     "evidence_class": "attested",
     "failure_attestation_digest": "sha256:...",

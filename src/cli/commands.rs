@@ -58158,9 +58158,16 @@ workflows:
                     obligation_id: String::from("postgres-marker"),
                     transaction_id: Some(String::from("sha256:transaction")),
                     control_task: String::from("verify:postgres-unavailable"),
+                    intervention: crate::output::ProofRuntimeNegativeControlIntervention {
+                        kind: String::from("dependency_endpoint_override"),
+                        id: String::from("postgres-unavailable"),
+                    },
                     expected_failure: String::from("dependency_unavailable"),
                     outcome: crate::output::ProofRuntimeNegativeControlOutcome::NonzeroExitObserved,
                     status: crate::output::ProofRuntimeNegativeControlStatus::Invalid,
+                    failure_mode: Some(
+                        crate::output::ProofRuntimeNegativeControlFailureMode::UnclassifiedNonzero,
+                    ),
                     proof_scope_ref: String::from(
                         "workflow:app/negative_control:postgres-unavailable",
                     ),
@@ -58216,6 +58223,14 @@ workflows:
             Some("nonzero_exit_observed")
         );
         assert_eq!(body["negative_control"]["status"].as_str(), Some("invalid"));
+        assert_eq!(
+            body["negative_control"]["failure_mode"].as_str(),
+            Some("unclassified_nonzero")
+        );
+        assert_eq!(
+            body["negative_control"]["intervention"]["kind"].as_str(),
+            Some("dependency_endpoint_override")
+        );
         assert_eq!(
             body["negative_control"]["obligation_id"].as_str(),
             Some("postgres-marker")
@@ -58304,6 +58319,9 @@ tasks:
             dependency: String::from("postgres"),
             obligation: String::from("postgres-marker"),
             task: String::from("control"),
+            intervention: crate::schema::WorkflowNegativeControlInterventionSpec {
+                kind: crate::schema::WorkflowNegativeControlInterventionKind::DependencyDisruption,
+            },
             expected_failure:
                 crate::schema::WorkflowNegativeControlFailureKind::DependencyUnavailable,
         };
@@ -58343,6 +58361,11 @@ tasks:
             record.status,
             crate::output::ProofRuntimeNegativeControlStatus::Invalid
         );
+        assert_eq!(
+            record.failure_mode,
+            Some(crate::output::ProofRuntimeNegativeControlFailureMode::UnclassifiedNonzero)
+        );
+        assert_eq!(record.intervention.kind, "dependency_disruption");
         assert!(record.failure_attestation_digest.is_none());
         assert_eq!(
             record.proof_scope_ref,
@@ -58359,6 +58382,9 @@ tasks:
             dependency: String::from("postgres"),
             obligation: String::from("postgres-marker"),
             task: String::from("control"),
+            intervention: crate::schema::WorkflowNegativeControlInterventionSpec {
+                kind: crate::schema::WorkflowNegativeControlInterventionKind::DependencyDisruption,
+            },
             expected_failure:
                 crate::schema::WorkflowNegativeControlFailureKind::DependencyUnavailable,
         };
@@ -58400,7 +58426,28 @@ tasks:
             &obligation,
         )
         .expect_err("a stale control attestation must not promote fault-tested evidence");
-        assert!(mismatched.contains("different proof transaction"));
+        assert!(mismatched.detail.contains("different proof transaction"));
+        assert_eq!(
+            mismatched.failure_mode,
+            crate::output::ProofRuntimeNegativeControlFailureMode::UnclassifiedNonzero
+        );
+
+        fs::write(
+            &attestation_path,
+            r#"{"transaction_id":"sha256:transaction","control_id":"postgres-down","obligation_id":"postgres-marker","failure_kind":"unexpected_failure"}"#,
+        )
+        .unwrap();
+        let wrong_failure = super::proof_runtime_read_negative_control_attestation(
+            &attestation_path,
+            &control,
+            &obligation,
+        )
+        .expect_err("a mismatched failure kind must not promote fault-tested evidence");
+        assert!(wrong_failure.detail.contains("instead of expected"));
+        assert_eq!(
+            wrong_failure.failure_mode,
+            crate::output::ProofRuntimeNegativeControlFailureMode::WrongAssertion
+        );
     }
 
     #[test]
@@ -58424,9 +58471,16 @@ tasks:
             obligation_id: String::from("postgres-marker"),
             transaction_id: Some(String::from("sha256:transaction")),
             control_task: String::from("control"),
+            intervention: crate::output::ProofRuntimeNegativeControlIntervention {
+                kind: String::from("dependency_disruption"),
+                id: String::from("postgres-down"),
+            },
             expected_failure: String::from("dependency_unavailable"),
-            outcome: crate::output::ProofRuntimeNegativeControlOutcome::NonzeroExitObserved,
+            outcome: crate::output::ProofRuntimeNegativeControlOutcome::ExpectedObligationFailed,
             status,
+            failure_mode: Some(
+                crate::output::ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect,
+            ),
             proof_scope_ref: String::from("workflow:app/negative_control:postgres-down"),
             evidence_class: ExecutionEvidenceClass::Attested,
             failure_attestation_digest: Some(String::from("sha256:failure")),
@@ -58468,6 +58522,34 @@ tasks:
             Some("app"),
         );
         assert!(boundaries.iter().any(|entry| {
+            entry.kind == "dependency_causality_not_proved"
+                && entry.reason.as_deref() == Some("negative_control_invalid")
+        }));
+
+        let mut malformed_validated =
+            control(crate::output::ProofRuntimeNegativeControlStatus::Validated);
+        malformed_validated.failure_mode =
+            Some(crate::output::ProofRuntimeNegativeControlFailureMode::UnclassifiedNonzero);
+        let mut malformed = vec![evidence()];
+        super::proof_runtime_apply_negative_control_projection(
+            &mut malformed,
+            &malformed_validated,
+        );
+        assert_eq!(malformed[0].level.as_deref(), Some("exercised"));
+        assert_eq!(
+            malformed[0]
+                .negative_control
+                .as_ref()
+                .map(|value| value.same_obligation),
+            Some(false)
+        );
+        let mut malformed_boundaries = Vec::new();
+        super::proof_runtime_append_dependency_causality_boundaries(
+            &mut malformed_boundaries,
+            &malformed,
+            Some("app"),
+        );
+        assert!(malformed_boundaries.iter().any(|entry| {
             entry.kind == "dependency_causality_not_proved"
                 && entry.reason.as_deref() == Some("negative_control_invalid")
         }));
@@ -100220,6 +100302,22 @@ struct ProofRuntimeNegativeControlAttestation {
     failure_kind: String,
 }
 
+#[derive(Debug)]
+struct ProofRuntimeNegativeControlAttestationError {
+    detail: String,
+    failure_mode: crate::output::ProofRuntimeNegativeControlFailureMode,
+}
+
+impl ProofRuntimeNegativeControlAttestationError {
+    fn unclassified(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            failure_mode:
+                crate::output::ProofRuntimeNegativeControlFailureMode::UnclassifiedNonzero,
+        }
+    }
+}
+
 fn proof_runtime_negative_control_attestation_path(
     artifact_dir: &Path,
     control: &crate::schema::WorkflowNegativeControlSpec,
@@ -100231,32 +100329,45 @@ fn proof_runtime_read_negative_control_attestation(
     path: &Path,
     control: &crate::schema::WorkflowNegativeControlSpec,
     obligation: &crate::output::ProofRuntimeSeamObservation,
-) -> Result<String, String> {
-    let bytes = fs::read(path)
-        .map_err(|error| format!("control did not write its failure attestation: {error}"))?;
+) -> Result<String, ProofRuntimeNegativeControlAttestationError> {
+    let bytes = fs::read(path).map_err(|error| {
+        ProofRuntimeNegativeControlAttestationError::unclassified(format!(
+            "control did not write its failure attestation: {error}"
+        ))
+    })?;
     let attestation: ProofRuntimeNegativeControlAttestation = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("control failure attestation is not valid JSON: {error}"))?;
+        .map_err(|error| {
+            ProofRuntimeNegativeControlAttestationError::unclassified(format!(
+                "control failure attestation is not valid JSON: {error}"
+            ))
+        })?;
     if attestation.transaction_id != obligation.transaction_id {
-        return Err(String::from(
+        return Err(ProofRuntimeNegativeControlAttestationError::unclassified(
             "control failure attestation belongs to a different proof transaction",
         ));
     }
     if attestation.control_id != control.id {
-        return Err(String::from(
+        return Err(ProofRuntimeNegativeControlAttestationError::unclassified(
             "control failure attestation belongs to a different negative control",
         ));
     }
     if attestation.obligation_id != control.obligation {
-        return Err(String::from(
-            "control failure attestation does not bind the declared green obligation",
-        ));
+        return Err(ProofRuntimeNegativeControlAttestationError {
+            detail: String::from(
+                "control failure attestation does not bind the declared green obligation",
+            ),
+            failure_mode: crate::output::ProofRuntimeNegativeControlFailureMode::WrongAssertion,
+        });
     }
     if attestation.failure_kind != control.expected_failure.as_str() {
-        return Err(format!(
-            "control failure attestation reported `{}` instead of expected `{}`",
-            attestation.failure_kind,
-            control.expected_failure.as_str()
-        ));
+        return Err(ProofRuntimeNegativeControlAttestationError {
+            detail: format!(
+                "control failure attestation reported `{}` instead of expected `{}`",
+                attestation.failure_kind,
+                control.expected_failure.as_str()
+            ),
+            failure_mode: crate::output::ProofRuntimeNegativeControlFailureMode::WrongAssertion,
+        });
     }
     Ok(proof_runtime_attestation_digest(&bytes))
 }
@@ -100279,9 +100390,14 @@ fn proof_runtime_execute_negative_control(
         obligation_id: control.obligation.clone(),
         transaction_id: obligation.map(|obligation| obligation.transaction_id.clone()),
         control_task: control.task.clone(),
+        intervention: crate::output::ProofRuntimeNegativeControlIntervention {
+            kind: control.intervention.kind.as_str().to_string(),
+            id: control.id.clone(),
+        },
         expected_failure: control.expected_failure.as_str().to_string(),
         outcome: ProofRuntimeNegativeControlOutcome::ControlCouldNotRun,
         status: crate::output::ProofRuntimeNegativeControlStatus::Unrun,
+        failure_mode: None,
         proof_scope_ref: proof_scope_ref.clone(),
         evidence_class: ExecutionEvidenceClass::Attested,
         failure_attestation_digest: None,
@@ -100363,17 +100479,21 @@ fn proof_runtime_execute_negative_control(
             let _ = fs::remove_file(&attestation_path);
             match attestation {
                 Ok(failure_attestation_digest) => ProofRuntimeNegativeControl {
-                    outcome: ProofRuntimeNegativeControlOutcome::NonzeroExitObserved,
+                    outcome: ProofRuntimeNegativeControlOutcome::ExpectedObligationFailed,
                     status: crate::output::ProofRuntimeNegativeControlStatus::Validated,
+                    failure_mode: Some(
+                        crate::output::ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect,
+                    ),
                     failure_attestation_digest: Some(failure_attestation_digest),
                     exit_code: output.status.code(),
                     ..base()
                 },
-                Err(detail) => ProofRuntimeNegativeControl {
+                Err(error) => ProofRuntimeNegativeControl {
                     outcome: ProofRuntimeNegativeControlOutcome::NonzeroExitObserved,
                     status: crate::output::ProofRuntimeNegativeControlStatus::Invalid,
+                    failure_mode: Some(error.failure_mode),
                     exit_code: output.status.code(),
-                    detail: Some(detail),
+                    detail: Some(error.detail),
                     ..base()
                 },
             }
@@ -100521,21 +100641,20 @@ fn proof_runtime_append_dependency_causality_boundaries(
     for evidence in dependency_evidence.iter().filter(|evidence| {
         evidence.proof_obligation_id.is_some() && evidence.level.as_deref() == Some("exercised")
     }) {
-        let status = evidence
-            .negative_control
-            .as_ref()
-            .map(|control| control.status);
-        if status == Some(crate::output::ProofRuntimeNegativeControlStatus::Validated) {
+        let control = evidence.negative_control.as_ref();
+        if control.is_some_and(proof_runtime_dependency_negative_control_is_validated) {
             continue;
         }
-        let reason = match status {
+        let reason = match control.map(|control| control.status) {
             Some(crate::output::ProofRuntimeNegativeControlStatus::Invalid) => {
                 "negative_control_invalid"
             }
             Some(crate::output::ProofRuntimeNegativeControlStatus::Unrun) => {
                 "negative_control_unrun"
             }
-            Some(crate::output::ProofRuntimeNegativeControlStatus::Validated) => unreachable!(),
+            Some(crate::output::ProofRuntimeNegativeControlStatus::Validated) => {
+                "negative_control_invalid"
+            }
             None => "no_negative_control_selected",
         };
         entries.push(crate::output::ProofRuntimeNotProved {
@@ -100561,6 +100680,7 @@ fn proof_runtime_apply_negative_control_projection(
     dependency_evidence: &mut [ProofRuntimeDependencyEvidence],
     control: &ProofRuntimeNegativeControl,
 ) {
+    let validated = proof_runtime_negative_control_is_validated(control);
     for evidence in dependency_evidence.iter_mut().filter(|evidence| {
         evidence.dependency_id == control.dependency_id
             && evidence.proof_obligation_id.as_deref() == Some(control.obligation_id.as_str())
@@ -100570,19 +100690,33 @@ fn proof_runtime_apply_negative_control_projection(
             // This is an attested equivalence claim, not merely evidence that a green transaction
             // existed. Invalid controls may carry a transaction id but did not verify the same
             // obligation and must not project that stronger statement.
-            same_obligation: control.status
-                == crate::output::ProofRuntimeNegativeControlStatus::Validated,
-            failure_attestation_digest: (control.status
-                == crate::output::ProofRuntimeNegativeControlStatus::Validated)
+            same_obligation: validated,
+            failure_mode: control.failure_mode,
+            failure_attestation_digest: validated
                 .then(|| control.failure_attestation_digest.clone())
                 .flatten(),
         });
-        if control.status == crate::output::ProofRuntimeNegativeControlStatus::Validated
-            && evidence.level.as_deref() == Some("exercised")
-        {
+        if validated && evidence.level.as_deref() == Some("exercised") {
             evidence.level = Some(String::from("fault_tested"));
         }
     }
+}
+
+fn proof_runtime_negative_control_is_validated(control: &ProofRuntimeNegativeControl) -> bool {
+    control.status == crate::output::ProofRuntimeNegativeControlStatus::Validated
+        && control.failure_mode
+            == Some(crate::output::ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect)
+        && control.failure_attestation_digest.is_some()
+}
+
+fn proof_runtime_dependency_negative_control_is_validated(
+    control: &crate::output::ProofRuntimeDependencyNegativeControl,
+) -> bool {
+    control.status == crate::output::ProofRuntimeNegativeControlStatus::Validated
+        && control.same_obligation
+        && control.failure_mode
+            == Some(crate::output::ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect)
+        && control.failure_attestation_digest.is_some()
 }
 
 fn proof_runtime_dependency_evidence(
@@ -103064,11 +103198,14 @@ fn render_proof_runtime_text(
             paint_section_title("Negative Control")
         ));
         stdout.push_str(&format!(
-            "\n  {} {} against {}: {} ({})",
+            "\n  {} {} against {}: {} ({}){}",
             next_bullet(),
             paint_backticked_code(&control.control_task),
             paint_backticked_code(&control.dependency_id),
             match control.outcome {
+                ProofRuntimeNegativeControlOutcome::ExpectedObligationFailed => {
+                    "expected obligation failed"
+                }
                 ProofRuntimeNegativeControlOutcome::NonzeroExitObserved => "non-zero exit observed",
                 ProofRuntimeNegativeControlOutcome::UnexpectedSuccess => "unexpected success",
                 ProofRuntimeNegativeControlOutcome::ControlCouldNotRun => "control could not run",
@@ -103078,6 +103215,13 @@ fn render_proof_runtime_text(
                 crate::output::ProofRuntimeNegativeControlStatus::Invalid => "invalid",
                 crate::output::ProofRuntimeNegativeControlStatus::Validated => "validated",
             },
+            control
+                .failure_mode
+                .map(|mode| format!(
+                    "; {}",
+                    proof_runtime_negative_control_failure_mode_text(mode)
+                ))
+                .unwrap_or_default(),
         ));
     }
 
@@ -103129,6 +103273,26 @@ fn render_proof_runtime_text(
     }
 
     stdout
+}
+
+fn proof_runtime_negative_control_failure_mode_text(
+    mode: crate::output::ProofRuntimeNegativeControlFailureMode,
+) -> &'static str {
+    match mode {
+        crate::output::ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect => {
+            "expected_missing_effect"
+        }
+        crate::output::ProofRuntimeNegativeControlFailureMode::SetupFailure => "setup_failure",
+        crate::output::ProofRuntimeNegativeControlFailureMode::Timeout => "timeout",
+        crate::output::ProofRuntimeNegativeControlFailureMode::Crash => "crash",
+        crate::output::ProofRuntimeNegativeControlFailureMode::TransportFailure => {
+            "transport_failure"
+        }
+        crate::output::ProofRuntimeNegativeControlFailureMode::WrongAssertion => "wrong_assertion",
+        crate::output::ProofRuntimeNegativeControlFailureMode::UnclassifiedNonzero => {
+            "unclassified_nonzero"
+        }
+    }
 }
 
 fn render_proof_runtime_dependency_evidence_text(entry: &ProofRuntimeDependencyEvidence) -> String {

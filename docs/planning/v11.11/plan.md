@@ -426,12 +426,16 @@ Direction:
   the ordinary green proof
 - reuse an already declared task, workflow, or adapter action for the first control lane; do not
   introduce a generic fault-injection executor in this slice
-- link the control record to the same selected proof scope and dependency identity, while keeping
-  its intervention and observed outcome explicit
+- link the control record to the same selected proof scope, dependency identity, and green
+  obligation, while carrying the contract-declared intervention identity beside the runner-observed
+  outcome
 - treat a plain control non-zero exit as a bounded `nonzero_exit_observed` result, not as evidence
   of expected dependency failure
-- publish `fault_tested` only after a later structured failure attestation binds the control to the
-  same green obligation and proves the expected obligation failed under the intervention
+- classify the observed control failure as runner-derived evidence: `expected_missing_effect`,
+  `setup_failure`, `timeout`, `crash`, `transport_failure`, `wrong_assertion`, or
+  `unclassified_nonzero`; contract prose and caller labels cannot select that classification
+- publish `fault_tested` only after a structured failure attestation binds the control to the same
+  green obligation and proves `expected_missing_effect` under the recorded intervention
 - publish an unexpected control success or an invalid control setup as evidence that the seam is
   not yet proven, never as a passing fault test
 - never derive `fault_tested` from a fingerprint, ordinary execution log, or successful selected
@@ -450,6 +454,7 @@ promotion.
   "negative_control": {
     "status": "unrun | invalid | validated",
     "same_obligation": true,
+    "failure_mode": "expected_missing_effect | setup_failure | timeout | crash | transport_failure | wrong_assertion | unclassified_nonzero",
     "failure_attestation_digest": "sha256:..."
   }
 }
@@ -459,10 +464,12 @@ Rules:
 
 - `unrun` means no selected control transaction exists; it adds no causal claim
 - `invalid` means the control was unable to prove the expected missing-effect failure, including
-  an unrelated non-zero exit, a setup failure, missing correlation, or a mismatched obligation;
-  it must preserve `not_proved` for causal dependency necessity
+  an unrelated non-zero exit, `setup_failure`, `timeout`, `crash`, `transport_failure`,
+  `wrong_assertion`, `unclassified_nonzero`, missing correlation, or a mismatched obligation; it
+  must preserve `not_proved` for causal dependency necessity
 - `validated` requires runner-verified correlation to the selected green obligation and a
-  non-secret digest of the structured failure attestation from that same control transaction
+  non-secret digest of the structured failure attestation from that same control transaction, with
+  runner-derived `failure_mode: expected_missing_effect`
 - only `validated` may promote the record from `exercised` to `fault_tested`
 - `negative_control_present` alone is never a promotion input; consumers must use `status`, not a
   boolean presence check
@@ -483,8 +490,13 @@ The first machine-readable shape should be additive:
     "obligation_id": "postgres-marker",
     "transaction_id": "sha256:...",
     "control_task": "proof:postgres-unavailable",
+    "intervention": {
+      "kind": "dependency_disruption",
+      "id": "postgres-unavailable"
+    },
     "expected_failure": "dependency_unavailable",
-    "outcome": "nonzero_exit_observed",
+    "outcome": "expected_obligation_failed",
+    "failure_mode": "expected_missing_effect",
     "status": "validated",
     "failure_attestation_digest": "sha256:...",
     "proof_scope_ref": "workflow:app-proof/negative_control:postgres-unavailable"
@@ -495,7 +507,9 @@ The first machine-readable shape should be additive:
 This standalone record is the canonical, boundary-attested control result. The matching
 `dependency_evidence[].negative_control` record is a derived projection only. A caller-provided
 reason or contract declaration can request the control lane but cannot substitute for its recorded
-outcome, obligation binding, or failure attestation.
+outcome, runner-derived failure classification, obligation binding, or failure attestation. A
+control with no structured attestation remains `invalid` with
+`failure_mode: unclassified_nonzero`; it cannot promote to `fault_tested`.
 
 ### 3c. Qualified top-level proof verdict
 

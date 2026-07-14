@@ -18971,6 +18971,8 @@ workflows:
           dependency: postgres
           obligation: postgres-marker
           task: postgres-down
+          intervention:
+            kind: dependency_disruption
           expected_failure: dependency_unavailable
 "#,
         )
@@ -19020,6 +19022,8 @@ workflows:
           dependency: postgres
           obligation: postgres-marker
           task: serve
+          intervention:
+            kind: dependency_disruption
           expected_failure: dependency_unavailable
 "#,
         )
@@ -19078,6 +19082,8 @@ workflows:
           dependency: postgres
           obligation: postgres-marker
           task: postgres-down
+          intervention:
+            kind: dependency_disruption
           expected_failure: dependency_unavailable
 "#,
         )

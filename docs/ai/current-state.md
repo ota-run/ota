@@ -49,9 +49,12 @@ durable agent workflow belongs in the canonical Ota skill.
   proof now keeps ordinary reachability and caller-side attempts distinct from marker-bound seam
   exercise. A selected negative control names one observed seam obligation and typed expected
   failure; only a runner-verified, transaction-bound failure attestation can validate the control
-  and promote that exact record to `fault_tested`. Generic non-zero exits remain `invalid`, while
-  exercised seams without a validated control carry `dependency_causality_not_proved`. Text and
-  JSON preserve the evidence level, origin, authority class, and control status for operators.
+  and promote that exact record to `fault_tested`. Canonical control output now carries a
+  contract-declared intervention identity and runner-derived failure mode: only
+  `expected_obligation_failed` with `expected_missing_effect` validates; generic non-zero exits
+  remain `invalid`. Exercised seams without a validated control carry
+  `dependency_causality_not_proved`. Text and JSON preserve the evidence level, origin, authority
+  class, control status, and failure classification for operators.
 - active V11.11 pressure gate: Athena API carries the first Rails/PostgreSQL fault-attested
   control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
   is historical evidence only. Its green transaction-bound matrix proved the warning-only runtime
@@ -218,7 +221,7 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.13/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
+`docs/planning/v11.10/plan.md` plus `docs/planning/v11.11/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
 `/Users/bobai/Workspace/Ota.run/skills`, and the active pressure repo before editing.
 
 The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
@@ -227,10 +230,13 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-Before widening the V11.13 model further, finish one healthy real generator lane and one
-independent sibling-consumer lane. Do not infer generated-file freshness from timestamps or later
-filesystem reads. Follow the pressure-testing protocol exactly and record whether the repo exposes
-a contract issue, implementation issue, or Ota platform gap.
+Finish V11.10 replay trust and V11.11 proof-boundary enforcement before starting V11.12 hydration
+provenance or returning to V11.13 generated-artifact breadth. For V11.11, the next proof gate is
+Athena's existing PostgreSQL negative control: validate that its matrix emits a canonical control
+record with a transaction-bound `expected_missing_effect` failure mode, while malformed or
+unclassified controls retain `dependency_causality_not_proved`. Do not infer generated-file
+freshness from timestamps or later filesystem reads. Follow the pressure-testing protocol exactly
+and record whether the repo exposes a contract issue, implementation issue, or Ota platform gap.
 
 ## Working Rules
 

@@ -610,6 +610,31 @@ unexpected: true
     }
 
     #[test]
+    fn rejects_negative_control_without_declared_intervention() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+workflows:
+  default: app
+  app:
+    proof:
+      negative_controls:
+        - id: postgres-down
+          dependency: postgres
+          obligation: postgres-marker
+          task: verify:postgres-down
+          expected_failure: dependency_unavailable
+"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing field `intervention`"));
+    }
+
+    #[test]
     fn rejects_generic_native_prerequisite_packages_field() {
         let error = parse_contract_str(
             Path::new("ota.yaml"),

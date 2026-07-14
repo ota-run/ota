@@ -37,6 +37,10 @@
   even if a separate cleanup query succeeded; and a late raw interrupt signal can no longer
   overwrite an already-established non-interrupt task or service failure. Explicit runner
   interruption evidence and a signal after clean completion still render `interrupted`.
+- tightened runtime-proof negative controls. Canonical control records now publish
+  contract-declared intervention identity and runner-derived failure mode; only a transaction-bound
+  `expected_obligation_failed` / `expected_missing_effect` attestation can promote evidence to
+  `fault_tested`. Unclassified non-zero exits remain invalid and retain the causality boundary.
 
 - Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker to
   a declared workflow producer, run a finite observer before teardown, and emit attested

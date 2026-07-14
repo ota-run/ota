@@ -698,6 +698,8 @@ pub struct ProofRuntimeDependencyNegativeControl {
     pub status: ProofRuntimeNegativeControlStatus,
     pub same_obligation: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_mode: Option<ProofRuntimeNegativeControlFailureMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_attestation_digest: Option<String>,
 }
 
@@ -740,9 +742,13 @@ pub struct ProofRuntimeNegativeControl {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transaction_id: Option<String>,
     pub control_task: String,
+    /// Contract-declared identity of the intervention used by the control lane.
+    pub intervention: ProofRuntimeNegativeControlIntervention,
     pub expected_failure: String,
     pub outcome: ProofRuntimeNegativeControlOutcome,
     pub status: ProofRuntimeNegativeControlStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_mode: Option<ProofRuntimeNegativeControlFailureMode>,
     pub proof_scope_ref: String,
     pub evidence_class: ExecutionEvidenceClass,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -753,12 +759,36 @@ pub struct ProofRuntimeNegativeControl {
     pub detail: Option<String>,
 }
 
+/// Stable identity for the declared lane that performs a negative-control intervention.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeNegativeControlIntervention {
+    pub kind: String,
+    pub id: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofRuntimeNegativeControlOutcome {
+    ExpectedObligationFailed,
     NonzeroExitObserved,
     UnexpectedSuccess,
     ControlCouldNotRun,
+}
+
+/// Runner-derived classification of a failed negative-control execution.
+///
+/// Ota emits only classifications it can establish from the control transaction. Unknown non-zero
+/// exits stay explicitly unclassified and cannot promote dependency evidence.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofRuntimeNegativeControlFailureMode {
+    ExpectedMissingEffect,
+    SetupFailure,
+    Timeout,
+    Crash,
+    TransportFailure,
+    WrongAssertion,
+    UnclassifiedNonzero,
 }
 
 /// Whether Ota could validate a selected negative control against its declared green obligation.

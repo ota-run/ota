@@ -3884,17 +3884,29 @@ workflows:
           dependency: postgres
           obligation: postgres-marker
           task: verify:postgres-unavailable
+          intervention:
+            kind: dependency_endpoint_override
           expected_failure: dependency_unavailable
 ```
 
 The contract declares the controlled dependency, the already-observed green seam obligation, the
-separate task, and a typed expected failure. Ota executes the task only when selected. It supplies
+separate task, the intervention family, and a typed expected failure. Ota executes the task only when selected. It supplies
 the active transaction, control, obligation, and transient attestation coordinates; the control
 must write a matching `dependency_unavailable` attestation after that failure is actually caught.
 A successful control task, an unrelated non-zero exit, or a stale/mismatched attestation is
 `invalid`, not a fault test. This surface does not infer disruption from prose or fabricate a
 generic fault injector. Until a matching control validates, an otherwise exercised seam retains
 the machine-readable `dependency_causality_not_proved` boundary.
+
+`intervention.kind` is a bounded contract declaration of what the finite control task changes:
+
+- `dependency_disruption` blocks or removes the declared dependency from the control lane.
+- `dependency_endpoint_override` redirects the control lane away from the declared dependency.
+- `null_substitution` replaces the declared dependency with a bounded null implementation.
+
+This is not the proof result. Ota records the declared intervention beside runner-derived control
+status, failure mode, transaction binding, and attestation digest. Only a matching
+`expected_missing_effect` attestation promotes the dependency evidence to `fault_tested`.
 
 Seam-observation shape:
 

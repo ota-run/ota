@@ -780,7 +780,34 @@ pub struct WorkflowNegativeControlSpec {
     /// The marker-bound seam observation whose green obligation this control must negate.
     pub obligation: String,
     pub task: String,
+    /// Contract-owned description of the intervention performed by the finite control task.
+    pub intervention: WorkflowNegativeControlInterventionSpec,
     pub expected_failure: WorkflowNegativeControlFailureKind,
+}
+
+/// The bounded intervention family used by a workflow negative control.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowNegativeControlInterventionSpec {
+    pub kind: WorkflowNegativeControlInterventionKind,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowNegativeControlInterventionKind {
+    DependencyDisruption,
+    DependencyEndpointOverride,
+    NullSubstitution,
+}
+
+impl WorkflowNegativeControlInterventionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DependencyDisruption => "dependency_disruption",
+            Self::DependencyEndpointOverride => "dependency_endpoint_override",
+            Self::NullSubstitution => "null_substitution",
+        }
+    }
 }
 
 /// The first typed failure family Ota can verify from a negative-control attestation.
