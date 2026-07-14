@@ -14681,6 +14681,58 @@ tasks:
     }
 
     #[test]
+    fn doctor_skips_agent_safe_dependency_hydration_advisory_for_first_class_sequence_hydration()
+    {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:
+    safe_for_agent: true
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_env_file
+          path: .env
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - .env
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary == "Agent-safe task `setup` performs network dependency hydration"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Info
+                && finding.summary
+                    == "Selected task path performs network dependency hydration: setup"
+        }));
+    }
+
+    #[test]
     fn doctor_surfaces_selected_task_path_effects() {
         let contract = parse_contract_str(
             synthetic_contract_path(),

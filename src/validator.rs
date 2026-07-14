@@ -10819,6 +10819,41 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories
 }
 
+fn prepare_spec_owns_dependency_hydration_for_advisory(
+    prepare: &crate::schema::TaskPrepareSpec,
+) -> bool {
+    match prepare {
+        crate::schema::TaskPrepareSpec::DependencyHydration(_) => true,
+        crate::schema::TaskPrepareSpec::Sequence(sequence) => sequence
+            .steps
+            .iter()
+            .any(prepare_sequence_step_owns_dependency_hydration_for_advisory),
+        _ => false,
+    }
+}
+
+fn prepare_sequence_step_owns_dependency_hydration_for_advisory(
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+) -> bool {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(_) => true,
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => sequence
+            .steps
+            .iter()
+            .any(prepare_sequence_step_owns_dependency_hydration_for_advisory),
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureVirtualenv(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitTemplate(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => false,
+    }
+}
+
 fn collect_legacy_node_runtime_tool_split_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
     if contract.toolchains.contains_key("node") {
         return Vec::new();
@@ -13778,10 +13813,10 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
             if let Some(network_kind) = task.effects.effective_network_kind() {
                 if network_kind == TaskNetworkEffectKind::DependencyHydration {
                     saw_hydration = true;
-                    hydration_is_fully_structured &= matches!(
-                        task.prepare.as_ref(),
-                        Some(crate::schema::TaskPrepareSpec::DependencyHydration(_))
-                    );
+                    hydration_is_fully_structured &= task
+                        .prepare
+                        .as_ref()
+                        .is_some_and(prepare_spec_owns_dependency_hydration_for_advisory);
                 }
                 effective_network_kind = Some(match (effective_network_kind, network_kind) {
                     (Some(TaskNetworkEffectKind::Broad), _) => TaskNetworkEffectKind::Broad,
@@ -38991,6 +39026,107 @@ tasks:
         - node
     effects:
       writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "verify"
+                    && value.network_kind == TaskNetworkEffectKind::DependencyHydration
+        )));
+    }
+
+    #[test]
+    fn skips_agent_safe_dependency_hydration_advisory_for_first_class_sequence_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:
+    safe_for_agent: true
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_env_file
+          path: .env
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - .env
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "setup"
+                    && value.network_kind == TaskNetworkEffectKind::DependencyHydration
+        )));
+    }
+
+    #[test]
+    fn skips_agent_safe_dependency_hydration_advisory_for_first_class_sequence_hydration_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  verify:
+    run: pnpm test
+    safe_for_agent: true
+    depends_on: [setup]
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_env_file
+          path: .env
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - .env
         - node_modules
       network: true
       network_kind: dependency_hydration

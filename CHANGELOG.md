@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed agent-safe dependency-hydration warning fan-out for structured sequence-backed setup
+  lanes. First-class `prepare.kind: sequence` tasks that include a typed
+  `dependency_hydration` step now suppress per-task agent-safe hydration warnings the same way as
+  direct hydration tasks, while preserving the single honest selected-path informational finding.
+
 - fixed replay-baseline scope and staleness classification. `ota up --replay-baseline ...` now
   treats a baseline from a different workflow/backend/provider/remote-target/lifecycle as
   `replay_unavailable` with
