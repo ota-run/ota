@@ -509,6 +509,13 @@ Direction:
 - keep that replay posture scoped to the same lane and execution boundary rather than implying one
   repo-global replay verdict
 - when replay fails, keep contract drift and replay drift separate
+- keep backend-scoped informational findings visible in receipt comparison without treating them
+  as witness drift by themselves; a selected execution boundary may honestly add context notes
+  that do not change the lane outcome
+- require an archived baseline to match the selected workflow, `backend`, `provider`, remote
+  `target`, and `lifecycle`
+  before it can establish `last_known_good`; scope mismatch is unavailable replay evidence, not
+  a failed current execution or a hidden-input claim
 - surface whether the failure looks like:
   - semantic contract drift
   - pinned input drift

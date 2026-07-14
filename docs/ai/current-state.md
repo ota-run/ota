@@ -54,15 +54,19 @@ durable agent workflow belongs in the canonical Ota skill.
   JSON preserve the evidence level, origin, authority class, and control status for operators.
 - active V11.11 pressure gate: Athena API carries the first Rails/PostgreSQL fault-attested
   control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
-  is historical evidence only. Its first Ubuntu gate showed `ota up` ready with advisory warnings
-  but the proof admission path still treated the detached runtime exit as blocking and withheld the
-  observer. The core decision owner now treats warning-only readiness as non-blocking. The second
-  Ubuntu gate then exposed the next true runner gap: the seam callback and detached runtime are
-  sibling children of the same `ota up` process, but the active-execution registry admitted only
-  direct parent-child pairs. Same-orchestrator sibling admission is now covered by a runner
-  regression; rerun the transaction-bound `fault_tested` matrix after the source push. Local
-  macOS proof remains host-blocked by Brew `libpq` fulfillment, so it must not be mistaken for a
-  negative-control result.
+  is historical evidence only. Its green transaction-bound matrix proved the warning-only runtime
+  admission and same-orchestrator sibling callback fixes across the selected Ubuntu proof lane.
+  Bedrock and Lead Quorum also remain green on their declared native/container compatibility
+  lanes. Local Athena macOS proof remains host-blocked by Brew `libpq` fulfillment, so it must
+  not be mistaken for a negative-control result.
+
+- V11.10 Bedrock replay proves native baseline replay as `replay_verified` and `partly_ambient`.
+  A container replay against that native archive correctly returns `replay_unavailable` with
+  `baseline_scope_mismatch`: workflow, backend, provider, remote target, and lifecycle identity are
+  required for `last_known_good`.
+  A freshly archived container witness then replays as `replay_verified` and `partly_ambient` on
+  the same container/ephemeral scope. Backend-scoped informational doctor notes remain visible but
+  do not stale an otherwise same-scope witness.
 
 ## Recent Completed Slice
 
@@ -80,9 +84,9 @@ durable agent workflow belongs in the canonical Ota skill.
   explicitly outside this narrow proof.
 
 - Kylrix also exposed a native long-running task UX gap: applications such as Next.js can exit
-  non-zero after a user `Ctrl+C`. Runner-observed interrupts now take precedence over that child
-  shutdown code, preserve it on the task step for diagnosis, and return canonical exit `130` with
-  an `interrupted` receipt and summary.
+  non-zero after a user `Ctrl+C`. Explicit runner interruption evidence, or a raw signal before a
+  clean completion, returns canonical exit `130` with an `interrupted` receipt and summary. A late
+  raw signal cannot overwrite an already-established non-interrupt task or service failure.
 
 - Dagger generated-SDK pressure exposed and fixed native source-managed tool activation: a
   release-asset tool was fulfilled and version-probed correctly, but the native shell task path

@@ -2488,6 +2488,8 @@ pub struct ReceiptDiffReplayScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
 }
 
@@ -2574,6 +2576,7 @@ pub struct UpReplayExecution {
 #[serde(rename_all = "snake_case")]
 pub enum UpReplayFailureKind {
     BaselineUnavailable,
+    BaselineScopeMismatch,
     SemanticContractDrift,
     NamedInputDrift,
     HiddenInputSuspicion,
@@ -2590,6 +2593,7 @@ pub struct UpReplayBaseline {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promoted_at: Option<String>,
     pub ok: bool,
+    pub scope: ReceiptDiffReplayScope,
     pub last_known_good: UpReplayBaselineStatus,
 }
 
@@ -2675,6 +2679,8 @@ pub struct ReceiptDiffBaseline {
     pub archived_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promoted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

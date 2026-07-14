@@ -4525,7 +4525,7 @@ Optional fields:
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
 - `replay`: present when `ota up` was invoked with `--replay-baseline <selection>`; this carries
   the resolved baseline pointer (`source`, `selection_path`, `archive_path`, `promoted_at`, `ok`,
-  `last_known_good`),
+  archived `scope`, `last_known_good`),
   the selected lane scope, execution-authored replay posture (`replay_verified`,
   `replay_failed`, or `replay_unavailable`), hermeticity, optional `failure_kind`, a concise
   reason, the same compact comparison block used by receipt diff, and grouped
@@ -4556,8 +4556,17 @@ Replay notes:
 - matching task-declared `replay_inputs` remain narrowing evidence, so replay may be
   `replay_verified` with `hermeticity: partly_ambient`
 - matching `policy_ruleset_identity` is acquitting for the named policy/ruleset class only
+- informational findings remain visible in `findings[]` and the grouped diff counts, but do not
+  by themselves make an otherwise ready replay witness stale when the archived and current
+  execution boundaries match; replay drift remains sensitive to execution failure plus introduced
+  or resolved warning/error findings
+- a baseline from a different workflow, `backend`, `provider`, `target`, or `lifecycle` is not
+  replay-comparable for the selected lane: Ota emits `replay_unavailable` with `failure_kind:
+  baseline_scope_mismatch` rather than promoting that archive to `last_known_good`; compare
+  `replay.baseline.scope` with `replay.scope` instead of inferring the mismatch from text
 - `replay.failure_kind` is emitted only when replay is not verified:
   - `baseline_unavailable`
+  - `baseline_scope_mismatch`
   - `semantic_contract_drift`
   - `named_input_drift`
   - `hidden_input_suspicion`

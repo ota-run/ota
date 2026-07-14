@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- fixed replay-baseline scope and staleness classification. `ota up --replay-baseline ...` now
+  treats a baseline from a different workflow/backend/provider/remote-target/lifecycle as
+  `replay_unavailable` with
+  `baseline_scope_mismatch`, while backend-scoped informational findings remain visible without
+  staling an otherwise reproduced witness on the same execution boundary. Replay JSON now carries
+  the archived baseline `scope` beside the selected current replay scope.
+- fixed two execution-evidence classification regressions: `ota clean` now preserves a configured
+  engine-unavailable failure when dependency-isolation volume discovery cannot reach that engine,
+  even if a separate cleanup query succeeded; and a late raw interrupt signal can no longer
+  overwrite an already-established non-interrupt task or service failure. Explicit runner
+  interruption evidence and a signal after clean completion still render `interrupted`.
+
 - Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker to
   a declared workflow producer, run a finite observer before teardown, and emit attested
   `exercised` dependency evidence only after Ota verifies a transaction-bound observer attestation

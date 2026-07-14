@@ -37602,6 +37602,7 @@ tasks:
                     workflow: Some(String::from("verify")),
                     backend: Some(String::from("native")),
                     provider: None,
+                    target: None,
                     lifecycle: Some(String::from("ephemeral")),
                 },
                 posture: crate::output::ReceiptDiffReplayPostureKind::WitnessOnly,
@@ -37623,6 +37624,7 @@ tasks:
                 archive_path: Some(String::from(".ota/receipts/archive.json")),
                 archived_at: None,
                 promoted_at: Some(String::from("2026-07-13T00:00:00Z")),
+                workflow: Some(String::from("verify")),
                 contract_identity: Some(String::from("baseline")),
                 contract_identity_details: None,
                 contract_snapshot_hash: Some(String::from("sha256:baseline")),
@@ -37714,6 +37716,163 @@ tasks:
             replay.baseline.last_known_good,
             crate::output::UpReplayBaselineStatus::ReplayVerified
         );
+    }
+
+    #[test]
+    fn up_replay_execution_keeps_backend_scope_notes_out_of_witness_drift() {
+        let mut report = sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("replay_input:verify:fixture"),
+                kind: String::from("static_file"),
+                input_classes: vec![ReplayInputClass::DeclaredReplayInput],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:fixture"),
+                current_identity: String::from("sha256:fixture"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        );
+        report.summary.introduced = crate::output::ReceiptDiffCounts {
+            count: 1,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 1,
+        };
+
+        let replay = super::build_up_replay_execution(report);
+
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayVerified
+        );
+        assert_eq!(
+            replay.baseline.last_known_good,
+            crate::output::UpReplayBaselineStatus::ReplayVerified
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_rejects_a_baseline_from_a_different_execution_boundary() {
+        let mut report = sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("replay_input:verify:fixture"),
+                kind: String::from("static_file"),
+                input_classes: vec![ReplayInputClass::DeclaredReplayInput],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:fixture"),
+                current_identity: String::from("sha256:fixture"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        );
+        report.current.backend = Some(String::from("container"));
+        report.summary.comparison.replay.scope.backend = Some(String::from("container"));
+
+        let replay = super::build_up_replay_execution(report);
+
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayUnavailable
+        );
+        assert_eq!(
+            replay.failure_kind,
+            Some(crate::output::UpReplayFailureKind::BaselineScopeMismatch)
+        );
+        assert_eq!(replay.baseline.scope.backend.as_deref(), Some("native"));
+        assert_eq!(replay.scope.backend.as_deref(), Some("container"));
+        assert_eq!(
+            replay.baseline.last_known_good,
+            crate::output::UpReplayBaselineStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn up_replay_execution_rejects_a_baseline_from_a_different_workflow() {
+        let mut report = sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("replay_input:verify:fixture"),
+                kind: String::from("static_file"),
+                input_classes: vec![ReplayInputClass::DeclaredReplayInput],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:fixture"),
+                current_identity: String::from("sha256:fixture"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        );
+        report.baseline.workflow = Some(String::from("verify"));
+        report.summary.comparison.replay.scope.workflow = Some(String::from("release"));
+
+        let replay = super::build_up_replay_execution(report);
+
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayUnavailable
+        );
+        assert_eq!(
+            replay.failure_kind,
+            Some(crate::output::UpReplayFailureKind::BaselineScopeMismatch)
+        );
+        assert_eq!(replay.baseline.scope.workflow.as_deref(), Some("verify"));
+        assert_eq!(replay.scope.workflow.as_deref(), Some("release"));
+    }
+
+    #[test]
+    fn up_replay_execution_rejects_a_baseline_from_a_different_remote_target() {
+        let mut report = sample_up_replay_report(
+            vec![crate::output::ReceiptDiffArtifactTrust {
+                id: String::from("replay_input:verify:fixture"),
+                kind: String::from("static_file"),
+                input_classes: vec![ReplayInputClass::DeclaredReplayInput],
+                trust_role: crate::output::ReceiptDiffArtifactTrustRole::Narrowing,
+                baseline_identity: String::from("sha256:fixture"),
+                current_identity: String::from("sha256:fixture"),
+                comparison: crate::output::ReceiptDiffArtifactComparison::Matched,
+            }],
+            true,
+            true,
+            0,
+            0,
+            Some(false),
+            false,
+        );
+        report.baseline.backend = Some(String::from("remote"));
+        report.baseline.provider = Some(String::from("ssh"));
+        report.baseline.target = Some(String::from("host/a"));
+        report.current.backend = Some(String::from("remote"));
+        report.current.provider = Some(String::from("ssh"));
+        report.current.target = Some(String::from("host/b"));
+        report.summary.comparison.replay.scope.backend = Some(String::from("remote"));
+        report.summary.comparison.replay.scope.provider = Some(String::from("ssh"));
+        report.summary.comparison.replay.scope.target = Some(String::from("host/b"));
+
+        let replay = super::build_up_replay_execution(report);
+
+        assert_eq!(
+            replay.posture,
+            crate::output::ReceiptDiffReplayPostureKind::ReplayUnavailable
+        );
+        assert_eq!(
+            replay.failure_kind,
+            Some(crate::output::UpReplayFailureKind::BaselineScopeMismatch)
+        );
+        assert_eq!(replay.baseline.scope.target.as_deref(), Some("host/a"));
+        assert_eq!(replay.scope.target.as_deref(), Some("host/b"));
     }
 
     #[test]
@@ -38734,6 +38893,7 @@ fn build_repo_receipt_diff_report(
         archive_path: Some(baseline_archive_path),
         archived_at: baseline.record.archived_at,
         promoted_at: baseline.promoted_at,
+        workflow: baseline.record.payload.workflow,
         contract_identity: baseline.contract_identity,
         contract_identity_details: baseline.record.payload.receipt.contract_identity,
         contract_snapshot_hash: baseline.record.payload.receipt.contract_snapshot_hash,
@@ -38841,6 +39001,7 @@ fn build_repo_receipt_diff_report(
                     workflow: workflow_name.map(str::to_string),
                     backend: current.backend.clone(),
                     provider: current.provider.clone(),
+                    target: current.target.clone(),
                     lifecycle: current.lifecycle.clone(),
                 },
                 posture: ReceiptDiffReplayPostureKind::WitnessOnly,
@@ -38916,8 +39077,18 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
             )
         })
     });
-    let findings_drifted =
-        summary.introduced.count > 0 || summary.resolved.count > 0 || !report.current.ok;
+    // Informational findings may describe the selected backend without changing the witnessed
+    // lane outcome. Keep them in the receipt diff, but do not let them stale a replay baseline.
+    let findings_drifted = summary.introduced.error_count > 0
+        || summary.introduced.warn_count > 0
+        || summary.resolved.error_count > 0
+        || summary.resolved.warn_count > 0
+        || !report.current.ok;
+    let scope_matches = report.baseline.workflow == comparison.replay.scope.workflow
+        && report.baseline.backend == report.current.backend
+        && report.baseline.provider == report.current.provider
+        && report.baseline.target == report.current.target
+        && report.baseline.lifecycle == report.current.lifecycle;
     let contract_changed =
         comparison.contract_snapshot_changed.unwrap_or(false) || comparison.identity_changed;
     let (posture, failure_kind, reason) = if !report.baseline.ok {
@@ -38926,6 +39097,14 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
             Some(UpReplayFailureKind::BaselineUnavailable),
             String::from(
                 "the selected baseline witness was not ready, so replay could not prove a last-known-good lane",
+            ),
+        )
+    } else if !scope_matches {
+        (
+            ReceiptDiffReplayPostureKind::ReplayUnavailable,
+            Some(UpReplayFailureKind::BaselineScopeMismatch),
+            String::from(
+                "the selected baseline witness was recorded for a different execution boundary, so it cannot establish last-known-good for this lane",
             ),
         )
     } else if contract_changed {
@@ -39005,6 +39184,13 @@ fn build_up_replay_execution(report: RepoReceiptDiffReport) -> UpReplayExecution
             archive_path: report.baseline.archive_path.clone(),
             promoted_at: report.baseline.promoted_at.clone(),
             ok: report.baseline.ok,
+            scope: ReceiptDiffReplayScope {
+                workflow: report.baseline.workflow.clone(),
+                backend: report.baseline.backend.clone(),
+                provider: report.baseline.provider.clone(),
+                target: report.baseline.target.clone(),
+                lifecycle: report.baseline.lifecycle.clone(),
+            },
             last_known_good: match posture {
                 ReceiptDiffReplayPostureKind::ReplayVerified => {
                     UpReplayBaselineStatus::ReplayVerified
@@ -92715,12 +92901,6 @@ fn receipt_reports_user_interruption(
     service_termination: Option<&ServiceTermination>,
     interrupted: bool,
 ) -> bool {
-    // The runner observed the signal at the execution boundary. That is stronger evidence than a
-    // child application's exit code or shutdown classification.
-    if interrupted {
-        return true;
-    }
-
     if let Some(service_termination) = service_termination {
         return service_termination_reports_user_interruption(service_termination);
     }
@@ -92745,7 +92925,9 @@ fn receipt_reports_user_interruption(
         return true;
     }
 
-    false
+    // A signal observed after an otherwise clean completion is enough to preserve the user's
+    // interrupt. It is not enough to overwrite an already-established non-interrupt failure.
+    interrupted && receipt.ok
 }
 
 fn service_termination_reports_user_interruption(service_termination: &ServiceTermination) -> bool {

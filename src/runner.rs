@@ -5661,7 +5661,6 @@ fn clean_execution_report_inner(
     };
     let strict_discovery = has_recorded_relevant_engines || !current_target_engines.is_empty();
     let mut engines_to_track = BTreeSet::new();
-    let mut current_target_engine_query_succeeded = false;
     report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
         let mut engine_query_succeeded = false;
@@ -5718,10 +5717,6 @@ fn clean_execution_report_inner(
             }
         }
 
-        if engine_query_succeeded && current_target_engines.contains(&engine) {
-            current_target_engine_query_succeeded = true;
-        }
-
         if engine_query_succeeded {
             match repo_scoped_legacy_persistent_container_names(
                 clean_task_name,
@@ -5773,11 +5768,7 @@ fn clean_execution_report_inner(
             && !has_current_cleanup_targets;
         let metadata_only_state = repo_state_contains_only_cleanup_metadata(working_dir)?;
         let stale_engine_is_unavailable = clean_discovery_error_is_engine_unavailable(&error);
-        if !((stale_recorded_engine_only && metadata_only_state && stale_engine_is_unavailable)
-            || (has_current_cleanup_targets
-                && current_target_engine_query_succeeded
-                && stale_engine_is_unavailable))
-        {
+        if !(stale_recorded_engine_only && metadata_only_state && stale_engine_is_unavailable) {
             return Err(error);
         }
         engines_to_track.clear();
@@ -55176,6 +55167,7 @@ tasks:
     fn clean_execution_report_classifies_engine_unavailable_failures() {
         use std::os::unix::fs::PermissionsExt;
 
+        let _cwd_guard = cwd_mutex_lock();
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -55236,8 +55228,12 @@ exit 0
         unsafe {
             env::set_var("PATH", &joined_path);
         }
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(fixture.dir.path()).unwrap();
 
         let error = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap_err();
+
+        env::set_current_dir(original_cwd).unwrap();
 
         match original_path {
             Some(path) => unsafe {
