@@ -143,7 +143,9 @@ human text output:
 - `ota run <task> --dry-run --json` and `ota up --json`: inspect additive
   `governance.post_execution.not_run_reason` and `governance.post_execution.crossing_record_state`
   when you need phase-accurate non-run and crossing-evidence posture instead of inferring from
-  null fields alone
+  null fields alone. A preflight refusal remains `post_execution.state: not_run` because execution
+  never began, but it sets `refusal_occurred: true` and carries the same refusal reason and record
+  as preflight.
 - the same `governance.post_execution.decision_basis[]` surface now carries the cited
   post-execution evidence-state basis when ota can decompose it honestly, such as
   `not_run:preview_only`, `not_run:preflight_refusal`, `evidence:receipt_present`,
@@ -3085,7 +3087,9 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance.evaluation` is the canonical phase-labeled machine surface for this lane:
   `preflight.state` tells consumers whether the selected path is `allowed`, `warning_only`,
   `blocked`, or `refused` before execution, while `post_execution.state` keeps execution evidence
-  separate as `not_run`, `refused`, or a satisfied evidence state after execution surfaces exist
+  separate as `not_run` or a satisfied evidence state after execution surfaces exist. A preflight
+  refusal is represented there as `not_run` with `refusal_occurred: true` and
+  `not_run_reason: preflight_refusal`, never as fabricated attempted execution.
 - `governance.evaluation.preflight.decision_basis[]` publishes the stable cited gate or refusal
   basis behind that preflight posture so CI or harness consumers do not have to infer it from
   human strings

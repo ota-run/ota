@@ -348,6 +348,9 @@
   `ota up --json --dry-run`, and executed `ota up --json` now also publish additive
   `governance.evaluation.post_execution.decision_basis[]`, citing the stable non-run, evidence,
   and crossing-record basis behind the selected evidence posture
+- fixed preview governance phase reconciliation for agent refusal. A preflight refusal now remains
+  explicitly present in `post_execution` as `refusal_occurred: true` with the same refusal record
+  and cited reason, while `state: not_run` truthfully preserves that execution never began.
 - added canonical `runtime_boundary` ownership on repo execution, workflow, and task lanes, so
   contracts can declare compiled filesystem posture plus explicit outbound target truth for
   harness-facing sandbox export instead of relying only on derived `agent.*_paths` and broad

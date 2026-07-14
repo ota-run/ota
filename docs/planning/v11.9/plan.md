@@ -680,7 +680,8 @@ V11.9 is complete when:
 - verdict-relevant hidden inputs discovered through replay are either explicit in the decision
   input model or called out as a remaining trust boundary
 - preflight and post-execution governance semantics remain phase-accurate while still exposing
-  reconciliation state
+  reconciliation state; a preflight refusal remains post-execution `not_run` because execution
+  never began, while `refusal_occurred`, refusal basis, and refusal record remain explicit
 - downstream consumers no longer need to assume all machine-readable governance fields are equally
   authoritative
 - V11.9 tightens the trust model without inventing a second governance taxonomy beside V11.4

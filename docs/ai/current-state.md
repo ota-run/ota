@@ -81,6 +81,11 @@ durable agent workflow belongs in the canonical Ota skill.
   Bedrock and Lead Quorum also remain green on their declared native/container compatibility
   lanes. Local Athena macOS proof remains host-blocked by Brew `libpq` fulfillment, so it must
   not be mistaken for a negative-control result.
+- active V11.9 phase-reconciliation hardening: a real Athena agent-preview pass exposed that a
+  preflight refusal could be named in `not_run_reason` while `post_execution.refusal_occurred`
+  remained false. The canonical preview projection now records the same attested refusal record,
+  reason, and derived basis in both phases while keeping post-execution `state: not_run` because
+  no execution was attempted.
 
 - V11.10 Bedrock replay proves native baseline replay as `replay_verified` and `partly_ambient`.
   A container replay against that native archive correctly returns `replay_unavailable` with

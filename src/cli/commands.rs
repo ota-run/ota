@@ -45553,9 +45553,7 @@ fn reconcile_post_execution_replay(
     let proof_present = parsed.proof_present.unwrap_or(false);
     let refusal_reason_family = parsed.refusal_reason_family.as_deref();
     let expected_decision_owner = expected_post_execution_decision_owner(receipt_present);
-    let expected_state = if refusal_reason_family.is_some() {
-        "refused"
-    } else if execution_attempted && proof_expected && !proof_present {
+    let expected_state = if execution_attempted && proof_expected && !proof_present {
         "evidence_missing"
     } else if execution_attempted {
         "evidence_satisfied"
@@ -45582,8 +45580,20 @@ fn reconcile_post_execution_replay(
     if evidence.execution_attempted != execution_attempted {
         mismatches.push(String::from("execution_attempted"));
     }
+    let expected_refusal_occurred = refusal_reason_family.is_some();
+    if evidence.refusal_occurred != expected_refusal_occurred {
+        mismatches.push(String::from("refusal_occurred"));
+    }
     if evidence.refusal_reason_family.as_deref() != refusal_reason_family {
         mismatches.push(String::from("refusal_reason_family"));
+    }
+    if evidence
+        .refusal
+        .as_ref()
+        .map(|refusal| refusal.reason_family.as_str())
+        != refusal_reason_family
+    {
+        mismatches.push(String::from("refusal"));
     }
     if evidence.not_run_reason != parsed.not_run_reason {
         mismatches.push(String::from("not_run_reason"));
@@ -45699,6 +45709,8 @@ fn preview_post_execution_evidence(
     refusal: Option<&AgentExecutionRefusal>,
     crossing_required: Option<bool>,
 ) -> crate::output::GovernancePostExecutionEvidence {
+    let refusal_reason_family = refusal.map(|entry| entry.reason);
+    let refusal_present = refusal.is_some();
     let not_run_reason = if refusal.is_some() {
         String::from("preflight_refusal")
     } else {
@@ -45709,13 +45721,15 @@ fn preview_post_execution_evidence(
     crate::output::GovernancePostExecutionEvidence {
         state: String::from("not_run"),
         execution_attempted: false,
-        refusal_occurred: false,
-        refusal_reason_family: None,
-        refusal: None,
+        // A preview has not executed the lane, but a preflight refusal is still an observed
+        // governance outcome and must remain visible in the post-execution projection.
+        refusal_occurred: refusal_present,
+        refusal_reason_family: refusal_reason_family.map(str::to_string),
+        refusal: refusal.map(AgentExecutionRefusal::governance_record),
         not_run_reason: Some(not_run_reason.clone()),
         crossing_record_state: crossing_record_state.clone(),
         decision_basis: governance_post_execution_decision_basis(
-            None,
+            refusal_reason_family,
             false,
             None,
             false,
@@ -45725,7 +45739,7 @@ fn preview_post_execution_evidence(
         ),
         decision_inputs: governance_post_execution_decision_inputs(
             false,
-            None,
+            refusal_reason_family,
             false,
             None,
             false,
@@ -45739,8 +45753,8 @@ fn preview_post_execution_evidence(
             mismatches: Vec::new(),
         },
         evidence_classes: governance_post_execution_evidence_classes(
-            None,
-            false,
+            refusal_reason_family,
+            refusal_present,
             Some(not_run_reason.as_str()),
             None,
         ),
@@ -65237,22 +65251,34 @@ agent:
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["refusal_occurred"],
-            false
+            true
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["refusal_reason_family"],
+            "requested_task_not_safe"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["refusal"]["requested_task"],
+            "publish"
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["not_run_reason"],
             "preflight_refusal"
         );
         assert_eq!(
-            json["governance"]["evaluation"]["post_execution"]["decision_basis"][1]["id"],
-            "evidence:proof_not_required"
-        );
-        assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_basis"][0]["id"],
-            "not_run:preflight_refusal"
+            "refusal:requested_task_not_safe"
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_basis"][2]["id"],
+            "evidence:proof_not_required"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_basis"][1]["id"],
+            "not_run:preflight_refusal"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_basis"][3]["id"],
             "crossing_record:suppressed_by_refusal"
         );
         assert_eq!(
@@ -65261,22 +65287,26 @@ agent:
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_inputs"][1]["id"],
-            "not_run_reason:preflight_refusal"
+            "refusal_reason_family:requested_task_not_safe"
         );
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["id"],
+            "not_run_reason:preflight_refusal"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][3]["id"],
             "receipt_present:false"
         );
         assert_eq!(
-            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["evidence_class"],
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][3]["evidence_class"],
             "attested"
         );
         assert_eq!(
-            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][2]["replay_class"],
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][3]["replay_class"],
             "witnessed"
         );
         assert_eq!(
-            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][6]["id"],
+            json["governance"]["evaluation"]["post_execution"]["decision_inputs"][7]["id"],
             "decision_owner:preview_post_execution_evidence"
         );
         assert_eq!(
