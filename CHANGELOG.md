@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed Unix signal forwarding for native commands and persistent services. Ota now terminates
+  only the child tree it owns during interruption and runtime-proof teardown, instead of
+  signalling the inherited process group and potentially cancelling the surrounding CLI or CI
+  shell.
+
 - fixed agent-safe dependency-hydration warning fan-out for structured sequence-backed setup
   lanes. First-class `prepare.kind: sequence` tasks that include a typed
   `dependency_hydration` step now suppress per-task agent-safe hydration warnings the same way as

@@ -56845,6 +56845,19 @@ workflows:
 
     #[cfg(unix)]
     #[test]
+    fn cli_signal_forwarding_uses_the_runner_owned_wrapper() {
+        let wrapped = crate::runner::signal_forwarding_shell_script(String::from("sleep 1"));
+
+        assert!(
+            !wrapped.contains("kill 0"),
+            "signal forwarding must never target the inherited process group"
+        );
+        assert!(wrapped.contains("ota_terminate_owned_tree"));
+        assert!(wrapped.contains("kill -KILL \"$ota_target\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proof_runtime_signal_group_target_requires_group_leader_match() {
         assert_eq!(super::proof_runtime_signal_group_target(42, Some(41)), None);
         assert_eq!(super::proof_runtime_signal_group_target(42, None), None);
@@ -117872,7 +117885,9 @@ fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
     shell
         .arg("-c")
-        .arg(signal_forwarding_shell_script(command.to_string()));
+        .arg(crate::runner::signal_forwarding_shell_script(
+            command.to_string(),
+        ));
     shell
 }
 
@@ -118015,17 +118030,6 @@ fn has_pwsh() -> bool {
 fn shell_single_quote(command: &str) -> String {
     let escaped = command.replace('\'', r"'\''");
     format!("'{}'", escaped)
-}
-
-#[cfg(unix)]
-fn signal_forwarding_shell_script(command: String) -> String {
-    format!("trap 'kill 0' INT TERM; {command}")
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-fn signal_forwarding_shell_script(command: String) -> String {
-    command
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> String {

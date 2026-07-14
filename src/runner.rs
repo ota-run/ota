@@ -4759,11 +4759,11 @@ cleanup; exit \"$status\"",
         statusfile = shell_quote(&statusfile),
         logfile = shell_quote(&logfile),
         interruptfile = shell_quote(&interruptfile),
-        wrapped_command = shell_quote(&format!(
-            "trap 'kill 0' INT TERM; {command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
+        wrapped_command = shell_quote(&signal_forwarding_shell_script(format!(
+            "{command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
             statusfile = shell_quote(&statusfile),
             command = command,
-        )),
+        ))),
     )
 }
 
@@ -4824,11 +4824,11 @@ cleanup_failed_start; exit \"$status\"",
         logfile = shell_quote(&logfile),
         interruptfile = shell_quote(&interruptfile),
         port = ready_port,
-        wrapped_command = shell_quote(&format!(
-            "trap 'kill 0' INT TERM; {command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
+        wrapped_command = shell_quote(&signal_forwarding_shell_script(format!(
+            "{command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
             statusfile = shell_quote(&statusfile),
             command = command,
-        )),
+        ))),
     )
 }
 
@@ -4846,12 +4846,38 @@ fn remote_activation_readiness_port(runtime: &crate::schema::TaskRuntimeSpec) ->
 }
 
 #[cfg(unix)]
-fn signal_forwarding_shell_script(command: String) -> String {
-    format!("trap 'kill 0' INT TERM; {command}")
+pub(crate) fn signal_forwarding_shell_script(command: String) -> String {
+    // Never use `kill 0` here. It signals the entire inherited process group and can therefore
+    // terminate the caller that asked Ota to stop a workload. Keep signal handling inside an
+    // owned child tree instead.
+    format!(
+        "ota_signal_child=; \
+ota_terminate_owned_tree() {{ \
+  ota_target=\"$1\"; \
+  [ -n \"$ota_target\" ] || return 0; \
+  [ \"$ota_target\" = \"$$\" ] && return 0; \
+  [ \"$ota_target\" = \"1\" ] && return 0; \
+  ota_children=$(cat \"/proc/$ota_target/task/$ota_target/children\" 2>/dev/null || pgrep -P \"$ota_target\" 2>/dev/null || true); \
+  for ota_child in $ota_children; do ota_terminate_owned_tree \"$ota_child\"; done; \
+  kill -TERM \"$ota_target\" 2>/dev/null || true; \
+  ota_wait=0; \
+  while kill -0 \"$ota_target\" 2>/dev/null && [ \"$ota_wait\" -lt 10 ]; do ota_wait=$((ota_wait + 1)); sleep 0.1; done; \
+  kill -0 \"$ota_target\" 2>/dev/null && kill -KILL \"$ota_target\" 2>/dev/null || true; \
+}}; \
+ota_forward_signal() {{ \
+  [ -n \"$ota_signal_child\" ] && ota_terminate_owned_tree \"$ota_signal_child\"; \
+  [ -n \"$ota_signal_child\" ] && wait \"$ota_signal_child\" 2>/dev/null || true; \
+  exit 130; \
+}}; \
+sh -c {command} & ota_signal_child=$!; \
+trap 'ota_forward_signal' INT TERM; \
+wait \"$ota_signal_child\"; ota_status=$?; exit \"$ota_status\"",
+        command = shell_quote(&command),
+    )
 }
 
 #[cfg(windows)]
-fn signal_forwarding_shell_script(command: String) -> String {
+pub(crate) fn signal_forwarding_shell_script(command: String) -> String {
     command
 }
 
@@ -49696,6 +49722,25 @@ tasks:
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("exec").count(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_forwarding_shell_wrapper_never_targets_its_process_group() {
+        let wrapped = super::signal_forwarding_shell_script(String::from("sleep 1"));
+
+        assert!(
+            !wrapped.contains("kill 0"),
+            "signal forwarding must not terminate its inherited process group: {wrapped}"
+        );
+        assert!(
+            wrapped.contains("ota_terminate_owned_tree"),
+            "signal forwarding must terminate only the owned command tree: {wrapped}"
+        );
+        assert!(
+            wrapped.contains("kill -KILL \"$ota_target\""),
+            "owned-child cleanup must retain bounded escalation: {wrapped}"
+        );
     }
 
     #[cfg(unix)]

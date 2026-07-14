@@ -53,8 +53,15 @@ durable agent workflow belongs in the canonical Ota skill.
   contract-declared intervention identity and runner-derived failure mode: only
   `expected_obligation_failed` with `expected_missing_effect` validates; generic non-zero exits
   remain `invalid`. Exercised seams without a validated control carry
-  `dependency_causality_not_proved`. Text and JSON preserve the evidence level, origin, authority
-  class, control status, and failure classification for operators.
+  `dependency_causality_not_proved`, while fault-tested seams retain
+  `dependency_output_shaping_not_proved` keyed to the declared seam obligation. Text and JSON
+  preserve the evidence level, origin, authority class, control status, failure classification,
+  and causal-depth boundary for operators.
+- active lifecycle hardening: native commands and persistent-service wrappers now forward
+  interruption only into their owned child tree. This removes inherited-process-group signalling
+  from runtime-proof teardown, which previously could cancel the surrounding GitHub Actions shell
+  on Athena's native proof lane. The focused and full library regressions pass locally; the next
+  gate is a fresh Athena matrix from the pushed implementation branch.
 - active V11.11 pressure gate: Athena API carries the first Rails/PostgreSQL fault-attested
   control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
   is historical evidence only. Its green transaction-bound matrix proved the warning-only runtime
