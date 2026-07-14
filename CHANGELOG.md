@@ -45,7 +45,9 @@
 - tightened runtime-proof negative controls. Canonical control records now publish
   contract-declared intervention identity and runner-derived failure mode; only a transaction-bound
   `expected_obligation_failed` / `expected_missing_effect` attestation can promote evidence to
-  `fault_tested`. Unclassified non-zero exits remain invalid and retain the causality boundary.
+  `fault_tested`. Unclassified non-zero exits remain invalid and retain the causality boundary;
+  fault-tested seams now retain `dependency_output_shaping_not_proved`, so seam causality cannot
+  be read as broader application-output proof.
 
 - Added workflow proof seam observations. `ota proof runtime` can now issue a per-proof marker to
   a declared workflow producer, run a finite observer before teardown, and emit attested

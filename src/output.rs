@@ -3119,6 +3119,9 @@ pub struct ProofRuntimeNotProved {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dependency_id: Option<String>,
+    /// The declared seam obligation this boundary qualifies, when it is narrower than a service.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_obligation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

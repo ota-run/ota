@@ -248,6 +248,7 @@ Direction:
   - `functional_runtime_not_proved`
   - `database_path_not_proved`
   - `external_network_path_not_proved`
+  - `dependency_output_shaping_not_proved`
   - `broader_repo_completion_not_proved`
 - prefer explicit reason families over prose-only notes where Ota can already classify honestly
 
@@ -471,6 +472,10 @@ Rules:
   non-secret digest of the structured failure attestation from that same control transaction, with
   runner-derived `failure_mode: expected_missing_effect`
 - only `validated` may promote the record from `exercised` to `fault_tested`
+- a validated control removes only `dependency_causality_not_proved`. It must retain a separate
+  `dependency_output_shaping_not_proved` entry keyed to the same dependency and seam obligation:
+  causal evidence for marker recovery does not prove that the dependency shaped a broader
+  application output
 - `negative_control_present` alone is never a promotion input; consumers must use `status`, not a
   boolean presence check
 - the separate negative-control record remains canonical for intervention, transaction binding, and
@@ -479,6 +484,9 @@ Rules:
 - an `exercised` seam without a `validated` qualifier must retain the machine-readable
   `dependency_causality_not_proved` boundary; absence of a selected control is not permission for
   consumers to infer causal necessity
+- a `fault_tested` seam must retain `dependency_output_shaping_not_proved` with its
+  `proof_obligation_id`; a valid control proves causality for that obligation, not broader output
+  shaping
 
 The first machine-readable shape should be additive:
 
@@ -588,6 +596,8 @@ V11.11 is complete when:
   truth
 - an exercised seam without a validated control carries `dependency_causality_not_proved`, so
   causal necessity cannot disappear merely because no control was selected
+- a fault-tested seam retains `dependency_output_shaping_not_proved` keyed to its declared
+  obligation, so seam causality cannot be over-read as broader application-output causality
 - marker-bound seam observers run before teardown, prove their producer and observer closures are
   owned by the selected workflow, and only a runner-verified transaction attestation removes the
   matching `dependency_exercise_not_proved` boundary

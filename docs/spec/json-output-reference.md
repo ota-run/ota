@@ -868,12 +868,18 @@ Notes:
   integration-test path for the selected lane's declared external state, and
   `dependency_causality_not_proved` when a seam was exercised but no matching negative control
   validated causal dependency necessity, and
+  `dependency_output_shaping_not_proved` when a validated control proved causality only for its
+  declared seam obligation rather than for a broader application output, and
   `broader_repo_completion_not_proved` as the scope-derived remainder outside this runtime slice
 - `not_proved[].declared_by_workflows` names the adjacent contract workflows that establish a
   contract-derived exclusion; scope-derived exclusions omit it
 - `not_proved[].dependency_id` and `not_proved[].declared_by_tasks` identify a declared service
   seam that remains unproved. This is deliberately not evidence that the service is unused or
   unreachable; it prevents a green runtime proof from being over-read as an exercised dependency.
+- `not_proved[].proof_obligation_id` appears when a boundary is narrower than its dependency. In
+  particular, a `fault_tested` seam retains `dependency_output_shaping_not_proved` for the same
+  obligation: Ota proved dependency necessity for that seam, not that the dependency shaped a
+  broader application output.
 - when Ota has only caller-side seam evidence, the paired `dependency_exercise_not_proved`
   boundary tightens `reason` from generic missing evidence to `caller_side_only_evidence`
 - `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as

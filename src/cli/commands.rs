@@ -2830,7 +2830,7 @@ pub fn proof_runtime(
                     effective_workflow_selector.as_deref(),
                     &dependency_evidence,
                 );
-                proof_runtime_append_dependency_causality_boundaries(
+                proof_runtime_append_dependency_scope_boundaries(
                     &mut not_proved,
                     &dependency_evidence,
                     effective_workflow_selector.as_deref(),
@@ -57929,6 +57929,7 @@ workflows:
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: Some(String::from("service:postgres")),
+            proof_obligation_id: None,
             reason: Some(String::from("no_independent_dependency_evidence")),
             declared_by_tasks: vec![String::from("serve")],
             declared_by_workflows: vec![String::from("app")],
@@ -58029,6 +58030,7 @@ workflows:
                 relative_to: String::from("runtime_path"),
                 source: String::from("contract_lane"),
                 dependency_id: Some(String::from("service:postgres")),
+                proof_obligation_id: None,
                 reason: Some(String::from("no_independent_dependency_evidence")),
                 declared_by_tasks: vec![String::from("verify")],
                 declared_by_workflows: vec![String::from("app")],
@@ -58088,6 +58090,7 @@ workflows:
                 relative_to: String::from("runtime_path"),
                 source: String::from("contract_lane"),
                 dependency_id: Some(String::from("service:postgres")),
+                proof_obligation_id: None,
                 reason: Some(String::from("caller_side_only_evidence")),
                 declared_by_tasks: vec![String::from("verify")],
                 declared_by_workflows: vec![String::from("app")],
@@ -58181,6 +58184,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("contract_lane"),
                     dependency_id: Some(String::from("service:postgres")),
+                    proof_obligation_id: None,
                     reason: Some(String::from("no_independent_dependency_evidence")),
                     declared_by_tasks: vec![String::from("serve")],
                     declared_by_workflows: vec![String::from("app")],
@@ -58501,6 +58505,33 @@ tasks:
                 .map(|value| value.status),
             Some(crate::output::ProofRuntimeNegativeControlStatus::Validated)
         );
+        let mut fault_tested_boundaries = Vec::new();
+        super::proof_runtime_append_dependency_scope_boundaries(
+            &mut fault_tested_boundaries,
+            &validated,
+            Some("app"),
+        );
+        assert!(fault_tested_boundaries.iter().any(|entry| {
+            entry.kind == "dependency_output_shaping_not_proved"
+                && entry.dependency_id.as_deref() == Some("service:postgres")
+                && entry.proof_obligation_id.as_deref() == Some("postgres-marker")
+                && entry.reason.as_deref()
+                    == Some("causal_evidence_scoped_to_declared_seam_obligation")
+        }));
+        assert!(
+            !fault_tested_boundaries
+                .iter()
+                .any(|entry| entry.kind == "dependency_causality_not_proved")
+        );
+        let depth_boundary = fault_tested_boundaries
+            .iter()
+            .find(|entry| entry.kind == "dependency_output_shaping_not_proved")
+            .expect("fault-tested evidence must retain its output-shaping boundary");
+        let depth_boundary_json = serde_json::to_value(depth_boundary).unwrap();
+        assert_eq!(
+            depth_boundary_json["proof_obligation_id"].as_str(),
+            Some("postgres-marker")
+        );
 
         let mut invalid = vec![evidence()];
         super::proof_runtime_apply_negative_control_projection(
@@ -58516,7 +58547,7 @@ tasks:
             Some((false, None))
         );
         let mut boundaries = Vec::new();
-        super::proof_runtime_append_dependency_causality_boundaries(
+        super::proof_runtime_append_dependency_scope_boundaries(
             &mut boundaries,
             &invalid,
             Some("app"),
@@ -58544,7 +58575,7 @@ tasks:
             Some(false)
         );
         let mut malformed_boundaries = Vec::new();
-        super::proof_runtime_append_dependency_causality_boundaries(
+        super::proof_runtime_append_dependency_scope_boundaries(
             &mut malformed_boundaries,
             &malformed,
             Some("app"),
@@ -58555,7 +58586,7 @@ tasks:
         }));
 
         let mut unselected_boundaries = Vec::new();
-        super::proof_runtime_append_dependency_causality_boundaries(
+        super::proof_runtime_append_dependency_scope_boundaries(
             &mut unselected_boundaries,
             &[evidence()],
             Some("app"),
@@ -58628,6 +58659,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -58690,6 +58722,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -58761,6 +58794,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -58915,6 +58949,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -58985,6 +59020,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -59055,6 +59091,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -59122,6 +59159,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -59192,6 +59230,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -59479,6 +59518,7 @@ workflows:
                     relative_to: String::from("runtime_path"),
                     source: String::from("proof_scope"),
                     dependency_id: None,
+                    proof_obligation_id: None,
                     reason: Some(String::from("broader_repo_scope_not_selected")),
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
@@ -100547,6 +100587,7 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: None,
+            proof_obligation_id: None,
             reason: Some(String::from("narrow_runtime_proof_scope")),
             declared_by_tasks: Vec::new(),
             declared_by_workflows: Vec::new(),
@@ -100590,6 +100631,7 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: None,
+            proof_obligation_id: None,
             reason: Some(String::from("adjacent_external_path_not_selected")),
             declared_by_tasks: Vec::new(),
             declared_by_workflows: external_network_workflows,
@@ -100622,6 +100664,7 @@ fn proof_runtime_not_proved(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: Some(format!("service:{service_name}")),
+            proof_obligation_id: None,
             reason: Some(
                 if caller_side_only_dependencies.contains(&format!("service:{service_name}")) {
                     String::from("caller_side_only_evidence")
@@ -100640,6 +100683,7 @@ fn proof_runtime_not_proved(
         relative_to: String::from("runtime_path"),
         source: String::from("proof_scope"),
         dependency_id: None,
+        proof_obligation_id: None,
         reason: Some(String::from("broader_repo_scope_not_selected")),
         declared_by_tasks: Vec::new(),
         declared_by_workflows: Vec::new(),
@@ -100652,14 +100696,35 @@ fn proof_runtime_not_proved(
     entries
 }
 
-fn proof_runtime_append_dependency_causality_boundaries(
+fn proof_runtime_append_dependency_scope_boundaries(
     entries: &mut Vec<crate::output::ProofRuntimeNotProved>,
     dependency_evidence: &[ProofRuntimeDependencyEvidence],
     workflow_name: Option<&str>,
 ) {
     for evidence in dependency_evidence.iter().filter(|evidence| {
-        evidence.proof_obligation_id.is_some() && evidence.level.as_deref() == Some("exercised")
+        evidence.proof_obligation_id.is_some()
+            && matches!(
+                evidence.level.as_deref(),
+                Some("exercised") | Some("fault_tested")
+            )
     }) {
+        if evidence.level.as_deref() == Some("fault_tested") {
+            entries.push(crate::output::ProofRuntimeNotProved {
+                kind: String::from("dependency_output_shaping_not_proved"),
+                relative_to: String::from("runtime_path"),
+                source: String::from("contract_lane"),
+                dependency_id: Some(evidence.dependency_id.clone()),
+                proof_obligation_id: evidence.proof_obligation_id.clone(),
+                reason: Some(String::from(
+                    "causal_evidence_scoped_to_declared_seam_obligation",
+                )),
+                declared_by_tasks: evidence.declared_by_tasks.clone(),
+                declared_by_workflows: workflow_name
+                    .map(|workflow| vec![workflow.to_string()])
+                    .unwrap_or_default(),
+            });
+            continue;
+        }
         let control = evidence.negative_control.as_ref();
         if control.is_some_and(proof_runtime_dependency_negative_control_is_validated) {
             continue;
@@ -100681,6 +100746,7 @@ fn proof_runtime_append_dependency_causality_boundaries(
             relative_to: String::from("runtime_path"),
             source: String::from("contract_lane"),
             dependency_id: Some(evidence.dependency_id.clone()),
+            proof_obligation_id: evidence.proof_obligation_id.clone(),
             reason: Some(String::from(reason)),
             declared_by_tasks: evidence.declared_by_tasks.clone(),
             declared_by_workflows: workflow_name
@@ -103360,6 +103426,22 @@ fn render_proof_runtime_not_proved_text(entry: &crate::output::ProofRuntimeNotPr
                 "dependency exercise not proved for {}{}",
                 paint_backticked_code(dependency),
                 task_scope
+            )
+        }
+        "dependency_output_shaping_not_proved" => {
+            let dependency = entry
+                .dependency_id
+                .as_deref()
+                .unwrap_or("declared dependency path");
+            let obligation = entry
+                .proof_obligation_id
+                .as_deref()
+                .map(paint_backticked_code)
+                .unwrap_or_else(|| String::from("the declared seam obligation"));
+            format!(
+                "dependency output shaping not proved for {} beyond {}",
+                paint_backticked_code(dependency),
+                obligation
             )
         }
         "external_network_path_not_proved" => {

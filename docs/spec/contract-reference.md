@@ -3907,6 +3907,9 @@ the machine-readable `dependency_causality_not_proved` boundary.
 This is not the proof result. Ota records the declared intervention beside runner-derived control
 status, failure mode, transaction binding, and attestation digest. Only a matching
 `expected_missing_effect` attestation promotes the dependency evidence to `fault_tested`.
+That promotion is deliberately limited to the declared seam obligation. The proof receipt retains
+`dependency_output_shaping_not_proved` for that same obligation, so consumers cannot read a
+validated control as proof that the dependency shaped a broader application output.
 
 Seam-observation shape:
 
