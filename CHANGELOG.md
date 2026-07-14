@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- fixed the first V11.12 hydration-provenance carrier. Successful `ota up --json` now records
+  selected structured hydration source posture in
+  typed `receipt.evaluated_inputs[]` `hydration_provenance` record, preserving the contract-declared
+  `.NET restore` source configuration separately from runner-resolved NuGet feed identities or an
+  explicit unavailable resolution. This captures feed truth before execution and prevents a later
+  config-file read from silently rewriting the receipt.
+
 - fixed Unix signal forwarding for native commands and persistent services. Ota now terminates
   only the child tree it owns during interruption and runtime-proof teardown, instead of
   signalling the inherited process group and potentially cancelling the surrounding CLI or CI

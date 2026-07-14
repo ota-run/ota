@@ -609,6 +609,8 @@ pub struct ExecutionReceiptEvaluatedInput {
     pub input_class: ReplayInputClass,
     pub identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub hydration_provenance: Option<ExecutionReceiptHydrationProvenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_lineage: Option<ExecutionReceiptArtifactLineage>,
 }
 
@@ -623,6 +625,38 @@ impl ExecutionReceiptWitnessedObservations {
     pub fn is_empty(&self) -> bool {
         self.query_traces.is_empty()
     }
+}
+
+/// Runner-derived source posture for a selected structured hydration lane.
+/// The declaration remains contract truth; this record is the resolved execution-time evidence.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptHydrationProvenance {
+    pub task: String,
+    pub source_kind: String,
+    pub declared: ExecutionReceiptHydrationSourcePosture,
+    pub resolved: ExecutionReceiptHydrationSourcePosture,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptHydrationSourcePosture {
+    pub source_posture: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub source_identities: Vec<ExecutionReceiptHydrationSourceIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptHydrationSourceIdentity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub url: String,
 }
 
 /// A captured query-identity trace. The trace is attested historical evidence, not an input

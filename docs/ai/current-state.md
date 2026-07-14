@@ -45,6 +45,12 @@ durable agent workflow belongs in the canonical Ota skill.
   dependency-resolution, or presentation anchor rather than over-reading same-contract reruns as
   hermetic; hidden-input replay failure now emits ordered `hidden_input_candidates` so operators
   can promote the next likely ambient class instead of reading one generic suspicion bucket
+- active V11.12 hydration provenance carrier: successful `ota up --json` now records selected
+  structured hydration lanes through typed `receipt.evaluated_inputs[]` hydration records. The
+  record captures contract-declared source posture and runner-resolved feed identity before
+  execution, preserving explicit `resolution: unavailable` when NuGet source choice remains
+  ambient. Azure SDK for .NET proves the same config-backed source identity on native and
+  container lanes locally; the next proof gate is the branch matrix.
 - active implementation and proof slice: `V11.11` seam and negative-control evidence. Runtime
   proof now keeps ordinary reachability and caller-side attempts distinct from marker-bound seam
   exercise. A selected negative control names one observed seam obligation and typed expected
@@ -228,7 +234,7 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.10/plan.md` plus `docs/planning/v11.11/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
+`docs/planning/v11.10/plan.md` through `docs/planning/v11.12/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
 `/Users/bobai/Workspace/Ota.run/skills`, and the active pressure repo before editing.
 
 The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
@@ -237,13 +243,12 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-Finish V11.10 replay trust and V11.11 proof-boundary enforcement before starting V11.12 hydration
-provenance or returning to V11.13 generated-artifact breadth. For V11.11, the next proof gate is
-Athena's existing PostgreSQL negative control: validate that its matrix emits a canonical control
-record with a transaction-bound `expected_missing_effect` failure mode, while malformed or
-unclassified controls retain `dependency_causality_not_proved`. Do not infer generated-file
-freshness from timestamps or later filesystem reads. Follow the pressure-testing protocol exactly
-and record whether the repo exposes a contract issue, implementation issue, or Ota platform gap.
+V11.12 is now active. Its first `.NET restore` carrier records declared and resolved source posture
+as a typed evaluated input at `ota up` receipt-authoring time. Native and container Azure SDK for
+.NET lanes prove the local shape; push the Ota branch and rerun Azure's matrix before closing the
+slice. Do not infer generated-file freshness from timestamps or later filesystem reads. Follow the
+pressure-testing protocol exactly and record whether the repo exposes a contract issue,
+implementation issue, or Ota platform gap.
 
 ## Working Rules
 

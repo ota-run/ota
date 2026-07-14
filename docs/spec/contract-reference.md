@@ -2242,8 +2242,10 @@ Task-effect rules:
   - optional repeated `--source <url>` when `prepare.source.sources[]` is declared
   - keep repository-owned feed selection in `config_file` when that is the real NuGet truth;
     `sources[]` is a command override, not a second copy of the config file
-  - on the first canonical machine carrier, `ota up --json`, Ota derives active config-backed feed
-    identities into `resolved_hydration_provenance.source_identities[]`; it publishes
+  - on the first canonical machine carrier, `ota up --json`, Ota records the selected lane as a
+    typed `receipt.evaluated_inputs[]` `hydration_provenance` record. Its nested declared posture
+    stays separate from runner-resolved feed identities; it publishes
+    `hydration_provenance.resolved.source_identities[]` for active config-backed feeds and
     `resolution: unavailable` plus `resolution_error` instead of claiming a config was resolved
     when it could not read, parse, or resolve it without ambient environment substitution; an
     undeclared `ambient_default` source posture is also `unavailable` because user/global NuGet

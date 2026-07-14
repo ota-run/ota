@@ -114,12 +114,47 @@
                   "kind": { "type": "string" },
                   "input_class": {
                     "enum": [
+                      "contract_truth",
+                      "source_identity",
+                      "policy_ruleset_identity",
+                      "declared_env_source_identity",
                       "declared_dependency_resolution",
                       "selected_runtime_version",
-                      "selected_runtime_artifact"
+                      "selected_runtime_artifact",
+                      "execution_presentation_profile",
+                      "comparator_semantics",
+                      "generated_artifact_lineage",
+                      "declared_replay_input"
                     ]
                   },
-                  "identity": { "type": "string" }
+                  "identity": { "type": "string" },
+                  "artifact_lineage": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["producer", "paths"],
+                    "properties": {
+                      "producer": { "type": "string" },
+                      "paths": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "inputs": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  },
+                  "hydration_provenance": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["task", "source_kind", "declared", "resolved"],
+                    "properties": {
+                      "task": { "type": "string" },
+                      "source_kind": { "type": "string" },
+                      "declared": { "$ref": "./tasks.json#/$defs/taskHydrationProvenance" },
+                      "resolved": { "$ref": "./tasks.json#/$defs/taskHydrationProvenance" }
+                    }
+                  }
                 }
               }
             },

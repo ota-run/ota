@@ -85,7 +85,9 @@ use crate::output::{
     EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionEvidenceClass,
     ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
     ExecutionReceipt, ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource,
-    ExecutionReceiptEvaluatedInput, ExecutionReceiptLogs, ExecutionReceiptQueryTraceDivergence,
+    ExecutionReceiptEvaluatedInput, ExecutionReceiptHydrationProvenance,
+    ExecutionReceiptHydrationSourceIdentity, ExecutionReceiptHydrationSourcePosture,
+    ExecutionReceiptLogs, ExecutionReceiptQueryTraceDivergence,
     ExecutionReceiptQueryTraceObservation, ExecutionReceiptQueryTraceRecord,
     ExecutionReceiptQueryTraceSummary, ExecutionReceiptStep, ExecutionReceiptSummary,
     ExecutionReceiptWitnessedObservations, ExecutionSummary, ExecutionTopologyFailure,
@@ -37481,6 +37483,7 @@ tasks:
             kind: String::from("lockfile"),
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: String::from("sha256:baseline"),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let mut current = baseline.clone();
@@ -37509,6 +37512,7 @@ tasks:
             kind: String::from("runtime_version"),
             input_class: ReplayInputClass::SelectedRuntimeVersion,
             identity: String::from("v24.1.0"),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let runtime_trust =
@@ -37532,6 +37536,7 @@ tasks:
             kind: String::from("source_identity"),
             input_class: ReplayInputClass::SourceIdentity,
             identity: String::from("git:abc123"),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let source_trust =
@@ -37547,6 +37552,7 @@ tasks:
             kind: String::from("presentation_profile"),
             input_class: ReplayInputClass::ExecutionPresentationProfile,
             identity: String::from("sha256:baseline"),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let presentation_trust = super::receipt_diff_artifact_trust(
@@ -37566,6 +37572,7 @@ tasks:
             kind: String::from("comparator_profile"),
             input_class: ReplayInputClass::ComparatorSemantics,
             identity: String::from("sha256:baseline"),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let comparator_trust = super::receipt_diff_artifact_trust(
@@ -38732,6 +38739,7 @@ tasks:
             identity: String::from(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let trust =
@@ -38758,6 +38766,7 @@ tasks:
             kind: String::from("policy_ruleset_identity"),
             input_class: ReplayInputClass::PolicyRulesetIdentity,
             identity: String::from("policy-hash-a"),
+            hydration_provenance: None,
             artifact_lineage: Some(crate::output::ExecutionReceiptArtifactLineage {
                 producer: String::from("org_policy_pack"),
                 paths: vec![String::from(".ota/org-policy.yaml")],
@@ -38787,6 +38796,7 @@ tasks:
             kind: String::from("env_source_identity"),
             input_class: ReplayInputClass::DeclaredEnvSourceIdentity,
             identity: String::from("env-source-hash-a"),
+            hydration_provenance: None,
             artifact_lineage: None,
         };
         let trust = super::receipt_diff_artifact_trust(
@@ -53742,12 +53752,12 @@ mod tests {
         DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
         RepoUpResult, RequirementActivationAction, adapter_bootstrap_request_for_missing_backend,
         bootstrap_failure_findings, build_env_report, build_env_report_with_overrides,
-        build_up_preview, capture_witnessed_observations_before_execution,
-        collect_validate_warnings, compact_contract_file_path_relative_to,
-        compact_path_relative_to, compact_policy_path_relative_to_contract,
-        contractless_signal_summary_parts, doctor as doctor_command,
-        doctor_mode_execution_overrides, env as env_command, execute_repo_up,
-        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
+        build_up_preview, capture_hydration_provenance_before_execution,
+        capture_witnessed_observations_before_execution, collect_validate_warnings,
+        compact_contract_file_path_relative_to, compact_path_relative_to,
+        compact_policy_path_relative_to_contract, contractless_signal_summary_parts,
+        doctor as doctor_command, doctor_mode_execution_overrides, env as env_command,
+        execute_repo_up, execution_receipt_step, execution_receipt_step_detail, render_clean_text,
         render_detect_comparison_section, render_env_text, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
@@ -53764,7 +53774,7 @@ mod tests {
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorPrimaryBlocker,
         DoctorSummary, DoctorVerdict, EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt,
         ExecutionReceiptLogs, ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary,
-        ServiceEndpointSummary, ServiceManagerSummary, ServiceProducerSummary,
+        ReplayInputClass, ServiceEndpointSummary, ServiceManagerSummary, ServiceProducerSummary,
         ServiceReadinessSummary, ServiceSummary, TaskSummary, ToolchainSelectionSummary,
         UpPreviewExecution, UpPreviewPlan, WorkflowSummary,
     };
@@ -54026,6 +54036,111 @@ tasks:
                 .len(),
             1,
             "a repeated query must retain one identity across distinct run indexes"
+        );
+    }
+
+    #[test]
+    fn hydration_provenance_captures_declared_and_resolved_dotnet_sources_before_execution() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        let yaml = r#"
+version: 1
+project:
+  name: dotnet-hydration-provenance
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
+        sources:
+          - https://packages.example.test/v3/index.json
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let provenance = capture_hydration_provenance_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("setup")],
+        );
+
+        assert_eq!(provenance.len(), 1);
+        let record = &provenance[0];
+        assert_eq!(record.kind, "hydration_provenance");
+        assert_eq!(
+            record.input_class,
+            ReplayInputClass::DeclaredDependencyResolution
+        );
+        let provenance = record
+            .hydration_provenance
+            .as_ref()
+            .expect("hydration provenance detail");
+        assert_eq!(provenance.task, "setup");
+        assert_eq!(provenance.source_kind, "dotnet_restore");
+        assert_eq!(provenance.declared.source_posture, "explicit_sources");
+        assert!(provenance.declared.source_identities.is_empty());
+        assert_eq!(provenance.resolved.resolution.as_deref(), Some("resolved"));
+        assert_eq!(provenance.resolved.source_identities.len(), 1);
+        assert_eq!(
+            provenance.resolved.source_identities[0].url,
+            "https://packages.example.test/v3/index.json"
+        );
+    }
+
+    #[test]
+    fn hydration_provenance_marks_ambient_dotnet_config_resolution_unavailable() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            repo.path().join("NuGet.Config"),
+            r#"<configuration><packageSources><add key="private" value="%NUGET_SOURCE%" /></packageSources></configuration>"#,
+        )
+        .expect("write NuGet config");
+        let yaml = r#"
+version: 1
+project:
+  name: ambient-dotnet-hydration-provenance
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
+        config_file: NuGet.Config
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let record = capture_hydration_provenance_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("setup")],
+        )
+        .pop()
+        .expect("captured hydration provenance");
+        let provenance = record
+            .hydration_provenance
+            .expect("hydration provenance detail");
+
+        assert_eq!(provenance.declared.source_posture, "config_file");
+        assert_eq!(
+            provenance.resolved.resolution.as_deref(),
+            Some("unavailable")
+        );
+        assert!(provenance.resolved.source_identities.is_empty());
+        assert!(
+            provenance
+                .resolved
+                .resolution_error
+                .as_deref()
+                .is_some_and(|error| error.contains("environment"))
         );
     }
 
@@ -96530,6 +96645,7 @@ fn collect_receipt_source_identity_input(
             kind: String::from("source_identity"),
             input_class: ReplayInputClass::SourceIdentity,
             identity: head,
+            hydration_provenance: None,
             artifact_lineage: None,
         },
     );
@@ -96590,6 +96706,7 @@ fn collect_receipt_policy_ruleset_identity_input(
             kind: String::from("policy_ruleset_identity"),
             input_class: ReplayInputClass::PolicyRulesetIdentity,
             identity: contract_snapshot_hash(&policy_bytes),
+            hydration_provenance: None,
             artifact_lineage: Some(crate::output::ExecutionReceiptArtifactLineage {
                 producer: String::from("org_policy_pack"),
                 paths: vec![display_path],
@@ -96646,6 +96763,7 @@ fn collect_receipt_declared_env_source_inputs(
                 kind: String::from("env_source_identity"),
                 input_class: ReplayInputClass::DeclaredEnvSourceIdentity,
                 identity: contract_snapshot_hash(&bytes),
+                hydration_provenance: None,
                 artifact_lineage: None,
             },
         );
@@ -96680,6 +96798,7 @@ fn capture_replay_inputs_before_execution(
                     kind: kind.to_string(),
                     input_class,
                     identity: contract_snapshot_hash(&bytes),
+                    hydration_provenance: None,
                     artifact_lineage: None,
                 },
             );
@@ -96874,6 +96993,143 @@ fn capture_witnessed_observations_before_execution(
     })
 }
 
+// Resolve source posture before the selected lane runs so the receipt records what Ota actually
+// used instead of reconstructing feed truth from a later filesystem read.
+fn capture_hydration_provenance_before_execution(
+    contract: &Contract,
+    contract_path: &Path,
+    roots: impl IntoIterator<Item = String>,
+) -> Vec<ExecutionReceiptEvaluatedInput> {
+    let mut provenance = Vec::new();
+    for task_name in contract.task_dependency_closure_names(roots) {
+        let Some(task) = contract.tasks.get(&task_name) else {
+            continue;
+        };
+        let Some(prepare) = task.prepare.as_ref() else {
+            continue;
+        };
+        collect_hydration_provenance_for_prepare(
+            &mut provenance,
+            &task_name,
+            prepare,
+            contract_path,
+        );
+    }
+    provenance.sort_by(|left, right| left.id.cmp(&right.id));
+    provenance.dedup_by(|left, right| left.id == right.id);
+    provenance
+}
+
+fn collect_hydration_provenance_for_prepare(
+    records: &mut Vec<ExecutionReceiptEvaluatedInput>,
+    task_name: &str,
+    prepare: &crate::schema::TaskPrepareSpec,
+    contract_path: &Path,
+) {
+    match prepare {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            collect_hydration_provenance_for_hydration(records, task_name, spec, contract_path);
+        }
+        crate::schema::TaskPrepareSpec::Sequence(sequence) => {
+            for step in &sequence.steps {
+                collect_hydration_provenance_for_sequence_step(
+                    records,
+                    task_name,
+                    step,
+                    contract_path,
+                );
+            }
+        }
+        crate::schema::TaskPrepareSpec::ToolBootstrap(_) => {}
+    }
+}
+
+fn collect_hydration_provenance_for_sequence_step(
+    records: &mut Vec<ExecutionReceiptEvaluatedInput>,
+    task_name: &str,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    contract_path: &Path,
+) {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            collect_hydration_provenance_for_hydration(records, task_name, spec, contract_path);
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => {
+            for nested in &sequence.steps {
+                collect_hydration_provenance_for_sequence_step(
+                    records,
+                    task_name,
+                    nested,
+                    contract_path,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_hydration_provenance_for_hydration(
+    records: &mut Vec<ExecutionReceiptEvaluatedInput>,
+    task_name: &str,
+    hydration: &crate::schema::TaskDependencyHydrationPrepareSpec,
+    contract_path: &Path,
+) {
+    let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) = &hydration.source
+    else {
+        return;
+    };
+    let declared = ExecutionReceiptHydrationSourcePosture {
+        source_posture: source.source_posture().to_string(),
+        config_file: source.config_file.clone(),
+        sources: source.sources.clone(),
+        source_identities: Vec::new(),
+        resolution: None,
+        resolution_error: None,
+    };
+    let resolved = receipt_hydration_source_posture(resolved_dotnet_hydration_provenance(
+        contract_path,
+        source,
+    ));
+    let provenance = ExecutionReceiptHydrationProvenance {
+        task: task_name.to_string(),
+        source_kind: String::from("dotnet_restore"),
+        declared,
+        resolved,
+    };
+    let identity = contract_snapshot_hash(
+        &serde_json::to_vec(&provenance)
+            .expect("hydration provenance must serialize for receipt identity"),
+    );
+    records.push(ExecutionReceiptEvaluatedInput {
+        id: format!("hydration:{task_name}:dotnet_restore:{identity}"),
+        kind: String::from("hydration_provenance"),
+        input_class: ReplayInputClass::DeclaredDependencyResolution,
+        identity,
+        hydration_provenance: Some(provenance),
+        artifact_lineage: None,
+    });
+}
+
+fn receipt_hydration_source_posture(
+    summary: WorkspaceTaskHydrationProvenanceSummary,
+) -> ExecutionReceiptHydrationSourcePosture {
+    ExecutionReceiptHydrationSourcePosture {
+        source_posture: summary.source_posture.to_string(),
+        config_file: summary.config_file,
+        sources: summary.sources,
+        source_identities: summary
+            .source_identities
+            .into_iter()
+            .map(|source| ExecutionReceiptHydrationSourceIdentity {
+                name: source.name,
+                url: source.url,
+            })
+            .collect(),
+        resolution: summary.resolution,
+        resolution_error: summary.resolution_error,
+    }
+}
+
 fn attach_pre_execution_replay_inputs(
     receipt: &mut ExecutionReceipt,
     captured: &[ExecutionReceiptEvaluatedInput],
@@ -96933,6 +97189,7 @@ fn collect_receipt_generated_artifact_inputs(
                 kind: String::from("generated_artifact_lineage"),
                 input_class: ReplayInputClass::GeneratedArtifactLineage,
                 identity,
+                hydration_provenance: None,
                 artifact_lineage: Some(lineage),
             },
         );
@@ -97173,6 +97430,7 @@ fn collect_receipt_compose_images_from_file(
                 kind: String::from("container_image_digest"),
                 input_class: ReplayInputClass::SelectedRuntimeArtifact,
                 identity: digest,
+                hydration_provenance: None,
                 artifact_lineage: None,
             },
         );
@@ -97321,6 +97579,7 @@ fn collect_receipt_hydration_source_inputs(
             kind: String::from("lockfile"),
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: contract_snapshot_hash(&bytes),
+            hydration_provenance: None,
             artifact_lineage: None,
         },
     );
@@ -97332,6 +97591,7 @@ fn collect_receipt_hydration_source_inputs(
                 kind: String::from("runtime_version"),
                 input_class: ReplayInputClass::SelectedRuntimeVersion,
                 identity: version,
+                hydration_provenance: None,
                 artifact_lineage: None,
             },
         );
@@ -112397,6 +112657,15 @@ fn execute_repo_up_with_behavior_with_agent(
             contract.selected_workflow_task_closure_names(workflow_name),
         )?
     };
+    let captured_hydration_provenance = if dry_run {
+        Vec::new()
+    } else {
+        capture_hydration_provenance_before_execution(
+            contract,
+            resolved_path,
+            contract.selected_workflow_task_closure_names(workflow_name),
+        )
+    };
     let mut result = execute_repo_up_with_behavior_with_agent_inner(
         contract,
         resolved_path,
@@ -112411,6 +112680,7 @@ fn execute_repo_up_with_behavior_with_agent(
     )?;
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_replay_inputs);
     attach_witnessed_observations(&mut result.receipt, &captured_witnessed_observations);
+    attach_pre_execution_replay_inputs(&mut result.receipt, &captured_hydration_provenance);
     Ok(result)
 }
 

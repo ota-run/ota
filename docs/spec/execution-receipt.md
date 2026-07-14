@@ -157,6 +157,11 @@ When a receipt comes from a selected task-backed execution path, it can also inc
 `dependency_steps`; each entry records the executed task step's selected backend, optional
 selected context, optional parent task, and `backend_selection_source` such as `override`,
 `task default mode`, or `inherited parent backend`.
+For selected structured hydration lanes, `ota up --json` also adds a typed
+`evaluated_inputs[]` record with `kind: hydration_provenance`. Its nested detail retains the
+contract-declared source posture separately from the runner-resolved source identity captured
+before execution. A resolution that would depend on ambient configuration remains explicitly
+unavailable rather than being reconstructed from a later config-file read.
 Each `steps[]` entry also carries additive `stage_family` truth using the execution-governance
 families `prepare`, `setup`, `verify`, `proof`, or `receipt`, so machine consumers do not need to
 infer broad stage ownership from free-form labels alone.

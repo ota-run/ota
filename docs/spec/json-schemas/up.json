@@ -611,6 +611,9 @@
                 }
               }
             },
+            "evaluated_inputs": {
+              "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/evaluated_inputs"
+            },
             "crossing": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing"
             },

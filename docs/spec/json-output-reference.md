@@ -2055,6 +2055,14 @@ separately from `evaluated_inputs[]`. Each trace is `evidence_class: attested`, 
 path, source SHA-256 identity, and per-subject/per-run identity records, and summarizes divergent subjects. Query
 identities are observed behavior, not current-run decision inputs; a divergence identifies a
 changed query shape without claiming model causality or a negative-control result.
+
+For selected structured hydration lanes, `ota up --json` also emits a typed
+`receipt.evaluated_inputs[]` record with `kind: hydration_provenance`. Its runner-derived nested
+detail retains the contract-owned declared posture separately from the execution-time resolved
+posture. For `.NET restore`, the resolved record may include parsed `source_identities[]`, or an
+explicit unavailable resolution when source selection would require ambient configuration.
+Consumers must not replace this captured input with a later config-file read when evaluating the
+execution receipt.
 - unavailable local planes remain explicit with `availability: "unavailable"` and
   `reason: "not_supported_by_task"`; this describes contract support, not current machine
   readiness, which remains the responsibility of `ota doctor` and `ota run --dry-run`
@@ -4829,6 +4837,10 @@ The nested `receipt` object can also include:
   not evaluated inputs. The nested summary reports subjects, records, and divergent subjects so
   consumers can distinguish stable query identity from observed variation without over-reading it
   as a current-run replay decision.
+- a typed `evaluated_inputs[]` `hydration_provenance` record when `ota up` selects a structured
+  hydration lane with source posture. Its runner-derived nested detail keeps contract-declared
+  source posture separate from the resolved execution-time identity; it is not a historical query
+  observation or a substitute for a later config-file read.
 - the same selected Node hydration lane can also record `runtime:node` with the contract-local
   `node --version` observed while authoring the receipt. This is intentionally a runtime-version
   observation, not an executable or image digest.

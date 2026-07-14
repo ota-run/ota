@@ -24,7 +24,7 @@
 
 # V11.12 Plan
 
-Status: planned follow-on product slice.
+Status: active implementation and pressure slice.
 
 Release target:
 
@@ -204,13 +204,14 @@ The first honest shape should be:
   - hydration source owns declared source/feed posture
 - output truth:
   - `ota up --json` is the first canonical carrier and publishes the resolved provenance of that
-    declared hydration source
+    declared hydration source through its typed `receipt.evaluated_inputs[]` record
 - no parallel repo-global provenance object for the same hydration lane
 
 The first honest declared-versus-resolved rule is:
 
 - declared source/feed posture remains the contract-owned truth on the structured hydration source
 - resolved source/feed posture is emitted on the first output carrier as execution-time evidence
+  beside the declared posture on the same selected hydration record
 - if the resolved posture differs from the declared posture because host, runtime, or ambient
   config widened or overrode it, Ota should publish the mismatch explicitly instead of collapsing
   both into one field
