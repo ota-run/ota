@@ -644,6 +644,8 @@ pub struct ExecutionReceiptHydrationSourcePosture {
     pub config_file: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub offline: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub source_identities: Vec<ExecutionReceiptHydrationSourceIdentity>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5154,6 +5156,8 @@ pub struct TaskHydrationProvenanceSummary<'a> {
     pub config_file: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<&'a str>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub offline: bool,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -5163,6 +5167,8 @@ pub struct WorkspaceTaskHydrationProvenanceSummary {
     pub config_file: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub offline: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub source_identities: Vec<WorkspaceTaskHydrationSourceIdentity>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5804,7 +5810,10 @@ fn summarize_dependency_hydration_prepare_spec(
             Vec::new(),
             Vec::new(),
             Some("uv"),
-            Some("sync"),
+            Some(match source.mode {
+                crate::schema::TaskUvHydrationMode::Sync => "sync",
+                crate::schema::TaskUvHydrationMode::PipRequirements => "pip_requirements",
+            }),
             None,
             Vec::new(),
             false,
@@ -5946,6 +5955,20 @@ fn summarize_dependency_hydration_prepare_spec(
             source_posture: source.source_posture(),
             config_file: source.config_file.as_deref(),
             sources: source.sources.iter().map(String::as_str).collect(),
+            offline: false,
+        };
+        declared_hydration_provenance = Some(provenance);
+    } else if let crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) = &spec.source {
+        let provenance = TaskHydrationProvenanceSummary {
+            source_posture: source.source_posture(),
+            config_file: None,
+            sources: source
+                .default_index
+                .iter()
+                .chain(source.indexes.iter())
+                .map(String::as_str)
+                .collect(),
+            offline: source.offline,
         };
         declared_hydration_provenance = Some(provenance);
     }
@@ -5986,6 +6009,36 @@ fn summarize_dependency_hydration_prepare_spec(
         declared_hydration_provenance,
         resolved_hydration_provenance,
         compose,
+    }
+}
+
+fn declared_hydration_provenance_summary(
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+) -> Option<WorkspaceTaskHydrationProvenanceSummary> {
+    match source {
+        crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
+            Some(WorkspaceTaskHydrationProvenanceSummary {
+                source_posture: source.source_posture(),
+                config_file: source.config_file.clone(),
+                sources: source.sources.clone(),
+                offline: false,
+                source_identities: Vec::new(),
+                resolution: None,
+                resolution_error: None,
+            })
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+            Some(WorkspaceTaskHydrationProvenanceSummary {
+                source_posture: source.source_posture(),
+                config_file: None,
+                sources: source.declared_sources(),
+                offline: source.offline,
+                source_identities: Vec::new(),
+                resolution: None,
+                resolution_error: None,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -6343,17 +6396,7 @@ pub fn summarize_task_prepare_owned(
             };
             let mut declared_hydration_provenance = None;
             let mut resolved_hydration_provenance = None;
-            if let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) =
-                &spec.source
-            {
-                let provenance = WorkspaceTaskHydrationProvenanceSummary {
-                    source_posture: source.source_posture(),
-                    config_file: source.config_file.clone(),
-                    sources: source.sources.clone(),
-                    source_identities: Vec::new(),
-                    resolution: None,
-                    resolution_error: None,
-                };
+            if let Some(provenance) = declared_hydration_provenance_summary(&spec.source) {
                 declared_hydration_provenance = Some(provenance.clone());
                 resolved_hydration_provenance = None;
             }
@@ -6514,6 +6557,7 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
                 source_posture: value.source_posture,
                 config_file: value.config_file.map(str::to_string),
                 sources: value.sources.into_iter().map(str::to_string).collect(),
+                offline: value.offline,
                 source_identities: Vec::new(),
                 resolution: None,
                 resolution_error: None,
@@ -6524,6 +6568,7 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
                 source_posture: value.source_posture,
                 config_file: value.config_file.map(str::to_string),
                 sources: value.sources.into_iter().map(str::to_string).collect(),
+                offline: value.offline,
                 source_identities: Vec::new(),
                 resolution: None,
                 resolution_error: None,

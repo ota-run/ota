@@ -18743,7 +18743,7 @@ fn enrich_hydration_provenance_for_prepare(
 ) {
     match spec {
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            enrich_dotnet_hydration_provenance(prepare, spec, contract_path);
+            enrich_hydration_provenance(prepare, spec, contract_path);
         }
         crate::schema::TaskPrepareSpec::Sequence(sequence) => {
             for (summary, step) in prepare.steps.iter_mut().zip(&sequence.steps) {
@@ -18761,7 +18761,7 @@ fn enrich_hydration_provenance_for_sequence_step(
 ) {
     match step {
         crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
-            enrich_dotnet_hydration_provenance(prepare, spec, contract_path);
+            enrich_hydration_provenance(prepare, spec, contract_path);
         }
         crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => {
             for (summary, nested_step) in prepare.steps.iter_mut().zip(&spec.steps) {
@@ -18772,17 +18772,20 @@ fn enrich_hydration_provenance_for_sequence_step(
     }
 }
 
-fn enrich_dotnet_hydration_provenance(
+fn enrich_hydration_provenance(
     prepare: &mut WorkspaceTaskPrepareSummary,
     spec: &crate::schema::TaskDependencyHydrationPrepareSpec,
     contract_path: &Path,
 ) {
-    let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) = &spec.source
-    else {
-        return;
+    prepare.resolved_hydration_provenance = match &spec.source {
+        crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
+            Some(resolved_dotnet_hydration_provenance(contract_path, source))
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+            Some(resolved_uv_hydration_provenance(source))
+        }
+        _ => None,
     };
-    prepare.resolved_hydration_provenance =
-        Some(resolved_dotnet_hydration_provenance(contract_path, source));
 }
 
 fn resolved_dotnet_hydration_provenance(
@@ -18831,6 +18834,45 @@ fn resolved_dotnet_hydration_provenance(
         source_posture: source.source_posture(),
         config_file: source.config_file.clone(),
         sources: source.sources.clone(),
+        offline: false,
+        source_identities,
+        resolution,
+        resolution_error,
+    }
+}
+
+fn resolved_uv_hydration_provenance(
+    source: &crate::schema::TaskUvHydrationSourceSpec,
+) -> WorkspaceTaskHydrationProvenanceSummary {
+    let source_identities = source
+        .default_index
+        .iter()
+        .map(|url| WorkspaceTaskHydrationSourceIdentity {
+            name: Some(String::from("default")),
+            url: url.clone(),
+        })
+        .chain(source.indexes.iter().enumerate().map(|(index, url)| {
+            WorkspaceTaskHydrationSourceIdentity {
+                name: Some(format!("index-{}", index + 1)),
+                url: url.clone(),
+            }
+        }))
+        .collect::<Vec<_>>();
+    let (resolution, resolution_error) = if source_identities.is_empty() {
+        (
+            Some(String::from("unavailable")),
+            Some(String::from(
+                "uv index selection is ambient; declare default_index or indexes[] for replayable source provenance",
+            )),
+        )
+    } else {
+        (Some(String::from("resolved")), None)
+    };
+    WorkspaceTaskHydrationProvenanceSummary {
+        source_posture: source.source_posture(),
+        config_file: None,
+        sources: source.declared_sources(),
+        offline: source.offline,
         source_identities,
         resolution,
         resolution_error,
@@ -37602,6 +37644,7 @@ tasks:
                     source_posture: String::from("config_file"),
                     config_file: Some(String::from("NuGet.Config")),
                     sources: Vec::new(),
+                    offline: false,
                     source_identities: Vec::new(),
                     resolution: None,
                     resolution_error: None,
@@ -37610,6 +37653,7 @@ tasks:
                     source_posture: String::from("config_file"),
                     config_file: Some(String::from("NuGet.Config")),
                     sources: Vec::new(),
+                    offline: false,
                     source_identities: Vec::new(),
                     resolution: Some(String::from("unavailable")),
                     resolution_error: Some(String::from("requires ambient environment")),
@@ -54201,6 +54245,95 @@ tasks:
             provenance.resolved.source_identities[0].url,
             "https://packages.example.test/v3/index.json"
         );
+    }
+
+    #[test]
+    fn hydration_provenance_captures_declared_uv_index_posture_before_execution() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        let yaml = r#"
+version: 1
+project:
+  name: uv-hydration-provenance
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_requirements
+        requirements_file: requirements.txt
+        default_index: https://pypi.example.test/simple
+        indexes:
+          - https://packages.example.test/simple
+        offline: true
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let provenance = capture_hydration_provenance_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("setup")],
+        );
+
+        let provenance = provenance[0]
+            .hydration_provenance
+            .as_ref()
+            .expect("hydration provenance detail");
+        assert_eq!(provenance.source_kind, "uv");
+        assert_eq!(provenance.declared.source_posture, "explicit_indexes");
+        assert!(provenance.declared.offline);
+        assert_eq!(provenance.resolved.resolution.as_deref(), Some("resolved"));
+        assert_eq!(provenance.resolved.source_identities.len(), 2);
+        assert_eq!(
+            provenance.resolved.source_identities[0].name.as_deref(),
+            Some("default")
+        );
+    }
+
+    #[test]
+    fn hydration_provenance_marks_ambient_uv_index_resolution_unavailable() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        let yaml = r#"
+version: 1
+project:
+  name: ambient-uv-hydration-provenance
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_requirements
+        requirements_file: requirements.txt
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let provenance = capture_hydration_provenance_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("setup")],
+        );
+        let provenance = provenance[0]
+            .hydration_provenance
+            .as_ref()
+            .expect("hydration provenance detail");
+
+        assert_eq!(provenance.declared.source_posture, "ambient_default");
+        assert_eq!(
+            provenance.resolved.resolution.as_deref(),
+            Some("unavailable")
+        );
+        assert!(provenance.resolved.source_identities.is_empty());
     }
 
     #[test]
@@ -97263,25 +97396,41 @@ fn collect_hydration_provenance_for_hydration(
     hydration: &crate::schema::TaskDependencyHydrationPrepareSpec,
     contract_path: &Path,
 ) {
-    let crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) = &hydration.source
-    else {
-        return;
+    let (source_kind, declared, resolved) = match &hydration.source {
+        crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
+            "dotnet_restore",
+            ExecutionReceiptHydrationSourcePosture {
+                source_posture: source.source_posture().to_string(),
+                config_file: source.config_file.clone(),
+                sources: source.sources.clone(),
+                offline: false,
+                source_identities: Vec::new(),
+                resolution: None,
+                resolution_error: None,
+            },
+            receipt_hydration_source_posture(resolved_dotnet_hydration_provenance(
+                contract_path,
+                source,
+            )),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
+            "uv",
+            ExecutionReceiptHydrationSourcePosture {
+                source_posture: source.source_posture().to_string(),
+                config_file: None,
+                sources: source.declared_sources(),
+                offline: source.offline,
+                source_identities: Vec::new(),
+                resolution: None,
+                resolution_error: None,
+            },
+            receipt_hydration_source_posture(resolved_uv_hydration_provenance(source)),
+        ),
+        _ => return,
     };
-    let declared = ExecutionReceiptHydrationSourcePosture {
-        source_posture: source.source_posture().to_string(),
-        config_file: source.config_file.clone(),
-        sources: source.sources.clone(),
-        source_identities: Vec::new(),
-        resolution: None,
-        resolution_error: None,
-    };
-    let resolved = receipt_hydration_source_posture(resolved_dotnet_hydration_provenance(
-        contract_path,
-        source,
-    ));
     let provenance = ExecutionReceiptHydrationProvenance {
         task: task_name.to_string(),
-        source_kind: String::from("dotnet_restore"),
+        source_kind: String::from(source_kind),
         declared,
         resolved,
     };
@@ -97290,7 +97439,7 @@ fn collect_hydration_provenance_for_hydration(
             .expect("hydration provenance must serialize for receipt identity"),
     );
     records.push(ExecutionReceiptEvaluatedInput {
-        id: format!("hydration:{task_name}:dotnet_restore:{identity}"),
+        id: format!("hydration:{task_name}:{source_kind}:{identity}"),
         kind: String::from("hydration_provenance"),
         input_class: ReplayInputClass::DeclaredDependencyResolution,
         identity,
@@ -97306,6 +97455,7 @@ fn receipt_hydration_source_posture(
         source_posture: summary.source_posture.to_string(),
         config_file: summary.config_file,
         sources: summary.sources,
+        offline: summary.offline,
         source_identities: summary
             .source_identities
             .into_iter()

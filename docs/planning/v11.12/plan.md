@@ -24,8 +24,10 @@
 
 # V11.12 Plan
 
-Status: first ecosystem implementation and pressure target complete. Future ecosystem widening
-remains a follow-on decision, not an implicit generalization from `.NET restore`.
+Status: .NET restore feed provenance and its first pressure target are complete. The uv
+index/offline implementation is pending Lead Quorum native/container pressure before this second
+ecosystem cut can be closed. Future ecosystem widening remains a follow-on decision, not an
+implicit generalization from either ecosystem.
 
 Release target:
 

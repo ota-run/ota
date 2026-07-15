@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- widened typed `uv` dependency hydration with contract-owned source posture. `default_index`,
+  ordered `indexes[]`, and `offline` now project into the executed uv command and flow through
+  task previews plus receipt `hydration_provenance`; when neither index surface is declared, Ota
+  records source resolution as unavailable instead of treating ambient uv/pip configuration as
+  replayable repo truth.
+
+- fixed published contract-schema parity for existing V11.10 task fields: `replay_inputs` and
+  `witnessed_observations.query_traces` now validate as documented instead of being rejected by a
+  stale generated schema.
+
 - fixed V11.11 proof-runtime schema drift. The published `ota proof runtime --json` schema now
   covers dependency evidence, marker-bound seam observations, canonical negative controls, and
   the causal-depth `not_proved` boundaries that the runner already emits.

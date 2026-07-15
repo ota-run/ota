@@ -2067,8 +2067,10 @@ changed query shape without claiming model causality or a negative-control resul
 For selected structured hydration lanes, `ota up --json` also emits a typed
 `receipt.evaluated_inputs[]` record with `kind: hydration_provenance`. Its runner-derived nested
 detail retains the contract-owned declared posture separately from the execution-time resolved
-posture. For `.NET restore`, the resolved record may include parsed `source_identities[]`, or an
-explicit unavailable resolution when source selection would require ambient configuration.
+posture. For `.NET restore` and `uv`, the resolved record may include typed
+`source_identities[]`, or an explicit unavailable resolution when source selection would require
+ambient configuration. `uv` additionally carries its declared `offline` posture; cache-only
+execution does not turn an undeclared cache source into resolved provenance.
 Consumers must not replace this captured input with a later config-file read when evaluating the
 execution receipt. During replay, an unavailable hydration resolution remains `narrowing` evidence
 and cannot make a lane hermetic; only a matching resolved source identity can acquit the named

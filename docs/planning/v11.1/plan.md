@@ -24,7 +24,8 @@
 
 # V11.1 Plan
 
-Status: active.
+Status: complete. Execution-governance visibility, closure-aware task discovery, and the first
+machine-readable proof surfaces shipped across the V11 implementation branch.
 
 Release target:
 

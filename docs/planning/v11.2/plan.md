@@ -24,7 +24,8 @@
 
 # V11.2 Plan
 
-Status: planned.
+Status: complete. Source-family convergence, field-aware provenance, self-origin protection, and
+doctor-side drift review shipped and were pressure-tested on real mixed-signal repositories.
 
 Release target:
 

@@ -57,6 +57,7 @@ tasks:
         cwd: .
         mode: pip_requirements
         requirements_file: requirements.txt
+        default_index: https://pypi.org/simple
     requirements:
       toolchains:
         - python

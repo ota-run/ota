@@ -2158,6 +2158,9 @@ Task-effect rules:
     - `prepare.source.kind: uv`
     - `prepare.source.cwd`: required repo-relative working directory for the uv hydration invocation
     - `prepare.source.mode`: optional uv hydration mode; ota currently ships `sync` and `pip_requirements`
+    - `prepare.source.default_index`: optional authoritative default Python package index projected as `uv --default-index <url>`
+    - `prepare.source.indexes`: optional ordered additional Python package indexes projected as repeated `uv --index <url>`
+    - `prepare.source.offline`: optional cache-only hydration posture projected as `uv --offline`; this prevents network access but does not make an undeclared local cache source replayable
     - `prepare.source.requirements_file`: required repo-relative requirements file when `prepare.source.mode: pip_requirements`; omit it for `mode: sync`
     - `prepare.source.kind: poetry`
     - `prepare.source.cwd`: required repo-relative working directory for the Poetry install invocation
@@ -2230,6 +2233,7 @@ Task-effect rules:
 - `prepare.source.kind: uv` currently executes one of two narrow canonical uv hydration lanes:
   - `uv sync`
   - `uv pip install -r <requirements_file>`
+  - optional `--default-index <url>`, ordered repeated `--index <url>`, and `--offline` are projected from the declared source posture; leave index selection undeclared only when the repo intentionally accepts ambient uv/pip configuration, in which case Ota records resolved provenance as unavailable rather than guessing from the host
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare.source.kind: helm` currently executes the narrow canonical Helm chart hydration lane: ota reads `Chart.yaml`, seeds any declared HTTP(S) chart repositories into isolated repo-owned Helm repository state under `.ota/state/helm/...`, then runs `helm dependency build .`

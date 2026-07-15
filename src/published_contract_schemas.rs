@@ -1481,6 +1481,9 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "cwd": { "type": "string" },
             "mode": { "enum": ["sync", "pip_requirements"] },
             "requirements_file": { "type": "string" },
+            "default_index": { "type": "string" },
+            "indexes": { "type": "array", "items": { "type": "string" } },
+            "offline": { "type": "boolean" },
             "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
@@ -2019,6 +2022,11 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskInput" }
         },
+        "replay_inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskReplayInput" }
+        },
+        "witnessed_observations": { "$ref": "#/$defs/taskWitnessedObservations" },
         "targets": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskTarget" }
@@ -2049,6 +2057,35 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         },
         "execution": { "$ref": "#/$defs/taskExecution" },
         "when": { "$ref": "#/$defs/taskWhen" }
+      }
+    },
+    "taskReplayInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "path"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["static_file", "presentation_profile", "comparator_profile"] },
+        "path": { "type": "string" }
+      }
+    },
+    "taskWitnessedObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query_traces": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskQueryTraceObservation" }
+        }
+      }
+    },
+    "taskQueryTraceObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string" }
       }
     },
     "envCheckHostAssertion": {

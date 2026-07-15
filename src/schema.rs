@@ -7673,20 +7673,60 @@ pub struct TaskUvHydrationSourceSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirements_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_index: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub offline: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskUvHydrationSourceSpec {
-    pub fn command_preview(&self) -> String {
-        match self.mode {
-            TaskUvHydrationMode::Sync => String::from("uv sync"),
-            TaskUvHydrationMode::PipRequirements => format!(
-                "uv pip install -r {}",
+    pub fn command_args(&self) -> Vec<String> {
+        let mut args = match self.mode {
+            TaskUvHydrationMode::Sync => vec![String::from("sync")],
+            TaskUvHydrationMode::PipRequirements => vec![
+                String::from("pip"),
+                String::from("install"),
+                String::from("-r"),
                 self.requirements_file
-                    .as_deref()
-                    .unwrap_or("requirements.txt")
-            ),
+                    .clone()
+                    .unwrap_or_else(|| String::from("requirements.txt")),
+            ],
+        };
+        if let Some(default_index) = self.default_index.as_deref() {
+            args.push(String::from("--default-index"));
+            args.push(default_index.to_string());
         }
+        for index in &self.indexes {
+            args.push(String::from("--index"));
+            args.push(index.clone());
+        }
+        if self.offline {
+            args.push(String::from("--offline"));
+        }
+        args
+    }
+
+    pub fn command_preview(&self) -> String {
+        format!("uv {}", self.command_args().join(" "))
+    }
+
+    pub const fn source_posture(&self) -> &'static str {
+        if self.default_index.is_some() || !self.indexes.is_empty() {
+            "explicit_indexes"
+        } else {
+            "ambient_default"
+        }
+    }
+
+    pub fn declared_sources(&self) -> Vec<String> {
+        self.default_index
+            .iter()
+            .chain(self.indexes.iter())
+            .cloned()
+            .collect()
     }
 }
 
@@ -10021,6 +10061,9 @@ tasks:
             cwd: String::from("."),
             mode: super::TaskUvHydrationMode::Sync,
             requirements_file: None,
+            default_index: None,
+            indexes: Vec::new(),
+            offline: false,
             compose: None,
         };
         assert_eq!(uv.command_preview(), "uv sync");
@@ -10032,9 +10075,31 @@ tasks:
             cwd: String::from("."),
             mode: super::TaskUvHydrationMode::PipRequirements,
             requirements_file: Some(String::from("requirements.txt")),
+            default_index: None,
+            indexes: Vec::new(),
+            offline: false,
             compose: None,
         };
         assert_eq!(uv.command_preview(), "uv pip install -r requirements.txt");
+    }
+
+    #[test]
+    fn uv_prepare_projects_declared_index_and_offline_posture() {
+        let uv = super::TaskUvHydrationSourceSpec {
+            cwd: String::from("."),
+            mode: super::TaskUvHydrationMode::PipRequirements,
+            requirements_file: Some(String::from("requirements.txt")),
+            default_index: Some(String::from("https://pypi.example.test/simple")),
+            indexes: vec![String::from("https://packages.example.test/simple")],
+            offline: true,
+            compose: None,
+        };
+
+        assert_eq!(uv.source_posture(), "explicit_indexes");
+        assert_eq!(
+            uv.command_preview(),
+            "uv pip install -r requirements.txt --default-index https://pypi.example.test/simple --index https://packages.example.test/simple --offline"
+        );
     }
 
     #[test]
@@ -10298,6 +10363,9 @@ tasks:
                                 cwd: String::from("api"),
                                 mode: super::TaskUvHydrationMode::Sync,
                                 requirements_file: None,
+                                default_index: None,
+                                indexes: Vec::new(),
+                                offline: false,
                                 compose: None,
                             },
                         ),
