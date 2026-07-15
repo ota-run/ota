@@ -67910,11 +67910,15 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["ok"], true);
-        assert_eq!(json["preview_status"], "RUNNABLE");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["code"],
+            "OTA_TOOL_VERSION_MISMATCH"
+        );
     }
 
     #[test]
