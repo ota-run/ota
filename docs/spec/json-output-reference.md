@@ -2045,6 +2045,8 @@ Each task summary now also carries a canonical `use` object:
   `native`, and when advertised `remote` in a stable order
 - every `use.modes[]` entry carries `default`, `availability`, and separate human/agent callable
   truth, including the exact command when callable
+- aggregate task entries derive mode availability from their concrete dependency closure: a mode is
+  supported only when every executable member supports that backend on the current platform
 
 Receipt `evaluated_inputs[]` also includes task-declared `replay_inputs` captured before execution.
 These records use `kind: static_file` and `input_class: declared_replay_input`; matching identities

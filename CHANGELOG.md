@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- fixed task discovery mode truth for aggregate tasks. `ota tasks --use` now advertises a
+  Container, Native, or Remote invocation only when every concrete task in the aggregate closure
+  supports that execution backend, instead of hiding a runnable aggregate mode because the
+  aggregate task has no command body of its own.
+
+- fixed doctor requirement probing for repo-owned command paths. Relative or absolute command and
+  launch executables such as `./bin/server` are no longer treated as host-PATH tools to version
+  probe before their producing task has materialized them.
+
 - widened typed `uv` dependency hydration with contract-owned source posture. `default_index`,
   ordered `indexes[]`, and `offline` now project into the executed uv command through
   cross-version compatible uv index flags and flow through

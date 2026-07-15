@@ -4540,6 +4540,38 @@ impl<'a> TaskSummary<'a> {
                 ),
             ),
         ];
+        let aggregate_inherited_supported_modes = task
+            .aggregate
+            .as_ref()
+            .map(|_| {
+                [
+                    ("container", crate::schema::Backend::Container),
+                    ("native", crate::schema::Backend::Native),
+                    ("remote", crate::schema::Backend::Remote),
+                ]
+                .into_iter()
+                .filter_map(|(mode, backend)| {
+                    let concrete_members = contract
+                        .task_dependency_closure_names([name.to_string()])
+                        .into_iter()
+                        .filter_map(|member_name| contract.tasks.get(member_name.as_str()))
+                        // Aggregate tasks carry no executable body. Their runnable mode is the
+                        // intersection of the concrete member-task closure.
+                        .filter(|member| member.aggregate.is_none())
+                        .collect::<Vec<_>>();
+                    let supported = !concrete_members.is_empty()
+                        && concrete_members.iter().all(|member| {
+                            member
+                                .dependency_backend_override_for_parent(Some(backend), backend)
+                                .is_some()
+                                && contract
+                                    .task_active_for_backend_on_os(member, backend, current_os)
+                        });
+                    supported.then_some(mode)
+                })
+                .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         Self {
             name,
             context: effective.context_name,
@@ -4553,6 +4585,8 @@ impl<'a> TaskSummary<'a> {
                 &modes,
                 supports_native_mode_override,
                 &mode_platform_availability,
+                task.aggregate.is_some(),
+                &aggregate_inherited_supported_modes,
             ),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
@@ -4661,6 +4695,8 @@ fn task_lane_use_summary(
     modes: &[TaskModeView<'_>],
     supports_native_mode_override: bool,
     mode_platform_availability: &[(&str, bool)],
+    aggregate_task: bool,
+    aggregate_inherited_supported_modes: &[&str],
 ) -> LaneUseSummary {
     let mut human = format!("ota run {task_name}");
     append_task_input_placeholders(&mut human, inputs);
@@ -4704,9 +4740,13 @@ fn task_lane_use_summary(
             .map(|(_, available)| *available)
             .unwrap_or(true);
         let supported = platform_available
-            && (mode == default_mode
-                || modes.iter().any(|entry| entry.mode == mode)
-                || (mode == "native" && supports_native_mode_override));
+            && if aggregate_task {
+                aggregate_inherited_supported_modes.contains(&mode)
+            } else {
+                mode == default_mode
+                    || modes.iter().any(|entry| entry.mode == mode)
+                    || (mode == "native" && supports_native_mode_override)
+            };
         let mut mode_human = format!("ota run {task_name}");
         let mut mode_agent = format!("ota run {task_name}");
         if mode != default_mode {
@@ -6914,6 +6954,151 @@ tasks:
             native.agent.command.as_deref(),
             Some("ota run build --native --agent")
         );
+    }
+
+    #[test]
+    fn aggregate_task_usage_inherits_member_mode_support() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    safe_for_agent: true
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          command:
+            exe: npm
+            args: [install]
+        container:
+          context: app
+          command:
+            exe: npm
+            args: [install]
+  test:
+    safe_for_agent: true
+    depends_on: [setup]
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          command:
+            exe: npm
+            args: [test]
+        container:
+          context: app
+          command:
+            exe: npm
+            args: [test]
+  verify:
+    safe_for_agent: true
+    aggregate:
+      tasks: [test]
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "verify",
+            contract
+                .tasks
+                .get("verify")
+                .expect("verify task should exist"),
+            "linux",
+            &contract,
+        );
+
+        let container = summary
+            .usage
+            .modes
+            .iter()
+            .find(|mode| mode.mode == "container")
+            .expect("container mode should be rendered");
+        assert_eq!(
+            container.availability,
+            super::LaneUseModeAvailability::Supported
+        );
+        assert_eq!(
+            container.human.command.as_deref(),
+            Some("ota run verify --container")
+        );
+        assert_eq!(
+            container.agent.command.as_deref(),
+            Some("ota run verify --container --agent")
+        );
+    }
+
+    #[test]
+    fn aggregate_task_usage_rejects_modes_missing_from_a_concrete_member() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  container-test:
+    safe_for_agent: true
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          command:
+            exe: npm
+            args: [test]
+  verify:
+    safe_for_agent: true
+    aggregate:
+      tasks: [container-test]
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "verify",
+            contract
+                .tasks
+                .get("verify")
+                .expect("verify task should exist"),
+            "linux",
+            &contract,
+        );
+
+        let native = summary
+            .usage
+            .modes
+            .iter()
+            .find(|mode| mode.mode == "native")
+            .expect("native mode should be rendered");
+        assert_eq!(
+            native.availability,
+            super::LaneUseModeAvailability::Unavailable
+        );
+        assert!(native.human.command.is_none());
+        assert!(native.agent.command.is_none());
     }
 
     #[test]

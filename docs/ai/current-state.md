@@ -163,6 +163,12 @@ durable agent workflow belongs in the canonical Ota skill.
   task mode branch. `ota tasks --json` now carries the same canonical per-mode truth under
   `tasks[].use.modes[]`, while the existing `use.human` and `use.agent` remain selected-mode
   compatibility projections.
+- Flagr pressure confirmed native and container Go module hydration, binary build, aggregate
+  verification, and runtime proof. It also closed two task-discovery regressions: aggregate mode
+  rows now inherit executable closure support, and Doctor no longer version-probes repo-owned
+  command paths before their producer task exists. The remaining integration lane is explicitly a
+  platform gap: its locally tagged Dockerfile image build needs a first-class Ota image
+  materialization action before the Compose integration workflow can be fully contract-owned.
 - `V11.11` contract-derived proof boundaries is implemented in Ota commit `e3bbdf02`.
   `ota proof runtime --json` now emits terminal `proof_verdict`, and Lead Quorum pressure proved
   `passed_with_unproven_boundaries` on the app lane across Ubuntu and macOS.

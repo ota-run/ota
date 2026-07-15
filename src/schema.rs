@@ -6142,7 +6142,7 @@ impl TaskSpec {
 
 fn task_command_executable(command: &TaskCommandSpec) -> Option<String> {
     let exe = command.exe.trim();
-    if exe.is_empty() || is_path_lookup_utility(exe) {
+    if exe.is_empty() || is_path_lookup_utility(exe) || is_path_executable(exe) {
         return None;
     }
     Some(exe.to_string())
@@ -6152,7 +6152,7 @@ fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
     match launch {
         TaskLaunchSpec::Command(command) => {
             let exe = command.exe.trim();
-            if exe.is_empty() || is_path_lookup_utility(exe) {
+            if exe.is_empty() || is_path_lookup_utility(exe) || is_path_executable(exe) {
                 return None;
             }
             Some(exe.to_string())
@@ -6164,6 +6164,11 @@ fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
 
 fn is_path_lookup_utility(exe: &str) -> bool {
     matches!(exe, "where" | "which")
+}
+
+// Only bare executable names can be resolved through the host PATH and version-probed.
+fn is_path_executable(exe: &str) -> bool {
+    exe.contains('/') || exe.contains('\\')
 }
 
 fn inferred_shell_command_executable(body: &str) -> Option<String> {
@@ -11247,6 +11252,30 @@ tasks:
 
         assert_eq!(
             contract.tasks["setup"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_ignores_repo_relative_command_launch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: ./bin/server
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["dev"]
                 .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
             None
         );

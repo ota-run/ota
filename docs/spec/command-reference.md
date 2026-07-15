@@ -322,6 +322,9 @@ Text output:
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes `Human Run`, with every advertised mode in stable `Container`, `Native`, then
   `Remote` order; the selected lane is marked `(Default)`
+- aggregate tasks inherit a mode only when every concrete task in their dependency closure
+  supports that backend on the current platform; the aggregate itself never needs a duplicate
+  command body merely to make its runnable modes discoverable
 - `Container` and `Native` remain visible when unavailable, with an explicit unsupported status
   instead of a fabricated command or silent omission
 - each task includes `Agent Run`; it prints `ota run <task> --agent` only when the full dependency
