@@ -175,6 +175,7 @@ jobs:
         run: |
           ota validate examples/basic-rust --plain
           ota validate examples/basic-node --plain
+          ota validate examples/build-container-image --plain
           ota workspace validate examples/workspace-basic --plain
 
       - name: Smoke Rust example preview
@@ -204,6 +205,24 @@ jobs:
             --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
             --assert-eq toolchains.0.name=node \
             -- ota run test --dry-run --json examples/basic-node
+
+      - name: Smoke container image build example preview
+        shell: bash
+        run: |
+          ota json validate \
+            --schema run-preview.json \
+            --allow-exit 0 \
+            --allow-exit 1 \
+            --write-payload build-container-image-run-preview.json \
+            --assert-eq dry_run=true \
+            --assert-eq requested_task.name=image:build \
+            --assert-eq requested_task.kind=build_container_image \
+            --assert-eq requested_task.action.kind=build_container_image \
+            --assert-eq requested_task.action.from=Dockerfile \
+            --assert-eq requested_task.action.to=build-container-image-example:local \
+            --assert-eq requested_task.action.context=. \
+            --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
+            -- ota run image:build --dry-run --json examples/build-container-image
 
       - name: Smoke workspace tasks JSON
         shell: bash

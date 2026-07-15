@@ -25,10 +25,10 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "452f93008ea88fb476344ff0b2a01045598b14e4"
-consumer_commit: "e4b310d9d13c7396eeec2cf5cafd739539373e37"
+reviewed_ota_commit: "7832edf74331c77e60786c598720589ce4e7da51"
+consumer_commit: "d5851c7fffce2eae0ac42673daa06fbb32ea7fe7"
 waiver_reason: ""
 notes: >
-  Baseline sync after widening the ota-run/skills package to cover modern and holistic contract
-  surfaces, including aggregate tasks, service launch, dependency hydration, workflow/service/env
-  modeling, and agent/governance review.
+  Reviewed after completing the canonical build_container_image example. The canonical skill
+  already teaches explicit file, context, tag, Docker external-state, and network posture, so no
+  guidance change was needed.

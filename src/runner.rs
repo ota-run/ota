@@ -5492,9 +5492,24 @@ pub fn clean_execution_report_for_workflow(
     contract_path: &Path,
     workflow_name: Option<&str>,
 ) -> Result<CleanExecutionReport, CleanExecutionError> {
+    clean_execution_report_for_workflow_with_overrides(
+        contract,
+        contract_path,
+        workflow_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn clean_execution_report_for_workflow_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<CleanExecutionReport, CleanExecutionError> {
     ensure_no_workflow_instance_cleanup_dependents(contract, workflow_name)
         .map_err(classify_clean_execution_error)?;
-    let scope = persistent_cleanup_scope_for_workflow(contract, workflow_name);
+    let scope =
+        persistent_cleanup_scope_for_workflow_with_overrides(contract, workflow_name, overrides);
     clean_execution_report_inner(contract, contract_path, Some(&scope))
         .map_err(classify_clean_execution_error)
 }
@@ -6268,9 +6283,22 @@ struct PersistentCleanupScope {
     env_materialization_paths: BTreeSet<String>,
 }
 
+#[cfg(test)]
 fn persistent_cleanup_scope_for_workflow(
     contract: &Contract,
     workflow_name: Option<&str>,
+) -> PersistentCleanupScope {
+    persistent_cleanup_scope_for_workflow_with_overrides(
+        contract,
+        workflow_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+fn persistent_cleanup_scope_for_workflow_with_overrides(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> PersistentCleanupScope {
     let mut scope = PersistentCleanupScope::default();
     scope.service_names = required_service_closure(
@@ -6279,17 +6307,32 @@ fn persistent_cleanup_scope_for_workflow(
     );
     for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
         scope.task_names.insert(task_name.clone());
-        let effective =
-            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default());
-        let backend =
-            resolve_execution_backend(contract, task_name.as_str(), ExecutionOverrides::default())
-                .ok();
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        // Cleanup admission must recognize the persistent family Ota started even if resolving
+        // the container engine now fails. Engine probing belongs to cleanup execution, not scope
+        // ownership.
+        if effective.backend == Backend::Container
+            && effective.lifecycle == Some(Lifecycle::Persistent)
+        {
+            let shared_backend_name = contract
+                .tasks
+                .get(task_name.as_str())
+                .and_then(|task| task.backend_binding_for_backend(Backend::Container));
+            scope
+                .persistent_backend_families
+                .insert(persistent_container_family_token(
+                    task_name.as_str(),
+                    effective.context_name,
+                    shared_backend_name,
+                ));
+        }
+        let backend = resolve_execution_backend(contract, task_name.as_str(), overrides).ok();
         if let Some(backend) = backend.as_ref() {
             let owner = repo_execution_lock_owner_for_backend(
                 contract,
                 None,
                 task_name.as_str(),
-                ExecutionOverrides::default(),
+                overrides,
                 backend,
             );
             scope.compose_projects.extend(owner.compose_projects);
@@ -55545,6 +55588,101 @@ workflows:
         let app_scope =
             super::persistent_cleanup_scope_for_workflow(&fixture.contract, Some("app"));
         assert!(app_scope.context_names.contains("app"));
+    }
+
+    #[test]
+    fn clean_execution_scope_for_workflow_uses_selected_mode_override() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  lifecycle: persistent
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22-bookworm
+        engines:
+          - docker
+tasks:
+  dev:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: echo native
+        container:
+          context: app
+          run: echo container
+          runtime:
+            kind: service
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        );
+
+        let default_scope =
+            super::persistent_cleanup_scope_for_workflow(&fixture.contract, Some("app"));
+        assert!(
+            !default_scope.context_names.contains("app"),
+            "the native-default cleanup scope must not claim the container context"
+        );
+
+        let container_scope = super::persistent_cleanup_scope_for_workflow_with_overrides(
+            &fixture.contract,
+            Some("app"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        );
+        assert!(
+            container_scope.context_names.contains("app"),
+            "container proof cleanup must own the container context it started"
+        );
+        assert!(
+            !container_scope.persistent_backend_families.is_empty(),
+            "container proof cleanup must include the selected persistent backend family"
+        );
+
+        let owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("container")),
+            execution_mode: String::from("container"),
+            lifecycle: Some(String::from("persistent")),
+            host_services: Vec::new(),
+            compose_projects: Vec::new(),
+            persistent_backend_families: container_scope
+                .persistent_backend_families
+                .iter()
+                .cloned()
+                .collect(),
+            env_materialization_paths: Vec::new(),
+            write_paths: Vec::new(),
+            write_owners: Vec::new(),
+            service_task: true,
+            parent_pid: None,
+            pid: std::process::id(),
+            started_at: String::from("2026-07-16T00:00:00Z"),
+        };
+        assert!(
+            super::active_execution_owned_by_cleanup_scope(&owner, &container_scope),
+            "container proof cleanup must admit the active service it owns"
+        );
+        assert!(
+            !super::active_execution_owned_by_cleanup_scope(&owner, &default_scope),
+            "native-default cleanup must not admit a container service execution"
+        );
     }
 
     #[test]

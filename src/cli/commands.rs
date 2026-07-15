@@ -153,8 +153,8 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
     TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
-    clean_execution_report, clean_execution_report_for_workflow, clean_stale_execution,
-    cleanup_selected_workflow_native_service_workloads, effective_execution,
+    clean_execution_report, clean_execution_report_for_workflow_with_overrides,
+    clean_stale_execution, cleanup_selected_workflow_native_service_workloads, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
     ensure_task_adapter_inputs_ready, ensure_task_env_files_ready_with_planned_outputs,
     env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
@@ -2588,10 +2588,11 @@ pub fn proof_runtime(
                 )
                 .err();
                 let repo_cleanup_error = if process_cleanup_error.is_none() {
-                    clean_execution_report_for_workflow(
+                    clean_execution_report_for_workflow_with_overrides(
                         contract,
                         &target.contract_path,
                         effective_workflow_selector.as_deref(),
+                        overrides,
                     )
                     .err()
                 } else {

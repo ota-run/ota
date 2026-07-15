@@ -27,12 +27,16 @@ version: 1
 
 project:
   name: build-container-image-example
+  description: Canonical Dockerfile-backed local image materialization using action.kind build_container_image
+  type: application
 
 tasks:
   image:build:
     description: Materialize the local image required by the container verification lane.
+    category: build
     action:
       kind: build_container_image
+      provider: docker
       file: Dockerfile
       context: .
       tag: build-container-image-example:local
@@ -44,3 +48,15 @@ tasks:
       network_kind: broad
       external_state:
         - docker
+
+workflows:
+  default: image-build
+  image-build:
+    intent: local_build
+    description: Materialize the declared Docker image through the typed Ota action.
+    prepare:
+      task: image:build
+
+metadata:
+  ota:
+    minimum_version: "1.6.24"

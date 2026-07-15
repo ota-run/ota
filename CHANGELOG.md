@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- fixed `ota proof runtime --container` cleanup for workflows whose default mode is native. The
+  proof cleanup scope now follows the selected effective mode and derives persistent ownership
+  from declared context truth before probing the container engine, so it can remove the runtime it
+  started without admitting unrelated active executions.
+
+- completed the canonical `build_container_image` example with a runnable Dockerfile, explicit
+  Docker provider and minimum-version truth, a finite image-build workflow, and smoke coverage for
+  the typed task preview
+
 - fixed execution-mode admission to use the same contract-owned support rule as task discovery;
   `ota run <task> --container` or `--remote` now refuses an unadvertised mode instead of forcing
   unbranched host-owned actions, including Docker/Compose control tasks, into that runtime; also
