@@ -17926,6 +17926,7 @@ fn render_run_preview_target(
                     let governance = run_preview_governance_summary(
                         &target.contract,
                         &requested_task,
+                        overrides,
                         preview_agent_summary.as_ref(),
                         &summary,
                         agent,
@@ -18089,6 +18090,7 @@ fn render_run_preview_target(
                 governance: run_preview_governance_summary(
                     &target.contract,
                     &requested_task,
+                    overrides,
                     preview_agent_summary.as_ref(),
                     &summary,
                     agent,
@@ -44827,11 +44829,14 @@ fn run_preview_runnable_modes(
 fn run_preview_governance_summary(
     contract: &Contract,
     task: &TaskSummary<'_>,
+    overrides: ExecutionOverrides,
     agent_summary: Option<&AgentSummary<'_>>,
     summary: &DoctorSummary,
     agent: bool,
     refusal: Option<&AgentExecutionRefusal>,
 ) -> crate::output::RunPreviewGovernanceSummary {
+    // Governance describes the selected runnable closure, not only the requested task node.
+    let effects = collect_task_closure_effects_summary(contract, task.name, overrides);
     crate::output::RunPreviewGovernanceSummary {
         safety_posture: if task.safe_for_agent && !task.effective_safe_for_agent {
             String::from("declared_safe_closure_unsafe")
@@ -44846,17 +44851,17 @@ fn run_preview_governance_summary(
         unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
         default_mode: render_task_default_mode(task).to_string(),
         runnable_modes: run_preview_runnable_modes(task),
-        network: task.effects.network,
-        network_kind: task.effects.network_kind,
-        writes: task.effects.writes.clone(),
-        workspace_writes: task.effects.workspace_writes.clone(),
-        adapter_state: task.effects.adapter_state.clone(),
-        external_state: task.effects.external_state.clone(),
+        network: effects.network,
+        network_kind: effects.network_kind,
+        writes: effects.writes.clone(),
+        workspace_writes: effects.workspace_writes.clone(),
+        adapter_state: effects.adapter_state.clone(),
+        external_state: effects.external_state.clone(),
         sandbox_policy: Some(compiled_codex_local_sandbox_policy_for_task(
             contract,
             agent_summary,
             task.name,
-            &task.effects,
+            &effects,
         )),
         receipt_follow_up_command: String::from("ota receipt --json --archive"),
         evaluation: governance_evaluation_for_task_preview(task, summary, agent, refusal),

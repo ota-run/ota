@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed `ota run <aggregate> --dry-run --json` governance truth to derive network, mutation,
+  external-state, and compiled sandbox posture from the selected aggregate closure instead of the
+  empty aggregate wrapper task; preview consumers now see the same governed execution surface Ota
+  will actually traverse
+
 - added first-class `action.kind: build_container_image`, so Dockerfile-backed local image
   materialization can be contract-owned as typed `file`, `context`, `tag`, and provider truth
   instead of opaque `docker build` command glue; validation, task previews, capability reporting,

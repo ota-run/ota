@@ -2801,8 +2801,10 @@ and `ota workspace run --json` for coordinated multi-repo execution receipts.
 shared readiness verdict.
 
 `governance` is the compact machine-readable execution-governance summary for this selected task
-path. It keeps the fast-consumption fields together so CI and agents do not have to reconstruct the
-selected safety posture from `requested_task`, effect declarations, and mode branches separately.
+path. Its effect and sandbox fields are derived from the full selected task closure, including
+aggregate members and dependencies, rather than only the requested task node. It keeps the
+fast-consumption fields together so CI and agents do not have to reconstruct the selected safety
+posture from `requested_task`, effect declarations, and mode branches separately.
 When the selected lane also carries compiled runtime-boundary truth, `governance.sandbox_policy`
 now repeats the same first-target `codex_local` sandbox profile published by `ota tasks --json`,
 so execution-facing preview consumers do not have to call a second command just to recover

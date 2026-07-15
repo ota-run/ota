@@ -1581,6 +1581,58 @@ tasks:
 }
 
 #[test]
+fn run_dry_run_json_derives_aggregate_governance_from_the_selected_closure() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: aggregate-governance-preview
+tasks:
+  integration:test:
+    run: echo integration
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - postgres
+  verify:integration:
+    aggregate:
+      tasks:
+        - integration:test
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "run",
+            "verify:integration",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["governance"]["network"], true);
+    assert_eq!(json["governance"]["network_kind"], "integration_test");
+    assert_eq!(
+        json["governance"]["external_state"],
+        serde_json::json!(["postgres"])
+    );
+    assert_eq!(
+        json["governance"]["sandbox_policy"]["network"]["default"],
+        "allow"
+    );
+    assert_eq!(
+        json["governance"]["sandbox_policy"]["network"]["source"],
+        "lane_effect_network"
+    );
+}
+
+#[test]
 fn run_dry_run_json_output_reports_compose_volume_reset_action() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
