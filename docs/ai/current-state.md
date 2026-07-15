@@ -169,6 +169,10 @@ durable agent workflow belongs in the canonical Ota skill.
   command paths before their producer task exists. The remaining integration lane is explicitly a
   platform gap: its locally tagged Dockerfile image build needs a first-class Ota image
   materialization action before the Compose integration workflow can be fully contract-owned.
+- V11.14 is planned as the next contract-claim assurance layer. It keeps contract declaration,
+  V11.3 closure enforcement, observable evidence assurance, and policy admission separate so a
+  wrong-but-internally-consistent claim is `unknown` or `contradicted`, never silently verified.
+  This is planning only; it does not change current agent-mode admission semantics.
 - `V11.11` contract-derived proof boundaries is implemented in Ota commit `e3bbdf02`.
   `ota proof runtime --json` now emits terminal `proof_verdict`, and Lead Quorum pressure proved
   `passed_with_unproven_boundaries` on the app lane across Ubuntu and macOS.

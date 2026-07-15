@@ -50,6 +50,8 @@ Source direction:
 - [V11.10 plan](../v11.10/plan.md)
 - [V11.11 plan](../v11.11/plan.md)
 - [V11.12 plan](../v11.12/plan.md)
+- [V11.13 plan](../v11.13/plan.md)
+- [V11.14 plan](../v11.14/plan.md)
 
 V11 theme:
 
@@ -121,18 +123,17 @@ The completed OSS governance slices after that are:
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md)
 - [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md)
 
-The active next OSS governance slice is:
+The completed trust/product follow-ons are:
 
 - [V11.9: governance truth reconciliation and evidence classes](../v11.9/plan.md)
-
-The next planned trust follow-on after that is:
-
 - [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md)
-
-The next planned trust/product follow-ons after that are:
-
 - [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
+- [V11.13: generated artifact lineage](../v11.13/plan.md)
+
+The next planned trust/governance slice is:
+
+- [V11.14: contract-claim assurance](../v11.14/plan.md)
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
@@ -144,7 +145,7 @@ Those slices make Ota higher in the stack without abandoning the open execution 
 - V11.8 compiles contract-owned execution boundary truth into real runtime filesystem and egress
   policy for cooperating sandbox targets
 
-The active next trust-refinement move is:
+The completed trust-refinement sequence established:
 
 - V11.9 tightens the trust model so governance fields are emitted from the same decision line that
   made them, typed by evidence class, decomposed where Ota already knows truthful blocker or gate
@@ -156,6 +157,12 @@ The active next trust-refinement move is:
   they covered and what they explicitly did not prove
 - V11.12 then tightens typed dependency hydration trust where source or feed posture materially
   changes replayability and execution confidence
+- V11.13 names generated source as a contract-owned producer/consumer artifact instead of relying
+  on procedural ordering alone
+
+The next planned trust-refinement move is V11.14. It distinguishes a maintainer claim, the closure
+the runner can enforce, observable evidence supporting or contradicting that claim, and the policy
+decision that admits it.
 
 ## Included capabilities
 
