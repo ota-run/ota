@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added first-class `action.kind: build_container_image`, so Dockerfile-backed local image
+  materialization can be contract-owned as typed `file`, `context`, `tag`, and provider truth
+  instead of opaque `docker build` command glue; validation, task previews, capability reporting,
+  published contract schema, direct task execution, and doctor replacement advisories now share
+  the same surface
+
 - fixed task discovery mode truth for aggregate tasks. `ota tasks --use` now advertises a
   Container, Native, or Remote invocation only when every concrete task in the aggregate closure
   supports that execution backend, instead of hiding a runnable aggregate mode because the

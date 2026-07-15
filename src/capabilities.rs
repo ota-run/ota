@@ -111,6 +111,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.21",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.build_container_image",
+        introduced_in: "1.6.24",
+    },
+    ContractCapabilitySpec {
         id: "tasks.action.reset_compose_service_volume",
         introduced_in: "1.6.22",
     },
@@ -368,6 +372,9 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.action.ensure_container_network" => {
             tasks_action_ensure_container_network_present(document)
         }
+        "tasks.action.build_container_image" => {
+            tasks_action_build_container_image_present(document)
+        }
         "tasks.action.reset_compose_service_volume" => {
             tasks_action_reset_compose_service_volume_present(document)
         }
@@ -485,6 +492,12 @@ fn capability_present_in_contract(
             matches!(
                 task.action.as_ref(),
                 Some(crate::schema::TaskActionSpec::EnsureContainerNetwork(_))
+            )
+        }),
+        "tasks.action.build_container_image" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::BuildContainerImage(_))
             )
         }),
         "tasks.action.reset_compose_service_volume" => contract.tasks.values().any(|task| {
@@ -743,6 +756,22 @@ fn tasks_action_ensure_container_network_present(document: &Value) -> bool {
                     .and_then(Value::as_str)
             })
             == Some("ensure_container_network")
+    })
+}
+
+fn tasks_action_build_container_image_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(|task| {
+        mapping_child(task, "action")
+            .and_then(Value::as_mapping)
+            .and_then(|action| {
+                action
+                    .get(Value::String(String::from("kind")))
+                    .and_then(Value::as_str)
+            })
+            == Some("build_container_image")
     })
 }
 

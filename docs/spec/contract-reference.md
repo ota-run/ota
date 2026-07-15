@@ -2514,10 +2514,12 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, `ensure_virtualenv`, `ensure_git_checkout`, `ensure_git_template`, `ensure_git_checkouts`, `ensure_container_network`,
+  `ensure_file`, `ensure_directory`, `ensure_virtualenv`, `ensure_git_checkout`, `ensure_git_template`, `ensure_git_checkouts`, `ensure_container_network`, `build_container_image`,
   `reset_compose_service_volume`, or `ensure_bundle`
-- `action` is the first-class host file-preparation surface for deterministic repo mutations; in
-  the current shipped slice it is native-only because it mutates the host working tree directly
+- `action` is the first-class surface for deterministic preparation and explicitly governed local
+  materialization. File-preparation actions are native-only because they mutate the host working
+  tree directly; `build_container_image` is a direct Docker-owned task action and materializes
+  external container state instead
   and Ota does not yet claim one cross-backend persistence/ownership model for container or remote
   mutations
 - `action.kind: copy_if_missing`
@@ -2568,6 +2570,14 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 - `action.kind: ensure_container_network`
   - `action.provider`: optional container runtime provider; currently `docker` (default `docker`)
   - `action.name`: required container network name to inspect/create
+- `action.kind: build_container_image`
+  - `action.provider`: optional container runtime provider; currently `docker` (default `docker`)
+  - `action.file`: required repo-relative Dockerfile path
+  - `action.context`: required repo-relative Docker build context
+  - `action.tag`: required local image tag; it must not be empty or contain whitespace
+  - this is a direct task action, not an `ensure_bundle` or `prepare.steps` entry: building a
+    local image is material execution with an explicit Docker side effect, not idempotent host
+    bootstrap
 - `action.kind: reset_compose_service_volume`
   - `action.provider`: optional compose runtime provider; currently `docker` (default `docker`)
   - `action.service`: required non-empty compose service name ota should stop, remove, and restart
@@ -2662,6 +2672,12 @@ Use `action.kind: ensure_container_network` when setup needs one deterministic e
 network without shell glue. It inspects the named provider-owned network, creates it only when
 missing, and keeps Docker network bootstrap on a first-class declarative surface instead of
 hard-coding `docker network inspect/create` logic into `run`, `script`, or `command`.
+
+Use `action.kind: build_container_image` when a task must materialize a Dockerfile-backed local
+image for a declared container or Compose lane. Ota invokes `docker build --file <file> --tag <tag>
+<context>` from the repository working directory and records the Dockerfile-to-tag action in task
+discovery. Keep the build's network and Docker state effects explicit on the task; do not hide a
+locally tagged image build in `run`, `script`, or `command`.
 
 Use `action.kind: reset_compose_service_volume` when one setup or recovery lane truthfully owns a
 destructive Compose-managed data reset such as “stop the service, remove its named volume, then

@@ -198,6 +198,9 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .any(|variant| variant["properties"]["kind"]
                 == json!({ "const": "ensure_container_network" }))
     );
+    assert!(task_action_variants.iter().any(
+        |variant| variant["properties"]["kind"] == json!({ "const": "build_container_image" })
+    ));
     assert!(
         task_action_variants
             .iter()
@@ -244,6 +247,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         task_kind_enum
             .iter()
             .any(|entry| entry == "ensure_container_network")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "build_container_image")
     );
     assert!(
         task_kind_enum

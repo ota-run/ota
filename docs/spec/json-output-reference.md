@@ -253,6 +253,10 @@ Current shape:
       "introduced_in": "1.6.21"
     },
     {
+      "id": "tasks.action.build_container_image",
+      "introduced_in": "1.6.24"
+    },
+    {
       "id": "tasks.action.reset_compose_service_volume",
       "introduced_in": "1.6.22"
     },

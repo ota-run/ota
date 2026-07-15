@@ -166,9 +166,11 @@ durable agent workflow belongs in the canonical Ota skill.
 - Flagr pressure confirmed native and container Go module hydration, binary build, aggregate
   verification, and runtime proof. It also closed two task-discovery regressions: aggregate mode
   rows now inherit executable closure support, and Doctor no longer version-probes repo-owned
-  command paths before their producer task exists. The remaining integration lane is explicitly a
-  platform gap: its locally tagged Dockerfile image build needs a first-class Ota image
-  materialization action before the Compose integration workflow can be fully contract-owned.
+  command paths before their producer task exists. The previously open locally tagged Dockerfile
+  image-build gap is now closed by first-class `action.kind: build_container_image`: contracts own
+  the provider, Dockerfile, repo-relative context, and local tag without raw `docker build` glue.
+  Lead Quorum proves the direct image build; Flagr carries the equivalent integration-image task,
+  with its live build awaiting a healthy Docker daemon on the pressure host.
 - V11.14 is planned as the next contract-claim assurance layer. It keeps contract declaration,
   V11.3 closure enforcement, observable evidence assurance, and policy admission separate so a
   wrong-but-internally-consistent claim is `unknown` or `contradicted`, never silently verified.

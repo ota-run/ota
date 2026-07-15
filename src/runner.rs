@@ -11400,6 +11400,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
         }
+        crate::schema::TaskActionSpec::BuildContainerImage(spec) => {
+            execute_build_container_image_action(task_name, spec, working_dir)
+        }
         crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => {
             execute_reset_compose_service_volume_action(task_name, spec, working_dir)
         }
@@ -12267,6 +12270,63 @@ fn execute_ensure_container_network_action(
     Ok(file_action_output(format!(
         "ensured {provider} container network `{name}`\n"
     )))
+}
+
+fn execute_build_container_image_action(
+    task_name: &str,
+    spec: &crate::schema::TaskBuildContainerImageActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let provider = spec.provider.label();
+    let file = spec.file.trim();
+    let context = spec.context.trim();
+    let tag = spec.tag.trim();
+    if file.is_empty() || context.is_empty() || tag.is_empty() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: String::from(
+                "action `build_container_image` must declare non-empty `file`, `context`, and `tag`",
+            ),
+        });
+    }
+
+    let output = Command::new(provider)
+        .current_dir(working_dir)
+        .args(["build", "--file", file, "--tag", tag, context])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not build {provider} image `{tag}`: {source}"),
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("exit status {}", output.status)
+        };
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not build {provider} image `{tag}`: {details}"),
+        });
+    }
+
+    let mut text = String::new();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stdout.trim().is_empty() {
+        text.push_str(stdout.as_ref());
+    }
+    if !stderr.trim().is_empty() {
+        text.push_str(stderr.as_ref());
+    }
+    if text.is_empty() {
+        text = format!("built {provider} image `{tag}` from `{file}`\n");
+    }
+    Ok(file_action_output(text))
 }
 
 fn execute_reset_compose_service_volume_action(
@@ -60430,6 +60490,77 @@ exit 1
             ),
             "{}",
             second.stdout
+        );
+    }
+
+    #[test]
+    fn build_container_image_action_uses_declared_dockerfile_context_and_tag() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    action:
+      kind: build_container_image
+      file: Dockerfile.integration
+      context: integration
+      tag: ota:test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("Dockerfile.integration"),
+            "FROM scratch\n",
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.dir.path().join("integration")).unwrap();
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("docker.log");
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$*" > "{log_path}"
+"#,
+                log_path = log_path.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let result = run_task(&fixture.contract, fixture.file_path(), "image:build")
+            .expect("build_container_image action should run");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(log_path).unwrap().trim(),
+            "build --file Dockerfile.integration --tag ota:test integration"
         );
     }
 

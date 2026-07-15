@@ -6860,6 +6860,7 @@ pub enum TaskActionSpec {
     EnsureGitTemplate(TaskEnsureGitTemplateActionSpec),
     EnsureGitCheckouts(TaskEnsureGitCheckoutsActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
+    BuildContainerImage(TaskBuildContainerImageActionSpec),
     ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
     EnsureBundle(TaskEnsureBundleActionSpec),
 }
@@ -6876,6 +6877,7 @@ impl TaskActionSpec {
             Self::EnsureGitTemplate(_) => "ensure_git_template",
             Self::EnsureGitCheckouts(_) => "ensure_git_checkouts",
             Self::EnsureContainerNetwork(_) => "ensure_container_network",
+            Self::BuildContainerImage(_) => "build_container_image",
             Self::ResetComposeServiceVolume(_) => "reset_compose_service_volume",
             Self::EnsureBundle(_) => "ensure_bundle",
         }
@@ -6987,6 +6989,13 @@ impl TaskActionSpec {
                 "ensure {} container network `{}` exists",
                 action.provider.label(),
                 action.name
+            ),
+            Self::BuildContainerImage(action) => format!(
+                "build {} image `{}` from `{}` with context `{}`",
+                action.provider.label(),
+                action.tag,
+                action.file,
+                action.context
             ),
             Self::ResetComposeServiceVolume(action) => format!(
                 "reset {} compose service `{}` volume `{}`",
@@ -8110,6 +8119,16 @@ pub struct TaskEnsureContainerNetworkActionSpec {
     #[serde(default, skip_serializing_if = "is_default_container_runtime_provider")]
     pub provider: TaskContainerRuntimeProvider,
     pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskBuildContainerImageActionSpec {
+    #[serde(default, skip_serializing_if = "is_default_container_runtime_provider")]
+    pub provider: TaskContainerRuntimeProvider,
+    pub file: String,
+    pub context: String,
+    pub tag: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

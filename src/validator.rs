@@ -4943,6 +4943,30 @@ fn validate_task_action(
                 )));
             }
         }
+        crate::schema::TaskActionSpec::BuildContainerImage(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.file",
+                spec.file.as_str(),
+                errors,
+            );
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.context",
+                spec.context.as_str(),
+                errors,
+            );
+            if spec.tag.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `build_container_image` must declare a non-empty `action.tag`"
+                )));
+            }
+            if spec.tag.contains(char::is_whitespace) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `build_container_image` `action.tag` must not contain whitespace"
+                )));
+            }
+        }
         crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => {
             if spec.service.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -9551,6 +9575,7 @@ pub enum ContractAdvisory {
     ReplaceableToolBootstrapOwnership(ReplaceableToolBootstrapOwnershipAdvisory),
     ReplaceableSystemdServiceOwnership(ReplaceableSystemdServiceOwnershipAdvisory),
     ReplaceableContainerNetworkOwnership(ReplaceableContainerNetworkOwnershipAdvisory),
+    ReplaceableContainerImageBuildOwnership(ReplaceableContainerImageBuildOwnershipAdvisory),
     ReplaceableComposeVolumeResetOwnership(ReplaceableComposeVolumeResetOwnershipAdvisory),
     ReplaceableAdapterInputOwnership(ReplaceableAdapterInputOwnershipAdvisory),
     NativePackageManagerLikelyWrongPlatform(NativePackageManagerLikelyWrongPlatformAdvisory),
@@ -9702,6 +9727,12 @@ pub struct ReplaceableSystemdServiceOwnershipAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceableContainerNetworkOwnershipAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableContainerImageBuildOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
 }
@@ -9900,6 +9931,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableContainerNetworkOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_CONTAINER_NETWORK_OWNERSHIP"
             }
+            ContractAdvisory::ReplaceableContainerImageBuildOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_CONTAINER_IMAGE_BUILD_OWNERSHIP"
+            }
             ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_VOLUME_RESET_OWNERSHIP"
             }
@@ -10068,6 +10102,10 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
                 "task `{}` hard-codes container network ownership in its task body",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableContainerImageBuildOwnership(advisory) => format!(
+                "task `{}` hard-codes Dockerfile image materialization in its task body",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => format!(
@@ -10262,6 +10300,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes container network bootstrap inside its task body (`{}`), which hides Docker network ownership from Ota instead of declaring it under `action.kind: ensure_container_network`",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ReplaceableContainerImageBuildOwnership(advisory) => format!(
+                "task `{}` hard-codes Dockerfile image materialization inside its task body (`{}`), which hides Dockerfile, context, and local tag ownership from Ota instead of declaring it under `action.kind: build_container_image`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => format!(
                 "task `{}` hard-codes Compose-managed service volume reset inside its task body (`{}`), which hides destructive Compose state reset from Ota instead of declaring it under `action.kind: reset_compose_service_volume`",
                 advisory.task_name, advisory.command
@@ -10362,6 +10404,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+            | ContractAdvisory::ReplaceableContainerImageBuildOwnership(_)
             | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
             | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
@@ -10405,6 +10448,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+            | ContractAdvisory::ReplaceableContainerImageBuildOwnership(_)
             | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
             | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
@@ -10449,6 +10493,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+            | ContractAdvisory::ReplaceableContainerImageBuildOwnership(_)
             | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
             | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
@@ -10578,6 +10623,10 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
                 "move container network ownership out of task `{}` body: use `action.kind: ensure_container_network` so Ota owns Docker network bootstrap declaratively",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableContainerImageBuildOwnership(advisory) => format!(
+                "move Dockerfile image materialization out of task `{}` body: use `action.kind: build_container_image` with explicit `file`, `context`, and `tag` so Ota owns the build declaratively",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => format!(
@@ -10792,6 +10841,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_replaceable_container_network_ownership_advisories(
         contract,
     ));
+    advisories.extend(collect_replaceable_container_image_build_ownership_advisories(contract));
     advisories.extend(collect_replaceable_compose_volume_reset_ownership_advisories(contract));
     advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
         contract,
@@ -11739,6 +11789,87 @@ fn collect_replaceable_container_network_ownership_advisories(
     advisories
 }
 
+fn collect_replaceable_container_image_build_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.aggregate.is_some()
+            || task.action.as_ref().is_some_and(|action| {
+                matches!(
+                    action,
+                    crate::schema::TaskActionSpec::BuildContainerImage(_)
+                )
+            })
+        {
+            continue;
+        }
+
+        let task_shell_command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(command) = task_shell_command
+            && obvious_container_image_build_shell(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableContainerImageBuildOwnership(
+                ReplaceableContainerImageBuildOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+            continue;
+        }
+        if let Some(command) = task.command.as_ref()
+            && obvious_container_image_build_command(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableContainerImageBuildOwnership(
+                ReplaceableContainerImageBuildOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: render_task_command_preview(command),
+                },
+            ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let branch_shell_command = branch
+                    .run
+                    .as_deref()
+                    .or(branch.script.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let Some(command) = branch_shell_command
+                    && obvious_container_image_build_shell(command)
+                {
+                    advisories.push(ContractAdvisory::ReplaceableContainerImageBuildOwnership(
+                        ReplaceableContainerImageBuildOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: command.to_string(),
+                        },
+                    ));
+                    break;
+                }
+                let Some(command) = branch.command.as_ref() else {
+                    continue;
+                };
+                if obvious_container_image_build_command(command) {
+                    advisories.push(ContractAdvisory::ReplaceableContainerImageBuildOwnership(
+                        ReplaceableContainerImageBuildOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: render_task_command_preview(command),
+                        },
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    advisories
+}
+
 fn collect_replaceable_compose_volume_reset_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
@@ -12411,6 +12542,19 @@ fn obvious_systemd_service_command(command: &TaskCommandSpec) -> bool {
 fn obvious_container_network_shell(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     lower.contains("docker network") && (lower.contains(" inspect ") || lower.contains(" create "))
+}
+
+fn obvious_container_image_build_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("docker build") && !lower.contains("docker buildx")
+}
+
+fn obvious_container_image_build_command(command: &TaskCommandSpec) -> bool {
+    command.exe.trim().eq_ignore_ascii_case("docker")
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("build"))
 }
 
 fn obvious_container_network_command(command: &TaskCommandSpec) -> bool {
@@ -22174,6 +22318,62 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_container_network action should validate");
+    }
+
+    #[test]
+    fn validates_build_container_image_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    action:
+      kind: build_container_image
+      file: Dockerfile
+      context: .
+      tag: ota:test
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("build_container_image action should validate");
+    }
+
+    #[test]
+    fn rejects_build_container_image_action_with_unsafe_path_or_tag() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    action:
+      kind: build_container_image
+      file: ../Dockerfile
+      context: .
+      tag: ota test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("invalid image action must fail");
+        assert!(
+            errors
+                .errors
+                .iter()
+                .any(|error| error.message.contains("action.file"))
+        );
+        assert!(
+            errors
+                .errors
+                .iter()
+                .any(|error| error.message.contains("action.tag"))
+        );
     }
 
     #[test]
@@ -40193,6 +40393,62 @@ tasks:
             ContractAdvisory::ReplaceableContainerNetworkOwnership(value)
                 if value.task_name == "network:ensure"
         )));
+    }
+
+    #[test]
+    fn collects_replaceable_container_image_build_ownership_advisory_only_for_raw_builds() {
+        let raw_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    command:
+      exe: docker
+      args:
+        - build
+        - --file
+        - Dockerfile
+        - --tag
+        - ota:local
+        - .
+"#,
+        )
+        .unwrap();
+        let typed_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    action:
+      kind: build_container_image
+      file: Dockerfile
+      context: .
+      tag: ota:local
+"#,
+        )
+        .unwrap();
+
+        let raw_advisories = collect_contract_advisories(&raw_contract);
+        assert!(raw_advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableContainerImageBuildOwnership(value)
+                if value.task_name == "image:build"
+                    && value.command == "docker build --file Dockerfile --tag ota:local ."
+        )));
+        assert!(
+            !collect_contract_advisories(&typed_contract)
+                .iter()
+                .any(|advisory| matches!(
+                    advisory,
+                    ContractAdvisory::ReplaceableContainerImageBuildOwnership(_)
+                ))
+        );
     }
 
     #[test]

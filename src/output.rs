@@ -2121,6 +2121,8 @@ pub struct WorkspaceTaskActionSummary {
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -5274,6 +5276,8 @@ pub struct TaskActionSummary<'a> {
     pub from: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<&'a str>,
 }
 
 fn summarize_task_command<'a>(
@@ -5424,56 +5428,73 @@ fn summarize_task_action<'a>(
             kind: "copy_if_missing",
             from: Some(copy.from.as_str()),
             to: Some(copy.to.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureEnvFile(spec) => Some(TaskActionSummary {
             kind: "ensure_env_file",
             from: spec.template.as_deref(),
             to: Some(spec.path.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureFile(spec) => Some(TaskActionSummary {
             kind: "ensure_file",
             from: spec.template.as_deref(),
             to: Some(spec.path.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureDirectory(spec) => Some(TaskActionSummary {
             kind: "ensure_directory",
             from: None,
             to: Some(spec.path.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => Some(TaskActionSummary {
             kind: "ensure_virtualenv",
             from: Some(spec.provider.label()),
             to: Some(spec.path.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => Some(TaskActionSummary {
             kind: "ensure_git_checkout",
             from: Some(spec.source.git.as_str()),
             to: Some(spec.path.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureGitTemplate(spec) => Some(TaskActionSummary {
             kind: "ensure_git_template",
             from: Some(spec.source.git.as_str()),
             to: Some(spec.path.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureGitCheckouts(_) => Some(TaskActionSummary {
             kind: "ensure_git_checkouts",
             from: None,
             to: None,
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => Some(TaskActionSummary {
             kind: "ensure_container_network",
             from: Some(spec.provider.label()),
             to: Some(spec.name.as_str()),
+            context: None,
+        }),
+        crate::schema::TaskActionSpec::BuildContainerImage(spec) => Some(TaskActionSummary {
+            kind: "build_container_image",
+            from: Some(spec.file.as_str()),
+            to: Some(spec.tag.as_str()),
+            context: Some(spec.context.as_str()),
         }),
         crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => Some(TaskActionSummary {
             kind: "reset_compose_service_volume",
             from: Some(spec.service.as_str()),
             to: Some(spec.volume.as_str()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureBundle(_) => Some(TaskActionSummary {
             kind: "ensure_bundle",
             from: None,
             to: None,
+            context: None,
         }),
     }
 }
@@ -5542,32 +5563,38 @@ pub fn summarize_task_action_owned(
             kind: "copy_if_missing",
             from: Some(copy.from.clone()),
             to: Some(copy.to.clone()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureEnvFile(spec) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_env_file",
             from: spec.template.clone(),
             to: Some(spec.path.clone()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureFile(spec) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_file",
             from: spec.template.clone(),
             to: Some(spec.path.clone()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureDirectory(spec) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_directory",
             from: None,
             to: Some(spec.path.clone()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureVirtualenv(spec) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_virtualenv",
             from: Some(spec.provider.label().to_string()),
             to: Some(spec.path.clone()),
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
             Some(WorkspaceTaskActionSummary {
                 kind: "ensure_git_checkout",
                 from: Some(spec.source.git.clone()),
                 to: Some(spec.path.clone()),
+                context: None,
             })
         }
         crate::schema::TaskActionSpec::EnsureGitTemplate(spec) => {
@@ -5575,18 +5602,29 @@ pub fn summarize_task_action_owned(
                 kind: "ensure_git_template",
                 from: Some(spec.source.git.clone()),
                 to: Some(spec.path.clone()),
+                context: None,
             })
         }
         crate::schema::TaskActionSpec::EnsureGitCheckouts(_) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_git_checkouts",
             from: None,
             to: None,
+            context: None,
         }),
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             Some(WorkspaceTaskActionSummary {
                 kind: "ensure_container_network",
                 from: Some(spec.provider.label().to_string()),
                 to: Some(spec.name.clone()),
+                context: None,
+            })
+        }
+        crate::schema::TaskActionSpec::BuildContainerImage(spec) => {
+            Some(WorkspaceTaskActionSummary {
+                kind: "build_container_image",
+                from: Some(spec.file.clone()),
+                to: Some(spec.tag.clone()),
+                context: Some(spec.context.clone()),
             })
         }
         crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => {
@@ -5594,12 +5632,14 @@ pub fn summarize_task_action_owned(
                 kind: "reset_compose_service_volume",
                 from: Some(spec.service.clone()),
                 to: Some(spec.volume.clone()),
+                context: None,
             })
         }
         crate::schema::TaskActionSpec::EnsureBundle(_) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_bundle",
             from: None,
             to: None,
+            context: None,
         }),
     }
 }

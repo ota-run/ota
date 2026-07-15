@@ -5088,6 +5088,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => {
                 ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory)
             }
+            ContractAdvisory::ReplaceableContainerImageBuildOwnership(advisory) => {
+                ContractAdvisory::ReplaceableContainerImageBuildOwnership(advisory)
+            }
             ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => {
                 ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory)
             }
@@ -5216,6 +5219,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
         | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
         | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+        | ContractAdvisory::ReplaceableContainerImageBuildOwnership(_)
         | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
         | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
         | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)

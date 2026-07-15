@@ -160,6 +160,17 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "from", "to", "context"],
+          "properties": {
+            "kind": { "const": "build_container_image" },
+            "from": { "type": "string" },
+            "to": { "type": "string" },
+            "context": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "from", "to"],
           "properties": {
             "kind": { "const": "reset_compose_service_volume" },
@@ -233,6 +244,7 @@
             "dotnet"
           ]
         },
+        "filter": { "type": "string" },
         "mode": {
           "enum": [
             "install",
@@ -253,6 +265,12 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "declared_hydration_provenance": {
+          "$ref": "#/$defs/taskHydrationProvenance"
+        },
+        "resolved_hydration_provenance": {
+          "$ref": "#/$defs/taskHydrationProvenance"
+        },
         "frozen_lockfile": { "type": "boolean" },
         "inline_builds": { "type": "boolean" },
         "force": { "type": "boolean" },
@@ -260,7 +278,41 @@
         "targets": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "browsers": {
+          "type": "array",
+          "items": { "type": "string" }
         }
+      }
+    },
+    "taskHydrationProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_posture"],
+      "properties": {
+        "source_posture": {
+          "enum": ["ambient_default", "config_file", "explicit_sources"]
+        },
+        "config_file": { "type": "string" },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "offline": { "type": "boolean" },
+        "source_identities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url"],
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "resolution": { "enum": ["resolved", "unavailable"] },
+        "resolution_error": { "type": "string" }
       }
     },
     "taskAggregate": {
@@ -345,7 +397,7 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },

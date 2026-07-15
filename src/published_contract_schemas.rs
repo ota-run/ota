@@ -1284,6 +1284,18 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "file", "context", "tag"],
+          "properties": {
+            "kind": { "const": "build_container_image" },
+            "provider": { "enum": ["docker"] },
+            "file": { "type": "string" },
+            "context": { "type": "string" },
+            "tag": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "steps"],
           "properties": {
             "kind": { "const": "ensure_bundle" },

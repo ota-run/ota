@@ -600,6 +600,38 @@ tasks:
 }
 
 #[test]
+fn tasks_json_output_with_container_image_build_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-demo
+tasks:
+  image:build:
+    action:
+      kind: build_container_image
+      file: Dockerfile.integration
+      context: integration
+      tag: task-demo:integration
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    assert_eq!(json["tasks"][0]["name"], "image:build");
+    assert_eq!(json["tasks"][0]["kind"], "build_container_image");
+    assert_eq!(json["tasks"][0]["action"]["kind"], "build_container_image");
+    assert_eq!(json["tasks"][0]["action"]["from"], "Dockerfile.integration");
+    assert_eq!(json["tasks"][0]["action"]["to"], "task-demo:integration");
+    assert_eq!(json["tasks"][0]["action"]["context"], "integration");
+}
+
+#[test]
 fn tasks_json_output_reports_command_shape() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

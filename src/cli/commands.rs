@@ -1598,6 +1598,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ReplaceableContainerImageBuildOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("replaceable Dockerfile image materialization"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::ReplaceableComposeVolumeResetOwnership(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -18666,6 +18677,7 @@ fn preview_stage_family_for_task_kind(kind: &str) -> &'static str {
         | "ensure_git_checkout"
         | "ensure_git_checkouts"
         | "ensure_container_network"
+        | "build_container_image"
         | "reset_compose_service_volume"
         | "ensure_bundle"
         | "dependency_hydration"
@@ -44745,6 +44757,11 @@ fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSumm
         "ensure_container_network" => {
             format!("ensure_container_network {}", action.to.unwrap_or("?"))
         }
+        "build_container_image" => format!(
+            "build_container_image {} -> {}",
+            action.from.unwrap_or("?"),
+            action.to.unwrap_or("?")
+        ),
         "reset_compose_service_volume" => {
             format!(
                 "reset_compose_service_volume {} -> {}",
@@ -46170,6 +46187,10 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
             }
             (None, Some(name)) => format!("ensure container network `{name}`"),
             _ => String::from("ensure container network"),
+        },
+        "build_container_image" => match (action.from, action.to) {
+            (Some(file), Some(tag)) => format!("build container image `{tag}` from `{file}`"),
+            _ => String::from("build container image"),
         },
         "reset_compose_service_volume" => match (action.from, action.to) {
             (Some(service), Some(volume)) => {

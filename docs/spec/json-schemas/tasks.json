@@ -268,6 +268,17 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "from", "to", "context"],
+          "properties": {
+            "kind": { "const": "build_container_image" },
+            "from": { "type": "string" },
+            "to": { "type": "string" },
+            "context": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "from", "to"],
           "properties": {
             "kind": { "const": "reset_compose_service_volume" },
@@ -834,7 +845,7 @@
                 "type": "object",
                 "additionalProperties": { "$ref": "#/$defs/taskInput" }
               },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "command": { "$ref": "#/$defs/taskCommand" },
@@ -1001,7 +1012,7 @@
                       "type": "object",
                       "additionalProperties": { "$ref": "#/$defs/taskInput" }
                     },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_virtualenv", "ensure_git_checkout", "ensure_git_template", "ensure_git_checkouts", "ensure_container_network", "build_container_image", "reset_compose_service_volume", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
