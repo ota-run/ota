@@ -58732,11 +58732,10 @@ tasks:
             detail: None,
         };
 
+        let validated_control =
+            control(crate::output::ProofRuntimeNegativeControlStatus::Validated);
         let mut validated = vec![evidence()];
-        super::proof_runtime_apply_negative_control_projection(
-            &mut validated,
-            &control(crate::output::ProofRuntimeNegativeControlStatus::Validated),
-        );
+        super::proof_runtime_apply_negative_control_projection(&mut validated, &validated_control);
         assert_eq!(validated[0].level.as_deref(), Some("fault_tested"));
         assert_eq!(
             validated[0]
@@ -58748,6 +58747,19 @@ tasks:
                 ExecutionEvidenceClass::Derived
             ))
         );
+        let projected_control = validated[0]
+            .negative_control
+            .as_ref()
+            .expect("validated controls must project onto their matching dependency evidence");
+        assert_eq!(
+            validated[0].proof_obligation_id.as_deref(),
+            Some(validated_control.obligation_id.as_str())
+        );
+        assert_eq!(
+            projected_control.failure_attestation_digest.as_deref(),
+            validated_control.failure_attestation_digest.as_deref()
+        );
+        assert!(projected_control.same_obligation);
         let mut fault_tested_boundaries = Vec::new();
         super::proof_runtime_append_dependency_scope_boundaries(
             &mut fault_tested_boundaries,
@@ -58774,6 +58786,36 @@ tasks:
         assert_eq!(
             depth_boundary_json["proof_obligation_id"].as_str(),
             Some("postgres-marker")
+        );
+
+        // Every marker-bound seam keeps its own depth boundary, even when a neighboring seam has
+        // a validated negative control and is promoted to fault-tested evidence.
+        let mut redis_evidence = evidence();
+        redis_evidence.dependency_id = String::from("service:redis");
+        redis_evidence.proof_obligation_id = Some(String::from("redis-marker"));
+        redis_evidence.declared_by_tasks = vec![String::from("observe-redis-marker")];
+        let mut multi_seam_boundaries = Vec::new();
+        super::proof_runtime_append_dependency_scope_boundaries(
+            &mut multi_seam_boundaries,
+            &[validated[0].clone(), redis_evidence],
+            Some("app"),
+        );
+        let output_shaping_boundaries = multi_seam_boundaries
+            .iter()
+            .filter(|entry| entry.kind == "dependency_output_shaping_not_proved")
+            .map(|entry| {
+                (
+                    entry.dependency_id.as_deref(),
+                    entry.proof_obligation_id.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            output_shaping_boundaries,
+            vec![
+                (Some("service:postgres"), Some("postgres-marker")),
+                (Some("service:redis"), Some("redis-marker")),
+            ]
         );
 
         let mut invalid = vec![evidence()];
