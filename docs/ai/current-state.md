@@ -52,40 +52,21 @@ durable agent workflow belongs in the canonical Ota skill.
   ambient. Azure SDK for .NET proves the same config-backed source identity on native and
   container lanes across Ubuntu, macOS, and Windows. Replay now treats unavailable hydration
   resolution as narrowing evidence, never as a hermetic dependency-resolution anchor.
-- active implementation and proof slice: `V11.11` seam and negative-control evidence. Runtime
-  proof now keeps ordinary reachability and caller-side attempts distinct from marker-bound seam
-  exercise. A selected negative control names one observed seam obligation and typed expected
-  failure; only a runner-verified, transaction-bound failure attestation can validate the control
-  and promote that exact record to `fault_tested`. Canonical control output now carries a
-  contract-declared intervention identity and runner-derived failure mode: only
-  `expected_obligation_failed` with `expected_missing_effect` validates; generic non-zero exits
-  remain `invalid`. Exercised seams without a validated control carry
-  `dependency_causality_not_proved`; every marker-bound seam retains
-  `dependency_output_shaping_not_proved` keyed to the declared seam obligation, reserving its
-  absence for a future explicit output-proof carrier. Text and JSON
-  preserve the evidence level, origin, authority class, control status, failure classification,
-  and causal-depth boundary for operators.
-- active V11.11 carrier propagation: the published `proof-runtime.json` now describes the full
-  emitted seam-evidence and negative-control shape, including obligation-scoped causality
-  boundaries; this keeps the machine contract aligned with the runtime proof output rather than
-  relying on the prose reference alone.
-- active lifecycle hardening: native commands and persistent-service wrappers now forward
-  interruption only into their owned child tree. This removes inherited-process-group signalling
-  from runtime-proof teardown, which previously could cancel the surrounding GitHub Actions shell
-  on Athena's native proof lane. The focused and full library regressions pass locally; the next
-  gate is a fresh Athena matrix from the pushed implementation branch.
-- active V11.11 pressure gate: Athena API carries the first Rails/PostgreSQL fault-attested
-  control under the marker-bound `app-proof` workflow. The prior `app`-only non-zero control proof
-  is historical evidence only. Its green transaction-bound matrix proved the warning-only runtime
-  admission and same-orchestrator sibling callback fixes across the selected Ubuntu proof lane.
-  Bedrock and Lead Quorum also remain green on their declared native/container compatibility
-  lanes. Local Athena macOS proof remains host-blocked by Brew `libpq` fulfillment, so it must
-  not be mistaken for a negative-control result.
-- active V11.9 phase-reconciliation hardening: a real Athena agent-preview pass exposed that a
-  preflight refusal could be named in `not_run_reason` while `post_execution.refusal_occurred`
-  remained false. The canonical preview projection now records the same attested refusal record,
-  reason, and derived basis in both phases while keeping post-execution `state: not_run` because
-  no execution was attempted.
+- completed V11.9 governance reconciliation: Athena exposed a preview that named
+  `not_run_reason: preflight_refusal` while reporting `refusal_occurred: false`. The canonical
+  preview now carries the same refusal record, reason, and basis in both phases while preserving
+  post-execution `state: not_run` because no execution began.
+- completed V11.11 proof-boundary and seam-control carrier: `ota proof runtime --json` publishes
+  qualified proof verdicts, scoped `not_proved` boundaries, provenance-aware seam evidence, and
+  canonical negative-control records. Athena's Rails/PostgreSQL lane proves transaction-bound
+  marker recovery and same-obligation fault control across its green matrix. Every marker-bound
+  seam retains `dependency_output_shaping_not_proved`; invariant coverage proves the pairing and
+  derived control projection. Generic `ota up` and ordinary receipts intentionally do not inherit
+  this evidence because they did not execute the proof lane.
+- completed V11.13 generated-artifact lineage: Dagger proves the generator path and EventCatalog
+  proves an independent sibling-consumer closure. Contract-owned producer, output-path, and input
+  lineage is validated, surfaced in task discovery, checked before consumer execution, and carried
+  into receipts as pointer-only evidence without claiming freshness.
 
 - V11.10 Bedrock replay proves native baseline replay as `replay_verified` and `partly_ambient`.
   A container replay against that native archive correctly returns `replay_unavailable` with
@@ -159,15 +140,15 @@ durable agent workflow belongs in the canonical Ota skill.
   live recording lane remains intentionally outside that claim because it reaches Claude, rewrites
   the fixture, and depends on an unpinned generic-pip requirements path that Ota does not yet own
   through typed dependency hydration.
-- The current V11.10 replay carrier now distinguishes whether the selected baseline is still the
+- The completed V11.10 replay carrier distinguishes whether the selected baseline is still the
   last known good witness. `ota up --replay-baseline ... --json` adds
   `replay.baseline.last_known_good` with `replay_verified`, `stale_witness`, or `unavailable`
   derived from the replay result itself, so promoted archives no longer all read as equally
   current after drift or unavailable-baseline failures.
-- The next V11.10 tightening names active execution governance as a replay-grade input too.
+- V11.10 also names active execution governance as a replay-grade input.
   Receipts now capture a loaded org policy pack as `policy_ruleset_identity`, and replay treats a
   changed ruleset as named input drift rather than generic hidden-input suspicion.
-- The current V11.10 tightening also names declared env-source files when the selected lane
+- V11.10 also names declared env-source files when the selected lane
   actually resolved from them. Receipts capture `env_source_identity` without recording values, so
   replay can distinguish declared env-source drift from still-ambient process or policy env.
 
@@ -183,29 +164,29 @@ durable agent workflow belongs in the canonical Ota skill.
 - `V11.11` contract-derived proof boundaries is implemented in Ota commit `e3bbdf02`.
   `ota proof runtime --json` now emits terminal `proof_verdict`, and Lead Quorum pressure proved
   `passed_with_unproven_boundaries` on the app lane across Ubuntu and macOS.
-- The next `V11.11` tightening keeps that qualified proof boundary visible in human output too:
+- V11.11 keeps that qualified proof boundary visible in human output too:
   `ota proof runtime` now renders concrete `Proof Boundaries` entries whenever `not_proved[]`
   exists, so external-network and broader-scope exclusions travel with the green proof instead of
   living only in JSON.
-- The next `V11.11` refinement makes those proof boundaries machine-actionable too: each
+- V11.11 makes those proof boundaries machine-actionable too: each
   `not_proved` entry now carries an explicit `reason`, and the human proof render includes the
   same reason label for seam, adjacent-lane, and broader-scope exclusions.
-- The current follow-on `V11.11` cut starts the first positive seam-evidence carrier on
+- The completed V11.11 seam-evidence carrier on
   `ota proof runtime --json`: `dependency_evidence[]` now publishes runner-derived
   `level: reachable` only for declared service seams that are also on the selected
   workflow-owned required-service path and have structured readiness Ota actually owns. This
   keeps selected service reachability distinct from still-unproved exercised interaction.
-- The next `V11.11` refinement keeps caller-side seam attempts separate from proved reachability:
+- V11.11 keeps caller-side seam attempts separate from proved reachability:
   proof-derived DNS, auth, and loopback service failure signals can now publish additive
   `interaction_attempted: true` with `observation.origin: caller_side`, while the paired
   `dependency_exercise_not_proved` boundary tightens to `caller_side_only_evidence` instead of
   generic missing evidence.
 - The same commit fixes detached native proof lifecycle ownership: nested `ota up --detach` leaves
   the service running for the outer proof to observe and clean up, preventing recursive teardown.
-- V11.10 now emits an initial runner-derived receipt-comparison artifact-trust record for matching
+- V11.10 emits a runner-derived receipt-comparison artifact-trust record for matching
   semantic contract snapshots. It is `acquitting` for `contract_truth` only; lockfile/runtime
   artifact capture remains the next implementation cut.
-- The in-progress V11.10 cut captures declared lockfile-strict Node identity in
+- V11.10 captures declared lockfile-strict Node identity in
   `receipt.evaluated_inputs[]` at receipt authoring time: `pnpm-lock.yaml` for frozen pnpm and
   `package-lock.json` or authoritative `npm-shrinkwrap.json` for `npm ci`. It carries this through
   archived baseline and current receipt diff and labels only matching
@@ -214,10 +195,10 @@ durable agent workflow belongs in the canonical Ota skill.
 - Lead Quorum is not yet the first hermetic replay target: its typed `uv pip_requirements` lane
   and Python range are real current repo truth, but not the pinned dependency/runtime pair V11.10
   needs. Treat that as a repo contract/replay-readiness gap, not a reason to weaken Ota evidence.
-- The in-progress next cut captures `runtime:node` through contract-local `node --version` on the
+- V11.10 captures `runtime:node` through contract-local `node --version` on the
   same typed lockfile-strict Node hydration path. It is deliberately `narrowing` for
   `selected_runtime_version`, not an executable/image-digest acquittal.
-- The current V11.10 cut adds the first immutable runtime-artifact carrier. Receipts
+- V11.10 adds the first immutable runtime-artifact carrier. Receipts
   recover literal digest-pinned Compose `image` values only for explicitly selected services in
   explicitly declared files and their declared Compose `depends_on` closure as
   `selected_runtime_artifact`; receipt diff treats a matching digest as `acquitting` only for that
@@ -245,7 +226,7 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.10/plan.md` through `docs/planning/v11.12/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
+`docs/planning/v11.9/plan.md` through `docs/planning/v11.13/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
 `/Users/bobai/Workspace/Ota.run/skills`, and the active pressure repo before editing.
 
 The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
@@ -254,12 +235,10 @@ Codex and agent skill stores. Its installation smoke test could not run locally 
 machine does not currently provide `node` or `npx`; source integrity was verified with diff and
 shell-syntax checks.
 
-V11.12 is now active. Its first `.NET restore` carrier records declared and resolved source posture
-as a typed evaluated input at `ota up` receipt-authoring time. Native and container Azure SDK for
-.NET lanes prove the local shape; push the Ota branch and rerun Azure's matrix before closing the
-slice. Do not infer generated-file freshness from timestamps or later filesystem reads. Follow the
-pressure-testing protocol exactly and record whether the repo exposes a contract issue,
-implementation issue, or Ota platform gap.
+V11.9 through V11.13 first OSS cuts are complete and pressure-proven. Do not create a parallel
+proof carrier by copying `ota proof runtime` evidence into generic `ota up` or readiness receipts:
+those artifacts did not execute the proof lane. Start the next product slice only from a real repo
+gap or an explicitly approved follow-on design, and follow the pressure-testing protocol exactly.
 
 ## Working Rules
 

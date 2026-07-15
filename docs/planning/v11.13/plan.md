@@ -22,7 +22,8 @@
 
 # V11.13: Generated Artifact Lineage
 
-Status: active implementation slice.
+Status: implementation and two independent pressure targets complete: Dagger generation and the
+EventCatalog sibling-consumer path.
 
 ## Problem
 

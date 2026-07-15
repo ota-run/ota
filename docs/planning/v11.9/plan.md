@@ -24,7 +24,8 @@
 
 # V11.9 Plan
 
-Status: active next slice.
+Status: implementation and Athena governance pressure target complete. Future provider-specific
+attestation remains outside this OSS trust slice.
 
 Release target:
 

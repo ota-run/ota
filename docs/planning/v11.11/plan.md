@@ -24,7 +24,9 @@
 
 # V11.11 Plan
 
-Status: active refinement after the completed foundation.
+Status: first proof carrier and Athena seam-control pressure target complete. A later dedicated
+proof-receipt archive must remain execution-authored; ordinary `ota up` receipts do not inherit
+runtime proof evidence they did not execute.
 
 Release target:
 
