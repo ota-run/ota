@@ -45,13 +45,15 @@ durable agent workflow belongs in the canonical Ota skill.
   dependency-resolution, or presentation anchor rather than over-reading same-contract reruns as
   hermetic; hidden-input replay failure now emits ordered `hidden_input_candidates` so operators
   can promote the next likely ambient class instead of reading one generic suspicion bucket
-- completed V11.12 first hydration-provenance carrier: successful `ota up --json` now records selected
-  structured hydration lanes through typed `receipt.evaluated_inputs[]` hydration records. The
-  record captures contract-declared source posture and runner-resolved feed identity before
-  execution, preserving explicit `resolution: unavailable` when NuGet source choice remains
-  ambient. Azure SDK for .NET proves the same config-backed source identity on native and
-  container lanes across Ubuntu, macOS, and Windows. Replay now treats unavailable hydration
-  resolution as narrowing evidence, never as a hermetic dependency-resolution anchor.
+- completed V11.12 typed hydration provenance across two ecosystems: successful `ota up --json`
+  records selected structured hydration lanes through typed `receipt.evaluated_inputs[]` hydration
+  records. The record captures contract-declared source posture and runner-resolved feed identity
+  before execution, preserving explicit `resolution: unavailable` when source choice remains
+  ambient. Azure SDK for .NET proves config-backed NuGet identity; Lead Quorum proves explicit uv
+  PyPI index posture across native and container lanes on Ubuntu, macOS, and Windows. Ota projects
+  uv index truth through flags supported by both older and current uv releases. Replay treats
+  unavailable hydration resolution as narrowing evidence, never as a hermetic dependency-resolution
+  anchor.
 - completed V11.9 governance reconciliation: Athena exposed a preview that named
   `not_run_reason: preflight_refusal` while reporting `refusal_occurred: false`. The canonical
   preview now carries the same refusal record, reason, and basis in both phases while preserving
@@ -121,7 +123,7 @@ durable agent workflow belongs in the canonical Ota skill.
   historical observed behavior cannot be over-read as a current-run decision input. Bedrock's
   recorded SQL trace proves the narrow admission: three subjects diverge while stable repeated
   queries retain one identity across runs.
-- The in-progress `V11.13` core cut makes generated source a named repo-scoped contract artifact:
+- The completed `V11.13` core cut makes generated source a named repo-scoped contract artifact:
   `artifacts.<name>` declares `kind: generated_source`, one producer task, output paths, and
   optional source inputs; consumers declare `requires_artifacts` and directly depend on the
   producer. Validation rejects dangling, overlapping, and dependency-disconnected lineage. The

@@ -24,9 +24,9 @@
 
 # V11.12 Plan
 
-Status: .NET restore feed provenance and its first pressure target are complete. The uv
-index/offline implementation is pending Lead Quorum native/container pressure before this second
-ecosystem cut can be closed. Future ecosystem widening remains a follow-on decision, not an
+Status: complete. .NET restore feed provenance and its first pressure target are complete. The uv
+index/offline implementation is now pressure-proven through Lead Quorum's native and container
+lanes across its supported matrix. Future ecosystem widening remains a follow-on decision, not an
 implicit generalization from either ecosystem.
 
 Release target:
@@ -293,3 +293,12 @@ The first real bar should be a repo whose deterministic typed hydration lane is 
 but where source/feed posture still changes the trust claim in practice.
 
 The strongest nearby target is a .NET repo with first-class `restore` pressure.
+
+## Completed pressure proof
+
+- Azure SDK for .NET proves the first `.NET restore` source-provenance cut across native and
+  container execution.
+- Lead Quorum proves the second `uv` cut with an explicit PyPI default index through native and
+  container verification across Ubuntu, macOS, and Windows. Ota projects that contract truth with
+  uv index flags supported by both older and current uv releases, rather than assuming a runner's
+  latest uv binary.
