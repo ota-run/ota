@@ -1242,7 +1242,9 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
-- `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
+- `--mode`, `--lifecycle`, and `--ephemeral` can select a contract-advertised execution mode for
+  one invocation; ota refuses an unadvertised backend instead of forcing a host-owned task into a
+  container or remote runtime
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure

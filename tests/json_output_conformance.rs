@@ -600,6 +600,36 @@ tasks:
 }
 
 #[test]
+fn tasks_json_output_with_container_network_action_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-demo
+tasks:
+  integration:network:
+    action:
+      kind: ensure_container_network
+      name: task-demo-integration
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    assert_eq!(
+        json["tasks"][0]["action"]["kind"],
+        "ensure_container_network"
+    );
+    assert_eq!(json["tasks"][0]["action"]["from"], "docker");
+    assert_eq!(json["tasks"][0]["action"]["to"], "task-demo-integration");
+}
+
+#[test]
 fn tasks_json_output_with_container_image_build_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
@@ -1006,6 +1036,54 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("workspace-tasks.json", &json);
+}
+
+#[test]
+fn workspace_tasks_json_output_with_container_network_action_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  integration:network:
+    action:
+      kind: ensure_container_network
+      name: web-integration
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "workspace",
+            "tasks",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("workspace-tasks.json", &json);
+    assert_eq!(
+        json["repos"][0]["tasks"][0]["action"]["kind"],
+        "ensure_container_network"
+    );
+    assert_eq!(json["repos"][0]["tasks"][0]["action"]["from"], "docker");
+    assert_eq!(
+        json["repos"][0]["tasks"][0]["action"]["to"],
+        "web-integration"
+    );
 }
 
 #[test]
@@ -1578,6 +1656,60 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("run-preview.json", &json);
+}
+
+#[test]
+fn run_dry_run_json_keeps_governance_on_the_admitted_lane_when_mode_is_rejected() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: rejected-mode-preview
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  integration:down:
+    action:
+      kind: ensure_container_network
+      name: integration
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "integration:down",
+            "--container",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["overrides"]["backend"], "container");
+    assert_eq!(json["governance"]["default_mode"], "native");
+    assert_eq!(
+        json["governance"]["runnable_modes"],
+        serde_json::json!([
+            {"mode": "native", "default": true, "command": "ota run integration:down"}
+        ])
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["why"],
+        "task `integration:down` was requested with `--mode container`, but it only supports modes: native"
+    );
 }
 
 #[test]

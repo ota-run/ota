@@ -150,11 +150,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "name"],
+          "required": ["kind", "from", "to"],
           "properties": {
             "kind": { "const": "ensure_container_network" },
-            "provider": { "enum": ["docker"] },
-            "name": { "type": "string" }
+            "from": { "enum": ["docker"] },
+            "to": { "type": "string" }
           }
         },
         {

@@ -13743,20 +13743,7 @@ fn task_supports_backend(
     task: &crate::schema::TaskSpec,
     backend: crate::schema::Backend,
 ) -> bool {
-    if task.workflow_backend(contract.execution.as_ref()) == backend {
-        return true;
-    }
-
-    if task.mode_execution_branch(backend).is_some() {
-        return true;
-    }
-
-    backend == crate::schema::Backend::Native
-        && task.workflow_backend(contract.execution.as_ref()) == crate::schema::Backend::Container
-        && task
-            .mode_execution_branch(crate::schema::Backend::Native)
-            .is_none()
-        && task.resolved_execution(current_os()).is_some()
+    task.supports_execution_backend(contract.execution.as_ref(), backend, current_os())
 }
 
 fn task_matches_tasks_filters(
@@ -17918,15 +17905,28 @@ fn render_run_preview_target(
             return match format {
                 OutputFormat::Text => CommandOutput::failure(text),
                 OutputFormat::Json => {
+                    let governance_overrides =
+                        if matches!(&error, RunError::UnsupportedTaskModeOverride { .. }) {
+                            ExecutionOverrides::default()
+                        } else {
+                            overrides
+                        };
+                    let governance_task = TaskSummary::from_spec_with_overrides(
+                        task_name.as_str(),
+                        task,
+                        current_os(),
+                        &target.contract,
+                        governance_overrides,
+                    );
                     let preview_agent_summary = listed_agent_summary(
                         &target.contract,
                         false,
-                        std::slice::from_ref(&requested_task),
+                        std::slice::from_ref(&governance_task),
                     );
                     let governance = run_preview_governance_summary(
                         &target.contract,
-                        &requested_task,
-                        overrides,
+                        &governance_task,
+                        governance_overrides,
                         preview_agent_summary.as_ref(),
                         &summary,
                         agent,

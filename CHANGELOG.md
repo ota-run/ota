@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- fixed execution-mode admission to use the same contract-owned support rule as task discovery;
+  `ota run <task> --container` or `--remote` now refuses an unadvertised mode instead of forcing
+  unbranched host-owned actions, including Docker/Compose control tasks, into that runtime; also
+  corrected task and workspace-task JSON schemas to match the established
+  `ensure_container_network` `from: docker` / `to: <network>` summary
+
 - fixed `ota run <aggregate> --dry-run --json` governance truth to derive network, mutation,
   external-state, and compiled sandbox posture from the selected aggregate closure instead of the
   empty aggregate wrapper task; preview consumers now see the same governed execution surface Ota

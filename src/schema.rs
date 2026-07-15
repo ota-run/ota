@@ -5209,6 +5209,20 @@ impl TaskSpec {
         Backend::Native
     }
 
+    pub fn supports_execution_backend(
+        &self,
+        execution: Option<&Execution>,
+        backend: Backend,
+        os: &str,
+    ) -> bool {
+        self.workflow_backend(execution) == backend
+            || self.mode_execution_branch(backend).is_some()
+            || (backend == Backend::Native
+                && self.workflow_backend(execution) == Backend::Container
+                && self.mode_execution_branch(Backend::Native).is_none()
+                && self.resolved_execution(os).is_some())
+    }
+
     pub fn mode_execution_branch(&self, backend: Backend) -> Option<&TaskModeBranchSpec> {
         self.execution
             .as_ref()

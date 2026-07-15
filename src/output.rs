@@ -4563,11 +4563,11 @@ impl<'a> TaskSummary<'a> {
                         .collect::<Vec<_>>();
                     let supported = !concrete_members.is_empty()
                         && concrete_members.iter().all(|member| {
-                            member
-                                .dependency_backend_override_for_parent(Some(backend), backend)
-                                .is_some()
-                                && contract
-                                    .task_active_for_backend_on_os(member, backend, current_os)
+                            member.supports_execution_backend(
+                                contract.execution.as_ref(),
+                                backend,
+                                current_os,
+                            ) && contract.task_active_for_backend_on_os(member, backend, current_os)
                         });
                     supported.then_some(mode)
                 })

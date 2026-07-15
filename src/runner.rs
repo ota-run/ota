@@ -21151,20 +21151,18 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
 
     if let Some(override_backend) = overrides.backend
         && let Some(task) = contract.tasks.get(task_name)
-        && task
-            .execution
-            .as_ref()
-            .is_some_and(|execution| execution.modes.any())
-        && task.workflow_backend(contract.execution.as_ref()) != override_backend
-        && task.mode_execution_branch(override_backend).is_none()
+        && !task.supports_execution_backend(
+            contract.execution.as_ref(),
+            override_backend,
+            current_os(),
+        )
     {
-        let supported_modes = task
-            .execution
-            .as_ref()
-            .map(|execution| execution.modes.iter())
+        let supported_modes = [Backend::Native, Backend::Container, Backend::Remote]
             .into_iter()
-            .flatten()
-            .map(|(backend, _)| match backend {
+            .filter(|backend| {
+                task.supports_execution_backend(contract.execution.as_ref(), *backend, current_os())
+            })
+            .map(|backend| match backend {
                 Backend::Native => "native",
                 Backend::Container => "container",
                 Backend::Remote => "remote",
@@ -52208,6 +52206,56 @@ tasks:
                 requested_mode,
                 supported_modes
             } if task == "start"
+                && requested_mode == "container"
+                && supported_modes == "native"
+        ));
+    }
+
+    #[test]
+    fn run_task_rejects_unbranched_host_task_for_unadvertised_container_mode() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  integration:down:
+    action:
+      kind: ensure_container_network
+      name: integration
+"#,
+        );
+
+        let error = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "integration:down",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::UnsupportedTaskModeOverride {
+                task,
+                requested_mode,
+                supported_modes
+            } if task == "integration:down"
                 && requested_mode == "container"
                 && supported_modes == "native"
         ));
