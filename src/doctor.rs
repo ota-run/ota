@@ -14681,8 +14681,7 @@ tasks:
     }
 
     #[test]
-    fn doctor_skips_agent_safe_dependency_hydration_advisory_for_first_class_sequence_hydration()
-    {
+    fn doctor_skips_agent_safe_dependency_hydration_advisory_for_first_class_sequence_hydration() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
