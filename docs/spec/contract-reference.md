@@ -2158,8 +2158,9 @@ Task-effect rules:
     - `prepare.source.kind: uv`
     - `prepare.source.cwd`: required repo-relative working directory for the uv hydration invocation
     - `prepare.source.mode`: optional uv hydration mode; ota currently ships `sync` and `pip_requirements`
-    - `prepare.source.default_index`: optional authoritative default Python package index projected as `uv --default-index <url>`
-    - `prepare.source.indexes`: optional ordered additional Python package indexes projected as repeated `uv --index <url>`
+    - `prepare.source.default_index`: optional authoritative default Python package index projected as `uv --index-url <url>`
+    - `prepare.source.indexes`: optional ordered additional Python package indexes projected as repeated `uv --extra-index-url <url>`
+      for compatibility across supported uv releases
     - `prepare.source.offline`: optional cache-only hydration posture projected as `uv --offline`; this prevents network access but does not make an undeclared local cache source replayable
     - `prepare.source.requirements_file`: required repo-relative requirements file when `prepare.source.mode: pip_requirements`; omit it for `mode: sync`
     - `prepare.source.kind: poetry`

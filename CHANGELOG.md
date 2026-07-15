@@ -27,7 +27,8 @@
 ## Unreleased
 
 - widened typed `uv` dependency hydration with contract-owned source posture. `default_index`,
-  ordered `indexes[]`, and `offline` now project into the executed uv command and flow through
+  ordered `indexes[]`, and `offline` now project into the executed uv command through
+  cross-version compatible uv index flags and flow through
   task previews plus receipt `hydration_provenance`; when neither index surface is declared, Ota
   records source resolution as unavailable instead of treating ambient uv/pip configuration as
   replayable repo truth.

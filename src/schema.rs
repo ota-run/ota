@@ -7696,11 +7696,12 @@ impl TaskUvHydrationSourceSpec {
             ],
         };
         if let Some(default_index) = self.default_index.as_deref() {
-            args.push(String::from("--default-index"));
+            // These names are accepted by both older and current uv releases.
+            args.push(String::from("--index-url"));
             args.push(default_index.to_string());
         }
         for index in &self.indexes {
-            args.push(String::from("--index"));
+            args.push(String::from("--extra-index-url"));
             args.push(index.clone());
         }
         if self.offline {
@@ -10098,7 +10099,7 @@ tasks:
         assert_eq!(uv.source_posture(), "explicit_indexes");
         assert_eq!(
             uv.command_preview(),
-            "uv pip install -r requirements.txt --default-index https://pypi.example.test/simple --index https://packages.example.test/simple --offline"
+            "uv pip install -r requirements.txt --index-url https://pypi.example.test/simple --extra-index-url https://packages.example.test/simple --offline"
         );
     }
 
