@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.24
+
 - aligned the published contract schema with the shipped V11.11 workflow proof surface, including
   seam observations, negative-control obligations, interventions, and expected failure classes;
   canonical and public proof examples now validate against the same contract accepted by Ota
