@@ -41776,6 +41776,22 @@ tasks:
         let _guard = env_mutex_lock();
         let _interrupt_guard = super::isolate_run_interrupt_for_test();
         let repo = tempdir().expect("repo tempdir");
+        let setup_script_path = repo.path().join("setup.sh");
+        fs::write(
+            &setup_script_path,
+            "#!/bin/sh\nset -eu\ntouch started\nsleep 1\nexit 1\n",
+        )
+        .expect("write setup script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&setup_script_path)
+                .expect("setup script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&setup_script_path, permissions)
+                .expect("set setup script permissions");
+        }
         let contract_path = repo.path().join("ota.yaml");
         fs::write(
             &contract_path,
@@ -41787,8 +41803,7 @@ tasks:
   setup:
     launch:
       kind: command
-      exe: sh
-      args: [-c, 'touch started; sleep 1; exit 1']
+      exe: ./setup.sh
   dev:
     depends_on: [setup]
     run: echo should-not-run
