@@ -2081,6 +2081,7 @@ Consumers must not replace this captured input with a later config-file read whe
 execution receipt. During replay, an unavailable hydration resolution remains `narrowing` evidence
 and cannot make a lane hermetic; only a matching resolved source identity can acquit the named
 dependency-resolution class.
+
 - unavailable local planes remain explicit with `availability: "unavailable"` and
   `reason: "not_supported_by_task"`; this describes contract support, not current machine
   readiness, which remains the responsibility of `ota doctor` and `ota run --dry-run`

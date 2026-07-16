@@ -3964,6 +3964,7 @@ the observed service. The marker value and transient attestation are never rende
 the receipt retains only transaction and attestation digests. Ota carries marker bindings internally
 and injects the raw marker only into `producer_task`; contract-owned environment defaults cannot
 replace it at execution time.
+
 - if `setup.task` already depends on the same action task, direct task execution still follows the task graph while workflow `ota up` avoids running the same prepare action twice
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
