@@ -41795,6 +41795,12 @@ tasks:
 "#,
         )
         .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("create policy dir");
+        fs::write(
+            repo.path().join(".ota").join("org-policy.yaml"),
+            "policies:\n  strict_versions: false\n",
+        )
+        .expect("write policy pack");
         let contract = load_contract(&contract_path).expect("load contract");
 
         let started_marker = repo.path().join("started");
