@@ -2083,6 +2083,9 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
     assert!(workflow.get("adapter_inputs").is_some());
     assert!(workflow.get("instances").is_some());
     assert!(workflow.get("attach").is_some());
+    assert!(workflow.get("proof").is_some());
+    assert!(schema["$defs"].get("workflowSeamObservation").is_some());
+    assert!(schema["$defs"].get("workflowNegativeControl").is_some());
     assert!(workflow_instance_task_overlay.get("runtime").is_some());
     assert!(workflow_instance_runtime_overlay.get("listeners").is_some());
     assert!(workflow_instance_runtime_overlay.get("readiness").is_some());

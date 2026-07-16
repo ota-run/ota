@@ -623,13 +623,12 @@ fn compact_display_path(path: &Path) -> String {
 fn should_surface_external_source_governance_drift(change: &DetectComparisonChange) -> bool {
     change.status == "update"
         && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MANUAL)
-        && change
-            .existing
-            .as_deref()
-            .zip(Some(change.detected.as_str()))
-            .is_none_or(|(existing, detected)| {
-                ci_verification_command_families_compatible(existing, detected)
-            })
+        && change.source.as_deref().is_none_or(|source| {
+            !source.starts_with("package.json#scripts.")
+                || change.existing.as_deref().is_none_or(|existing| {
+                    ci_verification_command_families_compatible(existing, &change.detected)
+                })
+        })
         && change.source.as_deref().is_some_and(|source| {
             matches_governed_external_source(
                 change.source_class.as_deref(),
@@ -1289,15 +1288,10 @@ fn collect_ci_verification_aggregate_changes(
     if lane_names.is_empty() {
         return Vec::new();
     }
-    let task_command_truth_by_field = ci_verification_task_command_truth_by_field(existing);
-    let comparable_signals = recover_ci_verification_task_signals(existing, signals)
-        .into_iter()
-        .filter(|signal| {
-            is_comparable_ci_verification_signal(existing, signal, &task_command_truth_by_field)
-        })
-        .collect::<Vec<_>>();
-    let workflow_candidates =
-        collect_ci_verification_workflow_task_sequences(existing, &comparable_signals);
+    // Keep the full workflow sequence here. A declared script verifier can own several adjacent
+    // commands that are not independently comparable to a task until they are recovered as one
+    // sequence; filtering individual signals first destroys that evidence.
+    let workflow_candidates = collect_ci_verification_workflow_task_sequences(existing, signals);
     if workflow_candidates.is_empty() {
         return Vec::new();
     }
@@ -1531,6 +1525,7 @@ fn recover_ci_verification_aggregate_task_sequence_from_signals(
 ) -> Vec<String> {
     let mut detected_tasks = Vec::new();
     let mut seen = BTreeMap::<String, ()>::new();
+    let task_command_truth_by_field = ci_verification_task_command_truth_by_field(existing);
 
     let script_matchers = existing
         .tasks
@@ -1555,7 +1550,9 @@ fn recover_ci_verification_aggregate_task_sequence_from_signals(
     while index < recovered_signals.len() {
         let signal = &recovered_signals[index];
         if !signal.exact_command {
-            if let Some(task_name) = verification_task_name_from_field(&signal.field) {
+            if is_comparable_ci_verification_signal(existing, signal, &task_command_truth_by_field)
+                && let Some(task_name) = verification_task_name_from_field(&signal.field)
+            {
                 if seen.insert(task_name.to_string(), ()).is_none() {
                     detected_tasks.push(task_name.to_string());
                 }
@@ -1574,7 +1571,9 @@ fn recover_ci_verification_aggregate_task_sequence_from_signals(
             continue;
         }
 
-        if let Some(task_name) = verification_task_name_from_field(&signal.field) {
+        if is_comparable_ci_verification_signal(existing, signal, &task_command_truth_by_field)
+            && let Some(task_name) = verification_task_name_from_field(&signal.field)
+        {
             if seen.insert(task_name.to_string(), ()).is_none() {
                 detected_tasks.push(task_name.to_string());
             }
@@ -1952,18 +1951,25 @@ fn is_comparable_ci_verification_signal(
         if signal.field.is_empty() {
             return false;
         }
-        if let Some(existing_command) = task_command_truth_by_field.get(&signal.field) {
-            return ci_verification_command_families_compatible(existing_command, &signal.command);
+        // A qualified matrix task has already been resolved onto a declared task identity. Its
+        // compact matrix token (for example `build`) is not expected to resemble the full command.
+        if signal.qualifier.is_some() && task_command_truth_by_field.contains_key(&signal.field) {
+            return true;
         }
         if verification_task_name_from_field(&signal.field)
             .is_some_and(|task_name| signal.command.trim() == task_name)
         {
             return true;
         }
+        if let Some(existing_command) = task_command_truth_by_field.get(&signal.field) {
+            return ci_verification_command_families_compatible(existing_command, &signal.command);
+        }
     }
 
     if let Some(existing_command) = task_command_truth_by_field.get(&signal.field) {
-        return ci_verification_command_families_compatible(existing_command, &signal.command);
+        return ci_verification_command_families_compatible(existing_command, &signal.command)
+            || (signal.exact_command
+                && same_node_package_manager_command(existing_command, &signal.command));
     }
 
     let Some(command_key) = canonicalize_ci_verification_command(&signal.command) else {
@@ -1992,18 +1998,28 @@ fn is_comparable_ci_verification_signal(
     })
 }
 
+fn same_node_package_manager_command(existing: &str, detected: &str) -> bool {
+    fn manager(command: &str) -> Option<&str> {
+        let command = command.trim_start();
+        let executable = command.split_whitespace().next()?;
+        matches!(executable, "npm" | "pnpm" | "yarn" | "bun").then_some(executable)
+    }
+
+    manager(existing)
+        .zip(manager(detected))
+        .is_some_and(|(left, right)| left == right)
+}
+
 fn compatible_recovered_ci_signal_field(
     field: &str,
-    detected_command: &str,
+    _detected_command: &str,
     task_command_truth_by_field: &BTreeMap<String, String>,
 ) -> String {
-    task_command_truth_by_field
-        .get(field)
-        .filter(|existing_command| {
-            ci_verification_command_families_compatible(existing_command, detected_command)
-        })
-        .map(|_| field.to_string())
-        .unwrap_or_default()
+    if task_command_truth_by_field.contains_key(field) {
+        field.to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn match_fuzzy_qualified_ci_verifier_task_field(

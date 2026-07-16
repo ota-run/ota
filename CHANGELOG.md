@@ -26,6 +26,39 @@
 
 ## Unreleased
 
+- aligned the published contract schema with the shipped V11.11 workflow proof surface, including
+  seam observations, negative-control obligations, interventions, and expected failure classes;
+  canonical and public proof examples now validate against the same contract accepted by Ota
+
+- fixed source-run maintainer tasks to select the `ota` binary explicitly, so contract validation,
+  task discovery, doctor follow-up, and dependency-update release gates remain runnable after the
+  repository added schema and documentation synchronization binaries
+
+- fixed the release gate after the 1.6.24 execution and governance widenings: backend-provider
+  commands retain request stdin through the signal-forwarding wrapper, container overrides are
+  tested only on explicitly advertised task modes, and interrupt simulations restore process-global
+  state deterministically
+
+- fixed doctor governance recovery so structured CI verifier steps and multi-file command sequences
+  remain available for aggregate comparison, while manual runtime and task drift from governed
+  external sources is no longer suppressed by command-family filtering
+
+- aligned local artifact hygiene with archived semantic snapshots by treating `.ota/contracts/`
+  alongside `.ota/state/`, `.ota/receipts/`, and `.ota/proof/`, and fixed cleanup so an unavailable
+  stale recorded engine does not block cleanup through the currently healthy declared engine
+
+- fixed interrupted run rendering so a signal observed in the active execution epoch remains the
+  authoritative task outcome, while service-only interruption evidence still retains its richer
+  readiness, endpoint, and container-engine diagnosis instead of being flattened prematurely
+
+- fixed `ota proof runtime` cleanup for selected Compose-managed dependency services; proof now
+  snapshots required-service state before startup and stops only services that were not already
+  running, preserving pre-existing developer services while removing proof-owned workloads
+
+- added a canonical runtime-proof evidence example that demonstrates marker-bound dependency
+  exercise, same-obligation negative-control attestation, and the required distinction between
+  `ok`, `proof_verdict`, and retained `not_proved` boundaries
+
 - fixed `ota proof runtime --container` cleanup for workflows whose default mode is native. The
   proof cleanup scope now follows the selected effective mode and derives persistent ownership
   from declared context truth before probing the container engine, so it can remove the runtime it

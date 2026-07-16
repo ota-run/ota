@@ -4608,6 +4608,16 @@ impl ServiceManagerSpec {
         }
     }
 
+    pub(crate) fn compose_service_ids_command(&self, service_name: &str) -> Option<String> {
+        (self.kind == ServiceManagerKind::Compose).then(|| {
+            format!(
+                "{} ps -q {}",
+                self.compose_command_prefix(),
+                shell_single_quote(self.compose_service(service_name))
+            )
+        })
+    }
+
     pub fn healthcheck_command(&self, service_name: &str, healthcheck: &str) -> String {
         match self.kind {
             ServiceManagerKind::Compose => format!(

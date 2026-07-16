@@ -192,7 +192,7 @@ tasks:
       Use this to self-host the contract validator against `./ota.yaml`.
       It exercises hook follow-ups inside the main repo without touching build artifacts or snapshots.
     category: dev
-    run: cargo run --quiet -- validate ./ota.yaml --plain
+    run: cargo run --quiet --bin ota -- validate ./ota.yaml --plain
     requirements:
       toolchains:
         - rust
@@ -209,7 +209,7 @@ tasks:
       Use this as the success follow-up for `ota run contract:validate`.
       It keeps the repo contract self-hosting by pointing straight at the validated task surface.
     category: dev
-    run: cargo run --quiet -- tasks . --use --plain
+    run: cargo run --quiet --bin ota -- tasks . --use --plain
     requirements:
       toolchains:
         - rust
@@ -220,7 +220,7 @@ tasks:
       Use this as the failure follow-up for `ota run contract:validate`.
       It points the operator at concrete readiness findings instead of stopping at a raw validation error.
     category: dev
-    run: cargo run --quiet -- doctor . --plain
+    run: cargo run --quiet --bin ota -- doctor . --plain
     requirements:
       toolchains:
         - rust
@@ -390,7 +390,7 @@ tasks:
     script: |
       set -e
       # Run schema/contract validation
-      cargo run --quiet -- validate ./ota.yaml --plain
+      cargo run --quiet --bin ota -- validate ./ota.yaml --plain
       # Run lockfile-specific tests
       cargo test --test real_repo_fixtures -- --test-threads=1 --skip workspace_refresh_pulls_updated_git_sources_on_real_command_path
     requirements:

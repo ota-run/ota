@@ -154,7 +154,8 @@ use crate::runner::{
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
     TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
     clean_execution_report, clean_execution_report_for_workflow_with_overrides,
-    clean_stale_execution, cleanup_selected_workflow_native_service_workloads, effective_execution,
+    clean_stale_execution, cleanup_selected_workflow_compose_services,
+    cleanup_selected_workflow_native_service_workloads, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
     ensure_task_adapter_inputs_ready, ensure_task_env_files_ready_with_planned_outputs,
     env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
@@ -168,6 +169,7 @@ use crate::runner::{
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
+    selected_workflow_compose_services_started_by_proof,
     task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
@@ -2520,6 +2522,15 @@ pub fn proof_runtime(
                     return CommandOutput::failure(error);
                 }
 
+                let compose_services_started_by_proof =
+                    match selected_workflow_compose_services_started_by_proof(
+                        contract,
+                        &target.contract_path,
+                        effective_workflow_selector.as_deref(),
+                    ) {
+                        Ok(services) => services,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
                 let mut up_process = match spawn_proof_runtime_up_process(
                     &target.contract_path,
                     workflow_name,
@@ -2546,7 +2557,18 @@ pub fn proof_runtime(
                         Ok(result) => result,
                         Err(error) => {
                             let _ = stop_proof_runtime_up_process(&mut up_process);
-                            return CommandOutput::failure(error);
+                            let cleanup_error = cleanup_selected_workflow_compose_services(
+                                contract,
+                                &target.contract_path,
+                                &compose_services_started_by_proof,
+                            )
+                            .err();
+                            return CommandOutput::failure(match cleanup_error {
+                                Some(cleanup) => {
+                                    format!("{error}; proof service cleanup failed: {cleanup}")
+                                }
+                                None => error,
+                            });
                         }
                     };
                 let proof_summary = doctor_summary(
@@ -2587,6 +2609,18 @@ pub fn proof_runtime(
                     overrides,
                 )
                 .err();
+                let compose_service_cleanup_error = cleanup_selected_workflow_compose_services(
+                    contract,
+                    &target.contract_path,
+                    &compose_services_started_by_proof,
+                )
+                .err();
+                let workload_cleanup_error =
+                    match (workload_cleanup_error, compose_service_cleanup_error) {
+                        (Some(native), Some(compose)) => Some(format!("{native}; {compose}")),
+                        (Some(error), None) | (None, Some(error)) => Some(error),
+                        (None, None) => None,
+                    };
                 let repo_cleanup_error = if process_cleanup_error.is_none() {
                     clean_execution_report_for_workflow_with_overrides(
                         contract,
@@ -53974,7 +54008,8 @@ mod tests {
         RepoExecutionConflictReason, RepoExecutionLockOwner, RunError, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, SharedLocalBackendEvidence,
         TaskExecutionRelation, TaskTargetResolutionEvidence, TaskTargetResolutionSource,
-        ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
+        ToolchainFulfillmentEvidence, isolate_run_interrupt_for_test,
+        simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
@@ -64472,6 +64507,7 @@ agent:
     #[test]
     fn streamed_run_command_persists_logs_when_interrupted() {
         let _guard = crate::test_support::env_mutex_lock();
+        let _interrupt_guard = isolate_run_interrupt_for_test();
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -64481,13 +64517,18 @@ project:
   name: demo
 tasks:
   dev:
-    run: sh -c 'printf "stdout line\n"; printf "stderr line\n" >&2; sleep 0.2; exit 130'
+    run: sh -c 'printf "stdout line\n"; printf "stderr line\n" >&2; touch started; sleep 0.2; exit 130'
 "#,
         )
         .expect("write contract");
 
-        let interrupt_thread = std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        let started_marker = repo.path().join("started");
+        let interrupt_thread = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !started_marker.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(started_marker.exists(), "streamed task should start");
             simulate_run_interrupt_for_test();
         });
 
@@ -64539,6 +64580,7 @@ tasks:
     #[test]
     fn streamed_run_command_reports_interrupt_when_child_exits_one() {
         let _guard = crate::test_support::env_mutex_lock();
+        let _interrupt_guard = isolate_run_interrupt_for_test();
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -64548,13 +64590,18 @@ project:
   name: demo
 tasks:
   dev:
-    run: sh -c 'sleep 0.2; exit 1'
+    run: sh -c 'touch started; sleep 0.2; exit 1'
 "#,
         )
         .expect("write contract");
 
-        let interrupt_thread = std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        let started_marker = repo.path().join("started");
+        let interrupt_thread = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !started_marker.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(started_marker.exists(), "streamed task should start");
             simulate_run_interrupt_for_test();
         });
         let output = super::run_command(
@@ -67845,12 +67892,16 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["ok"], true);
-        assert_eq!(json["preview_status"], "RUNNABLE");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
         assert_eq!(json["resolved"]["backend"], "native");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Version mismatch for tool: uv"
+        );
     }
 
     #[test]
@@ -84365,7 +84416,7 @@ tasks:
             "RUN SUMMARY\nTask:        dev:clean\nStatus:      interrupted\nNote:        service interrupted by user",
         ));
 
-        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
         assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
         assert!(rendered.contains("Task: dev"), "{rendered}");
         assert!(rendered.contains("Task:        dev:clean"), "{rendered}");
@@ -93699,7 +93750,9 @@ fn render_run_captured_failure_text(
     // A Ctrl+C observed while the runner owns this execution is authoritative. Container
     // shutdown inspection can explain the interruption, but must not relabel it as a startup
     // failure simply because the workload exited non-zero during teardown.
-    if run_failure_reports_user_interruption(interrupted, exit_code, summary, receipt_text) {
+    if interrupted
+        && run_failure_reports_user_interruption(interrupted, exit_code, summary, receipt_text)
+    {
         return render_task_interrupted_text(
             where_value,
             task_name,
@@ -93751,6 +93804,17 @@ fn render_run_captured_failure_text(
             overrides,
             service_termination,
             runtime,
+            summary,
+            receipt_text,
+        );
+    }
+    if run_failure_reports_user_interruption(interrupted, exit_code, summary, receipt_text) {
+        return render_task_interrupted_text(
+            where_value,
+            task_name,
+            requested_task_name,
+            member,
+            overrides,
             summary,
             receipt_text,
         );

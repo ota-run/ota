@@ -28,6 +28,7 @@ target
 .ota/state/
 
 # Ota local runtime artifacts
+.ota/contracts/
 .ota/receipts/
 
 .ota/proof/*

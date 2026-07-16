@@ -4857,7 +4857,9 @@ ota_forward_signal() {{ \
   [ -n \"$ota_signal_child\" ] && wait \"$ota_signal_child\" 2>/dev/null || true; \
   exit 130; \
 }}; \
-sh -c {command} & ota_signal_child=$!; \
+exec 3<&0; \
+sh -c {command} <&3 & ota_signal_child=$!; \
+exec 3<&-; \
 trap 'ota_forward_signal' INT TERM; \
 wait \"$ota_signal_child\"; ota_status=$?; exit \"$ota_status\"",
         command = shell_quote(&command),
@@ -5251,6 +5253,25 @@ fn interruption_observed_since(epoch: u64) -> bool {
 pub(crate) fn simulate_run_interrupt_for_test() {
     RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
     RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) struct RunInterruptTestGuard {
+    previous_requested: bool,
+}
+
+#[cfg(test)]
+impl Drop for RunInterruptTestGuard {
+    fn drop(&mut self) {
+        RUN_INTERRUPT_REQUESTED.store(self.previous_requested, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn isolate_run_interrupt_for_test() -> RunInterruptTestGuard {
+    RunInterruptTestGuard {
+        previous_requested: RUN_INTERRUPT_REQUESTED.swap(false, Ordering::Relaxed),
+    }
 }
 
 fn interruption_execution_note(interrupted: bool, _exit_code: i32) -> Option<String> {
@@ -5712,11 +5733,11 @@ fn clean_execution_report_inner(
             }
             Err(error) => {
                 let engine_unavailable = clean_discovery_error_is_engine_unavailable(&error);
-                first_discovery_error.get_or_insert(error);
-                if !(has_current_cleanup_targets
+                let stale_non_current_engine = has_current_cleanup_targets
                     && !current_target_engines.contains(&engine)
-                    && engine_unavailable)
-                {
+                    && engine_unavailable;
+                if !stale_non_current_engine {
+                    first_discovery_error.get_or_insert(error);
                     engines_to_track.insert(engine.clone());
                 }
             }
@@ -5737,11 +5758,11 @@ fn clean_execution_report_inner(
             }
             Err(error) => {
                 let engine_unavailable = clean_discovery_error_is_engine_unavailable(&error);
-                first_discovery_error.get_or_insert(error);
-                if !(has_current_cleanup_targets
+                let stale_non_current_engine = has_current_cleanup_targets
                     && !current_target_engines.contains(&engine)
-                    && engine_unavailable)
-                {
+                    && engine_unavailable;
+                if !stale_non_current_engine {
+                    first_discovery_error.get_or_insert(error);
                     engines_to_track.insert(engine.clone());
                 }
             }
@@ -17159,6 +17180,94 @@ pub(crate) fn cleanup_selected_workflow_native_service_workloads(
                 task_name,
                 normalize_requested_service_cleanup_note(note)
             ));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+pub(crate) fn selected_workflow_compose_services_started_by_proof(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> Result<BTreeSet<String>, String> {
+    let selected = required_service_closure(
+        contract,
+        &contract.selected_workflow_required_service_names(workflow_name),
+    );
+
+    let mut services_to_cleanup = BTreeSet::new();
+    for service_name in service_start_order(contract)
+        .into_iter()
+        .filter(|name| selected.contains(name))
+    {
+        let Some(service) = contract.services.get(service_name.as_str()) else {
+            continue;
+        };
+        let Some(command) = service
+            .manager
+            .as_ref()
+            .and_then(|manager| manager.compose_service_ids_command(service_name.as_str()))
+        else {
+            continue;
+        };
+        let output = run_host_shell_command(
+            command.as_str(),
+            contract_working_dir(contract_path),
+            TaskExecutionMode::CaptureActivation,
+        )
+        .map_err(|error| format!("required service `{service_name}` state probe: {error}"))?;
+        if output.exit_code != 0 {
+            return Err(format!(
+                "required service `{service_name}` state probe exited with code {}{}",
+                output.exit_code,
+                render_cleanup_command_output_detail(&output)
+            ));
+        }
+        if output.stdout.lines().all(|line| line.trim().is_empty()) {
+            services_to_cleanup.insert(service_name);
+        }
+    }
+    Ok(services_to_cleanup)
+}
+
+pub(crate) fn cleanup_selected_workflow_compose_services(
+    contract: &Contract,
+    contract_path: &Path,
+    services_started_by_proof: &BTreeSet<String>,
+) -> Result<(), String> {
+    let mut services = service_start_order(contract)
+        .into_iter()
+        .filter(|name| services_started_by_proof.contains(name))
+        .collect::<Vec<_>>();
+    services.reverse();
+
+    let mut failures = Vec::new();
+    for service_name in services {
+        let Some(service) = contract.services.get(service_name.as_str()) else {
+            continue;
+        };
+        if service.stop_command(service_name.as_str()).is_none() {
+            continue;
+        }
+
+        match run_service_stop_command(
+            service_name.as_str(),
+            service,
+            contract_working_dir(contract_path),
+            TaskExecutionMode::CaptureActivation,
+        ) {
+            Ok(output) if output.exit_code == 0 => {}
+            Ok(output) => failures.push(format!(
+                "required service `{service_name}` stop command exited with code {}{}",
+                output.exit_code,
+                render_cleanup_command_output_detail(&output)
+            )),
+            Err(error) => failures.push(format!("required service `{service_name}`: {error}")),
         }
     }
 
@@ -40659,6 +40768,7 @@ tasks:
     #[test]
     fn interrupted_cleanup_stops_ota_started_host_manager_services() {
         let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -40688,7 +40798,12 @@ services:
 
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("service.log"))
-                .unwrap()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "service cleanup log missing: {error}; note: {note}; evidence: {:?}",
+                        state.host_service_cleanup
+                    )
+                })
                 .lines()
                 .collect::<Vec<_>>(),
             vec!["stop"]
@@ -41565,6 +41680,8 @@ tasks:
 
     #[test]
     fn readiness_probe_confirms_reachability_during_interrupt_grace_window() {
+        let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
         let reserved = TcpListener::bind(("127.0.0.1", 0)).expect("reserve a local port");
         let port = reserved
             .local_addr()
@@ -41657,6 +41774,7 @@ tasks:
     #[test]
     fn observed_interrupt_normalizes_nonzero_dependency_exit() {
         let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
         let repo = tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
         fs::write(
@@ -46815,6 +46933,13 @@ tasks:
     run: printf dev > dev.txt
     depends_on:
       - install
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+        container:
+          context: app
 "#,
         );
 
@@ -48951,6 +49076,125 @@ workflows:
         drop(listener);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn workflow_compose_service_cleanup_stops_only_selected_required_services() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  dependency:
+    manager:
+      kind: compose
+      name: proof
+      file: compose.yaml
+      service: dependency
+  unrelated:
+    manager:
+      kind: compose
+      name: proof
+      file: compose.yaml
+      service: unrelated
+tasks:
+  setup:
+    run: echo setup
+    requires_services: [dependency]
+  app:
+    run: echo app
+    depends_on: [setup]
+workflows:
+  default: app-proof
+  app-proof:
+    run:
+      task: app
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("docker.log");
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let services_started_by_proof = super::selected_workflow_compose_services_started_by_proof(
+            &fixture.contract,
+            fixture.file_path(),
+            Some("app-proof"),
+        )
+        .expect("selected Compose service state should resolve");
+        assert_eq!(
+            services_started_by_proof,
+            BTreeSet::from([String::from("dependency")])
+        );
+        let result = super::cleanup_selected_workflow_compose_services(
+            &fixture.contract,
+            fixture.file_path(),
+            &services_started_by_proof,
+        );
+
+        result.expect("selected Compose service cleanup should succeed");
+        let calls = fs::read_to_string(&log_path).unwrap();
+        assert!(calls.contains("ps -q dependency"), "{calls}");
+        assert!(calls.contains("stop dependency"), "{calls}");
+        assert!(!calls.contains("unrelated"), "{calls}");
+
+        fs::write(
+            &docker_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps -q dependency'*) printf '%s\\n' existing-container ;;\nesac\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        fs::write(&log_path, "").unwrap();
+
+        let services_started_by_proof = super::selected_workflow_compose_services_started_by_proof(
+            &fixture.contract,
+            fixture.file_path(),
+            Some("app-proof"),
+        )
+        .expect("pre-existing Compose service state should resolve");
+        assert!(services_started_by_proof.is_empty());
+        super::cleanup_selected_workflow_compose_services(
+            &fixture.contract,
+            fixture.file_path(),
+            &services_started_by_proof,
+        )
+        .expect("pre-existing Compose service should not need cleanup");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        let calls = fs::read_to_string(log_path).unwrap();
+        assert!(calls.contains("ps -q dependency"), "{calls}");
+        assert!(!calls.contains("stop dependency"), "{calls}");
+    }
+
     #[cfg(all(unix, target_os = "linux"))]
     #[test]
     fn interrupted_persistent_service_cleanup_does_not_kill_unverified_pid_when_start_time_is_missing()
@@ -50767,7 +51011,7 @@ tasks:
     }
 
     #[test]
-    fn requested_step_late_nonzero_failure_does_not_promote_raw_interrupt_flag() {
+    fn requested_step_runner_observed_interrupt_overrides_nonzero_exit() {
         let mut state = super::TaskRunState::default();
         let output = super::TaskCommandOutput {
             exit_code: 1,
@@ -50786,7 +51030,7 @@ tasks:
             &output,
         );
 
-        assert!(!state.interrupted);
+        assert!(state.interrupted);
     }
 
     #[test]
@@ -50838,7 +51082,7 @@ tasks:
     }
 
     #[test]
-    fn dependency_step_late_nonzero_failure_does_not_promote_raw_interrupt_flag() {
+    fn dependency_step_runner_observed_interrupt_overrides_nonzero_service_exit() {
         let mut state = super::TaskRunState::default();
         let output = super::TaskCommandOutput {
             exit_code: 1,
@@ -50869,13 +51113,13 @@ tasks:
             &output,
         );
 
-        assert!(!state.interrupted);
-        assert!(state.service_termination.is_none());
+        assert!(state.interrupted);
+        assert_eq!(state.service_termination, output.service_termination);
         assert!(state.runtime.is_none());
     }
 
     #[test]
-    fn dependency_step_late_clean_service_exit_does_not_promote_interrupt_context() {
+    fn dependency_step_runner_observed_interrupt_preserves_clean_service_context() {
         let mut state = super::TaskRunState::default();
         let runtime = super::ResolvedTaskRuntime {
             kind: TaskRuntimeKind::Service,
@@ -50926,9 +51170,9 @@ tasks:
             &output,
         );
 
-        assert!(!state.interrupted);
-        assert!(state.service_termination.is_none());
-        assert!(state.runtime.is_none());
+        assert!(state.interrupted);
+        assert_eq!(state.service_termination, output.service_termination);
+        assert_eq!(state.runtime, Some(runtime));
     }
 
     #[test]
@@ -51196,6 +51440,11 @@ execution:
 tasks:
   dev:
     run: printf ready >> prepared.txt
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+        container: {}
     runtime:
       kind: service
       listeners:
@@ -51815,6 +52064,11 @@ execution:
 tasks:
   setup:
     run: printf ready > prepared.txt
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+        container: {}
 "#,
         );
         let bin_dir = fixture.dir.path().join("bin");

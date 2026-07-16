@@ -958,6 +958,55 @@
         "signal": { "$ref": "#/$defs/workflowReadinessSignal" }
       }
     },
+    "workflowNegativeControlIntervention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["dependency_disruption", "dependency_endpoint_override", "null_substitution"]
+        }
+      }
+    },
+    "workflowNegativeControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "dependency", "obligation", "task", "intervention", "expected_failure"],
+      "properties": {
+        "id": { "type": "string" },
+        "dependency": { "type": "string" },
+        "obligation": { "type": "string" },
+        "task": { "type": "string" },
+        "intervention": { "$ref": "#/$defs/workflowNegativeControlIntervention" },
+        "expected_failure": { "enum": ["dependency_unavailable"] }
+      }
+    },
+    "workflowSeamObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "dependency", "producer_task", "task", "marker_env"],
+      "properties": {
+        "id": { "type": "string" },
+        "dependency": { "type": "string" },
+        "producer_task": { "type": "string" },
+        "task": { "type": "string" },
+        "marker_env": { "type": "string" }
+      }
+    },
+    "workflowProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "negative_controls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workflowNegativeControl" }
+        },
+        "seam_observations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workflowSeamObservation" }
+        }
+      }
+    },
     "workflowExpose": {
       "oneOf": [
         { "type": "string" },
@@ -988,6 +1037,7 @@
         "attach": { "$ref": "#/$defs/workflowTaskRef" },
         "services": { "$ref": "#/$defs/workflowServices" },
         "readiness": { "$ref": "#/$defs/workflowReadiness" },
+        "proof": { "$ref": "#/$defs/workflowProof" },
         "exposes": {
           "type": "array",
           "items": { "$ref": "#/$defs/workflowExpose" }

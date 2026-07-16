@@ -7364,13 +7364,13 @@ if [ "$1" = "create" ]; then
   [ -z "$name" ] && name="ota-container-probe"
   detected_tool="unknown"
   case "$command" in
-    *"command -v 'node'"*|*"command -v node"*)
+    *node*)
       detected_tool="node"
       ;;
-    *"command -v 'cargo'"*|*"command -v cargo"*)
+    *cargo*)
       detected_tool="cargo"
       ;;
-    *"command -v 'java'"*|*"command -v java"*)
+    *java*)
       detected_tool="java"
       ;;
   esac
@@ -15131,6 +15131,11 @@ env:
 tasks:
   setup:
     run: printf ready > prepared.txt
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+        container: {}
 "#,
         );
 
@@ -15657,6 +15662,11 @@ project:
 tasks:
   dev:
     run: printf ready
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+        container: {}
 "#,
         );
 
@@ -31720,7 +31730,7 @@ name = "fastapi"
         let fixture = ContractFixture::new_dir();
         fixture.write(
             ".gitignore",
-            "node_modules/\n.ota/state/*\n.ota/receipts/*\n.ota/proof/*\n",
+            "node_modules/\n.ota/state/*\n.ota/contracts/*\n.ota/receipts/*\n.ota/proof/*\n",
         );
 
         let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
@@ -31728,10 +31738,12 @@ name = "fastapi"
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(".ota/state/*").count(), 1);
+        assert_eq!(gitignore.matches(".ota/contracts/*").count(), 1);
         assert_eq!(gitignore.matches(".ota/receipts/*").count(), 1);
         assert_eq!(gitignore.matches(".ota/proof/*").count(), 1);
         assert!(!gitignore.contains("# Ota local runtime artifacts"));
         assert!(!gitignore.contains(".ota/state/\n"));
+        assert!(!gitignore.contains(".ota/contracts/\n"));
         assert!(!gitignore.contains(".ota/receipts/\n"));
         assert!(!gitignore.contains(".ota/proof/\n"));
     }
@@ -38886,7 +38898,7 @@ tasks:
         assert_eq!(
             gitignore,
             String::from(
-                "# Ota local runtime artifacts\n.ota/state/*\n.ota/receipts/*\n.ota/proof/*\n"
+                "# Ota local runtime artifacts\n.ota/state/*\n.ota/contracts/*\n.ota/receipts/*\n.ota/proof/*\n"
             )
         );
     }
@@ -38913,7 +38925,7 @@ tasks:
         assert_eq!(
             gitignore,
             String::from(
-                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/*\n.ota/receipts/*\n.ota/proof/*\n"
+                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/*\n.ota/contracts/*\n.ota/receipts/*\n.ota/proof/*\n"
             )
         );
     }
@@ -38933,7 +38945,7 @@ tasks:
         fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
         fixture.write(
             ".gitignore",
-            ".ota/state/*\n.ota/receipts/*\n.ota/proof/*\n",
+            ".ota/state/*\n.ota/contracts/*\n.ota/receipts/*\n.ota/proof/*\n",
         );
 
         let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
@@ -38942,7 +38954,7 @@ tasks:
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(
             gitignore,
-            String::from(".ota/state/*\n.ota/receipts/*\n.ota/proof/*\n")
+            String::from(".ota/state/*\n.ota/contracts/*\n.ota/receipts/*\n.ota/proof/*\n")
         );
         let stdout = strip_ansi(&output.stdout);
         assert!(!stdout.trim().is_empty());
@@ -41944,7 +41956,8 @@ runtimes:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(
-            text.contains("Primary Blocker Java is missing from the configured container image")
+            text.contains("Primary Blocker Java is missing from the configured container image"),
+            "{text}"
         );
         assert!(text.contains("`java` is declared in the contract"));
         assert!(text.contains("configured container image"));
@@ -43977,7 +43990,7 @@ tasks:
 
         let output = run_with(["ota", "doctor", "--mode", "container", "."]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("READY"));
         assert!(!text.contains("Container execution backend unavailable: docker"));

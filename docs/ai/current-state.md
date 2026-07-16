@@ -64,11 +64,18 @@ durable agent workflow belongs in the canonical Ota skill.
   marker recovery and same-obligation fault control across its green matrix. Every marker-bound
   seam retains `dependency_output_shaping_not_proved`; invariant coverage proves the pairing and
   derived control projection. Generic `ota up` and ordinary receipts intentionally do not inherit
-  this evidence because they did not execute the proof lane.
+  this evidence because they did not execute the proof lane. The canonical runtime-proof example
+  now demonstrates the same carrier end to end. Compose dependencies started by proof are cleaned
+  on success and readiness failure, while services already running before proof are preserved.
 - completed V11.13 generated-artifact lineage: Dagger proves the generator path and EventCatalog
   proves an independent sibling-consumer closure. Contract-owned producer, output-path, and input
   lineage is validated, surfaced in task discovery, checked before consumer execution, and carried
   into receipts as pointer-only evidence without claiming freshness.
+- completed the 1.6.24 release-readiness sweep: the active pressure set has no unresolved Ota
+  platform gap, V11.11 proof evidence is propagated through the canonical and public examples,
+  skill guidance, site reference, generated contract schema, and changelog, and the complete native
+  `release-gate` passes. Lead Quorum's newest local-only pressure commit remains unpushed and is not
+  part of the matrix-backed release claim.
 
 - V11.10 Bedrock replay proves native baseline replay as `replay_verified` and `partly_ambient`.
   A container replay against that native archive correctly returns `replay_unavailable` with
@@ -253,6 +260,12 @@ V11.9 through V11.13 first OSS cuts are complete and pressure-proven. Do not cre
 proof carrier by copying `ota proof runtime` evidence into generic `ota up` or readiness receipts:
 those artifacts did not execute the proof lane. Start the next product slice only from a real repo
 gap or an explicitly approved follow-on design, and follow the pressure-testing protocol exactly.
+
+The current `1.6.24` branch-pinned pressure subset has green pushed matrices for Athena, Azure SDK
+for .NET, Bedrock, Dagger, EventCatalog, Grafana, Immich, Kylrix, Lead Quorum, and Flagr. Lead
+Quorum also has one newer local-only contract commit that is not yet matrix-proven; do not present
+that local tip as release evidence until it is pushed and rerun. The case-study root README is
+stale inventory and should not be used as the release ledger.
 
 ## Working Rules
 
