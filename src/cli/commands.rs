@@ -64227,8 +64227,11 @@ agent:
             "{stderr}"
         );
         assert!(stderr.contains("closure status: `unsafe`"), "{stderr}");
-        assert!(stderr.contains("refused before run-path"), "{stderr}");
-        assert!(stderr.contains("evaluation"), "{stderr}");
+        let normalized = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains("refused before run-path evaluation"),
+            "{stderr}"
+        );
         assert!(stderr.contains("RUN SUMMARY"), "{stderr}");
         assert!(!stderr.contains("Operation failed"), "{stderr}");
         assert!(!stderr.contains("\nContract\n"), "{stderr}");
@@ -97110,7 +97113,7 @@ fn collect_receipt_policy_ruleset_identity_input(
         .strip_prefix(root)
         .ok()
         .and_then(|path| path.to_str())
-        .map(str::to_string)
+        .map(compact_path_separator_style)
         .unwrap_or_else(|| native_path_display_text(&normalized_display_path(&policy_path)));
     inputs.insert(
         String::from("policy:org_ruleset"),
