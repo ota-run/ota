@@ -443,7 +443,39 @@ fn github_actions_ota_bootstrap_signal_for_step(
         let uses_lower = uses.to_ascii_lowercase();
         let with = step.get("with").and_then(YamlValue::as_mapping);
 
-        if uses_lower.starts_with("ota-run/setup@") || uses_lower.starts_with("ota-run/action@") {
+        if uses_lower.starts_with("ota-run/setup@") {
+            let mode = with
+                .and_then(|mapping| yaml_mapping_string(mapping, "source"))
+                .unwrap_or("explicit");
+            if mode.eq_ignore_ascii_case("contract") {
+                return Some(CiOtaBootstrapSignal {
+                    source: format!("{source_prefix}.uses"),
+                    mode: CiOtaBootstrapSignalMode::ContractConsumer,
+                });
+            }
+
+            let install_source = with
+                .and_then(|mapping| yaml_mapping_string(mapping, "ota-version"))
+                .map(|version| AgentBootstrapOtaSource::Version {
+                    version: version.to_string(),
+                });
+            return Some(CiOtaBootstrapSignal {
+                source: format!("{source_prefix}.uses"),
+                mode: CiOtaBootstrapSignalMode::WorkflowOwned {
+                    install_source,
+                    surface: format!("{uses} ({mode})"),
+                },
+            });
+        }
+
+        if uses_lower.starts_with("ota-run/action@") {
+            let install = with
+                .and_then(|mapping| yaml_mapping_string(mapping, "install"))
+                .unwrap_or("auto");
+            if install.eq_ignore_ascii_case("never") {
+                return None;
+            }
+
             let mode = with
                 .and_then(|mapping| yaml_mapping_string(mapping, "source"))
                 .unwrap_or("explicit");
@@ -4009,6 +4041,28 @@ runtimes:
 
         let changes = collect_detect_changes(&existing, &detected, &[]);
         assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn bootstrap_drift_ignores_reporting_action_without_installation() {
+        let step: YamlValue = serde_yaml::from_str(
+            r#"
+uses: ota-run/action@1.6.25-implementation
+with:
+  command: doctor
+  install: never
+  fail-on-ci-drift: true
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            super::github_actions_ota_bootstrap_signal_for_step(
+                &step,
+                ".github/workflows/ota-governance.yml#jobs.contract-ci-drift.steps[4]"
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -215,6 +215,9 @@ intentional unreleased pressure path.
 - `artifact-name` sets the uploaded artifact name; default: `ota-readiness`
 - `artifact-retention-days` sets optional artifact retention in days
 - `fail-on-error` fails the action when ota reports a blocked outcome; default: `true`
+- `fail-on-ci-drift` is an opt-in `command: doctor` gate that fails only when Ota establishes
+  contract-to-CI workflow drift through `governance.merge_gate` or canonical CI drift findings;
+  default: `false`
 - `install` controls installation behavior with `auto`, `always`, or `never`; default: `auto`
 - `source` chooses `explicit` or `contract`; default: `explicit`
 - `contract-path` points at `ota.yaml` or a repo directory containing it when `source=contract`;
@@ -236,6 +239,8 @@ intentional unreleased pressure path.
 - `error-count` returns the error count from the ota summary
 - `warn-count` returns the warning count from the ota summary
 - `info-count` returns the info count from the ota summary
+- `ci-drift-detected` reports whether the current Doctor output contains canonical
+  contract-to-CI workflow drift
 - `primary-summary` returns the primary blocker or top finding summary
 
 ## Job boundaries

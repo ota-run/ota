@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed CI bootstrap drift recovery to distinguish `ota-run/action` reporting steps from Ota
+  installers: an Action step with `install: never` no longer emits a false bootstrap-drift warning
+  merely because it references an unreleased Action branch for pressure proof
+
 - added additive `claim_assurance[]` to `ota doctor --json` as the first V11.14 carrier for
   contract-claim assurance. Agent-safe task declarations now keep maintainer assertion, derived
   closure, policy-independent assurance, and policy decision separate; contract-only evidence
