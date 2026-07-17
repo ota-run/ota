@@ -45001,7 +45001,7 @@ fn run_preview_governance_summary(
         } else {
             String::from("review_required")
         },
-        review_required: !task.effective_safe_for_agent,
+        review_required: !task.effective_safe_for_agent || refusal.is_some(),
         declared_safe_for_agent: task.safe_for_agent,
         effective_safe_for_agent: task.effective_safe_for_agent,
         unsafe_closure_tasks: task.unsafe_closure_tasks.clone(),
@@ -45046,7 +45046,7 @@ fn governance_evaluation_for_task_preview(
         crossing_classification.as_deref(),
         crossing_boundary_family.as_deref(),
     );
-    let review_required = Some(!task.effective_safe_for_agent);
+    let review_required = Some(!task.effective_safe_for_agent || refusal.is_some());
     let refusal_reason_family = refusal.map(|entry| entry.reason);
     let crossing_classification_for_evidence = crossing_classification.clone();
     let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
@@ -45174,7 +45174,10 @@ fn governance_evaluation_for_workflow_preview(
         crossing_classification.as_deref(),
         crossing_boundary_family.as_deref(),
     );
-    let review_required = safety.effective_safe.map(std::ops::Not::not);
+    let review_required = refusal
+        .is_some()
+        .then_some(true)
+        .or_else(|| safety.effective_safe.map(std::ops::Not::not));
     let refusal_reason_family = refusal.map(|entry| entry.reason);
     let crossing_classification_for_evidence = crossing_classification.clone();
     let crossing_boundary_family_for_evidence = crossing_boundary_family.clone();
@@ -65819,6 +65822,74 @@ agent:
         assert_eq!(
             json["governance"]["evaluation"]["post_execution"]["crossing_record_state"],
             "suppressed_by_refusal"
+        );
+    }
+
+    #[test]
+    fn run_dry_run_agent_json_marks_policy_refusal_as_review_required() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    safe_for_agent: true
+    run: echo verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["governance"]["review_required"], true);
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["review_required"],
+            true
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["refusal_reason_family"],
+            "claim_assurance_policy_denied"
+        );
+        assert_eq!(
+            json["governance"]["evaluation"]["preflight"]["refusal"]["closure_status"],
+            "policy_denied"
         );
     }
 
