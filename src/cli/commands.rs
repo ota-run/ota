@@ -103,32 +103,32 @@ use crate::output::{
     InitPackSeeds, InitSelectedPackOptions, InitSuccess, ListedWorkflowSummary,
     MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
     PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
-    ProofRuntimeNegativeControlOutcome, ProofRuntimeStatus, ReceiptDiffArtifactComparison,
-    ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline,
-    ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture,
-    ReceiptDiffReplayPostureKind, ReceiptDiffReplayScope, ReceiptDiffSide, ReceiptDiffSuccess,
-    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
-    ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass,
-    RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
-    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
-    ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpReplayBaseline, UpReplayBaselineStatus, UpReplayExecution, UpReplayFailureKind, UpStatus,
-    ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
-    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
-    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
-    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskHydrationProvenanceSummary,
-    WorkspaceTaskHydrationSourceIdentity, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
-    execution_receipt_conflict,
+    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
+    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
+    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeStatus,
+    ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
+    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffReplayHermeticity,
+    ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind, ReceiptDiffReplayScope,
+    ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
+    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
+    ReceiptPromotedBaseline, ReceiptSnapshotContract, ReceiptSnapshotSuccess,
+    ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass, RunPreviewPlan, RunPreviewSuccess,
+    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
+    TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayBaselineStatus,
+    UpReplayExecution, UpReplayFailureKind, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskHydrationProvenanceSummary, WorkspaceTaskHydrationSourceIdentity,
+    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess, execution_receipt_conflict,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -2341,6 +2341,7 @@ pub fn proof_runtime(
     member: Option<&str>,
     workflow_name: Option<&str>,
     negative_control: Option<&str>,
+    archive: bool,
     ready_timeout: Option<&str>,
     overrides: ExecutionOverrides,
     format: OutputFormat,
@@ -2405,6 +2406,9 @@ pub fn proof_runtime(
     if let Some(negative_control) = negative_control {
         debug_lines.push(format!("DEBUG negative_control={negative_control}"));
     }
+    if archive {
+        debug_lines.push(String::from("DEBUG archive=true"));
+    }
     if let Some(timeout) = ready_timeout {
         debug_lines.push(format!("DEBUG ready_timeout_secs={}", timeout.as_secs()));
     }
@@ -2452,6 +2456,21 @@ pub fn proof_runtime(
                     .as_ref()
                     .map(workflow_selector_from_summary)
                     .or_else(|| workflow_name.map(str::to_string));
+                let proof_archive_context = if archive {
+                    let root = contract_working_dir(&target.contract_path);
+                    match build_proof_runtime_archive_context(
+                        root,
+                        contract,
+                        &target.contract_path,
+                        effective_workflow_selector.as_deref(),
+                        overrides,
+                    ) {
+                        Ok(context) => Some(context),
+                        Err(error) => return CommandOutput::failure(error),
+                    }
+                } else {
+                    None
+                };
                 let selected_negative_control =
                     match proof_runtime_negative_control(contract, workflow_name, negative_control)
                     {
@@ -2912,8 +2931,8 @@ pub fn proof_runtime(
                         stderr: None,
                         exit_code: if ok { 0 } else { 1 },
                     },
-                    OutputFormat::Json => CommandOutput {
-                        stdout: to_json(&ProofRuntimeStatus {
+                    OutputFormat::Json => {
+                        let proof_status = ProofRuntimeStatus {
                             ok,
                             proof_verdict,
                             path: &path_display,
@@ -2946,10 +2965,42 @@ pub fn proof_runtime(
                             likely_cause: proof_likely_cause_text,
                             likely_cause_evidence: proof_likely_cause_evidence,
                             next: proof_next.as_deref(),
-                        }),
-                        stderr: None,
-                        exit_code: if ok { 0 } else { 1 },
-                    },
+                        };
+                        let archive = if let Some(context) = proof_archive_context.as_ref() {
+                            let record = ProofRuntimeArchiveRecord {
+                                kind: "runtime_proof",
+                                version: 1,
+                                contract_identity: &context.contract_identity,
+                                contract_snapshot_hash: &context.contract_snapshot_hash,
+                                contract_snapshot_ref: &context.contract_snapshot_ref,
+                                source_identity: context.source_identity.as_deref(),
+                                scope: &context.scope,
+                                proof: &proof_status,
+                            };
+                            match write_proof_runtime_archive(
+                                contract_working_dir(&target.contract_path),
+                                &record,
+                            ) {
+                                Ok(archive) => Some(archive),
+                                Err(error) => return CommandOutput::failure(error),
+                            }
+                        } else {
+                            None
+                        };
+                        CommandOutput {
+                            stdout: archive.map_or_else(
+                                || to_json(&proof_status),
+                                |archive| {
+                                    to_json(&ProofRuntimeArchivedStatus {
+                                        proof: &proof_status,
+                                        archive,
+                                    })
+                                },
+                            ),
+                            stderr: None,
+                            exit_code: if ok { 0 } else { 1 },
+                        }
+                    }
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
@@ -34725,7 +34776,20 @@ fn write_contract_snapshot_archive(
         )
     })?;
     let archive_path = archive_dir.join(contract_snapshot_archive_file_name(hash));
-    if !archive_path.exists() {
+    if archive_path.exists() {
+        let existing = fs::read(&archive_path).map_err(|error| {
+            format!(
+                "failed to read contract snapshot archive `{}`: {error}",
+                compact_path(&archive_path, ".")
+            )
+        })?;
+        if contract_snapshot_hash(&existing) != hash {
+            return Err(format!(
+                "contract snapshot archive `{}` does not match its content-addressed identity",
+                compact_path(&archive_path, ".")
+            ));
+        }
+    } else {
         fs::write(&archive_path, snapshot_json).map_err(|error| {
             format!(
                 "failed to write contract snapshot archive `{}`: {error}",
@@ -90948,6 +91012,7 @@ workflows:
             None,
             Some("app"),
             None,
+            true,
             None,
             ExecutionOverrides::default(),
             OutputFormat::Json,
@@ -90967,6 +91032,69 @@ workflows:
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("proof runtime json");
         assert_eq!(json["ok"], true, "{}", output.stdout);
+        let archive_identity = json["archive"]["identity"]
+            .as_str()
+            .expect("proof archive identity");
+        assert!(archive_identity.starts_with("sha256:"));
+        let archive_path = json["archive"]["path"]
+            .as_str()
+            .expect("proof archive path");
+        let archive_path = fixture.path().join(archive_path.trim_start_matches("./"));
+        let archive_bytes = fs::read(&archive_path).expect("proof archive should exist");
+        assert_eq!(
+            archive_identity,
+            super::contract_snapshot_hash(&archive_bytes)
+        );
+        let archive: serde_json::Value =
+            serde_json::from_slice(&archive_bytes).expect("proof archive json");
+        assert_eq!(archive["kind"], "runtime_proof");
+        assert_eq!(archive["version"], 1);
+        assert_eq!(archive["scope"]["workflow"], "app");
+        assert_eq!(archive["scope"]["backend"], "native");
+        assert!(
+            archive["contract_snapshot_hash"]
+                .as_str()
+                .is_some_and(|hash| hash.starts_with("sha256:"))
+        );
+        let snapshot_ref = archive["contract_snapshot_ref"]
+            .as_str()
+            .expect("archived contract snapshot reference");
+        assert!(
+            fixture
+                .path()
+                .join(snapshot_ref.trim_start_matches("./"))
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn proof_runtime_archive_rejects_tampered_content() {
+        let fixture = TempDir::new().unwrap();
+        let content = b"trusted runtime proof";
+        let identity = super::contract_snapshot_hash(content);
+        let archive_path = fixture.path().join("runtime-proof.json");
+        fs::write(&archive_path, b"tampered runtime proof").unwrap();
+
+        let error = super::verify_proof_runtime_archive_identity(&archive_path, &identity)
+            .expect_err("tampered archive must not validate");
+        assert!(error.contains("does not match its content-addressed identity"));
+    }
+
+    #[test]
+    fn contract_snapshot_archive_rejects_tampered_content() {
+        let fixture = TempDir::new().unwrap();
+        let content = b"trusted contract snapshot";
+        let identity = super::contract_snapshot_hash(content);
+        let archive_path = fixture
+            .path()
+            .join(".ota/contracts")
+            .join(super::contract_snapshot_archive_file_name(&identity));
+        fs::create_dir_all(archive_path.parent().unwrap()).unwrap();
+        fs::write(&archive_path, b"tampered contract snapshot").unwrap();
+
+        let error = super::write_contract_snapshot_archive(fixture.path(), &identity, content)
+            .expect_err("tampered snapshot must not validate");
+        assert!(error.contains("does not match its content-addressed identity"));
     }
 
     #[test]
@@ -100692,6 +100820,172 @@ fn write_proof_artifact(path: &Path, content: &str) -> Result<(), String> {
             compact_path(path, ".")
         )
     })
+}
+
+const PROOF_RUNTIME_ARCHIVE_LIMIT: usize = 50;
+
+#[derive(Debug, Serialize)]
+struct ProofRuntimeArchiveScope {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workflow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
+    backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+}
+
+#[derive(Debug)]
+struct ProofRuntimeArchiveContext {
+    contract_identity: ContractIdentity,
+    contract_snapshot_hash: String,
+    contract_snapshot_ref: String,
+    source_identity: Option<String>,
+    scope: ProofRuntimeArchiveScope,
+}
+
+#[derive(Serialize)]
+struct ProofRuntimeArchiveRecord<'a> {
+    kind: &'static str,
+    version: u32,
+    contract_identity: &'a ContractIdentity,
+    contract_snapshot_hash: &'a str,
+    contract_snapshot_ref: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_identity: Option<&'a str>,
+    scope: &'a ProofRuntimeArchiveScope,
+    proof: &'a ProofRuntimeStatus<'a>,
+}
+
+#[derive(Serialize)]
+struct ProofRuntimeArchivedStatus<'a> {
+    #[serde(flatten)]
+    proof: &'a ProofRuntimeStatus<'a>,
+    archive: ProofRuntimeArchive,
+}
+
+fn build_proof_runtime_archive_context(
+    root: &Path,
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<ProofRuntimeArchiveContext, String> {
+    let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
+    let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
+        String::from("proof archive requires an archived semantic contract snapshot")
+    })?;
+    let task = selected_up_primary_task_name(contract, workflow_name).map(str::to_string);
+    let phase = task.as_deref().map_or_else(
+        || selected_phase_execution_context(contract, contract_path, overrides),
+        |task_name| {
+            task_phase_execution_context(contract, contract_path, task_name, overrides, None)
+        },
+    );
+    Ok(ProofRuntimeArchiveContext {
+        contract_identity: repo_contract_identity(contract),
+        contract_snapshot_hash: snapshot.hash,
+        contract_snapshot_ref: receipt_storage_path_display(snapshot_path),
+        source_identity: git_head_identity(root).ok(),
+        scope: ProofRuntimeArchiveScope {
+            workflow: workflow_name.map(str::to_string),
+            task,
+            backend: phase.backend.unwrap_or_else(|| String::from("native")),
+            provider: phase.provider,
+            lifecycle: phase.lifecycle,
+            target: phase.target,
+        },
+    })
+}
+
+fn proof_runtime_archive_dir(root: &Path) -> PathBuf {
+    root.join(".ota").join("proof").join("archives")
+}
+
+fn write_proof_runtime_archive(
+    root: &Path,
+    record: &ProofRuntimeArchiveRecord<'_>,
+) -> Result<ProofRuntimeArchive, String> {
+    let content = serde_json::to_vec_pretty(record)
+        .map_err(|error| format!("failed to serialize proof archive: {error}"))?;
+    let identity = contract_snapshot_hash(&content);
+    let archive_dir = proof_runtime_archive_dir(root);
+    fs::create_dir_all(&archive_dir).map_err(|error| {
+        format!(
+            "failed to create proof archive directory `{}`: {error}",
+            compact_path(&archive_dir, ".")
+        )
+    })?;
+    let archive_path = archive_dir.join(format!(
+        "runtime-proof-{}.json",
+        identity
+            .strip_prefix("sha256:")
+            .unwrap_or(identity.as_str())
+    ));
+    if archive_path.exists() {
+        verify_proof_runtime_archive_identity(&archive_path, &identity)?;
+    } else {
+        fs::write(&archive_path, content).map_err(|error| {
+            format!(
+                "failed to write proof archive `{}`: {error}",
+                compact_path(&archive_path, ".")
+            )
+        })?;
+    }
+    prune_proof_runtime_archives(&archive_dir)?;
+    Ok(ProofRuntimeArchive {
+        identity,
+        path: receipt_storage_path_display(&archive_path),
+    })
+}
+
+fn verify_proof_runtime_archive_identity(
+    archive_path: &Path,
+    identity: &str,
+) -> Result<(), String> {
+    let existing = fs::read(archive_path).map_err(|error| {
+        format!(
+            "failed to read proof archive `{}`: {error}",
+            compact_path(archive_path, ".")
+        )
+    })?;
+    if contract_snapshot_hash(&existing) != identity {
+        return Err(format!(
+            "proof archive `{}` does not match its content-addressed identity",
+            compact_path(archive_path, ".")
+        ));
+    }
+    Ok(())
+}
+
+fn prune_proof_runtime_archives(archive_dir: &Path) -> Result<(), String> {
+    let mut entries = fs::read_dir(archive_dir)
+        .map_err(|error| format!("failed to read proof archive directory: {error}"))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            (name.starts_with("runtime-proof-") && name.ends_with(".json"))
+                .then_some((name, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    if entries.len() <= PROOF_RUNTIME_ARCHIVE_LIMIT {
+        return Ok(());
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let excess = entries.len().saturating_sub(PROOF_RUNTIME_ARCHIVE_LIMIT);
+    for (_, path) in entries.into_iter().take(excess) {
+        fs::remove_file(&path).map_err(|error| {
+            format!(
+                "failed to prune proof archive `{}`: {error}",
+                compact_path(&path, ".")
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn proof_runtime_artifact_dir(

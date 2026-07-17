@@ -3123,6 +3123,12 @@ pub struct ProofRuntimeArtifacts<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeArchive {
+    pub identity: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProofRuntimeLikelyCauseEvidence {
     pub kind: String,
     pub artifact: String,

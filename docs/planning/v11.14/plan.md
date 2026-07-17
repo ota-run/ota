@@ -130,6 +130,14 @@ The first implementation should remain narrow:
      broad enough for the selected policy. Exit code zero is execution success only; this slice
      must not create a second proof taxonomy.
 
+The first `proof_breadth` declaration is a workflow-owned **qualified runtime proof** whenever a
+workflow declares `proof`. It claims that the selected runtime proof carrier reports its own
+breadth honestly, not that the proof is repo-global or complete. Therefore a matching archived
+`passed_with_unproven_boundaries` record can support that qualified claim while its
+`not_proved[]` entries remain visible as policy inputs. It becomes a contradiction only when an
+explicit policy requires proof coverage that the selected record excludes; Ota must not treat every
+bounded proof as a contradiction merely because it is bounded.
+
 Do not broaden into code correctness, intent inference from opaque shell text, or a generic code
 review score.
 
@@ -171,6 +179,12 @@ The cited proof basis must carry:
 An absent artifact, contract-snapshot mismatch, scope mismatch, stale witness, or unavailable
 replay posture leaves proof assurance `unknown`. A historical green artifact must never support a
 changed contract or differently scoped lane.
+
+The existing `.ota/proof/<lane>/` bundle is a mutable working directory, not an immutable proof
+record. Before `proof_breadth` can consume runtime proof, Ota must add a proof-owned archive that
+captures the terminal proof JSON and binds it to its content identity, source identity, archived
+contract snapshot, and resolved execution scope. Ordinary repo receipts remain separate: they did
+not execute the proof lane and must not be retrofitted with runtime-proof evidence.
 
 ## Canonical Evaluator
 

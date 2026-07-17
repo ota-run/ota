@@ -41,6 +41,11 @@
   `effects.adapter_state: compose_volume:<volume>` is now cited as `contradicted` in Doctor
   claim-assurance output; opaque shell remains `unknown` rather than inferred
 
+- added `ota proof runtime --json --archive` for immutable runtime-proof records. Archived proof
+  JSON is content-addressed and bound to a semantic contract snapshot, clean source identity when
+  available, and resolved execution scope; the mutable proof working bundle is no longer a
+  candidate replay witness
+
 ## 1.6.24
 
 - aligned the published contract schema with the shipped V11.11 workflow proof surface, including

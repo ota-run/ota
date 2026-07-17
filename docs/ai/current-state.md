@@ -41,7 +41,10 @@ durable agent workflow belongs in the canonical Ota skill.
   declaration plus closure remains `unknown` without non-self-origin evidence. Its first
   deterministic contradiction is a typed `reset_compose_service_volume` action that omits the
   exact `effects.adapter_state: compose_volume:<volume>` it mutates; opaque shell remains
-  `unknown`. Opt-in
+  `unknown`. `ota proof runtime --json --archive` now creates a content-addressed proof-owned
+  record bound to the terminal proof output, archived contract snapshot, clean source identity
+  when available, and resolved execution scope; the shared proof-breadth evaluator remains next.
+  Opt-in
   `policies.agent.claim_assurance` requirements now drive the same canonical `deny` or `review`
   decision through Doctor, `ota run --agent`, previews, and `ota up --agent`; default agent
   admission remains unchanged without that policy requirement. Immutable proof-breadth evidence

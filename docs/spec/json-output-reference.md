@@ -896,6 +896,12 @@ Notes:
   boundary tightens `reason` from generic missing evidence to `caller_side_only_evidence`
 - `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as
   `proof_runtime_json`, `proof_topology`, `proof_doctor`, and `proof_up_log`
+- `ota proof runtime --json --archive` additionally writes one immutable proof-owned record under
+  `.ota/proof/archives/` and returns additive `archive.identity` and `archive.path`. The archive
+  is content-addressed and binds the terminal proof JSON to an archived semantic contract snapshot,
+  clean Git source identity when available, and resolved workflow/task/backend/provider/lifecycle
+  scope. The mutable `.ota/proof/<lane>/` working bundle remains supporting evidence, not a
+  replay-grade witness.
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface

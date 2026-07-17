@@ -622,6 +622,7 @@ ota proof runtime --ready-timeout 10m --workflow app [PATH]
 ota proof runtime --mode container --persistent [PATH]
 ota proof runtime --member api --workflow backend [PATH]
 ota proof runtime --json --workflow app [PATH]
+ota proof runtime --json --archive --workflow app [PATH]
 ota proof runtime --workflow app --negative-control postgres-unavailable [PATH]
 ```
 
@@ -640,6 +641,12 @@ Current behavior:
   implementation: the topology artifact is the same `ota execution topology --json` surface, the
   doctor artifact is the same `ota doctor --json` surface, and the up log is the repo-level
   preparation report for the selected path
+- supports `--archive` with `--json` to write an immutable, content-addressed terminal proof
+  record under `.ota/proof/archives/`; it binds the terminal proof JSON to an archived semantic
+  contract snapshot, clean Git source identity when available, and the resolved execution scope
+  (`workflow`, primary task, backend, provider, lifecycle, and target)
+- treats `.ota/proof/<workflow>/` as a mutable working bundle only. Its topology, doctor, and log
+  paths may support diagnosis, but only the `--archive` record is a replay-grade proof witness
 - honors the selected path's declared readiness timing policy when a workflow/task surface
   defines startup timing such as `start_period`, `interval`, `timeout`, and `retries`
 - when the selected run task is a service launcher that exits successfully before the runtime is
@@ -689,6 +696,8 @@ JSON output:
 - `workflow_env_artifacts` uses the same rendered-artifact summary as `ota execution plan`, so CI
   and agents can see which workflow-owned env file was materialized and which task/service lanes
   consume it during proof
+- `--archive` adds `archive.identity` and `archive.path`; the archive identity is the SHA-256 of
+  the stored record, so consumers can verify the exact terminal proof they select
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
 

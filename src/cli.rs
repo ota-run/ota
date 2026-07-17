@@ -845,6 +845,9 @@ enum ProofCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Archive the terminal machine-readable proof record under `.ota/proof/archives`.
+        #[arg(long, action = ArgAction::SetTrue, requires = "json")]
+        archive: bool,
         /// Override readiness wait budget for runtime proof behavior.
         #[arg(long, value_name = "DURATION")]
         ready_timeout: Option<String>,
@@ -4749,6 +4752,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             command:
                 ProofCommands::Runtime {
                     json,
+                    archive,
                     ready_timeout,
                     backend,
                     native,
@@ -4769,6 +4773,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member.as_deref(),
             workflow.as_deref(),
             negative_control.as_deref(),
+            archive,
             ready_timeout.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
@@ -18817,6 +18822,7 @@ tasks:
         assert!(super::command_supports_spinner(&super::Commands::Proof {
             command: super::ProofCommands::Runtime {
                 json: false,
+                archive: false,
                 ready_timeout: None,
                 backend: None,
                 native: false,
@@ -18931,6 +18937,7 @@ tasks:
             super::command_spinner_label(&super::Commands::Proof {
                 command: super::ProofCommands::Runtime {
                     json: false,
+                    archive: false,
                     ready_timeout: None,
                     backend: None,
                     native: false,
@@ -19084,6 +19091,7 @@ tasks:
                 super::Commands::Proof {
                     command: super::ProofCommands::Runtime {
                         json: true,
+                        archive: false,
                         ready_timeout: None,
                         backend: None,
                         native: false,
@@ -27827,6 +27835,7 @@ policies:
                 command:
                     super::ProofCommands::Runtime {
                         json: false,
+                        archive,
                         ready_timeout,
                         backend,
                         native,
@@ -27842,6 +27851,7 @@ policies:
                         path,
                     },
             } => {
+                assert!(!archive);
                 assert!(backend.is_none());
                 assert_eq!(ready_timeout.as_deref(), Some("5m"));
                 assert!(!native);
@@ -27860,6 +27870,22 @@ policies:
         }
 
         assert_eq!(super::command_where_label(&command), "ota proof runtime");
+    }
+
+    #[test]
+    fn proof_runtime_archive_requires_json() {
+        assert!(try_parse_cli_on_test_stack(&["ota", "proof", "runtime", "--archive"]).is_err());
+        let cli = try_parse_cli_on_test_stack(&["ota", "proof", "runtime", "--json", "--archive"])
+            .expect("proof archive should parse with json");
+        match cli.command {
+            Commands::Proof {
+                command: super::ProofCommands::Runtime { json, archive, .. },
+            } => {
+                assert!(json);
+                assert!(archive);
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
     }
 
     #[test]
