@@ -129,6 +129,7 @@
                   },
                   "identity": { "type": "string" },
                   "expected_identity": { "type": "string" },
+                  "execution_started": { "type": "boolean" },
                   "artifact_lineage": {
                     "type": "object",
                     "additionalProperties": false,

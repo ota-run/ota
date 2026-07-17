@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added optional immutable `tasks.<name>.replay_inputs[].expected_identity` pins. Ota now
+  validates canonical SHA-256 identities, evaluates them in dry-run and Doctor, blocks `ota run`
+  and `ota up` before task startup on missing or mismatched pins, and preserves expected plus
+  observed identity in the resulting blocked receipt instead of reducing the failure to text
+
 - fixed CI bootstrap drift recovery to distinguish `ota-run/action` reporting steps from Ota
   installers: an Action step with `install: never` no longer emits a false bootstrap-drift warning
   merely because it references an unreleased Action branch for pressure proof

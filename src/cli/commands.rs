@@ -144,6 +144,9 @@ use crate::provisioning::{
     ProvisioningOutputMode, activate_mise_paths_for_current_process,
     apply_provisioning_request_with_target,
 };
+use crate::replay_inputs::{
+    ReplayInputIdentityEvaluation, evaluate_replay_input_identity, sha256_identity,
+};
 use crate::runner::{
     CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason, CleanExecutionReport,
     CleanExecutionResourceKind, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
@@ -37820,6 +37823,7 @@ tasks:
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: String::from("sha256:baseline"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -37850,6 +37854,7 @@ tasks:
             input_class: ReplayInputClass::SelectedRuntimeVersion,
             identity: String::from("v24.1.0"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -37875,6 +37880,7 @@ tasks:
             input_class: ReplayInputClass::SourceIdentity,
             identity: String::from("git:abc123"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -37892,6 +37898,7 @@ tasks:
             input_class: ReplayInputClass::ExecutionPresentationProfile,
             identity: String::from("sha256:baseline"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -37913,6 +37920,7 @@ tasks:
             input_class: ReplayInputClass::ComparatorSemantics,
             identity: String::from("sha256:baseline"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -37937,6 +37945,7 @@ tasks:
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: String::from("sha256:ambient"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: Some(crate::output::ExecutionReceiptHydrationProvenance {
                 task: String::from("setup"),
                 source_kind: String::from("dotnet_restore"),
@@ -39004,6 +39013,189 @@ tasks:
     }
 
     #[test]
+    fn replay_input_identity_mismatch_is_preserved_in_up_receipt_before_execution() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: pinned-replay-input
+tasks:
+  verify:
+    command:
+      exe: true
+"#,
+        )
+        .expect("parse contract");
+        let expected_identity = format!("sha256:{}", "a".repeat(64));
+        let observed_identity = format!("sha256:{}", "b".repeat(64));
+        let mismatch = super::ReplayInputIdentityMismatch {
+            kind: "replay_input_identity_mismatch",
+            task: String::from("verify"),
+            input_id: String::from("fixture"),
+            path: String::from("fixture.txt"),
+            input_kind: String::from("static_file"),
+            input_class: ReplayInputClass::DeclaredReplayInput,
+            expected_identity: expected_identity.clone(),
+            observed_identity: observed_identity.clone(),
+            identity_error: None,
+            execution_started: false,
+        };
+
+        let result = super::up_replay_input_identity_mismatch_result(
+            &contract,
+            &contract_path,
+            None,
+            ExecutionOverrides::default(),
+            mismatch,
+        );
+
+        assert!(!result.ok);
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "preconditions");
+        assert_eq!(
+            result.receipt.failure_origin.as_deref(),
+            Some("replay_input_identity_mismatch")
+        );
+        assert_eq!(result.receipt.evaluated_inputs.len(), 1);
+        assert_eq!(
+            result.receipt.evaluated_inputs[0]
+                .expected_identity
+                .as_deref(),
+            Some(expected_identity.as_str())
+        );
+        assert_eq!(
+            result.receipt.evaluated_inputs[0].execution_started,
+            Some(false)
+        );
+        assert_eq!(
+            result.receipt.evaluated_inputs[0].identity,
+            observed_identity
+        );
+    }
+
+    #[test]
+    fn up_dry_run_blocks_pinned_replay_input_mismatch_before_preview() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(repo.path().join("fixture.txt"), "changed").expect("write fixture");
+        let contract_path = repo.path().join("ota.yaml");
+        let expected_identity = super::contract_snapshot_hash(b"expected");
+        let contract = parse_contract_str(
+            &contract_path,
+            &format!(
+                "version: 1\nproject:\n  name: pinned-up-preview\ntasks:\n  setup:\n    replay_inputs:\n      - id: fixture\n        kind: static_file\n        path: fixture.txt\n        expected_identity: {expected_identity}\n    command:\n      exe: true\nworkflows:\n  default: verify\n  verify:\n    setup:\n      task: setup\n"
+            ),
+        )
+        .expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            None,
+            false,
+            None,
+            true,
+            super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("dry-run result");
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert_eq!(
+            result.receipt.failure_origin.as_deref(),
+            Some("replay_input_identity_mismatch")
+        );
+    }
+
+    #[test]
+    fn run_blocks_pinned_replay_input_mismatch_without_starting_task() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(repo.path().join("fixture.txt"), "changed").expect("write fixture");
+        let expected_identity = super::contract_snapshot_hash(b"expected");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                "version: 1\nproject:\n  name: pinned-run\ntasks:\n  verify:\n    replay_inputs:\n      - id: fixture\n        kind: static_file\n        path: fixture.txt\n        expected_identity: {expected_identity}\n    run: printf executed > task-ran.txt\n"
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(!repo.path().join("task-ran.txt").exists());
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("replay_input_identity_mismatch"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("Failure Origin: replay_input_identity_mismatch"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("RUN SUMMARY"), "{stderr}");
+    }
+
+    #[test]
+    fn run_blocks_missing_pinned_replay_input_without_starting_task() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let expected_identity = super::contract_snapshot_hash(b"expected");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                "version: 1\nproject:\n  name: missing-pinned-run\ntasks:\n  verify:\n    replay_inputs:\n      - id: fixture\n        kind: static_file\n        path: fixture.txt\n        expected_identity: {expected_identity}\n    run: printf executed > task-ran.txt\n"
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(!repo.path().join("task-ran.txt").exists());
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("replay_input_identity_missing"), "{stderr}");
+        assert!(
+            stderr.contains("Failure Origin: replay_input_identity_missing"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
     fn receipt_captures_declared_npm_ci_shrinkwrap_identity() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let package_lock = "{\"lockfileVersion\": 3}\n";
@@ -39199,6 +39391,7 @@ tasks:
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -39227,6 +39420,7 @@ tasks:
             input_class: ReplayInputClass::PolicyRulesetIdentity,
             identity: String::from("policy-hash-a"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: Some(crate::output::ExecutionReceiptArtifactLineage {
                 producer: String::from("org_policy_pack"),
@@ -39258,6 +39452,7 @@ tasks:
             input_class: ReplayInputClass::DeclaredEnvSourceIdentity,
             identity: String::from("env-source-hash-a"),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         };
@@ -93438,17 +93633,32 @@ fn run_single_contract_target_streaming(
         });
     }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    let replay_inputs = capture_replay_inputs_before_execution(
+    let replay_inputs = match capture_replay_inputs_before_execution(
         &target.contract,
         &target.contract_path,
         [task_name.clone()],
-    )
-    .map_err(|message| RunCommandFailure {
-        message: message.to_string(),
-        summary: None,
-        exit_code: 1,
-        receipt: None,
-    })?;
+    ) {
+        Ok(inputs) => inputs,
+        Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
+            return Err(replay_input_identity_run_failure(
+                &target.contract,
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                overrides,
+                show_receipt,
+                mismatch,
+            ));
+        }
+        Err(error) => {
+            return Err(RunCommandFailure {
+                message: error.to_string(),
+                summary: None,
+                exit_code: 1,
+                receipt: None,
+            });
+        }
+    };
     let witnessed_observations = capture_witnessed_observations_before_execution(
         &target.contract,
         &target.contract_path,
@@ -93774,17 +93984,32 @@ fn run_single_contract_target_captured(
         });
     }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    let replay_inputs = capture_replay_inputs_before_execution(
+    let replay_inputs = match capture_replay_inputs_before_execution(
         &target.contract,
         &target.contract_path,
         [task_name.clone()],
-    )
-    .map_err(|message| RunCommandFailure {
-        message: message.to_string(),
-        summary: None,
-        exit_code: 1,
-        receipt: None,
-    })?;
+    ) {
+        Ok(inputs) => inputs,
+        Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
+            return Err(replay_input_identity_run_failure(
+                &target.contract,
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                overrides,
+                show_receipt,
+                mismatch,
+            ));
+        }
+        Err(error) => {
+            return Err(RunCommandFailure {
+                message: error.to_string(),
+                summary: None,
+                exit_code: 1,
+                receipt: None,
+            });
+        }
+    };
     let witnessed_observations = capture_witnessed_observations_before_execution(
         &target.contract,
         &target.contract_path,
@@ -97616,6 +97841,7 @@ fn collect_receipt_source_identity_input(
             input_class: ReplayInputClass::SourceIdentity,
             identity: head,
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         },
@@ -97678,6 +97904,7 @@ fn collect_receipt_policy_ruleset_identity_input(
             input_class: ReplayInputClass::PolicyRulesetIdentity,
             identity: contract_snapshot_hash(&policy_bytes),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: Some(crate::output::ExecutionReceiptArtifactLineage {
                 producer: String::from("org_policy_pack"),
@@ -97736,6 +97963,7 @@ fn collect_receipt_declared_env_source_inputs(
                 input_class: ReplayInputClass::DeclaredEnvSourceIdentity,
                 identity: contract_snapshot_hash(&bytes),
                 expected_identity: None,
+                execution_started: None,
                 hydration_provenance: None,
                 artifact_lineage: None,
             },
@@ -97749,9 +97977,28 @@ struct ReplayInputIdentityMismatch {
     task: String,
     input_id: String,
     path: String,
+    input_kind: String,
+    input_class: ReplayInputClass,
     expected_identity: String,
     observed_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity_error: Option<String>,
     execution_started: bool,
+}
+
+impl ReplayInputIdentityMismatch {
+    fn message(&self) -> String {
+        if let Some(error) = self.identity_error.as_deref() {
+            return format!(
+                "{}: declared replay input `{}` for task `{}` expected `{}` but could not be read before execution: {error}",
+                self.kind, self.input_id, self.task, self.expected_identity
+            );
+        }
+        format!(
+            "{}: declared replay input `{}` for task `{}` expected `{}` but observed `{}` before execution",
+            self.kind, self.input_id, self.task, self.expected_identity, self.observed_identity
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -97764,14 +98011,7 @@ impl std::fmt::Display for ReplayInputCaptureError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Capture(message) => formatter.write_str(message),
-            Self::IdentityMismatch(mismatch) => write!(
-                formatter,
-                "replay_input_identity_mismatch: declared replay input `{}` for task `{}` expected `{}` but observed `{}` before execution",
-                mismatch.input_id,
-                mismatch.task,
-                mismatch.expected_identity,
-                mismatch.observed_identity
-            ),
+            Self::IdentityMismatch(mismatch) => formatter.write_str(&mismatch.message()),
         }
     }
 }
@@ -97789,30 +98029,60 @@ fn capture_replay_inputs_before_execution(
         };
         for input in &task.replay_inputs {
             let path = input.path.trim();
-            let bytes = fs::read(root.join(path)).map_err(|error| {
+            let (kind, input_class) = replay_input_capture_surface(input.kind);
+            let observed = fs::read(root.join(path))
+                .map(|bytes| sha256_identity(&bytes))
+                .map_err(|error| error.to_string());
+            let id = format!("replay_input:{task_name}:{}", input.id.trim());
+            if let Some(evaluation) = evaluate_replay_input_identity(input, observed.clone()) {
+                match evaluation {
+                    ReplayInputIdentityEvaluation::Match { .. } => {}
+                    ReplayInputIdentityEvaluation::Mismatch {
+                        expected_identity,
+                        observed_identity,
+                    } => {
+                        return Err(ReplayInputCaptureError::IdentityMismatch(
+                            ReplayInputIdentityMismatch {
+                                kind: "replay_input_identity_mismatch",
+                                task: task_name.clone(),
+                                input_id: input.id.trim().to_string(),
+                                path: path.to_string(),
+                                input_kind: kind.to_string(),
+                                input_class,
+                                expected_identity,
+                                observed_identity,
+                                identity_error: None,
+                                execution_started: false,
+                            },
+                        ));
+                    }
+                    ReplayInputIdentityEvaluation::Missing {
+                        expected_identity,
+                        error,
+                    } => {
+                        return Err(ReplayInputCaptureError::IdentityMismatch(
+                            ReplayInputIdentityMismatch {
+                                kind: "replay_input_identity_missing",
+                                task: task_name.clone(),
+                                input_id: input.id.trim().to_string(),
+                                path: path.to_string(),
+                                input_kind: kind.to_string(),
+                                input_class,
+                                expected_identity,
+                                observed_identity: String::from("unavailable"),
+                                identity_error: Some(error),
+                                execution_started: false,
+                            },
+                        ));
+                    }
+                }
+            }
+            let identity = observed.map_err(|error| {
                 ReplayInputCaptureError::Capture(format!(
                     "declared replay input `{}` for task `{task_name}` could not be captured before execution: {error}",
                     input.id
                 ))
             })?;
-            let (kind, input_class) = replay_input_capture_surface(input.kind);
-            let id = format!("replay_input:{task_name}:{}", input.id.trim());
-            let identity = contract_snapshot_hash(&bytes);
-            if let Some(expected_identity) = input.expected_identity.as_deref()
-                && expected_identity != identity
-            {
-                return Err(ReplayInputCaptureError::IdentityMismatch(
-                    ReplayInputIdentityMismatch {
-                        kind: "replay_input_identity_mismatch",
-                        task: task_name.clone(),
-                        input_id: input.id.trim().to_string(),
-                        path: path.to_string(),
-                        expected_identity: expected_identity.to_string(),
-                        observed_identity: identity,
-                        execution_started: false,
-                    },
-                ));
-            }
             captured.insert(
                 id.clone(),
                 ExecutionReceiptEvaluatedInput {
@@ -97821,6 +98091,7 @@ fn capture_replay_inputs_before_execution(
                     input_class,
                     identity,
                     expected_identity: input.expected_identity.clone(),
+                    execution_started: None,
                     hydration_provenance: None,
                     artifact_lineage: None,
                 },
@@ -97828,6 +98099,149 @@ fn capture_replay_inputs_before_execution(
         }
     }
     Ok(captured.into_values().collect())
+}
+
+fn replay_input_identity_mismatch_finding(mismatch: &ReplayInputIdentityMismatch) -> Finding {
+    let missing = mismatch.identity_error.is_some();
+    Finding {
+        identity: Some(FindingIdentity {
+            code: String::from(if missing {
+                "OTA_REPLAY_INPUT_IDENTITY_MISSING"
+            } else {
+                "OTA_REPLAY_INPUT_IDENTITY_MISMATCH"
+            }),
+            category: String::from("replay"),
+            owner: String::from("execution"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: format!(
+            "Replay input identity {}: {}",
+            if missing { "missing" } else { "mismatch" },
+            mismatch.input_id
+        ),
+        why: mismatch.message(),
+        next: format!(
+            "restore `{}` to the declared identity or update `tasks.{}.replay_inputs` through reviewed contract change before rerunning",
+            mismatch.path, mismatch.task
+        ),
+    }
+}
+
+fn replay_input_identity_mismatch_evaluated_input(
+    mismatch: &ReplayInputIdentityMismatch,
+) -> ExecutionReceiptEvaluatedInput {
+    ExecutionReceiptEvaluatedInput {
+        id: format!("replay_input:{}:{}", mismatch.task, mismatch.input_id),
+        kind: mismatch.input_kind.clone(),
+        input_class: mismatch.input_class,
+        identity: mismatch.observed_identity.clone(),
+        expected_identity: Some(mismatch.expected_identity.clone()),
+        execution_started: Some(false),
+        hydration_provenance: None,
+        artifact_lineage: None,
+    }
+}
+
+fn replay_input_identity_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    mismatch: ReplayInputIdentityMismatch,
+) -> RunCommandFailure {
+    let finding = replay_input_identity_mismatch_finding(&mismatch);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            contract_path,
+            task_name,
+            overrides,
+            member.map(str::to_string),
+        ),
+        "BLOCKED",
+        "preconditions",
+        None,
+        member,
+        Some(task_name),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.evaluated_inputs = vec![replay_input_identity_mismatch_evaluated_input(&mismatch)];
+    receipt.failure_origin = Some(mismatch.kind.to_string());
+    receipt.blocked = vec![mismatch.kind.to_string()];
+    refresh_execution_receipt_status(&mut receipt);
+    RunCommandFailure {
+        message: stylize_text_failure("ota run", &mismatch.message()),
+        summary: Some(render_execution_receipt_summary_block(
+            &receipt,
+            Some(task_name),
+            "RUN SUMMARY",
+        )),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+fn up_replay_input_identity_mismatch_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    mismatch: ReplayInputIdentityMismatch,
+) -> RepoUpResult {
+    let finding = replay_input_identity_mismatch_finding(&mismatch);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        resolved_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            resolved_path,
+            mismatch.task.as_str(),
+            overrides,
+            None,
+        ),
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        Some(mismatch.task.as_str()),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.evaluated_inputs = vec![replay_input_identity_mismatch_evaluated_input(&mismatch)];
+    receipt.failure_origin = Some(mismatch.kind.to_string());
+    receipt.blocked = vec![mismatch.kind.to_string()];
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "preconditions",
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: Some(mismatch.task),
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
 }
 
 fn replay_input_class_closes_hermetic_replay(class: ReplayInputClass) -> bool {
@@ -98145,6 +98559,7 @@ fn collect_hydration_provenance_for_hydration(
         input_class: ReplayInputClass::DeclaredDependencyResolution,
         identity,
         expected_identity: None,
+        execution_started: None,
         hydration_provenance: Some(provenance),
         artifact_lineage: None,
     });
@@ -98231,6 +98646,7 @@ fn collect_receipt_generated_artifact_inputs(
                 input_class: ReplayInputClass::GeneratedArtifactLineage,
                 identity,
                 expected_identity: None,
+                execution_started: None,
                 hydration_provenance: None,
                 artifact_lineage: Some(lineage),
             },
@@ -98473,6 +98889,7 @@ fn collect_receipt_compose_images_from_file(
                 input_class: ReplayInputClass::SelectedRuntimeArtifact,
                 identity: digest,
                 expected_identity: None,
+                execution_started: None,
                 hydration_provenance: None,
                 artifact_lineage: None,
             },
@@ -98623,6 +99040,7 @@ fn collect_receipt_hydration_source_inputs(
             input_class: ReplayInputClass::DeclaredDependencyResolution,
             identity: contract_snapshot_hash(&bytes),
             expected_identity: None,
+            execution_started: None,
             hydration_provenance: None,
             artifact_lineage: None,
         },
@@ -98636,6 +99054,7 @@ fn collect_receipt_hydration_source_inputs(
                 input_class: ReplayInputClass::SelectedRuntimeVersion,
                 identity: version,
                 expected_identity: None,
+                execution_started: None,
                 hydration_provenance: None,
                 artifact_lineage: None,
             },
@@ -105620,6 +106039,14 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         paint_key("Steps:"),
         receipt.summary.step_count
     ));
+    if let Some(failure_origin) = receipt.failure_origin.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Failure Origin:"),
+            failure_origin
+        ));
+    }
     if !receipt.env_sources.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Env Sources")));
         for source in &receipt.env_sources {
@@ -105714,6 +106141,20 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                     .expect("replay input class must serialize")
                     .trim_matches('"')
             ));
+            if let Some(expected_identity) = input.expected_identity.as_deref() {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Expected Identity:"),
+                    expected_identity
+                ));
+            }
+            if let Some(execution_started) = input.execution_started {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Execution Started:"),
+                    execution_started
+                ));
+            }
         }
     }
 
@@ -113858,15 +114299,22 @@ fn execute_repo_up_with_behavior_with_agent(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
 ) -> Result<RepoUpResult, String> {
-    let captured_replay_inputs = if dry_run {
-        Vec::new()
-    } else {
-        capture_replay_inputs_before_execution(
-            contract,
-            resolved_path,
-            contract.selected_workflow_task_closure_names(workflow_name),
-        )
-        .map_err(|error| error.to_string())?
+    let captured_replay_inputs = match capture_replay_inputs_before_execution(
+        contract,
+        resolved_path,
+        contract.selected_workflow_task_closure_names(workflow_name),
+    ) {
+        Ok(inputs) => inputs,
+        Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
+            return Ok(up_replay_input_identity_mismatch_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                mismatch,
+            ));
+        }
+        Err(error) => return Err(error.to_string()),
     };
     let captured_witnessed_observations = if dry_run {
         ExecutionReceiptWitnessedObservations::default()

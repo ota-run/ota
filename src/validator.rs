@@ -18902,6 +18902,26 @@ tasks:
     }
 
     #[test]
+    fn rejects_noncanonical_replay_input_expected_identity() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                "version: 1\nproject:\n  name: ota\ntasks:\n  verify:\n    replay_inputs:\n      - id: fixture\n        kind: static_file\n        path: fixture.txt\n        expected_identity: sha256:{}\n    command:\n      exe: true\n",
+                "A".repeat(64)
+            ),
+        )
+        .expect("parse contract");
+
+        let errors = validate_contract(&contract).expect_err("uppercase identity must be rejected");
+        assert!(
+            errors
+                .errors()
+                .iter()
+                .any(|error| error.to_string().contains("expected_identity"))
+        );
+    }
+
+    #[test]
     fn rejects_secret_env_defaults_during_contract_validation() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

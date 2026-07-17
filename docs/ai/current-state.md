@@ -35,6 +35,12 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
+- active replay-input identity hardening: optional task `replay_inputs[].expected_identity` pins
+  now validate canonical SHA-256 values, surface missing or mismatched artifacts through Doctor,
+  block dry-run/run/up before task startup, and preserve expected plus observed identity in the
+  receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
+  dry-run, and real native plus container agent-safe execution. Strict-policy admission for lanes
+  that require declared pins remains a future policy refinement rather than an implicit default.
 - active V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks. It keeps maintainer
   declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;

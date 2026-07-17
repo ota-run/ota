@@ -1275,6 +1275,11 @@ Current behavior:
 - `--dry-run` is the read-only repo run preview surface: it resolves the selected task path,
   env, toolchains, native prerequisites, dependencies, and execution plan without running setup,
   dependencies, task processes, or containers
+- dry-run also evaluates declared replay-input identity pins. A missing or mismatched
+  `expected_identity` returns the typed `replay_input_identity_missing` or
+  `replay_input_identity_mismatch` preflight result before Ota presents the lane as runnable; real
+  execution blocks on the same condition before task startup and retains the expected identity plus
+  the observed identity when the input was readable in the receipt's `evaluated_inputs[]`
 - `--dry-run` prints `RUN PREVIEW`, uses the execution-preview vocabulary
   `RUNNABLE` / `RUNNABLE WITH WARNINGS` / `BLOCKED`, and shows `Mode: dry-run (no write)` plus
   the selected execution path, requirements, and planned actions
@@ -1477,6 +1482,9 @@ ota doctor --member api --member web --json [PATH]
 - missing-file precondition failures now point to `ota up` / `ota run setup` when `tasks.setup` already exists, or to `ota assist wire-setup` when the repo still needs a contract-first setup path
 - when a contract has no tasks, doctor now keeps that path preview-first too: it suggests `ota detect --dry-run` before any detect write, while still offering `ota assist add-task` when the right fix is clearly one explicit task
 - checks configured env requirements, declared checks, and service healthchecks in native mode
+- reports warning findings for missing or mismatched pinned `tasks.<name>.replay_inputs[]` so
+  operators can repair deterministic replay inputs before invoking an execution lane; execution
+  remains the hard preflight boundary
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, doctor
   scopes runtime, tool, env, and precondition-check diagnosis to that setup/run dependency path
   instead of treating unrelated task-specific prerequisites as repo-global truth

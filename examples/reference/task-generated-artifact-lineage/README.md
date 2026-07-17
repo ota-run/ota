@@ -46,6 +46,7 @@ tasks:
       - id: api_schema
         kind: static_file
         path: schema/api.graphql
+        expected_identity: sha256:cf448e0a574c770db5d4562bd2d46a67b50fa02d16eb207febc2a613c399b27a
       - id: runtime-presentation
         kind: presentation_profile
         path: replay/presentation-profile.yaml
@@ -62,3 +63,7 @@ Use `static_file` for generic immutable repo files, `presentation_profile` for d
 output-shaping or normalization policy, and `comparator_profile` for declared equivalence or
 tolerance policy. Keep the query trace separate: Ota emits it under receipt
 `witnessed_observations`, not `evaluated_inputs`.
+
+Use `expected_identity` when the lane must reject a changed input before execution. It is an
+explicit reviewed SHA-256 pin: Ota records the observed identity but never updates the declared
+value for you.

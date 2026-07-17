@@ -1096,6 +1096,9 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success_receipt.get("failure_origin").is_some());
     assert!(success_receipt.get("dependency_steps").is_some());
     assert!(success_receipt.get("next_steps").is_some());
+    let evaluated_input = &success_receipt["evaluated_inputs"]["items"]["properties"];
+    assert!(evaluated_input.get("expected_identity").is_some());
+    assert!(evaluated_input.get("execution_started").is_some());
     assert!(success.get("findings").is_some());
     assert!(success.get("promoted_baseline").is_some());
     assert!(success_summary.get("error_count").is_some());

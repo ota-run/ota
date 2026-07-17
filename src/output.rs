@@ -613,6 +613,9 @@ pub struct ExecutionReceiptEvaluatedInput {
     pub identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_identity: Option<String>,
+    /// Present only for a preflight input that prevented the selected execution from starting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_started: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hydration_provenance: Option<ExecutionReceiptHydrationProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]

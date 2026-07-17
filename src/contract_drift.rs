@@ -38,6 +38,9 @@ use crate::output::{
     DoctorRequiredVerificationLaneEvidenceClasses, GovernanceDecisionBasisEntry,
     GovernanceDecisionInputEntry, GovernanceReplayResult,
 };
+use crate::replay_inputs::{
+    ReplayInputIdentityEvaluation, evaluate_replay_input_identity, sha256_identity,
+};
 use crate::schema::{
     AgentBootstrapOtaSource, Backend, Contract, ServiceSpec, ToolchainFulfillmentMode,
     ToolchainProvider,
@@ -58,6 +61,7 @@ pub(crate) fn append_contract_drift_findings(
     findings: &mut Vec<Finding>,
 ) {
     let root = contract_path.parent().unwrap_or(contract_path);
+    append_replay_input_identity_findings(contract, root, findings);
     let Ok(detect_report) = detect_repo(root) else {
         return;
     };
@@ -300,6 +304,61 @@ pub(crate) fn append_contract_drift_findings(
                 compact_display_path(root)
             ),
         ));
+    }
+}
+
+fn append_replay_input_identity_findings(
+    contract: &Contract,
+    root: &Path,
+    findings: &mut Vec<Finding>,
+) {
+    for (task_name, task) in &contract.tasks {
+        for input in &task.replay_inputs {
+            if input.expected_identity.is_none() {
+                continue;
+            }
+            let path = input.path.trim();
+            let evaluation = evaluate_replay_input_identity(
+                input,
+                fs::read(root.join(path))
+                    .map(|bytes| sha256_identity(&bytes))
+                    .map_err(|error| error.to_string()),
+            )
+            .expect("only pinned replay inputs reach identity evaluation");
+            match evaluation {
+                ReplayInputIdentityEvaluation::Missing {
+                    expected_identity,
+                    error,
+                } => {
+                    findings.push(Finding::identified(
+                        "OTA_REPLAY_INPUT_IDENTITY_MISSING",
+                        "replay",
+                        "repo_contract",
+                        FindingSeverity::Warn,
+                        format!("Pinned replay input `{}` is missing", input.id),
+                        format!(
+                            "task `{task_name}` requires `{path}` with identity `{expected_identity}`, but Ota could not read it: {error}"
+                        ),
+                        format!("restore `{path}` with the declared immutable content before running `{task_name}`"),
+                    ));
+                }
+                ReplayInputIdentityEvaluation::Mismatch {
+                    expected_identity,
+                    observed_identity,
+                } => findings.push(Finding::identified(
+                    "OTA_REPLAY_INPUT_IDENTITY_MISMATCH",
+                    "replay",
+                    "repo_contract",
+                    FindingSeverity::Warn,
+                    format!("Pinned replay input `{}` does not match", input.id),
+                    format!(
+                        "task `{task_name}` expects `{path}` as `{expected_identity}`, but observed `{observed_identity}"
+                    ),
+                    format!("restore the declared content for `{path}` or intentionally update `expected_identity` after review"),
+                )),
+                ReplayInputIdentityEvaluation::Match { .. } => {}
+            }
+        }
     }
 }
 
@@ -3400,7 +3459,38 @@ mod tests {
     use crate::parser::parse_contract_str;
     use crate::schema::{EnvSource, EnvSourceKind, ToolchainProvider};
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::Path;
+
+    #[test]
+    fn doctor_reports_missing_and_mismatched_pinned_replay_inputs() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(repo.path().join("fixture.txt"), "changed").expect("write fixture");
+        let expected = sha256_identity(b"expected");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            &format!(
+                "version: 1\nproject:\n  name: pinned-replay-inputs\ntasks:\n  verify:\n    replay_inputs:\n      - id: changed\n        kind: static_file\n        path: fixture.txt\n        expected_identity: {expected}\n      - id: missing\n        kind: static_file\n        path: missing.txt\n        expected_identity: {expected}\n    command:\n      exe: true\n"
+            ),
+        )
+        .expect("parse contract");
+
+        let mut findings = Vec::new();
+        append_replay_input_identity_findings(&contract, repo.path(), &mut findings);
+
+        let codes: Vec<&str> = findings
+            .iter()
+            .filter_map(|finding| {
+                finding
+                    .identity
+                    .as_ref()
+                    .map(|identity| identity.code.as_str())
+            })
+            .collect();
+        assert!(codes.contains(&"OTA_REPLAY_INPUT_IDENTITY_MISMATCH"));
+        assert!(codes.contains(&"OTA_REPLAY_INPUT_IDENTITY_MISSING"));
+    }
 
     #[test]
     fn collect_detect_removals_keeps_manual_task_fields_visible_for_rewrite_only() {

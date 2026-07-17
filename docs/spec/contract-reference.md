@@ -1946,6 +1946,10 @@ Fields:
   - `kind: comparator_profile` for declared comparison semantics such as equivalence, tolerance,
     ignored labels, or threshold posture; matching identity narrows comparator drift but does not
     by itself make the lane hermetic
+  - `expected_identity`: optional immutable `sha256:<64 lowercase hex characters>` pin. When
+    declared, Ota hashes the input before execution and blocks the selected closure before any task
+    starts if the observed identity differs. Ota never rewrites this value; intentional input
+    changes require a reviewed contract update.
   replay inputs cannot overlap declared closure writes
 - replay-input kind guide:
   - use `static_file` when the file is part of the deterministic selected-lane input set
@@ -1960,6 +1964,7 @@ Fields:
       - id: recorded_sql
         kind: static_file
         path: data/fixture.jsonl
+        expected_identity: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       - id: frozen_store
         kind: static_file
         path: data/store.db

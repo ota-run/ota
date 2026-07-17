@@ -2061,7 +2061,13 @@ Each task summary now also carries a canonical `use` object:
 Receipt `evaluated_inputs[]` also includes task-declared `replay_inputs` captured before execution.
 These records use `kind: static_file` and `input_class: declared_replay_input`; matching identities
 only prove the named file held still and remain narrowing evidence rather than a hermetic replay
-claim.
+claim. When the contract declares `expected_identity`, the record retains both the observed
+`identity` and `expected_identity`. A missing or mismatched pin does not begin execution: Ota emits
+a blocked preconditions receipt with `failure_origin: replay_input_identity_missing` or
+`replay_input_identity_mismatch`, one evaluated input containing the expected identity, the
+observed identity when readable, plus `execution_started: false`, and the matching
+`OTA_REPLAY_INPUT_IDENTITY_MISSING` or
+`OTA_REPLAY_INPUT_IDENTITY_MISMATCH` finding.
 When an active org policy pack participates in the selected lane, receipt capture also adds
 `kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
 policy/ruleset drift as named input drift instead of leaving governance movement ambient.
