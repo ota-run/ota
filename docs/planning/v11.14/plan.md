@@ -27,7 +27,7 @@
 
 # V11.14: Contract-Claim Assurance
 
-Status: planned. This follows V11.13 and does not reopen completed V11.3 runner enforcement.
+Status: active. This follows completed V11.13 and does not reopen completed V11.3 runner enforcement.
 
 ## Problem
 

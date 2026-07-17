@@ -33,8 +33,13 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `1.6.24-implementation`
-- released baseline: `v1.6.23`
+- branch: `1.6.25-implementation`
+- released baseline: `v1.6.24`
+- active V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
+  first additive `ota doctor --json` carrier for declared agent-safe tasks. It keeps maintainer
+  declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;
+  declaration plus closure remains `unknown` without non-self-origin evidence, and default agent
+  admission remains unchanged while contradiction and strict-policy paths are completed next.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt

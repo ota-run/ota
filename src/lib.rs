@@ -23,6 +23,7 @@
 pub(crate) mod adapter_inputs;
 pub(crate) mod agent_boundary_docs;
 pub(crate) mod capabilities;
+pub mod claim_assurance;
 pub mod cli;
 pub(crate) mod contract_drift;
 pub mod detector;

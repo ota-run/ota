@@ -25,6 +25,7 @@ use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::claim_assurance::ClaimAssuranceRecord;
 use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
@@ -100,6 +101,8 @@ pub struct DoctorSuccess<'a> {
     pub execution: Option<ExecutionSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub governance: Option<DoctorGovernanceSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub claim_assurance: Vec<ClaimAssuranceRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<&'a ProvisioningPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]

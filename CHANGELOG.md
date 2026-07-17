@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added additive `claim_assurance[]` to `ota doctor --json` as the first V11.14 carrier for
+  contract-claim assurance. Agent-safe task declarations now keep maintainer assertion, derived
+  closure, policy-independent assurance, and policy decision separate; contract-only evidence
+  remains explicitly `unknown` rather than reading as independently supported
+
 ## 1.6.24
 
 - aligned the published contract schema with the shipped V11.11 workflow proof surface, including

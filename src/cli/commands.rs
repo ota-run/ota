@@ -17279,6 +17279,25 @@ pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> Tas
     task_effective_safety_with_overrides(contract, task_name, ExecutionOverrides::default())
 }
 
+fn doctor_claim_assurance(
+    contract: &Contract,
+) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
+    contract
+        .tasks
+        .keys()
+        .filter_map(|task_name| {
+            let safety = task_effective_safety(contract, task_name);
+            safety.declared_safe.then(|| {
+                crate::claim_assurance::agent_safety_claim(
+                    task_name,
+                    safety.effective_safe,
+                    safety.unsafe_closure_tasks,
+                )
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn task_effective_safety_with_overrides(
     contract: &Contract,
     task_name: &str,
@@ -22364,6 +22383,7 @@ pub fn doctor(
                                 agent: None,
                                 execution: None,
                                 governance: None,
+                                claim_assurance: Vec::new(),
                                 provisioning: report.provisioning.as_ref().map(|value| &value.plan),
                                 provisioning_request: report
                                     .provisioning
@@ -22824,6 +22844,7 @@ pub fn doctor(
                                         &target.contract,
                                         &rewritten_findings,
                                     ),
+                                    claim_assurance: doctor_claim_assurance(&target.contract),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -101743,6 +101764,7 @@ fn proof_runtime_doctor_artifact_json(
         agent: agent_summary,
         execution: execution_summary,
         governance: doctor_required_verification_governance(contract, &refined_findings),
+        claim_assurance: doctor_claim_assurance(contract),
         provisioning: report.provisioning.as_ref().map(|value| &value.plan),
         provisioning_request: report.provisioning.as_ref().map(|value| &value.request),
         adapter_bootstrap: report.adapter_bootstrap.as_ref(),

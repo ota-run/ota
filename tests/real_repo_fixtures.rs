@@ -1358,6 +1358,22 @@ agent:
     assert_eq!(json["agent"]["safe_tasks"][0], "setup");
     assert_eq!(json["agent"]["verify_after_changes"][0], "test");
     assert_eq!(json["agent"]["writable_paths"][0], "src");
+
+    let assurance = &json["claim_assurance"][0];
+    assert_eq!(assurance["subject"]["kind"], "task");
+    assert_eq!(assurance["subject"]["name"], "setup");
+    assert_eq!(assurance["family"], "agent_safety");
+    assert_eq!(assurance["declaration"]["value"], "safe");
+    assert_eq!(assurance["declaration"]["evidence_class"], "asserted");
+    assert_eq!(assurance["closure"]["status"], "safe");
+    assert_eq!(assurance["closure"]["evidence_class"], "derived");
+    assert_eq!(assurance["assurance"]["status"], "unknown");
+    assert_eq!(
+        assurance["assurance"]["gaps"][0],
+        "non_self_origin_evidence"
+    );
+    assert_eq!(assurance["policy"]["decision"], "allow");
+    assert_eq!(assurance["policy"]["basis"][0], "default_compatibility");
 }
 
 #[test]

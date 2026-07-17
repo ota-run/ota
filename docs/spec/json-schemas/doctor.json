@@ -6,6 +6,100 @@
   "additionalProperties": false,
   "required": ["ok", "path", "mode", "summary", "findings"],
   "$defs": {
+    "claimAssurance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "family", "declaration", "closure", "assurance", "policy"],
+      "properties": {
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        "family": { "enum": ["agent_safety", "declared_effects", "proof_breadth"] },
+        "declaration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "evidence_class"],
+          "properties": {
+            "value": { "type": "string" },
+            "evidence_class": { "enum": ["asserted", "derived", "attested"] }
+          }
+        },
+        "closure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "evidence_class"],
+          "properties": {
+            "status": { "enum": ["safe", "unsafe", "unavailable"] },
+            "blockers": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "evidence_class": { "enum": ["derived"] }
+          }
+        },
+        "assurance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "coverage"],
+          "properties": {
+            "status": { "enum": ["supported", "contradicted", "unknown"] },
+            "coverage": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "gaps": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "source", "evidence_class"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "source": { "type": "string" },
+                  "evidence_class": { "enum": ["asserted", "derived", "attested"] }
+                }
+              }
+            },
+            "contradictions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "source", "evidence_class"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "source": { "type": "string" },
+                  "evidence_class": { "enum": ["asserted", "derived", "attested"] }
+                }
+              }
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision", "basis", "evidence_class"],
+          "properties": {
+            "decision": { "enum": ["allow", "deny", "review"] },
+            "basis": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "evidence_class": { "enum": ["derived"] }
+          }
+        }
+      }
+    },
     "toolchainSelection": {
       "type": "object",
       "additionalProperties": false,
@@ -134,6 +228,10 @@
       }
     },
     "workflow": { "$ref": "#/$defs/workflowSummary" },
+    "claim_assurance": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/claimAssurance" }
+    },
     "agent": {
       "type": "object",
       "additionalProperties": false,

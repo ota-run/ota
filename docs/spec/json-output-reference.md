@@ -2606,6 +2606,45 @@ Failure:
 Finding objects always include stable identity fields:
 `code`, `category`, `owner`, and `evidence`.
 
+### Contract-claim assurance
+
+`ota doctor --json` may include additive top-level `claim_assurance[]`. This is the first carrier
+for V11.14 contract-claim assurance. Each record uses structured subject identity instead of a
+delimiter-encoded identifier:
+
+```json
+{
+  "subject": { "kind": "task", "name": "setup" },
+  "family": "agent_safety",
+  "declaration": { "value": "safe", "evidence_class": "asserted" },
+  "closure": { "status": "safe", "evidence_class": "derived" },
+  "assurance": {
+    "status": "unknown",
+    "coverage": ["contract_declaration", "execution_closure"],
+    "gaps": ["non_self_origin_evidence"]
+  },
+  "policy": {
+    "decision": "allow",
+    "basis": ["default_compatibility"],
+    "evidence_class": "derived"
+  }
+}
+```
+
+The fields deliberately carry separate truths:
+
+- `declaration` is the maintainer assertion.
+- `closure` is Ota's derived V11.3 execution-closure result.
+- `assurance` is policy-independent evidence posture: `supported`, `contradicted`, or `unknown`.
+  Contract declaration and closure alone do not independently corroborate a safety claim, so the
+  first carrier emits `unknown` until a later assurance source supplies matching evidence.
+- `policy` is the derived policy decision over that canonical record. The initial default remains
+  `allow` for compatibility and does not change `ota run --agent` admission behavior.
+
+The current carrier emits agent-safety records only for tasks declared safe. Later V11.14 work may
+add declared-effects and proof-breadth families, but consumers must not infer their absence as
+support or contradiction.
+
 `ota doctor --json` may also include additive top-level `governance.required_verification_lanes`
 when the contract already declares merge-relevant CI verification truth. Ota projects these lanes
 from `workflows.*` with `intent: ci_verification` or legacy `ci_validation`, and falls back to
