@@ -128,6 +128,7 @@
                     ]
                   },
                   "identity": { "type": "string" },
+                  "expected_identity": { "type": "string" },
                   "artifact_lineage": {
                     "type": "object",
                     "additionalProperties": false,

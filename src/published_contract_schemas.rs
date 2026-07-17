@@ -2128,7 +2128,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "properties": {
         "id": { "type": "string" },
         "kind": { "enum": ["static_file", "presentation_profile", "comparator_profile"] },
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "expected_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       }
     },
     "taskWitnessedObservations": {

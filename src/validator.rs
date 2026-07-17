@@ -216,6 +216,18 @@ fn validate_task_replay_inputs(contract: &Contract, errors: &mut Vec<ValidationE
                     "task `{task_name}` replay input `{path}` overlaps a write in its selected dependency closure"
                 )));
             }
+            if let Some(expected_identity) = input.expected_identity.as_deref() {
+                let valid = expected_identity.len() == 71
+                    && expected_identity.starts_with("sha256:")
+                    && expected_identity[7..]
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+                if !valid {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` `replay_inputs[{index}].expected_identity` must be a SHA-256 identity such as `sha256:<64 lowercase hex characters>`"
+                    )));
+                }
+            }
         }
     }
 }

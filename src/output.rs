@@ -612,6 +612,8 @@ pub struct ExecutionReceiptEvaluatedInput {
     pub input_class: ReplayInputClass,
     pub identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hydration_provenance: Option<ExecutionReceiptHydrationProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_lineage: Option<ExecutionReceiptArtifactLineage>,

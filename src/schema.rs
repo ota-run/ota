@@ -8698,6 +8698,9 @@ pub struct TaskReplayInputSpec {
     pub id: String,
     pub kind: TaskReplayInputKind,
     pub path: String,
+    /// Optional immutable SHA-256 identity required before the selected lane may execute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_identity: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
