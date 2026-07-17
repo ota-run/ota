@@ -249,7 +249,9 @@ supported assurance explicitly.
 
 1. Define the shared `claim_assurance` domain types and policy-independent evaluator.
 2. Implement `agent_safety` from existing declaration and V11.3 closure truth.
-3. Add deterministic structured-effect contradiction and explicit unknown-coverage paths.
+3. Add deterministic structured-effect contradiction and explicit unknown-coverage paths. The
+   first contradiction is a typed `reset_compose_service_volume` action without its exact
+   `effects.adapter_state: [compose_volume:<volume>]` declaration; opaque shell remains unknown.
 4. Add policy evaluation that consumes the canonical record without changing the default policy.
 5. Bind `proof_breadth` to immutable, scope-matching V11.11/V11.10 artifacts.
 6. Carry the shared result through `ota doctor --json` as the first review carrier.

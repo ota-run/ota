@@ -36,6 +36,11 @@
   remains explicitly `unknown` rather than reading as independently supported. Org policy can now
   opt into family-scoped assurance requirements without reclassifying the canonical evidence state
 
+- added the first deterministic V11.14 contradiction: a declared-safe typed
+  `reset_compose_service_volume` action that omits its matching
+  `effects.adapter_state: compose_volume:<volume>` is now cited as `contradicted` in Doctor
+  claim-assurance output; opaque shell remains `unknown` rather than inferred
+
 ## 1.6.24
 
 - aligned the published contract schema with the shipped V11.11 workflow proof surface, including

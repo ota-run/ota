@@ -2638,6 +2638,10 @@ The fields deliberately carry separate truths:
 - `assurance` is policy-independent evidence posture: `supported`, `contradicted`, or `unknown`.
   Contract declaration and closure alone do not independently corroborate a safety claim, so the
   first carrier emits `unknown` until a later assurance source supplies matching evidence.
+  A deterministic typed-action conflict is instead `contradicted`. For example, a declared-safe
+  `reset_compose_service_volume` action without the matching
+  `effects.adapter_state: [compose_volume:<volume>]` emits a cited contradiction from
+  `task.action`; Ota does not make the equivalent claim for opaque shell text.
 - `policy` is the derived policy decision over that canonical record. The initial default remains
   `allow` for compatibility and does not change `ota run --agent` admission behavior.
 

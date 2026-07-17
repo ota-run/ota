@@ -20,6 +20,7 @@
 
 //! Canonical, policy-independent assessment of contract claims.
 
+use crate::schema::{TaskActionSpec, TaskSpec};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -88,10 +89,11 @@ pub struct ClaimPolicyDecision {
 /// Evaluates a declared-safe task without treating its own declaration as corroboration.
 pub fn agent_safety_claim(
     task_name: &str,
+    task: &TaskSpec,
     effective_safe: bool,
     unsafe_closure_tasks: Vec<String>,
 ) -> ClaimAssuranceRecord {
-    ClaimAssuranceRecord {
+    let mut claim = ClaimAssuranceRecord {
         subject: ClaimSubject {
             kind: String::from("task"),
             name: task_name.to_string(),
@@ -131,16 +133,56 @@ pub fn agent_safety_claim(
             basis: vec![String::from("default_compatibility")],
             evidence_class: String::from("derived"),
         },
+    };
+
+    apply_typed_action_contradictions(&mut claim, task);
+    claim
+}
+
+// Typed actions are structured execution facts. They can contradict an omitted matching effect
+// without trying to infer intent from an opaque shell command.
+fn apply_typed_action_contradictions(claim: &mut ClaimAssuranceRecord, task: &TaskSpec) {
+    let Some(TaskActionSpec::ResetComposeServiceVolume(action)) = task.action.as_ref() else {
+        return;
+    };
+    let volume = action.volume.trim();
+    let required_effect = format!("compose_volume:{volume}");
+    if task
+        .effects
+        .adapter_state
+        .iter()
+        .any(|effect| effect.trim() == required_effect)
+    {
+        return;
     }
+
+    claim.assurance.status = String::from("contradicted");
+    claim
+        .assurance
+        .coverage
+        .push(String::from("structured_action"));
+    claim.assurance.gaps.clear();
+    claim.assurance.evidence.push(ClaimEvidence {
+        id: format!("typed_action:reset_compose_service_volume:{}", volume),
+        source: String::from("task.action"),
+        evidence_class: String::from("derived"),
+    });
+    claim.assurance.contradictions.push(ClaimContradiction {
+        id: format!("missing_adapter_state:{required_effect}"),
+        source: String::from("task.action"),
+        evidence_class: String::from("derived"),
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::agent_safety_claim;
+    use crate::schema::TaskSpec;
 
     #[test]
     fn declared_safe_closure_is_unknown_without_independent_evidence() {
-        let claim = agent_safety_claim("verify", true, Vec::new());
+        let task: TaskSpec = serde_yaml::from_str("run: printf verify").unwrap();
+        let claim = agent_safety_claim("verify", &task, true, Vec::new());
 
         assert_eq!(claim.declaration.value, "safe");
         assert_eq!(claim.closure.status, "safe");
@@ -151,10 +193,51 @@ mod tests {
 
     #[test]
     fn unsafe_closure_remains_separate_from_assurance() {
-        let claim = agent_safety_claim("verify", false, vec![String::from("publish")]);
+        let task: TaskSpec = serde_yaml::from_str("run: printf verify").unwrap();
+        let claim = agent_safety_claim("verify", &task, false, vec![String::from("publish")]);
 
         assert_eq!(claim.closure.status, "unsafe");
         assert_eq!(claim.closure.blockers, ["publish"]);
         assert_eq!(claim.assurance.status, "unknown");
+    }
+
+    #[test]
+    fn typed_volume_reset_without_matching_effect_is_contradicted() {
+        let task: TaskSpec = serde_yaml::from_str(
+            r#"
+action:
+  kind: reset_compose_service_volume
+  service: web
+  volume: node_modules
+"#,
+        )
+        .unwrap();
+        let claim = agent_safety_claim("reset", &task, true, Vec::new());
+
+        assert_eq!(claim.assurance.status, "contradicted");
+        assert_eq!(
+            claim.assurance.contradictions[0].id,
+            "missing_adapter_state:compose_volume:node_modules"
+        );
+    }
+
+    #[test]
+    fn typed_volume_reset_with_matching_effect_remains_unknown() {
+        let task: TaskSpec = serde_yaml::from_str(
+            r#"
+action:
+  kind: reset_compose_service_volume
+  service: web
+  volume: " node_modules "
+effects:
+  adapter_state:
+    - compose_volume:node_modules
+"#,
+        )
+        .unwrap();
+        let claim = agent_safety_claim("reset", &task, true, Vec::new());
+
+        assert_eq!(claim.assurance.status, "unknown");
+        assert!(claim.assurance.contradictions.is_empty());
     }
 }

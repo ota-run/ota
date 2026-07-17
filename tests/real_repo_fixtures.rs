@@ -1419,6 +1419,40 @@ policies:
 }
 
 #[test]
+fn doctor_json_contradicts_safe_task_with_undeclared_typed_volume_mutation() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: typed-action-contradiction-app
+tasks:
+  reset:
+    action:
+      kind: reset_compose_service_volume
+      service: web
+      volume: node_modules
+    safe_for_agent: true
+agent:
+  safe_tasks:
+    - reset
+"#,
+    );
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+    let assurance = &json["claim_assurance"][0];
+
+    assert_eq!(assurance["assurance"]["status"], "contradicted");
+    assert_eq!(
+        assurance["assurance"]["contradictions"][0]["id"],
+        "missing_adapter_state:compose_volume:node_modules"
+    );
+    assert_eq!(assurance["policy"]["decision"], "allow");
+}
+
+#[test]
 fn doctor_json_includes_projected_merge_gate_governance() {
     let fixture = TempDir::new().expect("temp dir should be created");
     write_contract(

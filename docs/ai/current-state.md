@@ -38,11 +38,14 @@ durable agent workflow belongs in the canonical Ota skill.
 - active V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks. It keeps maintainer
   declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;
-  declaration plus closure remains `unknown` without non-self-origin evidence. Opt-in
+  declaration plus closure remains `unknown` without non-self-origin evidence. Its first
+  deterministic contradiction is a typed `reset_compose_service_volume` action that omits the
+  exact `effects.adapter_state: compose_volume:<volume>` it mutates; opaque shell remains
+  `unknown`. Opt-in
   `policies.agent.claim_assurance` requirements now drive the same canonical `deny` or `review`
   decision through Doctor, `ota run --agent`, previews, and `ota up --agent`; default agent
-  admission remains unchanged without that policy requirement. Deterministic contradiction and
-  immutable proof-breadth evidence remain next.
+  admission remains unchanged without that policy requirement. Immutable proof-breadth evidence
+  remains next.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt

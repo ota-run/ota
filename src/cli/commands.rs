@@ -17322,12 +17322,13 @@ fn doctor_claim_assurance(
         .map(|(policy_pack, _)| policy_pack);
     contract
         .tasks
-        .keys()
-        .filter_map(|task_name| {
+        .iter()
+        .filter_map(|(task_name, task)| {
             let safety = task_effective_safety(contract, task_name);
             safety.declared_safe.then(|| {
                 let mut record = crate::claim_assurance::agent_safety_claim(
                     task_name,
+                    task,
                     safety.effective_safe,
                     safety.unsafe_closure_tasks,
                 );
