@@ -112,6 +112,56 @@ pub struct PolicyAgentRules {
     pub require_safe_tasks: bool,
     #[serde(default)]
     pub require_writable_paths: bool,
+    #[serde(default)]
+    pub claim_assurance: BTreeMap<String, PolicyClaimAssuranceRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyClaimAssuranceRule {
+    pub minimum_status: PolicyClaimAssuranceStatus,
+    #[serde(default)]
+    pub required_coverage: Vec<String>,
+    #[serde(default = "default_claim_assurance_insufficient_decision")]
+    pub on_insufficient: PolicyClaimAssuranceDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyClaimAssuranceStatus {
+    Supported,
+    Contradicted,
+    Unknown,
+}
+
+impl PolicyClaimAssuranceStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Supported => "supported",
+            Self::Contradicted => "contradicted",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyClaimAssuranceDecision {
+    Deny,
+    Review,
+}
+
+impl PolicyClaimAssuranceDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deny => "deny",
+            Self::Review => "review",
+        }
+    }
+}
+
+fn default_claim_assurance_insufficient_decision() -> PolicyClaimAssuranceDecision {
+    PolicyClaimAssuranceDecision::Deny
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -563,6 +613,7 @@ impl OrgPolicyPack {
         validate_version_policy_rules(&self.policies.version_policy.tools, "tool version policy")?;
         validate_backend_environment_rules(&self.policies.backend_environment)?;
         validate_effect_rules(self.policies.effects.as_ref())?;
+        validate_claim_assurance_rules(self.policies.agent.as_ref())?;
 
         Ok(())
     }
@@ -1199,6 +1250,20 @@ impl OrgPolicyPack {
             }),
         }
     }
+}
+
+fn validate_claim_assurance_rules(agent: Option<&PolicyAgentRules>) -> Result<(), String> {
+    let Some(agent) = agent else {
+        return Ok(());
+    };
+    for (family, rule) in &agent.claim_assurance {
+        if rule.minimum_status == PolicyClaimAssuranceStatus::Contradicted {
+            return Err(format!(
+                "agent claim-assurance rule `{family}` cannot require `minimum_status: contradicted`; use `supported` or `unknown` and choose `on_insufficient`"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

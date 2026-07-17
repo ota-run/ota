@@ -2645,6 +2645,13 @@ The current carrier emits agent-safety records only for tasks declared safe. Lat
 add declared-effects and proof-breadth families, but consumers must not infer their absence as
 support or contradiction.
 
+When an active org policy pack declares `policies.agent.claim_assurance.<family>`, `policy` is
+derived from that requirement. For example, a policy requiring `agent_safety.minimum_status:
+supported` changes an otherwise `unknown` record to `policy.decision: deny`; it does not relabel
+the assurance itself as contradicted. Agent-mode runner admission consumes this same record when
+the strict policy lane is enabled; ordinary agent execution remains backward-compatible without
+an assurance requirement.
+
 `ota doctor --json` may also include additive top-level `governance.required_verification_lanes`
 when the contract already declares merge-relevant CI verification truth. Ota projects these lanes
 from `workflows.*` with `intent: ci_verification` or legacy `ci_validation`, and falls back to

@@ -135,8 +135,9 @@ use crate::parser::{
     load_contract_for_member_with_contents, parse_contract_str,
 };
 use crate::policy_pack::{
-    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack, PolicyEffectDecision,
-    load_org_policy_pack_auto, load_org_policy_pack_auto_details,
+    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack,
+    PolicyClaimAssuranceStatus, PolicyEffectDecision, load_org_policy_pack_auto,
+    load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
@@ -17064,6 +17065,8 @@ impl AgentExecutionRefusal {
     fn closure_status(&self) -> &'static str {
         match self.reason {
             "unsafe_dependency_closure" => "unsafe_dependency_closure",
+            "claim_assurance_policy_denied" => "policy_denied",
+            "claim_assurance_policy_review_required" => "policy_review_required",
             _ => "unsafe",
         }
     }
@@ -17275,24 +17278,90 @@ fn agent_execution_refusal_for_task(
     })
 }
 
+fn agent_execution_refusal_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<AgentExecutionRefusal> {
+    if let Some(refusal) = agent_execution_refusal_for_task(contract, task_name, overrides) {
+        return Some(refusal);
+    }
+    let task_name = canonical_declared_task_name(contract, task_name);
+    doctor_claim_assurance(contract, contract_path)
+        .into_iter()
+        .find(|record| {
+            record.subject.kind == "task"
+                && record.subject.name == task_name
+                && record.family == "agent_safety"
+                && matches!(record.policy.decision.as_str(), "deny" | "review")
+        })
+        .map(|record| AgentExecutionRefusal {
+            requested_task: task_name.clone(),
+            blocked_task: task_name.clone(),
+            path: vec![task_name],
+            reason: if record.policy.decision == "deny" {
+                "claim_assurance_policy_denied"
+            } else {
+                "claim_assurance_policy_review_required"
+            },
+        })
+}
+
 pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> TaskEffectiveSafety {
     task_effective_safety_with_overrides(contract, task_name, ExecutionOverrides::default())
 }
 
 fn doctor_claim_assurance(
     contract: &Contract,
+    contract_path: &Path,
 ) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
+    let policy_pack = load_org_policy_pack_auto(contract_path)
+        .ok()
+        .flatten()
+        .map(|(policy_pack, _)| policy_pack);
     contract
         .tasks
         .keys()
         .filter_map(|task_name| {
             let safety = task_effective_safety(contract, task_name);
             safety.declared_safe.then(|| {
-                crate::claim_assurance::agent_safety_claim(
+                let mut record = crate::claim_assurance::agent_safety_claim(
                     task_name,
                     safety.effective_safe,
                     safety.unsafe_closure_tasks,
-                )
+                );
+                if let Some(rule) = policy_pack
+                    .as_ref()
+                    .and_then(|policy| policy.policies.agent.as_ref())
+                    .and_then(|agent| agent.claim_assurance.get(record.family.as_str()))
+                {
+                    let status_sufficient = match rule.minimum_status {
+                        PolicyClaimAssuranceStatus::Supported => {
+                            record.assurance.status == "supported"
+                        }
+                        PolicyClaimAssuranceStatus::Unknown => {
+                            record.assurance.status != "contradicted"
+                        }
+                        PolicyClaimAssuranceStatus::Contradicted => false,
+                    };
+                    let coverage_sufficient = rule.required_coverage.iter().all(|required| {
+                        record
+                            .assurance
+                            .coverage
+                            .iter()
+                            .any(|coverage| coverage == required)
+                    });
+                    if !status_sufficient || !coverage_sufficient {
+                        record.policy.decision = rule.on_insufficient.as_str().to_string();
+                        record.policy.basis = vec![format!(
+                            "claim_assurance:{}:minimum_status={}",
+                            record.family,
+                            rule.minimum_status.as_str()
+                        )];
+                    }
+                }
+                record
             })
         })
         .collect()
@@ -17384,6 +17453,26 @@ fn agent_execution_refusal_finding(refusal: &AgentExecutionRefusal, command: &st
             format!("Agent execution refused: task `{}`", refusal.requested_task),
             format!(
                 "task `{}` is outside the declared agent-safe surface for this contract, so execution was refused before run-path evaluation",
+                refusal.requested_task
+            ),
+        ),
+        "claim_assurance_policy_denied" => (
+            format!(
+                "Agent execution refused: claim-assurance policy for `{}`",
+                refusal.requested_task
+            ),
+            format!(
+                "task `{}` is declared safe, but the active org policy requires stronger claim assurance before agent execution",
+                refusal.requested_task
+            ),
+        ),
+        "claim_assurance_policy_review_required" => (
+            format!(
+                "Agent execution refused: claim-assurance review for `{}`",
+                refusal.requested_task
+            ),
+            format!(
+                "task `{}` is declared safe, but the active org policy requires claim-assurance review before agent execution",
                 refusal.requested_task
             ),
         ),
@@ -17484,6 +17573,8 @@ fn agent_execution_refusal_detail_lines(
         "closure status: `{}`",
         match reason {
             "unsafe_dependency_closure" => "unsafe_dependency_closure",
+            "claim_assurance_policy_denied" => "policy_denied",
+            "claim_assurance_policy_review_required" => "policy_review_required",
             _ => "unsafe",
         }
     ));
@@ -17536,7 +17627,8 @@ fn run_agent_execution_refusal(
     contract_path: &Path,
     _show_receipt: bool,
 ) -> Option<RunCommandFailure> {
-    let refusal = agent_execution_refusal_for_task(contract, task_name, overrides)?;
+    let refusal =
+        agent_execution_refusal_with_policy(contract, contract_path, task_name, overrides)?;
     let task_name = canonical_declared_task_name(contract, task_name);
     let command = format!(
         "{} --agent",
@@ -18058,7 +18150,12 @@ fn render_run_preview_target(
         overrides,
     );
     let refusal = if agent {
-        agent_execution_refusal_for_task(&target.contract, task_name.as_str(), overrides)
+        agent_execution_refusal_with_policy(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+        )
     } else {
         None
     };
@@ -22844,7 +22941,10 @@ pub fn doctor(
                                         &target.contract,
                                         &rewritten_findings,
                                     ),
-                                    claim_assurance: doctor_claim_assurance(&target.contract),
+                                    claim_assurance: doctor_claim_assurance(
+                                        &target.contract,
+                                        &target.contract_path,
+                                    ),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -64319,6 +64419,132 @@ agent:
     }
 
     #[test]
+    fn run_agent_refuses_when_claim_assurance_policy_requires_support() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    safe_for_agent: true
+    run: echo verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("claim assurance"), "{stderr}");
+        assert!(
+            stderr.contains("reason: `claim_assurance_policy_denied`"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("closure status: `policy_denied`"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("echo verify"), "{stderr}");
+    }
+
+    #[test]
+    fn run_agent_refuses_when_claim_assurance_policy_requires_review() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    safe_for_agent: true
+    run: echo verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+        on_insufficient: review
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("claim-assurance review"), "{stderr}");
+        assert!(
+            stderr.contains("reason: `claim_assurance_policy_review_required`"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("closure status: `policy_review_required`"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
     fn up_agent_text_refuses_without_generic_wrapper() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
@@ -101764,7 +101990,7 @@ fn proof_runtime_doctor_artifact_json(
         agent: agent_summary,
         execution: execution_summary,
         governance: doctor_required_verification_governance(contract, &refined_findings),
-        claim_assurance: doctor_claim_assurance(contract),
+        claim_assurance: doctor_claim_assurance(contract, contract_path),
         provisioning: report.provisioning.as_ref().map(|value| &value.plan),
         provisioning_request: report.provisioning.as_ref().map(|value| &value.request),
         adapter_bootstrap: report.adapter_bootstrap.as_ref(),
@@ -113176,9 +113402,12 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         for task_name in
             selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
         {
-            if let Some(refusal) =
-                agent_execution_refusal_for_task(contract, task_name.as_str(), overrides)
-            {
+            if let Some(refusal) = agent_execution_refusal_with_policy(
+                contract,
+                resolved_path,
+                task_name.as_str(),
+                overrides,
+            ) {
                 return Ok(up_agent_execution_refusal_result(
                     contract,
                     resolved_path,

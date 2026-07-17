@@ -1377,6 +1377,48 @@ agent:
 }
 
 #[test]
+fn doctor_json_applies_claim_assurance_policy_without_reclassifying_assurance() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: agent-assurance-policy-app
+tasks:
+  verify:
+    run: printf verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+    );
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  agent:
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+"#,
+    )
+    .expect("policy should be written");
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+    let assurance = &json["claim_assurance"][0];
+
+    assert_eq!(assurance["assurance"]["status"], "unknown");
+    assert_eq!(assurance["policy"]["decision"], "deny");
+    assert_eq!(
+        assurance["policy"]["basis"][0],
+        "claim_assurance:agent_safety:minimum_status=supported"
+    );
+}
+
+#[test]
 fn doctor_json_includes_projected_merge_gate_governance() {
     let fixture = TempDir::new().expect("temp dir should be created");
     write_contract(

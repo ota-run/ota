@@ -132,6 +132,13 @@ policies:
   agent:
     require_safe_tasks: true
     require_writable_paths: true
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+        required_coverage:
+          - task_body
+          - ci
+        on_insufficient: deny
   effects:
     mode: strict
     tasks:
@@ -210,6 +217,10 @@ That makes the value visible immediately:
 - `env.values` supplies approved shared env values for vars the repo contract already declares in `env.vars`.
 - `env.values` does not create new repo requirements by itself; it only helps satisfy declared env vars.
 - `agent.require_safe_tasks` requires agent-visible execution surfaces to be explicitly marked safe.
+- `agent.claim_assurance` is an opt-in requirement over V11.14's canonical claim-assurance record.
+  Keys are claim families such as `agent_safety`; each rule sets a minimum assurance status, optional
+  required coverage, and `on_insufficient: deny|review`. It never changes the underlying assurance
+  result: policy consumes `supported`, `contradicted`, or `unknown` after Ota has evaluated it.
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
 - `effects.mode` controls the fallback decision when no explicit rule matches:
   `compatibility` falls back to `warn`, `strict` falls back to `deny`.
