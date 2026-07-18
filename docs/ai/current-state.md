@@ -49,7 +49,11 @@ durable agent workflow belongs in the canonical Ota skill.
   exact `effects.adapter_state: compose_volume:<volume>` it mutates; opaque shell remains
   `unknown`. `ota proof runtime --json --archive` now creates a content-addressed proof-owned
   record bound to the terminal proof output, archived contract snapshot, clean source identity
-  when available, and resolved execution scope; the shared proof-breadth evaluator remains next.
+  when available, resolved execution scope, and explicit witness-only replay posture. The shared
+  proof-breadth evaluator consumes only a matching immutable archive: matching failed proof is
+  cited as `contradicted`; missing, stale, source-mismatched, or scope-mismatched evidence remains
+  `unknown`. Ota-owned `.ota` runtime state is excluded from the source-identity cleanliness check,
+  so a fresh archive cannot invalidate its own proof claim.
   Opt-in
   `policies.agent.claim_assurance` requirements now drive the same canonical `deny` or `review`
   decision through Doctor, `ota run --agent`, previews, and `ota up --agent`; default agent

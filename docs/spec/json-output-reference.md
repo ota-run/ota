@@ -899,9 +899,11 @@ Notes:
 - `ota proof runtime --json --archive` additionally writes one immutable proof-owned record under
   `.ota/proof/archives/` and returns additive `archive.identity` and `archive.path`. The archive
   is content-addressed and binds the terminal proof JSON to an archived semantic contract snapshot,
-  clean Git source identity when available, and resolved workflow/task/backend/provider/lifecycle
-  scope. The mutable `.ota/proof/<lane>/` working bundle remains supporting evidence, not a
-  replay-grade witness.
+  clean Git source identity when available, resolved workflow/task/backend/provider/lifecycle
+  scope, and explicit `replay_posture: witness_only`. The mutable `.ota/proof/<lane>/` working
+  bundle remains supporting evidence, not a replay-grade witness. Archive consumers also verify
+  that `contract_snapshot_ref` resolves to the same content-addressed snapshot as
+  `contract_snapshot_hash` before using the record as assurance evidence.
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface
@@ -2657,9 +2659,12 @@ The fields deliberately carry separate truths:
 - `policy` is the derived policy decision over that canonical record. The initial default remains
   `allow` for compatibility and does not change `ota run --agent` admission behavior.
 
-The current carrier emits agent-safety records only for tasks declared safe. Later V11.14 work may
-add declared-effects and proof-breadth families, but consumers must not infer their absence as
-support or contradiction.
+The current carrier emits agent-safety records for tasks declared safe and proof-breadth records
+for workflows that declare runtime proof. A proof-breadth record is `supported` only when Ota finds
+a content-addressed `runtime_proof` archive with matching semantic contract snapshot, clean source
+identity, resolved execution scope, and `replay_posture: witness_only`. A matching failed proof is
+`contradicted`; absent, stale, changed-source, or scope-mismatched archives remain `unknown`.
+Consumers must not infer absent declared-effects records as support or contradiction.
 
 When an active org policy pack declares `policies.agent.claim_assurance.<family>`, `policy` is
 derived from that requirement. For example, a policy requiring `agent_safety.minimum_status:

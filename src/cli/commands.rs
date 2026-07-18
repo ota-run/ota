@@ -135,7 +135,7 @@ use crate::parser::{
     load_contract_for_member_with_contents, parse_contract_str,
 };
 use crate::policy_pack::{
-    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack,
+    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack, OrgPolicyPack,
     PolicyClaimAssuranceStatus, PolicyEffectDecision, load_org_policy_pack_auto,
     load_org_policy_pack_auto_details,
 };
@@ -2977,6 +2977,7 @@ pub fn proof_runtime(
                                 contract_snapshot_hash: &context.contract_snapshot_hash,
                                 contract_snapshot_ref: &context.contract_snapshot_ref,
                                 source_identity: context.source_identity.as_deref(),
+                                replay_posture: "witness_only",
                                 scope: &context.scope,
                                 proof: &proof_status,
                             };
@@ -17374,7 +17375,7 @@ fn doctor_claim_assurance(
         .ok()
         .flatten()
         .map(|(policy_pack, _)| policy_pack);
-    contract
+    let mut records = contract
         .tasks
         .iter()
         .filter_map(|(task_name, task)| {
@@ -17386,40 +17387,73 @@ fn doctor_claim_assurance(
                     safety.effective_safe,
                     safety.unsafe_closure_tasks,
                 );
-                if let Some(rule) = policy_pack
-                    .as_ref()
-                    .and_then(|policy| policy.policies.agent.as_ref())
-                    .and_then(|agent| agent.claim_assurance.get(record.family.as_str()))
-                {
-                    let status_sufficient = match rule.minimum_status {
-                        PolicyClaimAssuranceStatus::Supported => {
-                            record.assurance.status == "supported"
-                        }
-                        PolicyClaimAssuranceStatus::Unknown => {
-                            record.assurance.status != "contradicted"
-                        }
-                        PolicyClaimAssuranceStatus::Contradicted => false,
-                    };
-                    let coverage_sufficient = rule.required_coverage.iter().all(|required| {
-                        record
-                            .assurance
-                            .coverage
-                            .iter()
-                            .any(|coverage| coverage == required)
-                    });
-                    if !status_sufficient || !coverage_sufficient {
-                        record.policy.decision = rule.on_insufficient.as_str().to_string();
-                        record.policy.basis = vec![format!(
-                            "claim_assurance:{}:minimum_status={}",
-                            record.family,
-                            rule.minimum_status.as_str()
-                        )];
-                    }
-                }
+                apply_claim_assurance_policy(&mut record, policy_pack.as_ref());
                 record
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    let root = contract_working_dir(contract_path);
+    let contract_snapshot_hash = build_contract_snapshot_artifact(root, contract, false)
+        .ok()
+        .map(|snapshot| snapshot.hash);
+    let source_identity = git_head_identity(root).ok();
+    let archives = load_proof_runtime_archive_candidates(root);
+    if let Some(workflows) = contract.workflows.as_ref() {
+        for (workflow_name, workflow) in &workflows.items {
+            if workflow.proof.is_empty() {
+                continue;
+            }
+            let scope = proof_runtime_archive_scope(
+                contract,
+                contract_path,
+                Some(workflow_name.as_str()),
+                ExecutionOverrides::default(),
+            );
+            let mut record = crate::claim_assurance::proof_breadth_claim(
+                workflow_name,
+                claim_assurance_proof_scope(&scope),
+                contract_snapshot_hash.as_deref(),
+                source_identity.as_deref(),
+                &archives,
+            );
+            apply_claim_assurance_policy(&mut record, policy_pack.as_ref());
+            records.push(record);
+        }
+    }
+    records
+}
+
+fn apply_claim_assurance_policy(
+    record: &mut crate::claim_assurance::ClaimAssuranceRecord,
+    policy_pack: Option<&OrgPolicyPack>,
+) {
+    let Some(rule) = policy_pack
+        .and_then(|policy| policy.policies.agent.as_ref())
+        .and_then(|agent| agent.claim_assurance.get(record.family.as_str()))
+    else {
+        return;
+    };
+    let status_sufficient = match rule.minimum_status {
+        PolicyClaimAssuranceStatus::Supported => record.assurance.status == "supported",
+        PolicyClaimAssuranceStatus::Unknown => record.assurance.status != "contradicted",
+        PolicyClaimAssuranceStatus::Contradicted => false,
+    };
+    let coverage_sufficient = rule.required_coverage.iter().all(|required| {
+        record
+            .assurance
+            .coverage
+            .iter()
+            .any(|coverage| coverage == required)
+    });
+    if !status_sufficient || !coverage_sufficient {
+        record.policy.decision = rule.on_insufficient.as_str().to_string();
+        record.policy.basis = vec![format!(
+            "claim_assurance:{}:minimum_status={}",
+            record.family,
+            rule.minimum_status.as_str()
+        )];
+    }
 }
 
 pub(crate) fn task_effective_safety_with_overrides(
@@ -91351,6 +91385,7 @@ workflows:
             serde_json::from_slice(&archive_bytes).expect("proof archive json");
         assert_eq!(archive["kind"], "runtime_proof");
         assert_eq!(archive["version"], 1);
+        assert_eq!(archive["replay_posture"], "witness_only");
         assert_eq!(archive["scope"]["workflow"], "app");
         assert_eq!(archive["scope"]["backend"], "native");
         assert!(
@@ -91380,6 +91415,133 @@ workflows:
         let error = super::verify_proof_runtime_archive_identity(&archive_path, &identity)
             .expect_err("tampered archive must not validate");
         assert!(error.contains("does not match its content-addressed identity"));
+    }
+
+    #[test]
+    fn doctor_claim_assurance_requires_a_matching_immutable_runtime_proof_archive() {
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-assurance
+tasks:
+  producer:
+    run: true
+  observe:
+    run: true
+workflows:
+  default: verify
+  verify:
+    run:
+      task: producer
+    proof:
+      seam_observations:
+        - id: database-marker
+          dependency: database
+          producer_task: producer
+          task: observe
+          marker_env: OTA_PROOF_MARKER
+"#,
+        )
+        .unwrap();
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "ota@example.com"],
+            vec!["config", "user.name", "Ota Tests"],
+            vec!["add", "ota.yaml"],
+            vec!["commit", "-m", "proof fixture"],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(repo.path())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let snapshot_artifact =
+            super::build_contract_snapshot_artifact(repo.path(), &contract, true).unwrap();
+        let snapshot = snapshot_artifact.hash;
+        let snapshot_ref =
+            super::receipt_storage_path_display(snapshot_artifact.archive_path.as_deref().unwrap());
+        let source = super::git_head_identity(repo.path()).unwrap();
+        let scope = super::proof_runtime_archive_scope(
+            &contract,
+            &contract_path,
+            Some("verify"),
+            ExecutionOverrides::default(),
+        );
+        let record = serde_json::json!({
+            "kind": "runtime_proof",
+            "version": 1,
+            "contract_snapshot_hash": snapshot,
+            "contract_snapshot_ref": snapshot_ref,
+            "source_identity": source,
+            "replay_posture": "witness_only",
+            "scope": scope,
+            "proof": {
+                "ok": true,
+                "proof_verdict": "passed_with_unproven_boundaries"
+            }
+        });
+        let bytes = serde_json::to_vec_pretty(&record).unwrap();
+        let identity = super::contract_snapshot_hash(&bytes);
+        let archive_path = repo.path().join(".ota/proof/archives").join(format!(
+            "runtime-proof-{}.json",
+            identity.strip_prefix("sha256:").unwrap()
+        ));
+        fs::create_dir_all(archive_path.parent().unwrap()).unwrap();
+        fs::write(archive_path, bytes).unwrap();
+
+        let claims = super::doctor_claim_assurance(&contract, &contract_path);
+        let proof = claims
+            .iter()
+            .find(|claim| claim.family == "proof_breadth")
+            .expect("proof breadth claim");
+        assert_eq!(proof.assurance.status, "supported");
+        assert!(proof.assurance.gaps.is_empty());
+        assert_eq!(
+            proof.assurance.evidence[0].id,
+            format!("proof_archive:{identity}")
+        );
+
+        let policy_pack: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      proof_breadth:
+        minimum_status: supported
+        required_coverage:
+          - immutable_proof_archive
+"#,
+        )
+        .unwrap();
+        let mut policy_bound_proof = proof.clone();
+        super::apply_claim_assurance_policy(&mut policy_bound_proof, Some(&policy_pack));
+        assert_eq!(policy_bound_proof.policy.decision, "allow");
+        assert_eq!(policy_bound_proof.policy.basis, ["default_compatibility"]);
+
+        fs::write(
+            snapshot_artifact.archive_path.unwrap(),
+            b"tampered snapshot",
+        )
+        .unwrap();
+        let claims = super::doctor_claim_assurance(&contract, &contract_path);
+        let proof = claims
+            .iter()
+            .find(|claim| claim.family == "proof_breadth")
+            .expect("proof breadth claim");
+        assert_eq!(proof.assurance.status, "unknown");
+        assert_eq!(proof.assurance.gaps, ["immutable_proof_archive"]);
     }
 
     #[test]
@@ -97850,7 +98012,16 @@ fn collect_receipt_source_identity_input(
 
 fn git_head_identity(root: &Path) -> Result<String, String> {
     let status = run_git_command(
-        &["status", "--porcelain"],
+        // `.ota` is Ota-owned runtime state. A fresh archive must not make its own proof
+        // unverifiable, while unrelated untracked source files still make the tree dirty.
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            ".",
+            ":(exclude).ota",
+        ],
         Some(root),
         RepoExecutionMode::Capture,
     )
@@ -101408,7 +101579,7 @@ fn write_proof_artifact(path: &Path, content: &str) -> Result<(), String> {
 
 const PROOF_RUNTIME_ARCHIVE_LIMIT: usize = 50;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProofRuntimeArchiveScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     workflow: Option<String>,
@@ -101441,8 +101612,27 @@ struct ProofRuntimeArchiveRecord<'a> {
     contract_snapshot_ref: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_identity: Option<&'a str>,
+    replay_posture: &'static str,
     scope: &'a ProofRuntimeArchiveScope,
     proof: &'a ProofRuntimeStatus<'a>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProofRuntimeArchiveReadRecord {
+    kind: String,
+    version: u32,
+    contract_snapshot_hash: String,
+    contract_snapshot_ref: String,
+    source_identity: Option<String>,
+    replay_posture: String,
+    scope: ProofRuntimeArchiveScope,
+    proof: ProofRuntimeArchiveReadProof,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProofRuntimeArchiveReadProof {
+    ok: bool,
+    proof_verdict: String,
 }
 
 #[derive(Serialize)]
@@ -101463,6 +101653,22 @@ fn build_proof_runtime_archive_context(
     let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
         String::from("proof archive requires an archived semantic contract snapshot")
     })?;
+    let scope = proof_runtime_archive_scope(contract, contract_path, workflow_name, overrides);
+    Ok(ProofRuntimeArchiveContext {
+        contract_identity: repo_contract_identity(contract),
+        contract_snapshot_hash: snapshot.hash,
+        contract_snapshot_ref: receipt_storage_path_display(snapshot_path),
+        source_identity: git_head_identity(root).ok(),
+        scope,
+    })
+}
+
+fn proof_runtime_archive_scope(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> ProofRuntimeArchiveScope {
     let task = selected_up_primary_task_name(contract, workflow_name).map(str::to_string);
     let phase = task.as_deref().map_or_else(
         || selected_phase_execution_context(contract, contract_path, overrides),
@@ -101470,24 +101676,80 @@ fn build_proof_runtime_archive_context(
             task_phase_execution_context(contract, contract_path, task_name, overrides, None)
         },
     );
-    Ok(ProofRuntimeArchiveContext {
-        contract_identity: repo_contract_identity(contract),
-        contract_snapshot_hash: snapshot.hash,
-        contract_snapshot_ref: receipt_storage_path_display(snapshot_path),
-        source_identity: git_head_identity(root).ok(),
-        scope: ProofRuntimeArchiveScope {
-            workflow: workflow_name.map(str::to_string),
-            task,
-            backend: phase.backend.unwrap_or_else(|| String::from("native")),
-            provider: phase.provider,
-            lifecycle: phase.lifecycle,
-            target: phase.target,
-        },
-    })
+    ProofRuntimeArchiveScope {
+        workflow: workflow_name.map(str::to_string),
+        task,
+        backend: phase.backend.unwrap_or_else(|| String::from("native")),
+        provider: phase.provider,
+        lifecycle: phase.lifecycle,
+        target: phase.target,
+    }
 }
 
 fn proof_runtime_archive_dir(root: &Path) -> PathBuf {
     root.join(".ota").join("proof").join("archives")
+}
+
+fn claim_assurance_proof_scope(
+    scope: &ProofRuntimeArchiveScope,
+) -> crate::claim_assurance::ProofArchiveScope {
+    crate::claim_assurance::ProofArchiveScope {
+        workflow: scope.workflow.clone(),
+        task: scope.task.clone(),
+        backend: scope.backend.clone(),
+        provider: scope.provider.clone(),
+        lifecycle: scope.lifecycle.clone(),
+        target: scope.target.clone(),
+    }
+}
+
+fn load_proof_runtime_archive_candidates(
+    root: &Path,
+) -> Vec<crate::claim_assurance::ProofArchiveCandidate> {
+    let archive_dir = proof_runtime_archive_dir(root);
+    let Ok(entries) = fs::read_dir(&archive_dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let file_name = path.file_name()?.to_str()?;
+            let bytes = fs::read(&path).ok()?;
+            let identity = contract_snapshot_hash(&bytes);
+            let expected_name = format!(
+                "runtime-proof-{}.json",
+                identity
+                    .strip_prefix("sha256:")
+                    .unwrap_or(identity.as_str())
+            );
+            if file_name != expected_name {
+                return None;
+            }
+            let archive = serde_json::from_slice::<ProofRuntimeArchiveReadRecord>(&bytes).ok()?;
+            let expected_snapshot_path = contract_snapshot_archive_dir(root).join(
+                contract_snapshot_archive_file_name(&archive.contract_snapshot_hash),
+            );
+            if Path::new(&archive.contract_snapshot_ref) != expected_snapshot_path {
+                return None;
+            }
+            let snapshot_bytes = fs::read(&expected_snapshot_path).ok()?;
+            if contract_snapshot_hash(&snapshot_bytes) != archive.contract_snapshot_hash {
+                return None;
+            }
+            (archive.kind == "runtime_proof"
+                && archive.version == 1
+                && archive.replay_posture == "witness_only")
+                .then_some(crate::claim_assurance::ProofArchiveCandidate {
+                    identity,
+                    contract_snapshot_hash: archive.contract_snapshot_hash,
+                    source_identity: archive.source_identity,
+                    scope: claim_assurance_proof_scope(&archive.scope),
+                    proof_ok: archive.proof.ok,
+                    proof_verdict: archive.proof.proof_verdict,
+                })
+        })
+        .collect()
 }
 
 fn write_proof_runtime_archive(

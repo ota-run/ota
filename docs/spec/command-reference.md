@@ -643,8 +643,10 @@ Current behavior:
   preparation report for the selected path
 - supports `--archive` with `--json` to write an immutable, content-addressed terminal proof
   record under `.ota/proof/archives/`; it binds the terminal proof JSON to an archived semantic
-  contract snapshot, clean Git source identity when available, and the resolved execution scope
-  (`workflow`, primary task, backend, provider, lifecycle, and target)
+  contract snapshot, clean Git source identity when available, the resolved execution scope
+  (`workflow`, primary task, backend, provider, lifecycle, and target), and explicit
+  `replay_posture: witness_only`; later assurance verifies the referenced snapshot's content
+  identity before admitting the proof archive
 - treats `.ota/proof/<workflow>/` as a mutable working bundle only. Its topology, doctor, and log
   paths may support diagnosis, but only the `--archive` record is a replay-grade proof witness
 - honors the selected path's declared readiness timing policy when a workflow/task surface
@@ -698,6 +700,11 @@ JSON output:
   consume it during proof
 - `--archive` adds `archive.identity` and `archive.path`; the archive identity is the SHA-256 of
   the stored record, so consumers can verify the exact terminal proof they select
+- after an archived runtime proof, `ota doctor --json` publishes a workflow `claim_assurance[]`
+  `proof_breadth` record. It is `supported` only when a content-addressed proof archive matches
+  the current semantic contract, clean source identity, resolved execution scope, and
+  `replay_posture: witness_only`; a matching failed proof is `contradicted`, while missing, stale,
+  source-mismatched, or scope-mismatched evidence remains `unknown`
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
 
@@ -1485,6 +1492,11 @@ ota doctor --member api --member web --json [PATH]
 - reports warning findings for missing or mismatched pinned `tasks.<name>.replay_inputs[]` so
   operators can repair deterministic replay inputs before invoking an execution lane; execution
   remains the hard preflight boundary
+- publishes additive workflow `claim_assurance[]` proof-breadth records when a workflow declares
+  runtime proof. The same immutable archive matching rule applies: current semantic contract,
+  clean source identity, resolved execution scope, and `replay_posture: witness_only` are all
+  required for `supported`; a matching failed archive is `contradicted` and all other cases are
+  `unknown`
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, doctor
   scopes runtime, tool, env, and precondition-check diagnosis to that setup/run dependency path
   instead of treating unrelated task-specific prerequisites as repo-global truth

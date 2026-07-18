@@ -86,6 +86,28 @@ pub struct ClaimPolicyDecision {
     pub evidence_class: String,
 }
 
+/// The execution boundary a runtime-proof archive must match before it can support a claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofArchiveScope {
+    pub workflow: Option<String>,
+    pub task: Option<String>,
+    pub backend: String,
+    pub provider: Option<String>,
+    pub lifecycle: Option<String>,
+    pub target: Option<String>,
+}
+
+/// A content-verified runtime-proof archive supplied by the persistence boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofArchiveCandidate {
+    pub identity: String,
+    pub contract_snapshot_hash: String,
+    pub source_identity: Option<String>,
+    pub scope: ProofArchiveScope,
+    pub proof_ok: bool,
+    pub proof_verdict: String,
+}
+
 /// Evaluates a declared-safe task without treating its own declaration as corroboration.
 pub fn agent_safety_claim(
     task_name: &str,
@@ -139,6 +161,138 @@ pub fn agent_safety_claim(
     claim
 }
 
+/// Evaluates a workflow's qualified runtime-proof claim from immutable archive candidates.
+/// A bounded proof can support this qualified claim; policy still consumes V11.11 boundaries when
+/// it needs stronger completion coverage.
+pub fn proof_breadth_claim(
+    workflow_name: &str,
+    expected_scope: ProofArchiveScope,
+    current_contract_snapshot_hash: Option<&str>,
+    current_source_identity: Option<&str>,
+    archives: &[ProofArchiveCandidate],
+) -> ClaimAssuranceRecord {
+    let mut claim = ClaimAssuranceRecord {
+        subject: ClaimSubject {
+            kind: String::from("workflow"),
+            name: workflow_name.to_string(),
+        },
+        family: String::from("proof_breadth"),
+        declaration: ClaimDeclaration {
+            value: String::from("qualified_runtime_proof"),
+            evidence_class: String::from("asserted"),
+        },
+        closure: ClaimClosure {
+            status: String::from("resolved"),
+            blockers: Vec::new(),
+            evidence_class: String::from("derived"),
+        },
+        assurance: ClaimAssurance {
+            status: String::from("unknown"),
+            coverage: vec![String::from("workflow_proof_declaration")],
+            gaps: vec![String::from("immutable_scope_matching_proof_archive")],
+            evidence: Vec::new(),
+            contradictions: Vec::new(),
+        },
+        policy: ClaimPolicyDecision {
+            decision: String::from("allow"),
+            basis: vec![String::from("default_compatibility")],
+            evidence_class: String::from("derived"),
+        },
+    };
+
+    let Some(contract_snapshot_hash) = current_contract_snapshot_hash else {
+        claim
+            .assurance
+            .gaps
+            .push(String::from("current_contract_snapshot"));
+        return claim;
+    };
+    let Some(source_identity) = current_source_identity else {
+        claim
+            .assurance
+            .gaps
+            .push(String::from("clean_source_identity"));
+        return claim;
+    };
+
+    let matching_archive = archives.iter().find(|archive| {
+        archive.contract_snapshot_hash == contract_snapshot_hash
+            && archive.source_identity.as_deref() == Some(source_identity)
+            && archive.scope == expected_scope
+    });
+    let Some(archive) = matching_archive else {
+        claim.assurance.gaps = proof_archive_gaps(
+            archives,
+            contract_snapshot_hash,
+            source_identity,
+            &expected_scope,
+        );
+        return claim;
+    };
+
+    claim.assurance.coverage.extend([
+        String::from("immutable_proof_archive"),
+        String::from("contract_snapshot"),
+        String::from("clean_source_identity"),
+        String::from("resolved_execution_scope"),
+        String::from("proof_verdict"),
+    ]);
+    claim.assurance.evidence.push(ClaimEvidence {
+        id: format!("proof_archive:{}", archive.identity),
+        source: String::from(".ota/proof/archives"),
+        evidence_class: String::from("attested"),
+    });
+    if archive.proof_ok
+        && matches!(
+            archive.proof_verdict.as_str(),
+            "passed" | "passed_with_unproven_boundaries"
+        )
+    {
+        claim.assurance.status = String::from("supported");
+        claim.assurance.gaps.clear();
+    } else {
+        claim.assurance.status = String::from("contradicted");
+        claim.assurance.gaps.clear();
+        claim.assurance.contradictions.push(ClaimContradiction {
+            id: format!("proof_verdict:{}", archive.proof_verdict),
+            source: String::from(".ota/proof/archives"),
+            evidence_class: String::from("attested"),
+        });
+    }
+    claim
+}
+
+fn proof_archive_gaps(
+    archives: &[ProofArchiveCandidate],
+    contract_snapshot_hash: &str,
+    source_identity: &str,
+    expected_scope: &ProofArchiveScope,
+) -> Vec<String> {
+    if archives.is_empty() {
+        return vec![String::from("immutable_proof_archive")];
+    }
+    if !archives
+        .iter()
+        .any(|archive| archive.contract_snapshot_hash == contract_snapshot_hash)
+    {
+        return vec![String::from("matching_contract_snapshot")];
+    }
+    if !archives.iter().any(|archive| {
+        archive.contract_snapshot_hash == contract_snapshot_hash
+            && archive.source_identity.as_deref() == Some(source_identity)
+    }) {
+        return vec![String::from("matching_clean_source_identity")];
+    }
+    if !archives.iter().any(|archive| {
+        archive.contract_snapshot_hash == contract_snapshot_hash
+            && archive.source_identity.as_deref() == Some(source_identity)
+            && archive.scope == *expected_scope
+    }) {
+        return vec![String::from("matching_execution_scope")];
+    }
+    vec![String::from("usable_terminal_proof_verdict")]
+}
+
 // Typed actions are structured execution facts. They can contradict an omitted matching effect
 // without trying to infer intent from an opaque shell command.
 fn apply_typed_action_contradictions(claim: &mut ClaimAssuranceRecord, task: &TaskSpec) {
@@ -176,7 +330,9 @@ fn apply_typed_action_contradictions(claim: &mut ClaimAssuranceRecord, task: &Ta
 
 #[cfg(test)]
 mod tests {
-    use super::agent_safety_claim;
+    use super::{
+        ProofArchiveCandidate, ProofArchiveScope, agent_safety_claim, proof_breadth_claim,
+    };
     use crate::schema::TaskSpec;
 
     #[test]
@@ -239,5 +395,98 @@ effects:
 
         assert_eq!(claim.assurance.status, "unknown");
         assert!(claim.assurance.contradictions.is_empty());
+    }
+
+    fn proof_scope() -> ProofArchiveScope {
+        ProofArchiveScope {
+            workflow: Some(String::from("verify")),
+            task: Some(String::from("gate")),
+            backend: String::from("native"),
+            provider: None,
+            lifecycle: None,
+            target: None,
+        }
+    }
+
+    fn matching_archive() -> ProofArchiveCandidate {
+        ProofArchiveCandidate {
+            identity: String::from("sha256:archive"),
+            contract_snapshot_hash: String::from("sha256:contract"),
+            source_identity: Some(String::from("git:source")),
+            scope: proof_scope(),
+            proof_ok: true,
+            proof_verdict: String::from("passed_with_unproven_boundaries"),
+        }
+    }
+
+    #[test]
+    fn qualified_proof_requires_immutable_matching_archive() {
+        let claim = proof_breadth_claim(
+            "verify",
+            proof_scope(),
+            Some("sha256:contract"),
+            Some("git:source"),
+            &[matching_archive()],
+        );
+
+        assert_eq!(claim.assurance.status, "supported");
+        assert!(claim.assurance.gaps.is_empty());
+        assert_eq!(claim.assurance.evidence[0].evidence_class, "attested");
+    }
+
+    #[test]
+    fn qualified_proof_rejects_stale_or_scope_mismatched_archive() {
+        let mut stale = matching_archive();
+        stale.contract_snapshot_hash = String::from("sha256:old");
+        let claim = proof_breadth_claim(
+            "verify",
+            proof_scope(),
+            Some("sha256:contract"),
+            Some("git:source"),
+            &[stale],
+        );
+        assert_eq!(claim.assurance.status, "unknown");
+        assert_eq!(claim.assurance.gaps, ["matching_contract_snapshot"]);
+
+        let mut wrong_scope = matching_archive();
+        wrong_scope.scope.backend = String::from("container");
+        let claim = proof_breadth_claim(
+            "verify",
+            proof_scope(),
+            Some("sha256:contract"),
+            Some("git:source"),
+            &[wrong_scope],
+        );
+        assert_eq!(claim.assurance.status, "unknown");
+        assert_eq!(claim.assurance.gaps, ["matching_execution_scope"]);
+
+        let mut stale_source = matching_archive();
+        stale_source.source_identity = Some(String::from("git:old-source"));
+        let claim = proof_breadth_claim(
+            "verify",
+            proof_scope(),
+            Some("sha256:contract"),
+            Some("git:source"),
+            &[stale_source],
+        );
+        assert_eq!(claim.assurance.status, "unknown");
+        assert_eq!(claim.assurance.gaps, ["matching_clean_source_identity"]);
+    }
+
+    #[test]
+    fn qualified_proof_marks_a_matching_failed_archive_contradicted() {
+        let mut failed = matching_archive();
+        failed.proof_ok = false;
+        failed.proof_verdict = String::from("failed");
+        let claim = proof_breadth_claim(
+            "verify",
+            proof_scope(),
+            Some("sha256:contract"),
+            Some("git:source"),
+            &[failed],
+        );
+
+        assert_eq!(claim.assurance.status, "contradicted");
+        assert_eq!(claim.assurance.contradictions[0].id, "proof_verdict:failed");
     }
 }

@@ -33,7 +33,7 @@ Use this example when runtime readiness is not enough and the proof must disting
 Run the complete proof with:
 
 ```sh
-ota proof runtime --workflow app-proof --negative-control dependency-unavailable --json .
+ota proof runtime --workflow app-proof --negative-control dependency-unavailable --json --archive .
 ```
 
 Read `proof_verdict` together with `not_proved[]`. Even after the seam reaches `fault_tested`, Ota
@@ -44,3 +44,9 @@ The producer receives `OTA_PROOF_DEPENDENCY_MARKER`. The observer does not; it m
 marker from the dependency and write the runner-owned attestation. The negative control writes a
 separate same-obligation failure attestation and exits non-zero. A generic failure without that
 validated attestation cannot become `fault_tested`.
+
+With Ota `1.6.25` or later, inspect `ota doctor --json .` after archiving for the workflow's
+`claim_assurance[]` entry. Ota marks the declared proof breadth `supported` only when the
+content-addressed archive matches the current semantic contract, clean source identity, and
+resolved execution scope. A matching failed proof is `contradicted`; missing, stale, or
+scope-mismatched archive evidence remains `unknown`.

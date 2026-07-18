@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- extended V11.14 `claim_assurance[]` with workflow `proof_breadth`. Doctor now consumes only a
+  content-addressed runtime-proof archive matching the current semantic contract, clean source
+  identity, resolved execution scope, and witness-only replay posture; matching failed proof is
+  cited as `contradicted`, while missing, stale, changed-source, or scope-mismatched archives
+  remain `unknown`. Ota-owned `.ota` runtime state does not dirty that source identity, so a fresh
+  archive cannot invalidate its own proof claim.
+
 - added optional immutable `tasks.<name>.replay_inputs[].expected_identity` pins. Ota now
   validates canonical SHA-256 identities, evaluates them in dry-run and Doctor, blocks `ota run`
   and `ota up` before task startup on missing or mismatched pins, and preserves expected plus
