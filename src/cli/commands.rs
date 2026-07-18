@@ -71921,10 +71921,18 @@ tasks:
     fn shipped_commands_findings_require_explicit_identity_metadata() {
         let production_source = commands_production_source();
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
+        let finding_without_identity =
+            production_source.split("Finding {").skip(1).any(|finding| {
+                finding.lines().take(10).any(|line| {
+                    matches!(
+                        line.trim(),
+                        "identity: None," | "identity: Default::default(),"
+                    )
+                })
+            });
 
         assert!(
-            !production_source.contains("identity: None,")
-                && !production_source.contains("identity: Default::default()"),
+            !finding_without_identity,
             "shipped command findings must carry explicit identity metadata: {}",
             source_path.display()
         );

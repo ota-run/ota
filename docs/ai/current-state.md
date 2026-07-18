@@ -41,7 +41,8 @@ durable agent workflow belongs in the canonical Ota skill.
   receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
   dry-run, and real native plus container agent-safe execution. Strict-policy admission for lanes
   that require declared pins remains a future policy refinement rather than an implicit default.
-- completed V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
+- V11.14 contract-claim assurance implementation is complete; pressure and release reconciliation
+  remain active. The shared `claim_assurance` domain now supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer
   declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;

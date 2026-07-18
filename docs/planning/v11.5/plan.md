@@ -24,7 +24,8 @@
 
 # V11.5 Plan
 
-Status: complete.
+Status: partially implemented. Required-lane projection, merge-check identity, and workflow drift
+evaluation are shipped; CI-owned refusal-canary execution remains open.
 
 Release target:
 

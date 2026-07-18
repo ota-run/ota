@@ -24,7 +24,8 @@
 
 # V11.7 Plan
 
-Status: complete.
+Status: partially implemented. Boundary crossing records and provenance are shipped; reusable
+grant authority, crossing-time liveness/scope checks, and authorizer binding remain open.
 
 Release target:
 

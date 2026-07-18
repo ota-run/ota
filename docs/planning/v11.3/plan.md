@@ -24,7 +24,7 @@
 
 # V11.3 Plan
 
-Status: complete. Agent-mode task and workflow execution now resolves the full closure before
+Status: partially implemented. Agent-mode task and workflow execution now resolves the full closure before
 execution, refuses unsafe paths at the runner boundary, and emits canonical refusal evidence.
 
 Release target:

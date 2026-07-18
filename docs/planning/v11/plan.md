@@ -117,13 +117,22 @@ That slice closes the remaining gap between safe-task and workflow-closure decla
 runtime control, so agent-safe execution truth becomes enforceable by the runner instead of
 staying only a governance and review surface.
 
-The completed OSS governance slices after that are:
+The implemented OSS governance slices after that are:
 
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
-- [V11.5: CI and merge-gate projection](../v11.5/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
-- [V11.7: audited execution boundary crossings](../v11.7/plan.md)
-- [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md)
+
+The following governance slices remain partially implemented and must not be represented as
+complete until their stated acceptance bars close:
+
+- [V11.3: agent-scoped execution enforcement](../v11.3/plan.md) - runner enforcement is shipped;
+  contract-owned refusal canaries remain open.
+- [V11.5: CI and merge-gate projection](../v11.5/plan.md) - required lanes and drift are shipped;
+  CI-owned refusal canary execution remains open.
+- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;
+  reusable grant authority and crossing-time liveness remain open.
+- [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - compiled
+  advisory profiles are shipped; provider-enforced sandbox application remains open.
 
 The completed trust/product follow-ons are:
 
@@ -132,7 +141,8 @@ The completed trust/product follow-ons are:
 - [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
 - [V11.13: generated artifact lineage](../v11.13/plan.md)
-- [V11.14: contract-claim assurance](../v11.14/plan.md)
+- [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation complete; release
+  reconciliation remains active.
 
 The next active provider-adapter slice is:
 

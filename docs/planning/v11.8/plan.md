@@ -24,7 +24,8 @@
 
 # V11.8 Plan
 
-Status: complete.
+Status: partially implemented. Capability-profile compilation is shipped; provider-enforced sandbox
+application and receipt-bound compiled-policy identity/freshness remain open.
 
 Release target:
 
