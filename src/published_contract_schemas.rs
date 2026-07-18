@@ -2274,6 +2274,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "safe_tasks": { "$ref": "#/$defs/stringArray" },
         "refusal_canaries": {
           "type": "array",
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/agentRefusalCanary" }
         },
         "verify_after_changes": { "$ref": "#/$defs/stringArray" },

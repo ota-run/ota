@@ -78,21 +78,54 @@ pub(crate) fn render_github_projection_from_projection(
     runner: &str,
 ) -> Result<GitHubProjection, String> {
     let check_name = &projection.merge_check_ids[0];
-    let job_id = format!(
-        "ota_{}",
-        check_name
-            .chars()
-            .map(|character| if character.is_ascii_alphanumeric() {
-                character
-            } else {
-                '_'
-            })
-            .collect::<String>()
-    );
+    let job_id = github_job_id(check_name);
     let workflow_yaml = yaml_scalar(&projection.workflow);
     let runner_yaml = yaml_scalar(runner);
     let check_yaml = yaml_scalar(check_name);
     let mode_flag = format!(" --mode {}", projection.mode);
+    let refusal_canary_jobs = projection
+        .refusal_canaries
+        .iter()
+        .map(|canary| {
+            let target = yaml_scalar(&canary.target);
+            let command = match canary.kind.as_str() {
+                "task" => format!(
+                    "ota run --agent --expect-refusal{mode_flag} --json {target}",
+                    target = target,
+                    mode_flag = mode_flag,
+                ),
+                "workflow" => format!(
+                    "ota up --agent --expect-refusal --workflow {target}{mode_flag} --json",
+                    target = target,
+                    mode_flag = mode_flag,
+                ),
+                _ => return String::new(),
+            };
+            format!(
+                concat!(
+                    "  {job_id}:\n",
+                    "    name: {check_name}\n",
+                    "    runs-on: ${{{{ inputs.ota_runner }}}}\n",
+                    "    steps:\n",
+                    "      - uses: actions/checkout@{GITHUB_CHECKOUT_REV}\n",
+                    "      - uses: ota-run/setup@{OTA_SETUP_REV}\n",
+                    "        with:\n",
+                    "          source: contract\n",
+                    "      - name: Verify Ota projection identity\n",
+                    "        run: ota ci projection --workflow {workflow_yaml}{mode_flag} --target-os ${{{{ inputs.ota_target_os }}}} --expect-identity ${{{{ inputs.ota_projection_identity }}}} --json\n",
+                    "      - name: Prove agent refusal canary\n",
+                    "        run: {command}\n"
+                ),
+                job_id = github_job_id(&canary.merge_check_id),
+                check_name = yaml_scalar(&canary.merge_check_id),
+                workflow_yaml = workflow_yaml,
+                mode_flag = mode_flag,
+                command = command,
+                GITHUB_CHECKOUT_REV = GITHUB_CHECKOUT_REV,
+                OTA_SETUP_REV = OTA_SETUP_REV,
+            )
+        })
+        .collect::<String>();
     let execution_steps = if projection.proof_required {
         format!(
             concat!(
@@ -156,6 +189,7 @@ pub(crate) fn render_github_projection_from_projection(
             "      - name: Preview contract lane\n",
             "        run: ota up --workflow {workflow_yaml}{mode_flag} --agent --dry-run --json\n",
             "{execution_steps}",
+            "{refusal_canary_jobs}",
         ),
         OWNERSHIP_MARKER = OWNERSHIP_MARKER,
         projection_identity = projection.identity,
@@ -167,6 +201,7 @@ pub(crate) fn render_github_projection_from_projection(
         GITHUB_CHECKOUT_REV = GITHUB_CHECKOUT_REV,
         OTA_SETUP_REV = OTA_SETUP_REV,
         execution_steps = execution_steps,
+        refusal_canary_jobs = refusal_canary_jobs,
     );
     let content_identity = format!("sha256:{:x}", Sha256::digest(rendered.as_bytes()));
     let render_identity = format!(
@@ -184,6 +219,20 @@ pub(crate) fn render_github_projection_from_projection(
         render_identity,
         rendered,
     })
+}
+
+fn github_job_id(check_id: &str) -> String {
+    format!(
+        "ota_{}",
+        check_id
+            .chars()
+            .map(|character| if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            })
+            .collect::<String>()
+    )
 }
 
 fn yaml_scalar(value: &str) -> String {
@@ -271,11 +320,20 @@ project:
 tasks:
   verify:
     run: echo verify
+  publish:
+    run: echo publish
 workflows:
   default: verify
   verify:
     run:
       task: verify
+  release:
+    run:
+      task: publish
+agent:
+  refusal_canaries:
+    - task: publish
+    - workflow: release
 "#,
         )
         .expect("fixture contract should parse");
@@ -312,6 +370,49 @@ workflows:
         );
         assert!(first.rendered.contains("ota tasks --safe --use --json"));
         assert!(first.rendered.contains("ota validate . --json"));
+        assert!(
+            first
+                .rendered
+                .contains("ota run --agent --expect-refusal --mode native --json 'publish'")
+        );
+        assert!(
+            first.rendered.contains(
+                "ota up --agent --expect-refusal --workflow 'release' --mode native --json"
+            )
+        );
+        assert!(
+            first
+                .rendered
+                .contains("name: 'ota.refusal-canary.task.publish'")
+        );
+        assert!(
+            first
+                .rendered
+                .contains("name: 'ota.refusal-canary.workflow.release'")
+        );
+        assert!(
+            first
+                .rendered
+                .contains("ota_ota_refusal_canary_task_publish:")
+        );
+        assert!(
+            first
+                .rendered
+                .contains("ota_ota_refusal_canary_workflow_release:")
+        );
+        assert_eq!(first.projection.refusal_canaries.len(), 2);
+        assert!(
+            first
+                .projection
+                .merge_check_ids
+                .contains(&String::from("ota.refusal-canary.task.publish"))
+        );
+        assert!(
+            first
+                .projection
+                .merge_check_ids
+                .contains(&String::from("ota.refusal-canary.workflow.release"))
+        );
         assert!(
             first
                 .rendered

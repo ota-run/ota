@@ -456,15 +456,23 @@ project:
 tasks:
   verify:
     run: echo verify
+  publish:
+    run: echo publish
 workflows:
   default: verify
   verify:
     intent: ci_verification
     run:
       task: verify
+  release:
+    run:
+      task: publish
 agent:
   safe_tasks:
     - verify
+  refusal_canaries:
+    - task: publish
+    - workflow: release
 "#,
     );
     let output = ".github/workflows/ota-governance.yml";
@@ -485,6 +493,21 @@ agent:
     );
     assert_matches_schema("ci-projection.json", &canonical);
     assert_eq!(canonical["projection"]["mode"], "native");
+    assert_eq!(
+        canonical["projection"]["refusal_canaries"],
+        serde_json::json!([
+            {
+                "kind": "task",
+                "target": "publish",
+                "merge_check_id": "ota.refusal-canary.task.publish"
+            },
+            {
+                "kind": "workflow",
+                "target": "release",
+                "merge_check_id": "ota.refusal-canary.workflow.release"
+            }
+        ])
+    );
     let resolved_default = run_ota(
         &[
             "ci",

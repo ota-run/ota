@@ -837,6 +837,13 @@ Success:
       "task": "verify",
       "mode": "native",
       "target_os": "linux",
+      "refusal_canaries": [
+        {
+          "kind": "task",
+          "target": "publish",
+          "merge_check_id": "ota.refusal-canary.task.publish"
+        }
+      ],
       "bootstrap": { "source_kind": "version", "source_identity": "v1.6.24" },
       "proof_required": false,
       "governance": {
@@ -883,6 +890,12 @@ receipts. `bootstrap` carries the portable contract-owned bootstrap posture, and
 names the declared proof requirement. A denied provider-neutral projection still returns its
 evaluated `projection` plus a typed `refusal` in JSON, so CI consumers can inspect the exact
 identity, decision, and basis rather than infer them from an error string.
+
+`projection.refusal_canaries[]` is the canonical contract-owned negative-control set for the
+selected CI lane. Each unique entry carries `kind`, `target`, and a stable `merge_check_id` that
+maps directly to one provider check; adapters run the corresponding Ota `--expect-refusal` command
+and let its typed exit semantics enforce the control. A provider adapter must not substitute
+shell/JQ assertions or contract-authored refusal reasons.
 
 ## `ota proof runtime --json`
 

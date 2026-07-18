@@ -6,7 +6,7 @@
     "projection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "mode", "target_os", "merge_check_ids", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
+      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "mode", "target_os", "merge_check_ids", "refusal_canaries", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
       "properties": {
         "schema_version": { "const": 1 },
         "semantic_contract_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
@@ -14,7 +14,21 @@
         "task": { "type": "string" },
         "mode": { "enum": ["native", "container", "remote"] },
         "target_os": { "enum": ["linux", "macos", "windows"] },
-        "merge_check_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "merge_check_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+        "refusal_canaries": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "target", "merge_check_id"],
+            "properties": {
+              "kind": { "enum": ["task", "workflow"] },
+              "target": { "type": "string" },
+              "merge_check_id": { "type": "string" }
+            }
+          }
+        },
         "proof_required": { "type": "boolean" },
         "proof_claim": { "type": ["string", "null"] },
         "bootstrap": {

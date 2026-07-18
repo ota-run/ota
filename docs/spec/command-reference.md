@@ -748,8 +748,10 @@ Current behavior:
 - The generated workflow owns checkout, immutable adapter revisions, `ota-run/setup` with
   `source: contract`, selected `ota validate`, `ota doctor --workflow`, safe-surface discovery,
   agent dry-run, and either agent execution plus receipt archival or, for a proof-required lane,
-  one authoritative `ota proof runtime` execution. A proof claim never bypasses agent admission.
-  It derives the visible GitHub check name from the canonical V11.5 `merge_check_id`.
+  one authoritative `ota proof runtime` execution. Each declared, unique
+  `agent.refusal_canaries` control renders as its own provider check using Ota's
+  `--expect-refusal` exit semantics rather than provider-shell assertions. Each check has a stable
+  canonical V11.5 `merge_check_id`. A proof claim never bypasses agent admission.
 - The human-owned caller must invoke the generated path and pass its exact
   `ota_projection_identity` and `ota_target_os`. It may also choose `ota_runner`; the renderer's `--runner` value is
   only the reusable workflow's default. Ota checks the projection identity rather than

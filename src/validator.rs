@@ -17924,16 +17924,29 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
         );
     }
 
+    let mut refusal_canary_targets = std::collections::BTreeSet::new();
     for (index, canary) in agent.refusal_canaries.iter().enumerate() {
         let field = format!("agent.refusal_canaries[{index}]");
         match (&canary.task, &canary.workflow) {
-            (Some(task), None) => validate_task_reference(
-                field.as_str(),
-                Some(task.as_str()),
-                &contract.tasks,
-                errors,
-            ),
+            (Some(task), None) => {
+                if !refusal_canary_targets.insert(("task", task.as_str())) {
+                    errors.push(ValidationError::new(format!(
+                        "`{field}` duplicates task refusal canary `{task}`"
+                    )));
+                }
+                validate_task_reference(
+                    field.as_str(),
+                    Some(task.as_str()),
+                    &contract.tasks,
+                    errors,
+                );
+            }
             (None, Some(workflow)) => {
+                if !refusal_canary_targets.insert(("workflow", workflow.as_str())) {
+                    errors.push(ValidationError::new(format!(
+                        "`{field}` duplicates workflow refusal canary `{workflow}`"
+                    )));
+                }
                 let declared = contract
                     .workflows
                     .as_ref()

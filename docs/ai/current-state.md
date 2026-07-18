@@ -72,7 +72,10 @@ durable agent workflow belongs in the canonical Ota skill.
   It emits separate projection, render, and parsed-caller binding identities; generated content
   runs validation, doctor, safe discovery, agent dry-run, execution, receipt archival, and a
   declared runtime proof when the selected workflow owns one. Agent-safe lanes retain `--agent`;
-  proof claims do not bypass agent admission, and proof-required lanes use one authoritative execution. Kylrix renders valid distinct native
+  proof claims do not bypass agent admission, and proof-required lanes use one authoritative execution.
+  Each unique contract refusal canary is now emitted as its own provider check with a stable
+  `merge_check_id`; the generated check invokes Ota's `--expect-refusal` runner boundary directly.
+  Kylrix renders valid distinct native
   and container reusable lanes without collapsing its separately selected `sqlite-dev` runtime
   proof into `verify`. Strict V11.14 agent and proof assurance admission is evaluated before
   projection render/check; denied or review-required lanes return their canonical refusal rather
@@ -85,7 +88,7 @@ durable agent workflow belongs in the canonical Ota skill.
   projection and typed refusal. Managed workflow paths reject symlink escape, and the neutral
   projection carries bootstrap posture, proof claim, and target-OS identity for the first GitHub
   adapter.
-- V11.3 refusal-canary implementation is ready for pressure: `agent.refusal_canaries` now names
+- V11.3 refusal-canary implementation is pressure-proven on Athena and Kylrix: `agent.refusal_canaries` names
   one task or workflow negative control, and `ota run --agent --expect-refusal <task>` or
   `ota up --agent --expect-refusal --workflow <workflow>` passes only when the agent-safety
   closure refuses before selected work begins. A policy-only denial is the failing

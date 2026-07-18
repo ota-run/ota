@@ -23,11 +23,12 @@
 //   See the License for the specific language governing permissions and
 //   limitations under the License.
 
-use crate::contract_drift::merge_check_id_for_lane_task;
+use crate::contract_drift::{merge_check_id_for_lane_task, merge_check_id_for_refusal_canary};
 use crate::schema::Contract;
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
 use sha2::Digest;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CiProjection {
@@ -39,6 +40,7 @@ pub(crate) struct CiProjection {
     /// The operating system selected for this projection, independent of a provider runner label.
     pub target_os: String,
     pub merge_check_ids: Vec<String>,
+    pub refusal_canaries: Vec<CiProjectionRefusalCanary>,
     pub proof_required: bool,
     pub proof_claim: Option<String>,
     pub bootstrap: CiProjectionBootstrap,
@@ -52,6 +54,13 @@ pub(crate) struct CiProjectionBootstrap {
     pub source_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_identity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CiProjectionRefusalCanary {
+    pub kind: String,
+    pub target: String,
+    pub merge_check_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,6 +99,7 @@ struct CiProjectionIdentity<'a> {
     mode: &'a str,
     target_os: &'a str,
     merge_check_ids: &'a [String],
+    refusal_canaries: &'a [CiProjectionRefusalCanary],
     proof_required: bool,
     proof_claim: &'a Option<String>,
     bootstrap: &'a CiProjectionBootstrap,
@@ -127,7 +137,61 @@ pub(crate) fn build_ci_projection(
         ));
     }
     let semantic_contract_identity = semantic_contract_identity(contract)?;
-    let merge_check_ids = vec![merge_check_id_for_lane_task(&task)];
+    let mut refusal_canaries = contract
+        .agent
+        .as_ref()
+        .map(|agent| {
+            agent
+                .refusal_canaries
+                .iter()
+                .filter_map(|canary| {
+                    canary
+                        .task
+                        .as_ref()
+                        .map(|target| CiProjectionRefusalCanary {
+                            kind: String::from("task"),
+                            target: target.clone(),
+                            merge_check_id: merge_check_id_for_refusal_canary("task", target),
+                        })
+                        .or_else(|| {
+                            canary
+                                .workflow
+                                .as_ref()
+                                .map(|target| CiProjectionRefusalCanary {
+                                    kind: String::from("workflow"),
+                                    target: target.clone(),
+                                    merge_check_id: merge_check_id_for_refusal_canary(
+                                        "workflow", target,
+                                    ),
+                                })
+                        })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    refusal_canaries.sort_by(|left, right| {
+        (&left.kind, &left.target, &left.merge_check_id).cmp(&(
+            &right.kind,
+            &right.target,
+            &right.merge_check_id,
+        ))
+    });
+    refusal_canaries.dedup_by(|left, right| left.kind == right.kind && left.target == right.target);
+    let mut refusal_check_ids = BTreeSet::new();
+    for canary in &refusal_canaries {
+        if !refusal_check_ids.insert(canary.merge_check_id.clone()) {
+            return Err(format!(
+                "refusal canaries produce the same merge check identity `{}`; rename one target to avoid a normalized identity collision",
+                canary.merge_check_id
+            ));
+        }
+    }
+    let mut merge_check_ids = vec![merge_check_id_for_lane_task(&task)];
+    merge_check_ids.extend(
+        refusal_canaries
+            .iter()
+            .map(|canary| canary.merge_check_id.clone()),
+    );
     let proof_required = workflow.proof.claim_value().is_some();
     let proof_claim = workflow.proof.claim_value().map(str::to_string);
     let bootstrap = contract
@@ -162,6 +226,7 @@ pub(crate) fn build_ci_projection(
         mode: mode.to_string(),
         target_os: target_os.to_string(),
         merge_check_ids,
+        refusal_canaries,
         proof_required,
         proof_claim,
         bootstrap,
@@ -208,6 +273,7 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
                 mode: &projection.mode,
                 target_os: &projection.target_os,
                 merge_check_ids: &projection.merge_check_ids,
+                refusal_canaries: &projection.refusal_canaries,
                 proof_required: projection.proof_required,
                 proof_claim: &projection.proof_claim,
                 bootstrap: &projection.bootstrap,
@@ -247,5 +313,88 @@ workflows:
             projection.semantic_contract_identity,
             semantic_contract_identity(&contract).expect("semantic identity should resolve")
         );
+    }
+
+    #[test]
+    fn projection_carries_declared_refusal_canaries_with_stable_check_identity() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: canary-fixture
+tasks:
+  verify:
+    run: echo verify
+  publish:
+    run: echo publish
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+  release:
+    run:
+      task: publish
+agent:
+  refusal_canaries:
+    - task: publish
+    - workflow: release
+"#,
+        )
+        .expect("fixture contract should parse");
+        let projection = build_ci_projection(&contract, "verify", "native", "linux")
+            .expect("projection should build");
+
+        assert_eq!(projection.refusal_canaries.len(), 2);
+        assert_eq!(
+            projection.refusal_canaries[0].merge_check_id,
+            "ota.refusal-canary.task.publish"
+        );
+        assert_eq!(
+            projection.refusal_canaries[1].merge_check_id,
+            "ota.refusal-canary.workflow.release"
+        );
+        assert!(
+            projection
+                .merge_check_ids
+                .contains(&String::from("ota.refusal-canary.task.publish"))
+        );
+        assert!(
+            projection
+                .merge_check_ids
+                .contains(&String::from("ota.refusal-canary.workflow.release"))
+        );
+    }
+
+    #[test]
+    fn projection_rejects_normalized_refusal_canary_identity_collisions() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: collision-fixture
+tasks:
+  verify:
+    run: echo verify
+  publish-release:
+    run: echo publish
+  publish_release:
+    run: echo publish
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  refusal_canaries:
+    - task: publish-release
+    - task: publish_release
+"#,
+        )
+        .expect("fixture contract should parse");
+
+        let error = build_ci_projection(&contract, "verify", "native", "linux")
+            .expect_err("normalized identity collisions must be rejected");
+        assert!(error.contains("ota.refusal-canary.task.publish-release"));
     }
 }

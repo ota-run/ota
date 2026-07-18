@@ -1244,6 +1244,14 @@ pub(crate) fn merge_check_id_for_lane_task(task_name: &str) -> String {
     format!("ota.verify.{}", merge_check_slug_from_lane_task(task_name))
 }
 
+pub(crate) fn merge_check_id_for_refusal_canary(kind: &str, target: &str) -> String {
+    format!(
+        "ota.refusal-canary.{}.{}",
+        merge_check_slug_from_lane_task(kind),
+        merge_check_slug_from_lane_task(target)
+    )
+}
+
 fn merge_check_slug_from_lane_task(task_name: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
