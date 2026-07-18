@@ -142,6 +142,10 @@ The following planned execution-trust slice is:
 
 - [V11.16: fresh-boundary setup proof](../v11.16/plan.md)
 
+The following planned replay-governance slice is:
+
+- [V11.17: trusted replay baseline regeneration](../v11.17/plan.md)
+
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
 - V11.4 publishes portable governance truth
