@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- added `workflows.<name>.proof.claim: bounded` for archive-backed verification proof lanes that
+  do not declare a dependency seam. Doctor now evaluates the same `proof_breadth` assurance model
+  for those lanes: it remains `unknown` without a matching immutable proof archive and becomes
+  `supported` only when the archived proof matches contract snapshot, source identity, and scope.
+  Existing seam-control proof declarations remain compatible and continue to publish their
+  qualified runtime-proof claim.
+
 - extended V11.14 `claim_assurance[]` with workflow `proof_breadth`. Doctor now consumes only a
   content-addressed runtime-proof archive matching the current semantic contract, clean source
   identity, resolved execution scope, and witness-only replay posture; matching failed proof is

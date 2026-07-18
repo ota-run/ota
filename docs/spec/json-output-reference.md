@@ -2660,7 +2660,9 @@ The fields deliberately carry separate truths:
   `allow` for compatibility and does not change `ota run --agent` admission behavior.
 
 The current carrier emits agent-safety records for tasks declared safe and proof-breadth records
-for workflows that declare runtime proof. A proof-breadth record is `supported` only when Ota finds
+for workflows that declare runtime seam proof or `workflows.<name>.proof.claim: bounded`. A
+bounded claim declares an archive-backed proof lane without inventing dependency-seam evidence. A
+proof-breadth record is `supported` only when Ota finds
 a content-addressed `runtime_proof` archive with matching semantic contract snapshot, clean source
 identity, resolved execution scope, and `replay_posture: witness_only`. A matching failed proof is
 `contradicted`; absent, stale, changed-source, or scope-mismatched archives remain `unknown`.

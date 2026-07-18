@@ -3845,6 +3845,11 @@ Current behavior:
 - use `workflows.<name>.instances.<instance>.tasks.<task>.adapter_inputs` when one selected task path needs instance-specific compose project naming, bake files, or other adapter-owned truth without splitting the workflow into repo-local shell variants
 - use `tasks.<name>.variants` with `variants.<i>.env`, `variants.<i>.env_files`, `variants.<i>.env_bindings`, `variants.<i>.inputs`, `variants.<i>.requirements`, or `variants.<i>.adapter_inputs` when one task keeps the same body but needs OS-scoped process, prerequisite, or adapter overlays such as Linux-only host uid/gid interpolation, service-derived URLs, input defaults/allowed values, platform-specific tool requirements, Compose files, env files, or profiles
 - use `workflows.<name>.instances.<instance>.tasks.<task>.runtime` when one selected task path needs instance-specific service listener publication or readiness selection and the base task already owns explicit `runtime` truth
+- use `workflows.<name>.proof.claim: bounded` when a workflow is a real, archive-backed proof lane
+  but has no declared dependency seam. It opts the workflow into `proof_breadth` assurance without
+  claiming repo-wide completion; Ota keeps the claim `unknown` until a matching immutable proof
+  archive exists. A bounded claim requires `workflows.<name>.run.task` so it always binds to an
+  executed lane rather than contract prose.
 - use `workflows.<name>.proof.negative_controls` when one declared service seam has a separate,
   finite failure-control task that should run only when explicitly selected by
   `ota proof runtime --negative-control <id>`; the task must remain outside the normal workflow
@@ -3892,6 +3897,23 @@ Current behavior:
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
 - if `workflows.<default>.prepare.task` or `.prepare.action` is declared, `ota up` runs that host prepare phase before required service startup or setup
 - execution planning carries workflow `prepare` as additive workflow context, but it does not become the concrete execution identity for `ota execution plan`
+
+Bounded proof shape:
+
+```yaml
+workflows:
+  verify:
+    run:
+      task: gate
+    proof:
+      claim: bounded
+```
+
+This declares a truthful proof claim for a finite verification lane such as an offline replay,
+build, or deterministic test gate. It does not claim a dependency seam, causal interaction, or
+broader repository completion. Run `ota proof runtime --workflow verify --archive`; Doctor emits
+`proof_breadth: unknown` until the archive matches the current contract, source identity, and
+execution scope.
 
 Negative-control shape:
 

@@ -140,6 +140,9 @@ Without that, today's honest narrow proof can become tomorrow's silent overclaim
   actually occurred
 - separate recorded negative-control proof runs for dependency disruption or null-substitution
   lanes when a repo chooses to prove causal dependency necessity
+- a generic bounded workflow-proof declaration for deterministic verification lanes that have no
+  dependency seam; it reuses the same archive-backed proof carrier and never manufactures seam
+  evidence
 
 ## Non-goals
 

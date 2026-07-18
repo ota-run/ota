@@ -1029,6 +1029,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "claim": { "enum": ["bounded"] },
         "negative_controls": {
           "type": "array",
           "items": { "$ref": "#/$defs/workflowNegativeControl" }

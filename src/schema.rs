@@ -755,10 +755,13 @@ pub struct WorkflowSpec {
     pub exposes: Vec<WorkflowExposeSpec>,
 }
 
-/// Optional workflow-owned tasks that attest a declared failure-control outcome.
+/// Contract-owned bounded proof claim and optional seam-control evidence for a workflow.
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowProofSpec {
+    /// Declares an archive-backed bounded proof without requiring a dependency seam.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<WorkflowProofClaimKind>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub negative_controls: Vec<WorkflowNegativeControlSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -767,8 +770,27 @@ pub struct WorkflowProofSpec {
 
 impl WorkflowProofSpec {
     pub fn is_empty(&self) -> bool {
-        self.negative_controls.is_empty() && self.seam_observations.is_empty()
+        self.claim.is_none()
+            && self.negative_controls.is_empty()
+            && self.seam_observations.is_empty()
     }
+
+    pub fn claim_value(&self) -> Option<&'static str> {
+        match self.claim {
+            Some(WorkflowProofClaimKind::Bounded) => Some("bounded_proof"),
+            None if !self.negative_controls.is_empty() || !self.seam_observations.is_empty() => {
+                Some("qualified_runtime_proof")
+            }
+            None => None,
+        }
+    }
+}
+
+/// The first generic proof declaration is intentionally bounded by the emitted proof artifact.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowProofClaimKind {
+    Bounded,
 }
 
 /// A finite task that proves one observed seam obligation fails under a declared intervention.

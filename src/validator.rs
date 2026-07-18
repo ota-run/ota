@@ -16496,6 +16496,11 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`workflows.{name}.intent` must not be empty"
             )));
         }
+        if workflow.proof.claim.is_some() && workflow.run.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.proof.claim` requires `workflows.{name}.run` so Ota can bind the claim to an executed proof lane"
+            )));
+        }
         validate_workflow_negative_controls(contract, name, workflow, errors);
         validate_workflow_seam_observations(contract, name, workflow, errors);
         if let Some(runtime_boundary) = workflow.runtime_boundary.as_ref() {
@@ -42109,6 +42114,35 @@ tasks:
             rendered
                 .contains("requires artifact `client` but must declare `depends_on: [generate]`"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn bounded_workflow_proof_claim_requires_a_run_lane() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: bounded-proof
+tasks:
+  verify:
+    run: true
+workflows:
+  default: verify
+  verify:
+    proof:
+      claim: bounded
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("a bounded proof must bind to an executable workflow lane")
+            .to_string();
+        assert!(
+            error.contains("`workflows.verify.proof.claim` requires `workflows.verify.run`"),
+            "{error}"
         );
     }
 }

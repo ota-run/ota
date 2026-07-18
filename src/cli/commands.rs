@@ -17401,9 +17401,9 @@ fn doctor_claim_assurance(
     let archives = load_proof_runtime_archive_candidates(root);
     if let Some(workflows) = contract.workflows.as_ref() {
         for (workflow_name, workflow) in &workflows.items {
-            if workflow.proof.is_empty() {
+            let Some(proof_claim) = workflow.proof.claim_value() else {
                 continue;
-            }
+            };
             let scope = proof_runtime_archive_scope(
                 contract,
                 contract_path,
@@ -17412,6 +17412,7 @@ fn doctor_claim_assurance(
             );
             let mut record = crate::claim_assurance::proof_breadth_claim(
                 workflow_name,
+                proof_claim,
                 claim_assurance_proof_scope(&scope),
                 contract_snapshot_hash.as_deref(),
                 source_identity.as_deref(),
@@ -91438,12 +91439,7 @@ workflows:
     run:
       task: producer
     proof:
-      seam_observations:
-        - id: database-marker
-          dependency: database
-          producer_task: producer
-          task: observe
-          marker_env: OTA_PROOF_MARKER
+      claim: bounded
 "#,
         )
         .unwrap();
@@ -91479,6 +91475,14 @@ workflows:
             Some("verify"),
             ExecutionOverrides::default(),
         );
+        let claims = super::doctor_claim_assurance(&contract, &contract_path);
+        let proof = claims
+            .iter()
+            .find(|claim| claim.family == "proof_breadth")
+            .expect("proof breadth claim");
+        assert_eq!(proof.declaration.value, "bounded_proof");
+        assert_eq!(proof.assurance.status, "unknown");
+        assert_eq!(proof.assurance.gaps, ["immutable_proof_archive"]);
         let record = serde_json::json!({
             "kind": "runtime_proof",
             "version": 1,

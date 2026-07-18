@@ -145,6 +145,7 @@ workflows:
     readiness:
       surfaces: [app]
     proof:
+      claim: bounded
       seam_observations:
         - id: dependency-marker
           dependency: dependency

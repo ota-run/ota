@@ -166,6 +166,7 @@ pub fn agent_safety_claim(
 /// it needs stronger completion coverage.
 pub fn proof_breadth_claim(
     workflow_name: &str,
+    declaration_value: &str,
     expected_scope: ProofArchiveScope,
     current_contract_snapshot_hash: Option<&str>,
     current_source_identity: Option<&str>,
@@ -178,7 +179,7 @@ pub fn proof_breadth_claim(
         },
         family: String::from("proof_breadth"),
         declaration: ClaimDeclaration {
-            value: String::from("qualified_runtime_proof"),
+            value: String::from(declaration_value),
             evidence_class: String::from("asserted"),
         },
         closure: ClaimClosure {
@@ -423,6 +424,7 @@ effects:
     fn qualified_proof_requires_immutable_matching_archive() {
         let claim = proof_breadth_claim(
             "verify",
+            "qualified_runtime_proof",
             proof_scope(),
             Some("sha256:contract"),
             Some("git:source"),
@@ -440,6 +442,7 @@ effects:
         stale.contract_snapshot_hash = String::from("sha256:old");
         let claim = proof_breadth_claim(
             "verify",
+            "qualified_runtime_proof",
             proof_scope(),
             Some("sha256:contract"),
             Some("git:source"),
@@ -452,6 +455,7 @@ effects:
         wrong_scope.scope.backend = String::from("container");
         let claim = proof_breadth_claim(
             "verify",
+            "qualified_runtime_proof",
             proof_scope(),
             Some("sha256:contract"),
             Some("git:source"),
@@ -464,6 +468,7 @@ effects:
         stale_source.source_identity = Some(String::from("git:old-source"));
         let claim = proof_breadth_claim(
             "verify",
+            "qualified_runtime_proof",
             proof_scope(),
             Some("sha256:contract"),
             Some("git:source"),
@@ -480,6 +485,7 @@ effects:
         failed.proof_verdict = String::from("failed");
         let claim = proof_breadth_claim(
             "verify",
+            "qualified_runtime_proof",
             proof_scope(),
             Some("sha256:contract"),
             Some("git:source"),
