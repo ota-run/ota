@@ -750,8 +750,10 @@ Current behavior:
   agent dry-run, and either agent execution plus receipt archival or, for a proof-required lane,
   one authoritative `ota proof runtime` execution. Each declared, unique
   `agent.refusal_canaries` control renders as its own provider check using Ota's
-  `--expect-refusal` exit semantics rather than provider-shell assertions. Each check has a stable
-  canonical V11.5 `merge_check_id`. A proof claim never bypasses agent admission.
+  `--expect-refusal` exit semantics rather than provider-shell assertions. Each check maps one
+  stable canonical V11.5 `merge_check_id` to a scope-qualified provider name such as
+  `ota.refusal-canary.task.publish (linux/container)`, so native and container or OS lanes do not
+  collapse into one GitHub check. A proof claim never bypasses agent admission.
 - The human-owned caller must invoke the generated path and pass its exact
   `ota_projection_identity` and `ota_target_os`. It may also choose `ota_runner`; the renderer's `--runner` value is
   only the reusable workflow's default. Ota checks the projection identity rather than
@@ -772,7 +774,7 @@ full CI workflow or infer provider policy. Existing workflow YAML remains useful
 but it cannot silently rewrite `ota.yaml`.
 
 JSON output carries `ok`, `operation`, `projection.identity`, selected workflow/task, runner,
-`merge_check_ids`, `proof_required`, `render_identity`, `binding_identity`, managed output path, caller path, and
+`merge_check_ids`, adapter `provider_checks`, `proof_required`, `render_identity`, `binding_identity`, managed output path, caller path, and
 whether `sync` mutated its owned file. `render_identity` is adapter-scoped; `binding_identity` also
 binds the parsed human-owned caller reference.
 Failures carry a stable `code`, including `managed_output_unowned`, `managed_output_stale`, and

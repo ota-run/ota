@@ -29,7 +29,8 @@
 - extended managed CI projection with contract-owned `agent.refusal_canaries`. Provider-neutral
   projections now carry de-duplicated task/workflow control identities and stable merge-check IDs;
   the GitHub adapter renders each as an independent provider check through Ota's real
-  `--expect-refusal` runner path without provider-shell assertion glue.
+  `--expect-refusal` runner path without provider-shell assertion glue. Its emitted
+  `provider_checks[]` maps each canonical identity to a target-OS/mode-qualified GitHub check name.
 
 - fixed published execution receipt and preview schemas to model the complete structured prepare
   summary, including Compose file/env-file selection, browser bootstrap, and typed hydration

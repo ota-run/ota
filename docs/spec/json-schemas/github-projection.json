@@ -57,10 +57,23 @@
     },
     "github_projection": {
       "type": "object", "additionalProperties": false,
-      "required": ["projection", "runner", "content_identity", "render_identity", "rendered"],
+      "required": ["projection", "runner", "provider_checks", "content_identity", "render_identity", "rendered"],
       "properties": {
         "projection": { "$ref": "#/$defs/projection" },
         "runner": { "type": "string" },
+        "provider_checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["merge_check_id", "provider_check_name"],
+            "properties": {
+              "merge_check_id": { "type": "string" },
+              "provider_check_name": { "type": "string" }
+            }
+          }
+        },
         "content_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "render_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "rendered": { "type": "string" }

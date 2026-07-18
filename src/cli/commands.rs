@@ -1969,18 +1969,31 @@ fn ci_projection_for_contract(
         Backend::Container => "container",
         Backend::Remote => "remote",
     };
-    if !contract.tasks.get(task).is_some_and(|task| {
-        task.active_for_os(target_os)
-            && task.supports_execution_backend(
-                contract.execution.as_ref(),
-                effective.backend,
-                target_os,
-            )
-    }) {
+    let unsupported_task = contract
+        .task_dependency_closure_names([task.to_string()])
+        .into_iter()
+        .filter_map(|task_name| {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|candidate| (task_name, candidate))
+        })
+        // Aggregate nodes are orchestration-only. Their selected executable closure owns mode support.
+        .find(|(_, candidate)| {
+            candidate.aggregate.is_none()
+                && (!candidate.active_for_os(target_os)
+                    || !candidate.supports_execution_backend(
+                        contract.execution.as_ref(),
+                        effective.backend,
+                        target_os,
+                    ))
+        })
+        .map(|(task_name, _)| task_name);
+    if let Some(unsupported_task) = unsupported_task {
         return Err((
             String::from("projection_mode_unavailable"),
             format!(
-                "workflow `{workflow}` task `{task}` does not support `{mode}` execution on `{target_os}`"
+                "workflow `{workflow}` task closure member `{unsupported_task}` does not support `{mode}` execution on `{target_os}`"
             ),
             None,
         ));
@@ -55719,6 +55732,60 @@ agent:
         let payload: serde_json::Value =
             serde_json::from_str(&result.stdout).expect("failure JSON should parse");
         assert_eq!(payload["code"], "projection_mode_unavailable");
+    }
+
+    #[test]
+    fn ci_projection_accepts_container_capable_aggregate_closure() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: aggregate-container-fixture
+execution:
+  backends:
+    container:
+      image: node:24-bookworm
+tasks:
+  test:
+    run: echo test
+    execution:
+      modes:
+        container: {}
+  lint:
+    run: echo lint
+    execution:
+      modes:
+        container: {}
+  verify:
+    aggregate:
+      tasks: [test, lint]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify, test, lint]
+"#,
+        )
+        .expect("contract fixture should write");
+
+        let result = ci_projection(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            Some("container"),
+            "linux",
+            None,
+            OutputFormat::Json,
+        );
+        assert_eq!(result.exit_code, 0, "{}", result.stdout);
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.stdout).expect("projection JSON should parse");
+        assert_eq!(payload["projection"]["mode"], "container");
     }
 
     #[cfg(unix)]

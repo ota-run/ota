@@ -74,7 +74,9 @@ durable agent workflow belongs in the canonical Ota skill.
   declared runtime proof when the selected workflow owns one. Agent-safe lanes retain `--agent`;
   proof claims do not bypass agent admission, and proof-required lanes use one authoritative execution.
   Each unique contract refusal canary is now emitted as its own provider check with a stable
-  `merge_check_id`; the generated check invokes Ota's `--expect-refusal` runner boundary directly.
+  `merge_check_id`; the GitHub adapter publishes the scope-qualified provider-check mapping so
+  native/container and OS lanes stay independently requireable. The generated check invokes Ota's
+  `--expect-refusal` runner boundary directly.
   Kylrix renders valid distinct native
   and container reusable lanes without collapsing its separately selected `sqlite-dev` runtime
   proof into `verify`. Strict V11.14 agent and proof assurance admission is evaluated before

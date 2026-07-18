@@ -548,6 +548,23 @@ agent:
         render["projection"]["projection"]["identity"],
         canonical["projection"]["identity"]
     );
+    assert_eq!(
+        render["projection"]["provider_checks"],
+        serde_json::json!([
+            {
+                "merge_check_id": "ota.verify.verify",
+                "provider_check_name": "ota.verify.verify (linux/native)"
+            },
+            {
+                "merge_check_id": "ota.refusal-canary.task.publish",
+                "provider_check_name": "ota.refusal-canary.task.publish (linux/native)"
+            },
+            {
+                "merge_check_id": "ota.refusal-canary.workflow.release",
+                "provider_check_name": "ota.refusal-canary.workflow.release (linux/native)"
+            }
+        ])
+    );
     let identity = render["projection"]["projection"]["identity"]
         .as_str()
         .expect("projection identity");

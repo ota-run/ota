@@ -43,9 +43,17 @@ const OTA_SETUP_REV: &str = "493cba84bf7f7c11c9e8e996d832d93a89c62184";
 pub(crate) struct GitHubProjection {
     pub projection: CiProjection,
     pub runner: String,
+    pub provider_checks: Vec<GitHubProjectionCheck>,
     pub content_identity: String,
     pub render_identity: String,
     pub rendered: String,
+}
+
+/// A scope-qualified GitHub check that maps back to one canonical Ota merge identity.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GitHubProjectionCheck {
+    pub merge_check_id: String,
+    pub provider_check_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,8 +89,20 @@ pub(crate) fn render_github_projection_from_projection(
     let job_id = github_job_id(check_name);
     let workflow_yaml = yaml_scalar(&projection.workflow);
     let runner_yaml = yaml_scalar(runner);
-    let check_yaml = yaml_scalar(check_name);
     let mode_flag = format!(" --mode {}", projection.mode);
+    let provider_checks = projection
+        .merge_check_ids
+        .iter()
+        .map(|merge_check_id| GitHubProjectionCheck {
+            merge_check_id: merge_check_id.clone(),
+            provider_check_name: github_check_name(
+                merge_check_id,
+                &projection.mode,
+                &projection.target_os,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let primary_provider_check = &provider_checks[0];
     let refusal_canary_jobs = projection
         .refusal_canaries
         .iter()
@@ -117,7 +137,11 @@ pub(crate) fn render_github_projection_from_projection(
                     "        run: {command}\n"
                 ),
                 job_id = github_job_id(&canary.merge_check_id),
-                check_name = yaml_scalar(&canary.merge_check_id),
+                check_name = yaml_scalar(&github_check_name(
+                    &canary.merge_check_id,
+                    &projection.mode,
+                    &projection.target_os,
+                )),
                 workflow_yaml = workflow_yaml,
                 mode_flag = mode_flag,
                 command = command,
@@ -195,7 +219,7 @@ pub(crate) fn render_github_projection_from_projection(
         projection_identity = projection.identity,
         workflow_yaml = workflow_yaml,
         job_id = job_id,
-        check_yaml = check_yaml,
+        check_yaml = yaml_scalar(&primary_provider_check.provider_check_name),
         runner_yaml = runner_yaml,
         mode_flag = mode_flag,
         GITHUB_CHECKOUT_REV = GITHUB_CHECKOUT_REV,
@@ -215,6 +239,7 @@ pub(crate) fn render_github_projection_from_projection(
     Ok(GitHubProjection {
         projection,
         runner: runner.to_string(),
+        provider_checks,
         content_identity,
         render_identity,
         rendered,
@@ -233,6 +258,10 @@ fn github_job_id(check_id: &str) -> String {
             })
             .collect::<String>()
     )
+}
+
+fn github_check_name(merge_check_id: &str, mode: &str, target_os: &str) -> String {
+    format!("{merge_check_id} ({target_os}/{mode})")
 }
 
 fn yaml_scalar(value: &str) -> String {
@@ -383,12 +412,12 @@ agent:
         assert!(
             first
                 .rendered
-                .contains("name: 'ota.refusal-canary.task.publish'")
+                .contains("name: 'ota.refusal-canary.task.publish (linux/native)'")
         );
         assert!(
             first
                 .rendered
-                .contains("name: 'ota.refusal-canary.workflow.release'")
+                .contains("name: 'ota.refusal-canary.workflow.release (linux/native)'")
         );
         assert!(
             first
@@ -401,6 +430,11 @@ agent:
                 .contains("ota_ota_refusal_canary_workflow_release:")
         );
         assert_eq!(first.projection.refusal_canaries.len(), 2);
+        assert_eq!(first.provider_checks.len(), 3);
+        assert_eq!(
+            first.provider_checks[1].provider_check_name,
+            "ota.refusal-canary.task.publish (linux/native)"
+        );
         assert!(
             first
                 .projection

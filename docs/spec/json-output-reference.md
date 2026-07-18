@@ -855,6 +855,12 @@ Success:
       "identity": "sha256:..."
     },
     "runner": "ubuntu-latest",
+    "provider_checks": [
+      {
+        "merge_check_id": "ota.verify.verify",
+        "provider_check_name": "ota.verify.verify (linux/native)"
+      }
+    ],
     "content_identity": "sha256:...",
     "render_identity": "sha256:..."
   },
@@ -896,6 +902,10 @@ selected CI lane. Each unique entry carries `kind`, `target`, and a stable `merg
 maps directly to one provider check; adapters run the corresponding Ota `--expect-refusal` command
 and let its typed exit semantics enforce the control. A provider adapter must not substitute
 shell/JQ assertions or contract-authored refusal reasons.
+
+GitHub exposes that mapping in `projection.provider_checks[]`. `merge_check_id` stays canonical and
+scope-free; `provider_check_name` adds the selected target OS and execution mode, preventing the
+same canonical lane from collapsing when a caller runs it across multiple platforms.
 
 ## `ota proof runtime --json`
 
