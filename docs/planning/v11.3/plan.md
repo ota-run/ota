@@ -24,12 +24,13 @@
 
 # V11.3 Plan
 
-Status: partially implemented. Agent-mode task and workflow execution now resolves the full closure before
-execution, refuses unsafe paths at the runner boundary, and emits canonical refusal evidence.
+Status: implementation complete; real-repo pressure verification remains open. Agent-mode task and workflow
+execution now resolves the full closure before execution, refuses unsafe paths at the runner boundary, emits
+canonical refusal evidence, and supports contract-owned refusal canaries against that same boundary.
 
 Release target:
 
-- partially implemented continuation after `v11.2`; refusal canaries remain open
+- implementation continuation after `v11.2`; pressure verification remains open
 
 Source direction:
 
@@ -275,13 +276,14 @@ the real enforcement boundary.
 
 The first command shape stays on the existing runner surface:
 
-- `ota run publish --agent --expect-refusal`
-- `ota up --workflow release --agent --expect-refusal`
+- `ota run --agent --expect-refusal publish`
+- `ota up --agent --expect-refusal --workflow release`
 
 A canary passes only when the real runner refuses before any selected task starts. It fails when
 the lane is admitted, when execution starts, or when Ota cannot derive a refusal. A changed but
-still-valid derived refusal reason remains a passing canary result, but must be emitted as
-governance drift for review.
+still-valid derived refusal reason remains a passing canary result. The receipt retains the
+runner-derived reason so later receipt/proof comparison can surface the change without the contract
+declaring or trusting an expected reason.
 
 This is not a synthetic proof task. It exercises the same closure resolution and refusal engine
 used by ordinary agent execution.

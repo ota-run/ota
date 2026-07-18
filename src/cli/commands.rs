@@ -17198,6 +17198,7 @@ pub fn run_command(
         members,
         task_inputs,
         false,
+        false,
         None,
         dry_run,
         debug,
@@ -17234,6 +17235,7 @@ pub(crate) fn run_command_with_agent(
         members,
         task_inputs,
         agent,
+        false,
         None,
         dry_run,
         debug,
@@ -17253,6 +17255,7 @@ pub(crate) fn run_command_with_agent_reason(
     members: &[String],
     task_inputs: &[String],
     agent: bool,
+    expect_refusal: bool,
     reason: Option<&str>,
     dry_run: bool,
     debug: bool,
@@ -17276,7 +17279,7 @@ pub(crate) fn run_command_with_agent_reason(
             ],
         );
     }
-    if matches!(format, OutputFormat::Json) && !dry_run {
+    if matches!(format, OutputFormat::Json) && !dry_run && !expect_refusal {
         return finalize_debug(
             CommandOutput::failure_with_code(
                 String::from("`--json` currently requires `ota run --dry-run`"),
@@ -17385,7 +17388,16 @@ pub(crate) fn run_command_with_agent_reason(
 
     with_effect_governance_override_map(&parsed_effect_overrides, || {
         finalize_debug(
-            if dry_run {
+            if expect_refusal {
+                run_refusal_canary_command(
+                    task_name,
+                    &resolved_path,
+                    overrides,
+                    members,
+                    &normalized_task_inputs,
+                    format,
+                )
+            } else if dry_run {
                 run_preview_command(
                     task_name,
                     &resolved_path,
@@ -17787,6 +17799,26 @@ impl AgentExecutionRefusal {
     }
 }
 
+/// The authoritative pre-execution result for agent-mode admission.
+///
+/// Normal execution and refusal canaries consume this one decision so a canary cannot exercise a
+/// parallel, weaker policy path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AgentExecutionAdmission {
+    SafetyRefused(AgentExecutionRefusal),
+    PolicyRefused(AgentExecutionRefusal),
+    Admitted,
+}
+
+impl AgentExecutionAdmission {
+    fn refusal(&self) -> Option<&AgentExecutionRefusal> {
+        match self {
+            Self::SafetyRefused(refusal) | Self::PolicyRefused(refusal) => Some(refusal),
+            Self::Admitted => None,
+        }
+    }
+}
+
 fn collect_reachable_task_names_for_visibility(
     contract: &Contract,
     root_task_name: &str,
@@ -17981,17 +18013,17 @@ fn agent_execution_refusal_for_task(
     })
 }
 
-fn agent_execution_refusal_with_policy(
+fn agent_execution_admission(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
-) -> Option<AgentExecutionRefusal> {
+) -> AgentExecutionAdmission {
     if let Some(refusal) = agent_execution_refusal_for_task(contract, task_name, overrides) {
-        return Some(refusal);
+        return AgentExecutionAdmission::SafetyRefused(refusal);
     }
     let task_name = canonical_declared_task_name(contract, task_name);
-    doctor_claim_assurance_with_overrides(contract, contract_path, overrides)
+    let policy_refusal = doctor_claim_assurance_with_overrides(contract, contract_path, overrides)
         .into_iter()
         .find(|record| {
             record.subject.kind == "task"
@@ -18008,7 +18040,22 @@ fn agent_execution_refusal_with_policy(
             } else {
                 "claim_assurance_policy_review_required"
             },
-        })
+        });
+    match policy_refusal {
+        Some(refusal) => AgentExecutionAdmission::PolicyRefused(refusal),
+        None => AgentExecutionAdmission::Admitted,
+    }
+}
+
+fn agent_execution_refusal_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<AgentExecutionRefusal> {
+    agent_execution_admission(contract, contract_path, task_name, overrides)
+        .refusal()
+        .cloned()
 }
 
 pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> TaskEffectiveSafety {
@@ -18373,8 +18420,9 @@ fn run_agent_execution_refusal(
     contract_path: &Path,
     _show_receipt: bool,
 ) -> Option<RunCommandFailure> {
-    let refusal =
-        agent_execution_refusal_with_policy(contract, contract_path, task_name, overrides)?;
+    let refusal = agent_execution_admission(contract, contract_path, task_name, overrides)
+        .refusal()
+        .cloned()?;
     let task_name = canonical_declared_task_name(contract, task_name);
     let command = format!(
         "{} --agent",
@@ -18412,6 +18460,250 @@ fn run_agent_execution_refusal(
         exit_code: 1,
         receipt: None,
     })
+}
+
+fn refusal_canary_is_declared(contract: &Contract, kind: &str, target: &str) -> bool {
+    let Some(agent) = contract.agent.as_ref() else {
+        return false;
+    };
+    agent.refusal_canaries.iter().any(|canary| match kind {
+        "task" => canary.task.as_deref() == Some(target),
+        "workflow" => canary.workflow.as_deref() == Some(target),
+        _ => false,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RefusalCanaryOutcome {
+    RefusedAsExpected(AgentExecutionRefusal),
+    WrongRefusalBoundary(AgentExecutionRefusal),
+    RefusalNotObserved,
+}
+
+impl RefusalCanaryOutcome {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::RefusedAsExpected(_) => "refused_as_expected",
+            Self::WrongRefusalBoundary(_) => "wrong_refusal_boundary",
+            Self::RefusalNotObserved => "refusal_not_observed",
+        }
+    }
+
+    fn refusal(&self) -> Option<&AgentExecutionRefusal> {
+        match self {
+            Self::RefusedAsExpected(refusal) | Self::WrongRefusalBoundary(refusal) => Some(refusal),
+            Self::RefusalNotObserved => None,
+        }
+    }
+
+    fn passed(&self) -> bool {
+        matches!(self, Self::RefusedAsExpected(_))
+    }
+}
+
+fn render_refusal_canary_result(
+    format: OutputFormat,
+    kind: &str,
+    target: &str,
+    receipt: Option<&ExecutionReceipt>,
+    outcome: &RefusalCanaryOutcome,
+) -> CommandOutput {
+    let passed = outcome.passed();
+    let refusal = outcome.refusal();
+    let payload = json!({
+        "ok": passed,
+        "status": outcome.status(),
+        "canary": {
+            "kind": kind,
+            "target": target,
+            "execution_started": false,
+            "refusal": refusal.map(AgentExecutionRefusal::governance_record),
+        },
+        "receipt": receipt,
+    });
+    match format {
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json_value(payload),
+            stderr: None,
+            exit_code: if passed { 0 } else { 1 },
+        },
+        OutputFormat::Text if passed => {
+            let refusal = refusal.expect("refused canary carries a refusal");
+            let mut text = format!(
+                "🦦 AGENT REFUSAL CANARY {kind}:{target}\n\nStatus:      refused as expected\nTarget:      {kind}:{target}\nExecution:   not started\nReason:      {}",
+                refusal.reason
+            );
+            if refusal.blocked_task != refusal.requested_task {
+                text.push_str(&format!("\nBlocked task: {}", refusal.blocked_task));
+            }
+            if refusal.path.len() > 1 {
+                text.push_str(&format!("\nPath:        {}", refusal.path.join(" -> ")));
+            }
+            CommandOutput::success(text)
+        }
+        OutputFormat::Text if matches!(outcome, RefusalCanaryOutcome::WrongRefusalBoundary(_)) => {
+            let refusal = refusal.expect("wrong-boundary canary carries a refusal");
+            CommandOutput::failure_with_code(
+                format!(
+                    "AGENT REFUSAL CANARY FAILED\n\nTarget: `{kind}:{target}` was refused by `{}` rather than the agent-safety closure boundary. No task was started by the canary. Review the selected task/workflow safety declaration and closure.",
+                    refusal.reason
+                ),
+                1,
+            )
+        }
+        OutputFormat::Text => CommandOutput::failure_with_code(
+            format!(
+                "AGENT REFUSAL CANARY FAILED\n\nTarget: `{kind}:{target}` was admitted by the current agent boundary. No task was started by the canary. Review the declared safe closure before treating this lane as enforced."
+            ),
+            1,
+        ),
+    }
+}
+
+fn run_refusal_canary_command(
+    task_name: &str,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    members: &[String],
+    task_inputs: &[String],
+    format: OutputFormat,
+) -> CommandOutput {
+    if !members.is_empty() {
+        return CommandOutput::failure_with_code(
+            String::from(
+                "`--expect-refusal` currently requires one repository contract; do not combine it with `--member`",
+            ),
+            2,
+        );
+    }
+    if !task_inputs.is_empty() {
+        return CommandOutput::failure_with_code(
+            String::from(
+                "`--expect-refusal` does not accept task inputs because the canary never starts the task",
+            ),
+            2,
+        );
+    }
+    let target = match load_and_validate_target(resolved_path, None) {
+        Ok(target) => target,
+        Err(ContractProblem::Load(error)) => return CommandOutput::failure(error.to_string()),
+        Err(ContractProblem::Validation(error)) => {
+            return CommandOutput::failure(error.to_string());
+        }
+    };
+    let task_name = canonical_declared_task_name(&target.contract, task_name);
+    if !refusal_canary_is_declared(&target.contract, "task", task_name.as_str()) {
+        return CommandOutput::failure_with_code(
+            format!(
+                "task `{task_name}` is not declared in `agent.refusal_canaries`; add `- task: {task_name}` before using `--expect-refusal`"
+            ),
+            2,
+        );
+    }
+    let admission = agent_execution_admission(
+        &target.contract,
+        &target.contract_path,
+        task_name.as_str(),
+        overrides,
+    );
+    let outcome = match admission {
+        AgentExecutionAdmission::SafetyRefused(refusal) => {
+            RefusalCanaryOutcome::RefusedAsExpected(refusal)
+        }
+        AgentExecutionAdmission::PolicyRefused(refusal) => {
+            RefusalCanaryOutcome::WrongRefusalBoundary(refusal)
+        }
+        AgentExecutionAdmission::Admitted => RefusalCanaryOutcome::RefusalNotObserved,
+    };
+    let receipt = outcome.refusal().map(|refusal| {
+        let command = format!("ota run {task_name} --agent --expect-refusal");
+        repo_agent_execution_refusal_receipt(
+            &target.contract,
+            &target.contract_path,
+            overrides,
+            None,
+            None,
+            "refusal_canary",
+            task_name.as_str(),
+            command.as_str(),
+            refusal,
+        )
+    });
+    render_refusal_canary_result(
+        format,
+        "task",
+        task_name.as_str(),
+        receipt.as_ref(),
+        &outcome,
+    )
+}
+
+fn up_refusal_canary_command(
+    target: &LoadedContractTarget,
+    workflow_name: &str,
+    overrides: ExecutionOverrides,
+    format: OutputFormat,
+) -> CommandOutput {
+    let Some((selected_name, _)) = target.contract.selected_workflow(Some(workflow_name)) else {
+        return CommandOutput::failure_with_code(
+            format!("workflow `{workflow_name}` is not declared by this contract"),
+            2,
+        );
+    };
+    if !refusal_canary_is_declared(&target.contract, "workflow", selected_name) {
+        return CommandOutput::failure_with_code(
+            format!(
+                "workflow `{selected_name}` is not declared in `agent.refusal_canaries`; add `- workflow: {selected_name}` before using `--expect-refusal`"
+            ),
+            2,
+        );
+    }
+    let admission = selected_up_agent_task_names(
+        &target.contract,
+        Some(selected_name),
+        UpRunBehaviorPreference::Auto,
+    )
+    .into_iter()
+    .map(|task_name| {
+        agent_execution_admission(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+        )
+    })
+    .find(|admission| !matches!(admission, AgentExecutionAdmission::Admitted))
+    .unwrap_or(AgentExecutionAdmission::Admitted);
+    let outcome = match admission {
+        AgentExecutionAdmission::SafetyRefused(refusal) => {
+            RefusalCanaryOutcome::RefusedAsExpected(refusal)
+        }
+        AgentExecutionAdmission::PolicyRefused(refusal) => {
+            RefusalCanaryOutcome::WrongRefusalBoundary(refusal)
+        }
+        AgentExecutionAdmission::Admitted => RefusalCanaryOutcome::RefusalNotObserved,
+    };
+    let receipt = outcome.refusal().map(|refusal| {
+        let command = format!("ota up --workflow {selected_name} --agent --expect-refusal");
+        repo_agent_execution_refusal_receipt(
+            &target.contract,
+            &target.contract_path,
+            overrides,
+            None,
+            Some(selected_name),
+            "refusal_canary",
+            refusal.requested_task.as_str(),
+            command.as_str(),
+            refusal,
+        )
+    });
+    render_refusal_canary_result(
+        format,
+        "workflow",
+        selected_name,
+        receipt.as_ref(),
+        &outcome,
+    )
 }
 
 fn task_effect_governance_scope(contract: &Contract, task_name: &str) -> EffectGovernanceScope {
@@ -28860,6 +29152,7 @@ pub fn up(
         members,
         workflow_name,
         false,
+        false,
         None,
         format,
         debug,
@@ -28899,6 +29192,7 @@ pub(crate) fn up_with_agent(
         members,
         workflow_name,
         agent,
+        false,
         None,
         format,
         debug,
@@ -28920,6 +29214,7 @@ pub(crate) fn up_with_agent_reason(
     members: &[String],
     workflow_name: Option<&str>,
     agent: bool,
+    expect_refusal: bool,
     reason: Option<&str>,
     format: OutputFormat,
     debug: bool,
@@ -29127,6 +29422,19 @@ pub(crate) fn up_with_agent_reason(
         finalize_debug(
             match load_and_validate_target(&resolved_path, single_member) {
                 Ok(target) if members.is_empty() || members.len() == 1 => {
+                    if expect_refusal {
+                        return match workflow_name {
+                            Some(workflow_name) => {
+                                up_refusal_canary_command(&target, workflow_name, overrides, format)
+                            }
+                            None => CommandOutput::failure_with_code(
+                                String::from(
+                                    "`ota up --expect-refusal` requires an explicit `--workflow` canary target",
+                                ),
+                                2,
+                            ),
+                        };
+                    }
                     if members.is_empty()
                         && target.contract_path == resolved_path
                         && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -65723,6 +66031,229 @@ agent:
         );
         assert!(stderr.contains("blocked task: `setup`"), "{stderr}");
         assert!(stderr.contains("path: `verify -> setup`"), "{stderr}");
+    }
+
+    #[test]
+    fn declared_task_refusal_canary_passes_without_starting_the_task() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+agent:
+  refusal_canaries:
+    - task: publish
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            true,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("canary json");
+        assert_eq!(json["status"], "refused_as_expected");
+        assert_eq!(json["canary"]["kind"], "task");
+        assert_eq!(json["canary"]["target"], "publish");
+        assert_eq!(json["canary"]["execution_started"], false);
+        assert_eq!(
+            json["canary"]["refusal"]["reason_family"],
+            "requested_task_not_safe"
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn refusal_canary_fails_when_the_target_is_admitted() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+agent:
+  safe_tasks: [verify]
+  refusal_canaries:
+    - task: verify
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            true,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("canary json");
+        assert_eq!(json["status"], "refusal_not_observed");
+        assert_eq!(json["canary"]["execution_started"], false);
+        assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn refusal_canary_rejects_policy_refusal_as_the_wrong_boundary() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+agent:
+  safe_tasks: [verify]
+  refusal_canaries:
+    - task: verify
+"#,
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+        on_insufficient: deny
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            true,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("canary json");
+        assert_eq!(json["status"], "wrong_refusal_boundary");
+        assert_eq!(
+            json["canary"]["refusal"]["reason_family"],
+            "claim_assurance_policy_denied"
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn declared_workflow_refusal_canary_uses_the_up_agent_boundary() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  release:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+workflows:
+  default: release
+  release:
+    run:
+      task: release
+agent:
+  refusal_canaries:
+    - workflow: release
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::up_with_agent_reason(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            Some("release"),
+            true,
+            true,
+            None,
+            OutputFormat::Json,
+            false,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("canary json");
+        assert_eq!(json["status"], "refused_as_expected");
+        assert_eq!(json["canary"]["kind"], "workflow");
+        assert_eq!(json["canary"]["target"], "release");
+        assert_eq!(json["canary"]["execution_started"], false);
+        assert!(!repo.path().join("should-not-exist").exists());
     }
 
     #[test]
@@ -115587,18 +116118,16 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         for task_name in
             selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
         {
-            if let Some(refusal) = agent_execution_refusal_with_policy(
-                contract,
-                resolved_path,
-                task_name.as_str(),
-                overrides,
-            ) {
+            if let Some(refusal) =
+                agent_execution_admission(contract, resolved_path, task_name.as_str(), overrides)
+                    .refusal()
+            {
                 return Ok(up_agent_execution_refusal_result(
                     contract,
                     resolved_path,
                     workflow_name,
                     overrides,
-                    &refusal,
+                    refusal,
                 ));
             }
         }

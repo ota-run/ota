@@ -229,6 +229,100 @@ fn version_json_output_matches_published_schema() {
 }
 
 #[test]
+fn refusal_canary_json_output_matches_published_schema_for_expected_and_missing_refusals() {
+    let refused = TempDir::new().expect("refused fixture");
+    write_contract(
+        &refused,
+        r#"
+version: 1
+project:
+  name: refusal-canary-refused
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "exit 99"]
+agent:
+  refusal_canaries:
+    - task: publish
+"#,
+    );
+    let refused_json = run_ota(
+        &["run", "--agent", "--expect-refusal", "--json", "publish"],
+        refused.path(),
+    );
+    assert_matches_schema("refusal-canary.json", &refused_json);
+    assert_eq!(refused_json["status"], "refused_as_expected");
+    assert_eq!(refused_json["receipt"]["ok"], false);
+
+    let admitted = TempDir::new().expect("admitted fixture");
+    write_contract(
+        &admitted,
+        r#"
+version: 1
+project:
+  name: refusal-canary-admitted
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "exit 99"]
+agent:
+  safe_tasks: [verify]
+  refusal_canaries:
+    - task: verify
+"#,
+    );
+    let admitted_json = run_ota_failure_stdout_json(
+        &["run", "--agent", "--expect-refusal", "--json", "verify"],
+        admitted.path(),
+    );
+    assert_matches_schema("refusal-canary.json", &admitted_json);
+    assert_eq!(admitted_json["status"], "refusal_not_observed");
+    assert_eq!(admitted_json["canary"]["execution_started"], false);
+
+    let policy_refused = TempDir::new().expect("policy-refused fixture");
+    write_contract(
+        &policy_refused,
+        r#"
+version: 1
+project:
+  name: refusal-canary-policy-refused
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "exit 99"]
+agent:
+  safe_tasks: [verify]
+  refusal_canaries:
+    - task: verify
+"#,
+    );
+    fs::create_dir_all(policy_refused.path().join(".ota")).expect("policy directory");
+    fs::write(
+        policy_refused.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  agent:
+    claim_assurance:
+      agent_safety:
+        minimum_status: supported
+        on_insufficient: deny
+"#,
+    )
+    .expect("policy should be written");
+    let policy_refused_json = run_ota_failure_stdout_json(
+        &["run", "--agent", "--expect-refusal", "--json", "verify"],
+        policy_refused.path(),
+    );
+    assert_matches_schema("refusal-canary.json", &policy_refused_json);
+    assert_eq!(policy_refused_json["status"], "wrong_refusal_boundary");
+}
+
+#[test]
 fn github_projection_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

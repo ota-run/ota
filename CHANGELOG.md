@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- added contract-owned `agent.refusal_canaries` and runner-bound `--expect-refusal` controls for
+  V11.3 agent safety. `ota run --agent --expect-refusal <task>` and
+  `ota up --agent --expect-refusal --workflow <workflow>` now pass only when the existing agent
+  admission boundary refuses the declared target before work starts, publishing a typed
+  `refused_as_expected` result with the derived refusal receipt. An admitted target fails the
+  canary without starting the selected lane.
+
 - added the first V11.15 CI projection surface: `ota ci projection --workflow <name> --mode <mode>
   --target-os <linux|macos|windows> --json` emits the provider-neutral contract lane, while `ota ci github render`, `check`, and
   `sync` share one deterministic GitHub reusable-workflow adapter. Generated content uses immutable

@@ -122,11 +122,11 @@ The implemented OSS governance slices after that are:
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 
-The following governance slices remain partially implemented and must not be represented as
-complete until their stated acceptance bars close:
+The following governance slices have open acceptance work and must not be represented as complete
+until their stated pressure or implementation bars close:
 
-- [V11.3: agent-scoped execution enforcement](../v11.3/plan.md) - runner enforcement is shipped;
-  contract-owned refusal canaries remain open.
+- [V11.3: agent-scoped execution enforcement](../v11.3/plan.md) - runner enforcement and
+  contract-owned refusal canaries are implemented; real-repo pressure verification remains open.
 - [V11.5: CI and merge-gate projection](../v11.5/plan.md) - required lanes and drift are shipped;
   CI-owned refusal canary execution remains open.
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;

@@ -786,6 +786,29 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
 }
 
 #[test]
+fn refusal_canary_schema_distinguishes_expected_refusal_from_admission_drift() {
+    let schema = load_schema("docs/spec/json-schemas/refusal-canary.json");
+    let properties = &schema["properties"];
+
+    assert_eq!(
+        properties["status"]["enum"],
+        serde_json::json!([
+            "refused_as_expected",
+            "wrong_refusal_boundary",
+            "refusal_not_observed"
+        ])
+    );
+    assert_eq!(
+        properties["canary"]["properties"]["execution_started"]["const"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        properties["canary"]["properties"]["refusal"]["oneOf"][0]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/governanceRefusalRecord")
+    );
+}
+
+#[test]
 fn version_schema_covers_build_identity_and_capability_fields() {
     let schema = load_schema("docs/spec/json-schemas/version.json");
     let properties = &schema["properties"];

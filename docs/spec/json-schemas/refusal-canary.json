@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/refusal-canary.json",
+  "title": "ota agent refusal canary --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "status", "canary", "receipt"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "status": {
+      "enum": [
+        "refused_as_expected",
+        "wrong_refusal_boundary",
+        "refusal_not_observed"
+      ]
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "execution_started", "refusal"],
+      "properties": {
+        "kind": { "enum": ["task", "workflow"] },
+        "target": { "type": "string" },
+        "execution_started": { "const": false },
+        "refusal": {
+          "oneOf": [
+            { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "receipt": {
+      "oneOf": [
+        { "$ref": "./receipt.json#/oneOf/0/properties/receipt" },
+        { "type": "null" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "refused_as_expected" } } },
+      "then": {
+        "properties": {
+          "ok": { "const": true },
+          "canary": { "properties": { "refusal": { "type": "object" } } },
+          "receipt": { "type": "object" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "wrong_refusal_boundary" } } },
+      "then": {
+        "properties": {
+          "ok": { "const": false },
+          "canary": { "properties": { "refusal": { "type": "object" } } },
+          "receipt": { "type": "object" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "refusal_not_observed" } } },
+      "then": {
+        "properties": {
+          "ok": { "const": false },
+          "canary": { "properties": { "refusal": { "type": "null" } } },
+          "receipt": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

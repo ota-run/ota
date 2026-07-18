@@ -198,7 +198,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -208,8 +208,11 @@ enum Commands {
         /// Enforce the declared agent-safe task boundary for this execution.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
-        /// Print machine-readable JSON output for dry-run preview.
-        #[arg(long, action = ArgAction::SetTrue, requires = "dry_run")]
+        /// Assert that the contract-declared task refusal canary is refused by agent execution.
+        #[arg(long, action = ArgAction::SetTrue, requires = "agent", conflicts_with_all = ["dry_run", "stream", "receipt", "log"])]
+        expect_refusal: bool,
+        /// Print machine-readable JSON output for a dry-run preview or refusal canary.
+        #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Preview the selected task plan without executing anything.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -530,6 +533,9 @@ enum Commands {
         /// Enforce the declared agent-safe task boundary for this workflow execution.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Assert that the contract-declared workflow refusal canary is refused by agent execution.
+        #[arg(long, action = ArgAction::SetTrue, requires = "agent", requires = "workflow", conflicts_with_all = ["dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member"])]
+        expect_refusal: bool,
         /// Preview the selected up plan without mutating repo or execution state.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
@@ -5250,6 +5256,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Run {
             task,
             agent,
+            expect_refusal,
             json,
             dry_run,
             backend,
@@ -5290,6 +5297,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &member,
                     &inputs,
                     true,
+                    expect_refusal,
                     reason.as_deref(),
                     dry_run,
                     debug,
@@ -5307,6 +5315,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &effect_override,
                     &member,
                     &inputs,
+                    false,
                     false,
                     reason.as_deref(),
                     dry_run,
@@ -5437,6 +5446,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Up {
             json,
             agent,
+            expect_refusal,
             dry_run,
             stream,
             attach,
@@ -5475,6 +5485,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &member,
                     workflow.as_deref(),
                     true,
+                    expect_refusal,
                     reason.as_deref(),
                     format,
                     debug,
@@ -5494,6 +5505,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     &effect_override,
                     &member,
                     workflow.as_deref(),
+                    false,
                     false,
                     reason.as_deref(),
                     format,
@@ -17987,6 +17999,7 @@ tasks:
             &Commands::Run {
                 task: String::from("install-from-source"),
                 agent: false,
+                expect_refusal: false,
                 json: false,
                 dry_run: false,
                 backend: None,
@@ -18028,6 +18041,7 @@ tasks:
             &Commands::Run {
                 task: String::from("ci"),
                 agent: false,
+                expect_refusal: false,
                 json: false,
                 dry_run: false,
                 backend: None,
@@ -19026,6 +19040,7 @@ tasks:
             path: None,
             json: false,
             agent: false,
+            expect_refusal: false,
             dry_run: false,
             stream: false,
             attach: false,
@@ -19054,6 +19069,7 @@ tasks:
             path: None,
             json: false,
             agent: false,
+            expect_refusal: false,
             dry_run: false,
             stream: true,
             attach: false,
@@ -19114,6 +19130,7 @@ tasks:
                 path: None,
                 json: false,
                 agent: false,
+                expect_refusal: false,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -19148,6 +19165,7 @@ tasks:
                 path: None,
                 json: false,
                 agent: false,
+                expect_refusal: false,
                 dry_run: false,
                 stream: false,
                 attach: false,
@@ -19221,6 +19239,7 @@ tasks:
         assert!(!super::command_supports_spinner(&super::Commands::Run {
             task: String::from("test"),
             agent: false,
+            expect_refusal: false,
             json: false,
             dry_run: false,
             backend: None,
@@ -19607,6 +19626,7 @@ tasks:
                 super::Commands::Up {
                     json: true,
                     agent: false,
+                    expect_refusal: false,
                     dry_run: false,
                     stream: false,
                     attach: false,
@@ -28244,6 +28264,7 @@ policies:
         let command = super::Commands::Run {
             task: String::from("ci"),
             agent: false,
+            expect_refusal: false,
             json: true,
             dry_run: true,
             backend: None,

@@ -4278,6 +4278,7 @@ Current validation rules:
 - `entrypoint` must reference a known task when set
 - `default_task` must reference a known task when set
 - `safe_tasks` entries must reference known tasks
+- every `refusal_canaries` entry must declare exactly one known `task` or known `workflow`
 - `verify_after_changes` entries must reference known tasks
 - `writable_paths` entries must not be empty and must be normalized relative paths
 - `exceptions.sensitive_writes` entries must not be empty and must be normalized relative paths
@@ -4322,6 +4323,12 @@ Agent semantics:
 - `entrypoint` is the first task an AI agent should use to get oriented in the repo
 - `default_task` is the normal verification task to run when no more specific task is needed
 - `safe_tasks` are the tasks an AI agent can run without broad risk
+- `refusal_canaries` declare negative controls that must be refused by the real agent runner;
+  each entry names only a `task` or `workflow`, while Ota derives the current refusal reason and
+  closure at execution time
+- run a declared task canary with `ota run --agent --expect-refusal <task>`, or a declared
+  workflow canary with `ota up --agent --expect-refusal --workflow <workflow>`; either command
+  exits `0` only when the runner refuses before task or workflow execution begins
 - when a repo declares a matching safe or verification task, agents should prefer `ota run <task>`
   over raw package-manager or language-tool commands; fall back only when no truthful Ota task
   exists or when isolating an Ota defect

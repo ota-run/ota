@@ -9620,6 +9620,16 @@ pub struct AgentExceptionsConfig {
     pub sensitive_writes: Vec<String>,
 }
 
+/// A contract-owned negative control that must be refused by agent-mode execution.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRefusalCanaryConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+}
+
 impl AgentExceptionsConfig {
     pub fn is_empty(&self) -> bool {
         self.sensitive_writes.is_empty()
@@ -9637,6 +9647,8 @@ pub struct AgentConfig {
     pub default_task: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub safe_tasks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refusal_canaries: Vec<AgentRefusalCanaryConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verify_after_changes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -9664,6 +9676,8 @@ struct RawAgentConfig {
     default_task: Option<String>,
     #[serde(default)]
     safe_tasks: Vec<String>,
+    #[serde(default)]
+    refusal_canaries: Vec<AgentRefusalCanaryConfig>,
     #[serde(default)]
     verify_after_changes: Vec<String>,
     #[serde(default)]
@@ -9700,6 +9714,7 @@ impl<'de> Deserialize<'de> for AgentConfig {
             entrypoint: raw.entrypoint,
             default_task: raw.default_task,
             safe_tasks: raw.safe_tasks,
+            refusal_canaries: raw.refusal_canaries,
             verify_after_changes: raw.verify_after_changes,
             writable_paths: raw.writable_paths,
             exceptions: AgentExceptionsConfig { sensitive_writes },

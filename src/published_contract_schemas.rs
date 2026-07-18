@@ -2252,6 +2252,18 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "sensitive_writes": { "$ref": "#/$defs/stringArray" }
       }
     },
+    "agentRefusalCanary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task": { "type": "string" },
+        "workflow": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["task"], "not": { "required": ["workflow"] } },
+        { "required": ["workflow"], "not": { "required": ["task"] } }
+      ]
+    },
     "agentConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -2260,6 +2272,10 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "entrypoint": { "type": "string" },
         "default_task": { "type": "string" },
         "safe_tasks": { "$ref": "#/$defs/stringArray" },
+        "refusal_canaries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/agentRefusalCanary" }
+        },
         "verify_after_changes": { "$ref": "#/$defs/stringArray" },
         "writable_paths": { "$ref": "#/$defs/stringArray" },
         "exceptions": { "$ref": "#/$defs/agentExceptions" },

@@ -85,6 +85,13 @@ durable agent workflow belongs in the canonical Ota skill.
   projection and typed refusal. Managed workflow paths reject symlink escape, and the neutral
   projection carries bootstrap posture, proof claim, and target-OS identity for the first GitHub
   adapter.
+- V11.3 refusal-canary implementation is ready for pressure: `agent.refusal_canaries` now names
+  one task or workflow negative control, and `ota run --agent --expect-refusal <task>` or
+  `ota up --agent --expect-refusal --workflow <workflow>` passes only when the agent-safety
+  closure refuses before selected work begins. A policy-only denial is the failing
+  `wrong_refusal_boundary` outcome. The contract never supplies an expected reason; Ota emits the
+  runner-derived refusal and blocked receipt for later comparison. First-party docs/site/skill are
+  aligned; do not add it to released examples until `v1.6.25` is available.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt

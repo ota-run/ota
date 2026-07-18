@@ -17924,6 +17924,32 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
         );
     }
 
+    for (index, canary) in agent.refusal_canaries.iter().enumerate() {
+        let field = format!("agent.refusal_canaries[{index}]");
+        match (&canary.task, &canary.workflow) {
+            (Some(task), None) => validate_task_reference(
+                field.as_str(),
+                Some(task.as_str()),
+                &contract.tasks,
+                errors,
+            ),
+            (None, Some(workflow)) => {
+                let declared = contract
+                    .workflows
+                    .as_ref()
+                    .is_some_and(|workflows| workflows.items.contains_key(workflow));
+                if !declared {
+                    errors.push(ValidationError::new(format!(
+                        "`{field}.workflow` references unknown workflow `{workflow}`"
+                    )));
+                }
+            }
+            _ => errors.push(ValidationError::new(format!(
+                "`{field}` must declare exactly one of `task` or `workflow`"
+            ))),
+        }
+    }
+
     for task in &agent.verify_after_changes {
         validate_task_reference(
             "agent.verify_after_changes",

@@ -20,6 +20,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/execution-topology.json](json-schemas/execution-topology.json)
 - [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
+- [json-schemas/refusal-canary.json](json-schemas/refusal-canary.json)
 - [json-schemas/services.json](json-schemas/services.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
@@ -3289,6 +3290,15 @@ Use this when a human or agent needs the selected run plan before execution:
 - `ota run <task> --dry-run --json --agent` now reflects the enforced runner boundary in
   `governance.evaluation.preflight`: unsafe selected tasks or unsafe reachable closures publish
   `state: "refused"` and return a blocked preview instead of looking runnable in JSON
+- `ota run --agent --expect-refusal --json <task>` is the machine-readable negative-control
+  surface. It emits `status: "refused_as_expected"` with `canary.kind`, `canary.target`,
+  `canary.execution_started: false`, the derived refusal record, and the blocked receipt. If the
+  target is admitted it emits `status: "refusal_not_observed"`. A policy-only refusal emits
+  `status: "wrong_refusal_boundary"`: it is still blocked, but it does not prove the safety
+  closure boundary. Both exit non-zero and record `execution_started: false`; consumers must
+  treat either as enforcement drift. Its schema is
+  [refusal-canary.json](json-schemas/refusal-canary.json). The top-level `ok` reports whether the
+  canary assertion passed; nested `receipt.ok` remains `false` because agent execution was blocked.
 - `requested_task.safe_for_agent` is the declared contract safe membership, while
   `requested_task.effective_safe_for_agent` reflects whether the reachable dependency/workflow
   closure remains agent-safe

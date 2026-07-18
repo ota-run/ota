@@ -1358,8 +1358,9 @@ Current behavior:
 - `--dry-run` prints `RUN PREVIEW`, uses the execution-preview vocabulary
   `RUNNABLE` / `RUNNABLE WITH WARNINGS` / `BLOCKED`, and shows `Mode: dry-run (no write)` plus
   the selected execution path, requirements, and planned actions
-- repo-level `--json` currently requires `--dry-run`, so the machine-readable run surface is
-  `ota run <task> --dry-run --json`
+- repo-level `--json` normally requires `--dry-run`; the one execution-free exception is a
+  contract-declared refusal canary: `ota run --agent --expect-refusal --json <task>` emits the
+  runner-authored `refused_as_expected` or `refusal_not_observed` result without starting the task
 - preview JSON includes additive `governance`, a compact selected-lane summary with
   `safety_posture`, `review_required`, closure-aware effective safety, effective `default_mode`,
   runnable mode commands, selected effect surface, and the next durable receipt command
@@ -1369,6 +1370,9 @@ Current behavior:
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
 - agent refusals are ota-authored execution outcomes, not generic task failures: text output renders `AGENT EXECUTION REFUSED`, receipts use blocked status, and no task process or dependency path starts before the refusal returns
+- `--expect-refusal` is the negative-control form of that same boundary. It requires `--agent`
+  and a matching `agent.refusal_canaries` target; a refusal is exit `0`, while admission is exit
+  `1`. It never accepts task inputs or starts the selected lane.
 - when the requested task is a service runtime with declared readiness, `--stream` also shows live
   readiness probe progress while ota is still trying to prove startup
 - for service runtimes with declared readiness, ota now treats the declared startup readiness
