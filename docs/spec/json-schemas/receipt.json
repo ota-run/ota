@@ -254,7 +254,20 @@
                 "properties": {
                   "name": { "type": "string" },
                   "value": { "type": "string" },
-                  "source": { "type": "string" }
+                  "source": { "type": "string" },
+                  "source_kind": { "type": "string" },
+                  "source_label": { "type": "string" },
+                  "source_path": { "type": "string" },
+                  "source_status": {
+                    "enum": [
+                      "loaded",
+                      "missing_optional",
+                      "missing_required",
+                      "parse_failed",
+                      "invalid_structure",
+                      "collision"
+                    ]
+                  }
                 }
               }
             },
@@ -394,7 +407,8 @@
                   "parent": { "type": "string" },
                   "backend": { "type": "string" },
                   "context": { "type": "string" },
-                  "backend_selection_source": { "type": "string" }
+                  "backend_selection_source": { "type": "string" },
+                  "prepare": { "$ref": "./tasks.json#/$defs/taskPrepareSummary" }
                 }
               }
             },

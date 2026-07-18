@@ -3314,7 +3314,9 @@ Use this when a human or agent needs the selected run plan before execution:
   `task default mode`, `task context`, `mode context`, `mode branch support`, `default context`,
   `contract preferred`, `default`, or `inherited parent backend`
 - when a dependency step is a structured setup lane, `plan.dependency_steps[].prepare` carries the
-  same machine-readable prepare summary used by task/workflow discovery, including additive
+  same strict machine-readable prepare summary used by task/workflow discovery. It retains the
+  selected source kind, working directory, Compose file and env-file sets, package filter/groups,
+  browser targets, and hydration posture, including additive
   `declared_hydration_provenance` and `resolved_hydration_provenance` for hydration-owned source
   posture such as `.NET restore` `config_file` and explicit `sources[]`; the declared record is
   contract truth, while the resolved record can add parsed `source_identities[]` with stable feed

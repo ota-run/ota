@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed published execution receipt and preview schemas to model the complete structured prepare
+  summary, including Compose file/env-file selection, browser bootstrap, and typed hydration
+  provenance. Receipt environment source status is again constrained to the runner's canonical
+  source-status vocabulary instead of arbitrary text.
+
 - added contract-owned `agent.refusal_canaries` and runner-bound `--expect-refusal` controls for
   V11.3 agent safety. `ota run --agent --expect-refusal <task>` and
   `ota up --agent --expect-refusal --workflow <workflow>` now pass only when the existing agent

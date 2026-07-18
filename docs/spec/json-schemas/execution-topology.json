@@ -38,7 +38,7 @@
         "compose": { "$ref": "./tasks.json#/$defs/taskComposeExecution" },
         "launch": { "$ref": "./tasks.json#/$defs/taskLaunch" },
         "action": { "$ref": "./tasks.json#/$defs/taskAction" },
-        "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" },
+        "prepare": { "$ref": "./tasks.json#/$defs/taskPrepareSummary" },
         "aggregate": { "$ref": "./tasks.json#/$defs/taskAggregate" },
         "effects": { "$ref": "./tasks.json#/$defs/taskEffects" },
         "selected_variant_os": { "type": "string" },
@@ -101,7 +101,7 @@
               },
               "compose": { "$ref": "./tasks.json#/$defs/taskComposeExecution" },
               "launch": { "$ref": "./tasks.json#/$defs/taskLaunch" },
-              "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" },
+              "prepare": { "$ref": "./tasks.json#/$defs/taskPrepareSummary" },
               "has_runtime": { "type": "boolean" }
             }
           }

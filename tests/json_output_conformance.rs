@@ -145,6 +145,29 @@ fn assert_matches_schema(schema_name: &str, instance: &Value) {
     }
 }
 
+fn assert_rejects_schema(schema_name: &str, instance: &Value) {
+    let schema_path = schema_dir().join(schema_name);
+    let raw_schema = load_json(&schema_path);
+    let mut options = JSONSchema::options();
+    options.with_draft(Draft::Draft202012);
+    for entry in fs::read_dir(schema_dir()).expect("schema dir should be readable") {
+        let entry = entry.expect("schema dir entry should load");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let document = load_json(&path);
+        if let Some(id) = document.get("$id").and_then(Value::as_str) {
+            options.with_document(id.to_string(), document);
+        }
+    }
+    let compiled = options.compile(&raw_schema).expect("schema should compile");
+    assert!(
+        compiled.validate(instance).is_err(),
+        "instance unexpectedly matched schema `{schema_name}`"
+    );
+}
+
 fn write_contract(dir: &TempDir, contents: &str) {
     fs::write(dir.path().join("ota.yaml"), contents).expect("contract should be written");
 }
@@ -254,6 +277,105 @@ agent:
     assert_matches_schema("refusal-canary.json", &refused_json);
     assert_eq!(refused_json["status"], "refused_as_expected");
     assert_eq!(refused_json["receipt"]["ok"], false);
+
+    let rich_receipt = TempDir::new().expect("rich receipt fixture");
+    write_contract(
+        &rich_receipt,
+        r#"
+version: 1
+project:
+  name: refusal-canary-rich-receipt
+env:
+  vars:
+    APP_MODE:
+      default: test
+  sources:
+    - kind: dotenv
+      path: .env
+toolchains:
+  ruby:
+    version: "3.3"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    requirements:
+      toolchains: [ruby]
+    effects:
+      writes: [vendor/bundle]
+      network: true
+      network_kind: dependency_hydration
+    safe_for_agent: true
+  hydrate:images:
+    prepare:
+      kind: dependency_hydration
+      medium: container_images
+      source:
+        kind: docker_compose
+        cwd: compose
+        files: [docker-compose.base.yml, docker-compose.dev.yml]
+        env_files: [.env.compose]
+      targets: [web]
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: container_image_hydration
+    safe_for_agent: true
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "exit 99"]
+    depends_on: [install, hydrate:images]
+agent:
+  safe_tasks: [install, hydrate:images]
+  refusal_canaries:
+    - task: publish
+"#,
+    );
+    fs::write(rich_receipt.path().join(".env"), "APP_MODE=test\n")
+        .expect("dotenv fixture should be written");
+    let rich_receipt_json = run_ota(
+        &["run", "--agent", "--expect-refusal", "--json", "publish"],
+        rich_receipt.path(),
+    );
+    assert_matches_schema("refusal-canary.json", &rich_receipt_json);
+    assert!(
+        rich_receipt_json["receipt"]["dependency_steps"]
+            .as_array()
+            .expect("dependency steps")
+            .iter()
+            .any(|step| step.get("prepare").is_some())
+    );
+    assert!(
+        rich_receipt_json["receipt"]["dependency_steps"]
+            .as_array()
+            .expect("dependency steps")
+            .iter()
+            .any(|step| {
+                step["prepare"]["source_kind"] == "docker_compose"
+                    && step["prepare"]["files"].as_array().is_some()
+                    && step["prepare"]["env_files"].as_array().is_some()
+            }),
+        "compose hydration summary should retain declared compose file and env-file truth"
+    );
+    assert!(
+        rich_receipt_json["receipt"]["env_sources"]
+            .as_array()
+            .expect("environment sources")
+            .iter()
+            .any(|source| source.get("source_kind").is_some())
+    );
+    let mut invalid_source_status = rich_receipt_json.clone();
+    invalid_source_status["receipt"]["env_sources"][0]["source_status"] =
+        Value::String("not_a_runner_status".to_string());
+    assert_rejects_schema("refusal-canary.json", &invalid_source_status);
 
     let admitted = TempDir::new().expect("admitted fixture");
     write_contract(

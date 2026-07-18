@@ -382,6 +382,130 @@
         }
       }
     },
+    "taskPrepareSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "sequence",
+            "dependency_hydration",
+            "tool_bootstrap",
+            "copy_if_missing",
+            "ensure_env_file",
+            "ensure_file",
+            "ensure_directory",
+            "ensure_virtualenv",
+            "ensure_git_checkout",
+            "ensure_git_template",
+            "ensure_container_network",
+            "reset_compose_service_volume"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskPrepareSummary" }
+        },
+        "medium": { "enum": ["container_images", "package_dependencies"] },
+        "source_kind": {
+          "enum": [
+            "pip",
+            "docker_compose",
+            "node_package_manager",
+            "bundler",
+            "uv",
+            "poetry",
+            "go_modules",
+            "maven",
+            "gradle",
+            "cargo",
+            "dotnet_restore"
+          ]
+        },
+        "cwd": { "type": "string" },
+        "file": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "env_files": { "type": "array", "items": { "type": "string" } },
+        "manager": {
+          "enum": [
+            "npm",
+            "pnpm",
+            "yarn",
+            "bun",
+            "bundle",
+            "uv",
+            "poetry",
+            "mvn",
+            "./mvnw",
+            "gradle",
+            "./gradlew",
+            "cargo",
+            "dotnet"
+          ]
+        },
+        "filter": { "type": "string" },
+        "mode": {
+          "enum": [
+            "install",
+            "ci",
+            "sync",
+            "pip_requirements",
+            "download",
+            "uv",
+            "playwright_browsers",
+            "cypress_browsers",
+            "resolve",
+            "go-offline",
+            "dependencies",
+            "fetch",
+            "restore"
+          ]
+        },
+        "group_mode": { "enum": ["with", "only"] },
+        "groups": { "type": "array", "items": { "type": "string" } },
+        "frozen_lockfile": { "type": "boolean" },
+        "inline_builds": { "type": "boolean" },
+        "force": { "type": "boolean" },
+        "no_root": { "type": "boolean" },
+        "skip_tests": { "type": "boolean" },
+        "with_deps": { "type": "boolean" },
+        "targets": { "type": "array", "items": { "type": "string" } },
+        "browsers": {
+          "type": "array",
+          "items": { "enum": ["chromium", "firefox", "webkit"] }
+        },
+        "declared_hydration_provenance": {
+          "$ref": "#/$defs/taskHydrationProvenance"
+        },
+        "resolved_hydration_provenance": {
+          "$ref": "#/$defs/taskHydrationProvenance"
+        },
+        "compose": { "$ref": "#/$defs/taskComposeInvocationSummary" }
+      }
+    },
+    "taskComposeInvocationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "engine"],
+      "properties": {
+        "kind": { "type": "string" },
+        "engine": { "enum": ["docker", "podman"] },
+        "service": { "type": "string" },
+        "services": { "type": "array", "items": { "type": "string" } },
+        "workdir": { "type": "string" },
+        "rm": { "type": "boolean" },
+        "build": { "type": "boolean" },
+        "service_ports": { "type": "boolean" },
+        "detach": { "type": "boolean" },
+        "force_recreate": { "type": "boolean" },
+        "force": { "type": "boolean" },
+        "follow": { "type": "boolean" },
+        "remove_volumes": { "type": "boolean" },
+        "timeout_seconds": { "type": "integer", "minimum": 0 },
+        "tty": { "type": "boolean" }
+      }
+    },
     "taskHydrationProvenance": {
       "type": "object",
       "additionalProperties": false,
@@ -410,7 +534,8 @@
         "resolution": {
           "enum": ["resolved", "unavailable"]
         },
-        "resolution_error": { "type": "string" }
+        "resolution_error": { "type": "string" },
+        "offline": { "type": "boolean" }
       }
     },
     "taskAggregate": {
@@ -851,7 +976,7 @@
               "command": { "$ref": "#/$defs/taskCommand" },
               "launch": { "$ref": "#/$defs/taskLaunch" },
               "action": { "$ref": "#/$defs/taskAction" },
-              "prepare": { "$ref": "#/$defs/taskPrepare" },
+              "prepare": { "$ref": "#/$defs/taskPrepareSummary" },
               "aggregate": { "$ref": "#/$defs/taskAggregate" },
               "effects": { "$ref": "#/$defs/taskEffects" },
               "selected_variant_os": { "type": "string" },
@@ -925,7 +1050,7 @@
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },
-                    "prepare": { "$ref": "#/$defs/taskPrepare" },
+                    "prepare": { "$ref": "#/$defs/taskPrepareSummary" },
                     "has_runtime": { "type": "boolean" }
                   }
                 }
@@ -1018,7 +1143,7 @@
                     "command": { "$ref": "#/$defs/taskCommand" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },
                     "action": { "$ref": "#/$defs/taskAction" },
-                    "prepare": { "$ref": "#/$defs/taskPrepare" },
+                    "prepare": { "$ref": "#/$defs/taskPrepareSummary" },
                     "aggregate": { "$ref": "#/$defs/taskAggregate" },
                     "effects": { "$ref": "#/$defs/taskEffects" },
                     "selected_variant_os": { "type": "string" },
@@ -1092,7 +1217,7 @@
                           "script": { "type": "string" },
                           "command": { "$ref": "#/$defs/taskCommand" },
                           "launch": { "$ref": "#/$defs/taskLaunch" },
-                          "prepare": { "$ref": "#/$defs/taskPrepare" },
+                          "prepare": { "$ref": "#/$defs/taskPrepareSummary" },
                           "has_runtime": { "type": "boolean" }
                         }
                       }

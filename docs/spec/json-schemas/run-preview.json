@@ -98,7 +98,7 @@
               "backend": { "type": "string" },
               "context": { "type": "string" },
               "backend_selection_source": { "type": "string" },
-              "prepare": { "$ref": "./tasks.json#/$defs/taskPrepare" }
+              "prepare": { "$ref": "./tasks.json#/$defs/taskPrepareSummary" }
             }
           }
         },
