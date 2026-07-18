@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- added the first V11.15 CI projection surface: `ota ci projection --workflow <name> --mode <mode>
+  --target-os <linux|macos|windows> --json` emits the provider-neutral contract lane, while `ota ci github render`, `check`, and
+  `sync` share one deterministic GitHub reusable-workflow adapter. Generated content uses immutable
+  Action revisions, consumes
+  `ota-run/setup` through `source: contract`, runs contract validation, discovery, dry-run,
+  execution, archival, and declared proof requirements, uses canonical merge-check identity, and
+  binds a human-owned caller through a parsed structural reference. Native, container, and target-OS
+  lanes have distinct projection identities; proof claims never bypass agent admission; proof lanes
+  use one authoritative runtime-proof execution; render and caller binding identities are separate; `sync` is
+  atomic and refuses unowned files, caller paths, absolute/traversal paths, or any attempt to
+  rewrite provider-owned scheduling policy.
+
 - added `workflows.<name>.proof.claim: bounded` for archive-backed verification proof lanes that
   do not declare a dependency seam. Doctor now evaluates the same `proof_breadth` assurance model
   for those lanes: it remains `unknown` without a matching immutable proof archive and becomes

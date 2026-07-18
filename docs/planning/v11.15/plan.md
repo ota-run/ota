@@ -52,6 +52,10 @@ The first implementation owns only a dedicated generated reusable workflow. A sm
 caller workflow invokes it and retains provider policy. Ota must never rewrite arbitrary workflow
 YAML, infer permissions, mutate deployment jobs, or silently take ownership of provider policy.
 
+The implementation starts with one provider-neutral `ci_projection` domain. GitHub is an adapter;
+GitLab, Bitbucket, and later adapters must consume the same projection rather than extracting
+GitHub-shaped authority from generated YAML.
+
 ## Synchronization Model
 
 V11.15 uses **bidirectional discovery with one-way authority**:
@@ -95,16 +99,28 @@ The first renderer may accept only explicit selection options such as provider, 
 generated workflow path, caller workflow path, and runner image. Those options configure the
 adapter; they must not restate bootstrap or verification commands already declared in the contract.
 
+### Admission and proof execution
+
+Projection always consumes the runner's agent-closure admission. A proof claim describes evidence
+breadth; it is not execution authority. A denied or review-required workflow remains an
+inspectable refusal until a future contract- or policy-owned CI execution authority exists.
+
+For an admitted proof-required workflow, `ota proof runtime` is the authoritative execution lane.
+The generated adapter may preview the lane, but must not first run `ota up` and then rerun the same
+runtime through proof. Projection identity includes the explicit `target_os` (`linux`, `macos`, or
+`windows`) as well as the selected mode. Provider runner labels remain provider-owned.
+
 ## Command Surface
 
 The first provider-specific surface is intentionally narrow:
 
 ```text
-ota ci github render --workflow verify --output .github/workflows/ota-governance.yml
-ota ci github check --workflow verify \
+ota ci projection --workflow verify --mode container --target-os linux --json
+ota ci github render --workflow verify --mode container --target-os linux --output .github/workflows/ota-governance.yml
+ota ci github check --workflow verify --mode container --target-os linux \
   --output .github/workflows/ota-governance.yml \
   --caller .github/workflows/ci.yml
-ota ci github sync --workflow verify \
+ota ci github sync --workflow verify --mode container --target-os linux \
   --output .github/workflows/ota-governance.yml \
   --caller .github/workflows/ci.yml
 ```
@@ -117,6 +133,15 @@ ota ci github sync --workflow verify \
   it never mutates the human-owned caller.
 - all three emit stable JSON with projection identity, selected contract lane, output identity,
   merge-check mappings, and drift/refusal detail.
+
+The canonical projection identity includes only contract governance truth: projection schema
+version, semantic contract identity, selected workflow/task/mode/target OS, required merge-check identities,
+and declared proof requirement. It excludes filenames, caller paths, runner labels, provider
+syntax, and YAML formatting. GitHub derives a distinct `render_identity` from projection identity,
+adapter version, normalized adapter inputs, and generated-content digest. `binding_identity` then
+binds that render identity to the parsed caller reusable-workflow reference. Provider ownership is
+expressed only as authority categories and required bindings, never GitHub-specific secret or
+permission syntax.
 
 The generated workflow must consume contract truth through released `ota-run/setup` and Ota CLI
 commands. It must not duplicate install scripts or verification shell commands.
@@ -197,6 +222,10 @@ V11.15 is complete when:
   merge-check identity;
 - pressure tests prove one generated reusable workflow plus caller and one repo with mixed
   handwritten deployment/provider jobs.
+- the Kylrix native and container matrix retains its existing validation, discovery, dry-run,
+  execution, receipt, and separately selected runtime-proof evidence; the managed projection may
+  replace only evidence it can derive from the selected contract workflow and must not silently
+  collapse separate runtime workflows into one green wrapper.
 
 ## Pressure Targets
 

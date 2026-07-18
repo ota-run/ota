@@ -49,6 +49,9 @@ use super::{
     AssistTaskTargetAddressViewArg,
 };
 use crate::adapter_inputs::bind_workflow_adapter_overlays;
+use crate::ci_projection::{
+    CiProjection, CiProjectionProofAssurance, build_ci_projection, refresh_ci_projection_identity,
+};
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
@@ -73,6 +76,10 @@ use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
     container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
     execution_target, format_backend, format_lifecycle, selected_container_engine_from_backend,
+};
+use crate::github_projection::{
+    CallerProjectionBinding, GitHubProjection, OWNERSHIP_MARKER, caller_projection_binding,
+    managed_projection_identity, render_github_projection_from_projection,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -190,6 +197,9 @@ use crate::schema::{
     ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
     parse_readiness_duration_spec, split_workflow_selector,
 };
+use crate::semantic_identity::{
+    contract_snapshot_hash, normalize_semantic_json, normalized_contract_snapshot_json,
+};
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
     declared_toolchain_fulfillment_attempt_summary,
@@ -305,7 +315,7 @@ pub fn set_plain_mode(enabled: bool) {
         unsafe {
             std::env::remove_var("OTA_PLAIN_MODE");
         }
-    }
+    };
 }
 
 pub fn set_concise_mode(enabled: bool) {
@@ -1911,6 +1921,644 @@ fn render_validate_ready_next(contract_path: &Path, member: Option<&str>) -> Str
     };
 
     format_next_timeline(&[doctor, tasks])
+}
+
+fn ci_projection_for_contract(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow: &str,
+    requested_mode: Option<&str>,
+    target_os: &str,
+) -> Result<CiProjection, (String, String, Option<CiProjection>)> {
+    let task = contract
+        .workflows
+        .as_ref()
+        .and_then(|workflows| workflows.items.get(workflow))
+        .and_then(|workflow| workflow.run.as_ref())
+        .map(|run| run.task.as_str())
+        .ok_or_else(|| {
+            (
+                String::from("projection_unavailable"),
+                format!("workflow `{workflow}` does not declare `run.task`"),
+                None,
+            )
+        })?;
+    let requested_backend = match requested_mode {
+        Some("native") => Some(Backend::Native),
+        Some("container") => Some(Backend::Container),
+        Some("remote") => Some(Backend::Remote),
+        Some(mode) => {
+            return Err((
+                String::from("projection_mode_unsupported"),
+                format!("unsupported execution mode `{mode}`"),
+                None,
+            ));
+        }
+        None => None,
+    };
+    let effective = effective_task_execution(
+        contract,
+        task,
+        ExecutionOverrides {
+            backend: requested_backend,
+            ..ExecutionOverrides::default()
+        },
+    );
+    let mode = match effective.backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    };
+    if !contract.tasks.get(task).is_some_and(|task| {
+        task.active_for_os(target_os)
+            && task.supports_execution_backend(
+                contract.execution.as_ref(),
+                effective.backend,
+                target_os,
+            )
+    }) {
+        return Err((
+            String::from("projection_mode_unavailable"),
+            format!(
+                "workflow `{workflow}` task `{task}` does not support `{mode}` execution on `{target_os}`"
+            ),
+            None,
+        ));
+    }
+    let mut projection = build_ci_projection(contract, workflow, mode, target_os)
+        .map_err(|message| (String::from("projection_unavailable"), message, None))?;
+    let overrides = ExecutionOverrides {
+        backend: Some(match mode {
+            "native" => Backend::Native,
+            "container" => Backend::Container,
+            "remote" => Backend::Remote,
+            _ => unreachable!("projection mode was validated by build_ci_projection"),
+        }),
+        ..ExecutionOverrides::default()
+    };
+    if let Some(refusal) =
+        agent_execution_refusal_with_policy(contract, contract_path, &projection.task, overrides)
+    {
+        projection.governance.agent_admission.decision = if refusal.reason.contains("review") {
+            String::from("review")
+        } else {
+            String::from("deny")
+        };
+        projection.governance.agent_admission.basis = vec![refusal.reason.to_string()];
+        let _ = refresh_ci_projection_identity(&mut projection);
+        return Err((
+            refusal.reason.to_string(),
+            format!(
+                "workflow `{workflow}` cannot be projected for agent execution because task `{}` is not admitted",
+                projection.task
+            ),
+            Some(projection),
+        ));
+    } else {
+        projection.governance.agent_admission.decision = String::from("allow");
+        projection.governance.agent_admission.basis = vec![String::from("agent_closure_admitted")];
+    }
+
+    if projection.proof_required {
+        let record = doctor_claim_assurance_with_overrides(contract, contract_path, overrides)
+            .into_iter()
+            .find(|record| {
+                record.subject.kind == "workflow"
+                    && record.subject.name == workflow
+                    && record.family == "proof_breadth"
+            })
+            .ok_or_else(|| {
+                (
+                    String::from("proof_assurance_unavailable"),
+                    format!(
+                        "workflow `{workflow}` declares proof without a proof-assurance record"
+                    ),
+                    None,
+                )
+            })?;
+        projection.governance.proof_assurance = Some(CiProjectionProofAssurance {
+            status: record.assurance.status,
+            policy_decision: record.policy.decision.clone(),
+            basis: record.policy.basis,
+        });
+        if matches!(record.policy.decision.as_str(), "deny" | "review") {
+            let _ = refresh_ci_projection_identity(&mut projection);
+            return Err((
+                format!("proof_assurance_policy_{}", record.policy.decision),
+                format!(
+                    "workflow `{workflow}` proof assurance is `{}` under the selected policy",
+                    record.policy.decision
+                ),
+                Some(projection),
+            ));
+        }
+    }
+    refresh_ci_projection_identity(&mut projection).map_err(|message| {
+        (
+            String::from("projection_identity_unavailable"),
+            message,
+            None,
+        )
+    })?;
+    Ok(projection)
+}
+
+pub fn ci_projection(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    workflow: &str,
+    mode: Option<&str>,
+    target_os: &str,
+    expected_identity: Option<&str>,
+    format: OutputFormat,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => return ci_github_failure(format, "contract_not_found", error.to_string()),
+    };
+    let contract = match load_contract(&resolved_path) {
+        Ok(contract) => contract,
+        Err(error) => return ci_github_failure(format, "contract_invalid", error.to_string()),
+    };
+    let projection =
+        match ci_projection_for_contract(&contract, &resolved_path, workflow, mode, target_os) {
+            Ok(projection) => projection,
+            Err((code, message, Some(projection))) if matches!(format, OutputFormat::Json) => {
+                return CommandOutput::failure(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "operation": "projection",
+                        "code": code,
+                        "message": message,
+                        "projection": projection,
+                        "refusal": { "code": code, "message": message },
+                    }))
+                    .expect("CI projection refusal JSON is serializable"),
+                );
+            }
+            Err((code, message, _)) => return ci_github_failure(format, &code, message),
+        };
+    if expected_identity.is_some_and(|expected| expected != projection.identity) {
+        return ci_github_failure(
+            format,
+            "projection_identity_mismatch",
+            format!(
+                "expected projection identity `{}`, observed `{}`",
+                expected_identity.expect("identity checked"),
+                projection.identity
+            ),
+        );
+    }
+    match format {
+        OutputFormat::Text => CommandOutput::success(
+            serde_json::to_string_pretty(&projection).expect("CI projection JSON is serializable"),
+        ),
+        OutputFormat::Json => CommandOutput::success(
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "operation": "projection",
+                "projection": projection,
+            }))
+            .expect("CI projection JSON is serializable"),
+        ),
+    }
+}
+
+pub fn ci_github_render(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    workflow: &str,
+    output: Option<&Path>,
+    runner: &str,
+    mode: Option<&str>,
+    target_os: &str,
+    format: OutputFormat,
+    _debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => return ci_github_failure(format, "contract_not_found", error.to_string()),
+    };
+    let contract = match load_contract(&resolved_path) {
+        Ok(contract) => contract,
+        Err(error) => return ci_github_failure(format, "contract_invalid", error.to_string()),
+    };
+    let projection =
+        match ci_projection_for_contract(&contract, &resolved_path, workflow, mode, target_os) {
+            Ok(projection) => render_github_projection_from_projection(projection, runner),
+            Err((code, message, _)) => return ci_github_failure(format, &code, message),
+        };
+    let projection = match projection {
+        Ok(projection) => projection,
+        Err(error) => return ci_github_failure(format, "projection_unavailable", error),
+    };
+    let root = resolved_path.parent().unwrap_or_else(|| Path::new("."));
+    let output = match output {
+        Some(output) => match ci_github_repo_path(root, output, "output") {
+            Ok(path) => Some(path),
+            Err(error) => return ci_github_failure(format, "invalid_output_path", error),
+        },
+        None => None,
+    };
+
+    match format {
+        OutputFormat::Text => CommandOutput::success(projection.rendered),
+        OutputFormat::Json => CommandOutput::success(
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "operation": "render",
+                "projection": projection,
+                "output_path": output.map(|path| path.display().to_string()),
+                "mutated": false,
+            }))
+            .expect("GitHub projection JSON is serializable"),
+        ),
+    }
+}
+
+pub fn ci_github_check(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    workflow: &str,
+    output: &Path,
+    caller: &Path,
+    runner: &str,
+    mode: Option<&str>,
+    target_os: &str,
+    sync: bool,
+    format: OutputFormat,
+    _debug: bool,
+) -> CommandOutput {
+    let operation = if sync { "sync" } else { "check" };
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => return ci_github_failure(format, "contract_not_found", error.to_string()),
+    };
+    let root = resolved_path.parent().unwrap_or_else(|| Path::new("."));
+    let output = match ci_github_repo_path(root, output, "output") {
+        Ok(path) => path,
+        Err(error) => return ci_github_failure(format, "invalid_output_path", error),
+    };
+    let caller = match ci_github_repo_path(root, caller, "caller") {
+        Ok(path) => path,
+        Err(error) => return ci_github_failure(format, "invalid_caller_path", error),
+    };
+    if output == caller {
+        return ci_github_failure(
+            format,
+            "caller_is_managed_output",
+            String::from(
+                "the human-owned caller path must differ from the Ota-managed output path",
+            ),
+        );
+    }
+    let contract = match load_contract(&resolved_path) {
+        Ok(contract) => contract,
+        Err(error) => return ci_github_failure(format, "contract_invalid", error.to_string()),
+    };
+    let projection =
+        match ci_projection_for_contract(&contract, &resolved_path, workflow, mode, target_os) {
+            Ok(projection) => render_github_projection_from_projection(projection, runner),
+            Err((code, message, _)) => return ci_github_failure(format, &code, message),
+        };
+    let projection = match projection {
+        Ok(projection) => projection,
+        Err(error) => return ci_github_failure(format, "projection_unavailable", error),
+    };
+    let caller_contents = match fs::read_to_string(&caller) {
+        Ok(contents) => contents,
+        Err(error) => {
+            return ci_github_failure(
+                format,
+                "caller_unavailable",
+                format!("could not read caller `{}`: {error}", caller.display()),
+            );
+        }
+    };
+    let Some(caller_binding) = caller_projection_binding(
+        &caller_contents,
+        &output,
+        root,
+        &projection.projection.identity,
+        &projection.projection.target_os,
+    ) else {
+        return ci_github_failure(
+            format,
+            "caller_projection_reference_mismatch",
+            format!(
+                "caller `{}` must reference `{}` with ota_projection_identity `{}` and ota_target_os `{}`",
+                caller.display(),
+                output.strip_prefix(root).unwrap_or(&output).display(),
+                projection.projection.identity,
+                projection.projection.target_os,
+            ),
+        );
+    };
+
+    let existing = match fs::read_to_string(&output) {
+        Ok(contents) => Some(contents),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return ci_github_failure(
+                format,
+                "managed_output_unavailable",
+                format!(
+                    "could not read managed GitHub workflow `{}`: {error}",
+                    output.display()
+                ),
+            );
+        }
+    };
+    if sync {
+        if let Some(existing) = existing.as_deref() {
+            if managed_projection_identity(existing).is_none() {
+                return ci_github_failure(
+                    format,
+                    "managed_output_unowned",
+                    format!(
+                        "refusing to overwrite unowned GitHub workflow `{}`; only files starting with `{OWNERSHIP_MARKER}` are sync targets",
+                        output.display()
+                    ),
+                );
+            }
+            if managed_projection_identity(existing)
+                == Some(projection.projection.identity.as_str())
+                && ci_github_projection_semantically_matches(existing, &projection.rendered)
+            {
+                return ci_github_success(
+                    format,
+                    operation,
+                    &projection,
+                    &output,
+                    &caller,
+                    &caller_binding,
+                    false,
+                );
+            }
+        }
+        if let Err(error) = ci_github_atomic_write(&output, projection.rendered.as_bytes()) {
+            return ci_github_failure(format, "sync_write_failed", error);
+        }
+        return ci_github_success(
+            format,
+            operation,
+            &projection,
+            &output,
+            &caller,
+            &caller_binding,
+            true,
+        );
+    }
+
+    let Some(existing) = existing.as_deref() else {
+        return ci_github_failure(
+            format,
+            "managed_output_missing",
+            format!(
+                "managed GitHub workflow `{}` does not exist",
+                output.display()
+            ),
+        );
+    };
+    if managed_projection_identity(existing) != Some(projection.projection.identity.as_str())
+        || !ci_github_projection_semantically_matches(existing, &projection.rendered)
+    {
+        return ci_github_failure(
+            format,
+            "managed_output_stale",
+            format!(
+                "managed GitHub workflow `{}` does not match projection `{}`; run `ota ci github sync --workflow {workflow} --output {}` after updating its human-owned caller reference",
+                output.display(),
+                projection.projection.identity,
+                output.display()
+            ),
+        );
+    }
+    ci_github_success(
+        format,
+        operation,
+        &projection,
+        &output,
+        &caller,
+        &caller_binding,
+        false,
+    )
+}
+
+fn ci_github_repo_path(root: &Path, path: &Path, label: &str) -> Result<PathBuf, String> {
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "{label} path must be a normalized repo-relative path: `{}`",
+            path.display()
+        ));
+    }
+    let candidate = root.join(path);
+    if !candidate.starts_with(root) {
+        return Err(format!(
+            "{label} path escapes the contract repository: `{}`",
+            path.display()
+        ));
+    }
+    let workflow_dir = root.join(".github/workflows");
+    let yaml_extension = candidate
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "yml" | "yaml"));
+    if !candidate.starts_with(&workflow_dir) || !yaml_extension {
+        return Err(format!(
+            "{label} path must name a .yml or .yaml file under `.github/workflows`: `{}`",
+            path.display()
+        ));
+    }
+    ci_github_verify_existing_path_containment(root, &candidate, label)?;
+    Ok(candidate)
+}
+
+// Check the nearest existing ancestor so a managed workflow path cannot traverse a symlink out of
+// the repository before sync creates or replaces the file.
+fn ci_github_verify_existing_path_containment(
+    root: &Path,
+    candidate: &Path,
+    label: &str,
+) -> Result<(), String> {
+    let canonical_root = fs::canonicalize(root).map_err(|error| {
+        format!(
+            "could not canonicalize contract repository `{}`: {error}",
+            root.display()
+        )
+    })?;
+    let mut existing = candidate;
+    while !existing.exists() {
+        existing = existing.parent().ok_or_else(|| {
+            format!(
+                "{label} path has no existing repository ancestor: `{}`",
+                candidate.display()
+            )
+        })?;
+    }
+    let canonical_existing = fs::canonicalize(existing).map_err(|error| {
+        format!(
+            "could not canonicalize {label} path ancestor `{}`: {error}",
+            existing.display()
+        )
+    })?;
+    if !canonical_existing.starts_with(&canonical_root) {
+        return Err(format!(
+            "{label} path escapes the contract repository through a symlink: `{}`",
+            candidate.display()
+        ));
+    }
+    Ok(())
+}
+
+fn ci_github_projection_semantically_matches(actual: &str, expected: &str) -> bool {
+    let actual = actual.lines().skip(1).collect::<Vec<_>>().join("\n");
+    let expected = expected.lines().skip(1).collect::<Vec<_>>().join("\n");
+    match (
+        serde_yaml::from_str::<YamlValue>(&actual),
+        serde_yaml::from_str::<YamlValue>(&expected),
+    ) {
+        (Ok(actual), Ok(expected)) => actual == expected,
+        // A malformed managed workflow is drift, never semantic equivalence.
+        _ => false,
+    }
+}
+
+fn ci_github_atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or_else(|| {
+        format!(
+            "managed output `{}` has no parent directory",
+            path.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create `{}`: {error}", parent.display()))?;
+    let root = path
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == ".github"))
+        .and_then(Path::parent)
+        .ok_or_else(|| format!("managed output `{}` has no repository root", path.display()))?;
+    ci_github_verify_existing_path_containment(root, path, "output")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temporary = parent.join(format!(
+        ".{}.ota-tmp-{}-{nonce}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("projection.yml"),
+        std::process::id()
+    ));
+    fs::write(&temporary, contents)
+        .map_err(|error| format!("could not write `{}`: {error}", temporary.display()))?;
+    ci_github_replace_file(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("could not atomically replace `{}`: {error}", path.display())
+    })
+}
+
+#[cfg(not(windows))]
+fn ci_github_replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
+    fs::rename(temporary, path)
+}
+
+#[cfg(windows)]
+fn ci_github_replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+
+    if !path.exists() {
+        return fs::rename(temporary, path);
+    }
+    let target = path
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    let replacement = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<_>>();
+    let replaced = unsafe {
+        windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+            target.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if replaced == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn ci_github_success(
+    format: OutputFormat,
+    operation: &str,
+    projection: &GitHubProjection,
+    output: &Path,
+    caller: &Path,
+    caller_binding: &CallerProjectionBinding,
+    mutated: bool,
+) -> CommandOutput {
+    let binding_identity = format!(
+        "sha256:{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(1u8, &projection.render_identity, caller_binding,))
+                .expect("GitHub binding identity is serializable")
+        )
+    );
+    match format {
+        OutputFormat::Text => CommandOutput::success(format!(
+            "Ota GitHub projection {operation} succeeded\nProjection: {}\nManaged output: {}\nCaller: {}\n",
+            projection.projection.identity,
+            output.display(),
+            caller.display()
+        )),
+        OutputFormat::Json => CommandOutput::success(
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "operation": operation,
+                "projection": projection,
+                "binding_identity": binding_identity,
+                "output_path": output.display().to_string(),
+                "caller_path": caller.display().to_string(),
+                "mutated": mutated,
+            }))
+            .expect("GitHub projection JSON is serializable"),
+        ),
+    }
+}
+
+fn ci_github_failure(format: OutputFormat, code: &str, message: String) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            CommandOutput::failure(format!("GitHub projection failed [{code}]: {message}"))
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: serde_json::to_string_pretty(&json!({
+                "ok": false,
+                "code": code,
+                "message": message,
+            }))
+            .expect("GitHub projection failure JSON is serializable"),
+            stderr: None,
+            exit_code: 1,
+        },
+    }
 }
 
 pub fn execution_plan(
@@ -17343,7 +17991,7 @@ fn agent_execution_refusal_with_policy(
         return Some(refusal);
     }
     let task_name = canonical_declared_task_name(contract, task_name);
-    doctor_claim_assurance(contract, contract_path)
+    doctor_claim_assurance_with_overrides(contract, contract_path, overrides)
         .into_iter()
         .find(|record| {
             record.subject.kind == "task"
@@ -17371,6 +18019,14 @@ fn doctor_claim_assurance(
     contract: &Contract,
     contract_path: &Path,
 ) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
+    doctor_claim_assurance_with_overrides(contract, contract_path, ExecutionOverrides::default())
+}
+
+fn doctor_claim_assurance_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
     let policy_pack = load_org_policy_pack_auto(contract_path)
         .ok()
         .flatten()
@@ -17379,7 +18035,7 @@ fn doctor_claim_assurance(
         .tasks
         .iter()
         .filter_map(|(task_name, task)| {
-            let safety = task_effective_safety(contract, task_name);
+            let safety = task_effective_safety_with_overrides(contract, task_name, overrides);
             safety.declared_safe.then(|| {
                 let mut record = crate::claim_assurance::agent_safety_claim(
                     task_name,
@@ -17408,7 +18064,7 @@ fn doctor_claim_assurance(
                 contract,
                 contract_path,
                 Some(workflow_name.as_str()),
-                ExecutionOverrides::default(),
+                overrides,
             );
             let mut record = crate::claim_assurance::proof_breadth_claim(
                 workflow_name,
@@ -34840,22 +35496,6 @@ struct ContractSnapshotArtifact {
     archive_path: Option<PathBuf>,
 }
 
-fn normalized_contract_snapshot_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
-    let normalized = serde_json::to_value(value)
-        .map_err(|error| format!("failed to normalize contract snapshot value: {error}"))?;
-    serde_json::to_vec_pretty(&normalize_semantic_json(normalized))
-        .map_err(|error| format!("failed to serialize normalized contract snapshot: {error}"))
-}
-
-fn contract_snapshot_hash(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    format!("sha256:{hex}")
-}
-
 fn contract_snapshot_archive_file_name(hash: &str) -> String {
     format!("{}.json", hash.replace(':', "-"))
 }
@@ -34914,40 +35554,6 @@ fn build_contract_snapshot_artifact<T: Serialize>(
         None
     };
     Ok(ContractSnapshotArtifact { hash, archive_path })
-}
-
-fn normalize_semantic_json(value: JsonValue) -> JsonValue {
-    prune_semantic_json("", value).unwrap_or_else(|| JsonValue::Object(Default::default()))
-}
-
-fn prune_semantic_json(path: &str, value: JsonValue) -> Option<JsonValue> {
-    match value {
-        JsonValue::Null => None,
-        JsonValue::Bool(false) => None,
-        JsonValue::String(value) if value.trim().is_empty() => None,
-        JsonValue::Array(values) => {
-            let values = values
-                .into_iter()
-                .enumerate()
-                .filter_map(|(index, value)| {
-                    let child_path = append_diff_path(path, &format!("[{index}]"));
-                    prune_semantic_json(&child_path, value)
-                })
-                .collect::<Vec<_>>();
-            (!values.is_empty()).then_some(JsonValue::Array(values))
-        }
-        JsonValue::Object(map) => {
-            let mut normalized = serde_json::Map::new();
-            for (key, value) in map {
-                let child_path = append_diff_path(path, &key);
-                if let Some(value) = prune_semantic_json(&child_path, value) {
-                    normalized.insert(key, value);
-                }
-            }
-            (!normalized.is_empty()).then_some(JsonValue::Object(normalized))
-        }
-        other => Some(other),
-    }
 }
 
 fn receipt_baseline_path(root: &Path) -> PathBuf {
@@ -54496,7 +55102,8 @@ mod tests {
         RepoUpResult, RequirementActivationAction, adapter_bootstrap_request_for_missing_backend,
         bootstrap_failure_findings, build_env_report, build_env_report_with_overrides,
         build_up_preview, capture_hydration_provenance_before_execution,
-        capture_witnessed_observations_before_execution, collect_validate_warnings,
+        capture_witnessed_observations_before_execution, ci_github_check, ci_github_render,
+        ci_github_repo_path, ci_projection, ci_projection_for_contract, collect_validate_warnings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, contractless_signal_summary_parts,
         doctor as doctor_command, doctor_mode_execution_overrides, env as env_command,
@@ -54527,6 +55134,301 @@ mod tests {
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningPlanEntry,
         ProvisioningTargetKind,
     };
+
+    #[test]
+    fn github_projection_sync_and_check_share_one_renderer() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: github-projection-fixture
+tasks:
+  verify:
+    run: echo verify
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+        )
+        .expect("contract fixture should write");
+        let output = Path::new(".github/workflows/ota-governance.yml");
+        let render = ci_github_render(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            Some(output),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(render.exit_code, 0);
+        let rendered: serde_json::Value = serde_json::from_str(&render.stdout).unwrap();
+        assert_eq!(
+            rendered["projection"]["projection"]["governance"]["agent_admission"]["decision"],
+            "allow"
+        );
+        let identity = rendered["projection"]["projection"]["identity"]
+            .as_str()
+            .unwrap();
+        let escaped = ci_github_render(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            Some(Path::new("../outside.yml")),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(escaped.exit_code, 1);
+        let unsafe_contract_path = repo.path().join("unsafe-ota.yaml");
+        fs::write(
+            &unsafe_contract_path,
+            r#"
+version: 1
+project:
+  name: unsafe-github-projection-fixture
+tasks:
+  verify:
+    run: echo verify
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+        let refused = ci_github_render(
+            Some(unsafe_contract_path.as_path()),
+            None,
+            "verify",
+            Some(output),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(refused.exit_code, 1);
+        let refused: serde_json::Value = serde_json::from_str(&refused.stdout).unwrap();
+        assert_eq!(refused["code"], "requested_task_not_safe");
+        let inspectable_refusal = ci_projection(
+            Some(unsafe_contract_path.as_path()),
+            None,
+            "verify",
+            Some("native"),
+            "linux",
+            None,
+            OutputFormat::Json,
+        );
+        assert_eq!(inspectable_refusal.exit_code, 1);
+        let inspectable_refusal: serde_json::Value =
+            serde_json::from_str(inspectable_refusal.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(inspectable_refusal["operation"], "projection");
+        assert_eq!(
+            inspectable_refusal["projection"]["governance"]["agent_admission"]["decision"],
+            "deny"
+        );
+        let unsafe_proof_contract_path = repo.path().join("unsafe-proof-ota.yaml");
+        fs::write(
+            &unsafe_proof_contract_path,
+            r#"
+version: 1
+project:
+  name: trusted-proof-github-projection-fixture
+tasks:
+  verify:
+    run: echo verify
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+    proof:
+      claim: bounded
+"#,
+        )
+        .unwrap();
+        let unsafe_proof = ci_projection_for_contract(
+            &parse_contract_str(
+                &unsafe_proof_contract_path,
+                &fs::read_to_string(&unsafe_proof_contract_path).unwrap(),
+            )
+            .unwrap(),
+            &unsafe_proof_contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("a proof claim must not bypass agent admission");
+        assert_eq!(unsafe_proof.0, "requested_task_not_safe");
+        let caller_path = repo.path().join(".github/workflows/ci.yml");
+        fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+        fs::write(
+            &caller_path,
+            format!(
+                "jobs:\n  ota:\n    uses: ./.github/workflows/ota-governance.yml\n    with:\n      ota_projection_identity: {identity}\n      ota_target_os: linux\n"
+            ),
+        )
+        .unwrap();
+
+        let sync = ci_github_check(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            output,
+            Path::new(".github/workflows/ci.yml"),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            true,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(sync.exit_code, 0, "{}", sync.stdout);
+        let repeated_sync = ci_github_check(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            output,
+            Path::new(".github/workflows/ci.yml"),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            true,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(repeated_sync.exit_code, 0, "{}", repeated_sync.stdout);
+        let repeated_sync: serde_json::Value = serde_json::from_str(&repeated_sync.stdout).unwrap();
+        assert_eq!(repeated_sync["mutated"], false);
+        let check = ci_github_check(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            output,
+            Path::new(".github/workflows/ci.yml"),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(check.exit_code, 0, "{}", check.stdout);
+
+        let output_path = repo.path().join(output);
+        let managed = fs::read_to_string(&output_path).unwrap();
+        fs::write(
+            &output_path,
+            managed.replacen("ota up --workflow", "echo bypassed && ota up --workflow", 1),
+        )
+        .unwrap();
+        let stale = ci_github_check(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            output,
+            Path::new(".github/workflows/ci.yml"),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(stale.exit_code, 1);
+        let stale: serde_json::Value = serde_json::from_str(&stale.stdout).unwrap();
+        assert_eq!(stale["code"], "managed_output_stale");
+
+        fs::write(repo.path().join(output), "name: externally-owned\n").unwrap();
+        let rejected = ci_github_check(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            output,
+            Path::new(".github/workflows/ci.yml"),
+            "ubuntu-latest",
+            Some("native"),
+            "linux",
+            true,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(rejected.exit_code, 1);
+        let rejected: serde_json::Value = serde_json::from_str(&rejected.stdout).unwrap();
+        assert_eq!(rejected["code"], "managed_output_unowned");
+    }
+
+    #[test]
+    fn ci_projection_rejects_a_target_os_outside_the_task_contract() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: target-os-fixture
+tasks:
+  verify:
+    run: echo verify
+    only_on: [linux]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("contract fixture should write");
+
+        let result = ci_projection(
+            Some(contract_path.as_path()),
+            None,
+            "verify",
+            Some("native"),
+            "windows",
+            None,
+            OutputFormat::Json,
+        );
+        assert_eq!(result.exit_code, 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.stdout).expect("failure JSON should parse");
+        assert_eq!(payload["code"], "projection_mode_unavailable");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn github_projection_paths_reject_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let repo = tempdir().expect("repo tempdir");
+        let outside = tempdir().expect("outside tempdir");
+        symlink(outside.path(), repo.path().join(".github")).expect("symlink should write");
+        let error = ci_github_repo_path(
+            repo.path(),
+            Path::new(".github/workflows/ota-governance.yml"),
+            "output",
+        )
+        .expect_err("symlink escape must be rejected");
+        assert!(error.contains("symlink"), "{error}");
+    }
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
         CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason,

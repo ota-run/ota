@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/ci-projection.json",
+  "title": "ota ci projection --json",
+  "$defs": {
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "mode", "target_os", "merge_check_ids", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "semantic_contract_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "workflow": { "type": "string" },
+        "task": { "type": "string" },
+        "mode": { "enum": ["native", "container", "remote"] },
+        "target_os": { "enum": ["linux", "macos", "windows"] },
+        "merge_check_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "proof_required": { "type": "boolean" },
+        "proof_claim": { "type": ["string", "null"] },
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_kind"],
+          "properties": {
+            "source_kind": { "enum": ["version", "git_rev", "branch", "unspecified"] },
+            "source_identity": { "type": "string" }
+          }
+        },
+        "governance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["agent_admission"],
+          "properties": {
+            "agent_admission": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["decision", "basis"],
+              "properties": {
+                "decision": { "enum": ["allow", "deny", "review", "unresolved"] },
+                "basis": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "proof_assurance": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "policy_decision", "basis"],
+              "properties": {
+                "status": { "enum": ["supported", "contradicted", "unknown"] },
+                "policy_decision": { "enum": ["allow", "deny", "review"] },
+                "basis": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "ownership": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ota_owned", "provider_owned", "required_bindings"],
+          "properties": {
+            "ota_owned": { "type": "array", "items": { "type": "string" } },
+            "provider_owned": { "type": "array", "items": { "type": "string" } },
+            "required_bindings": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "operation", "projection"],
+      "properties": {
+        "ok": { "const": true },
+        "operation": { "const": "projection" },
+        "projection": { "$ref": "#/$defs/projection" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "operation", "code", "message"],
+      "properties": {
+        "ok": { "const": false },
+        "operation": { "const": "projection" },
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "refusal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      },
+      "allOf": [{ "not": { "required": ["projection"] } }]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "operation", "code", "message", "projection", "refusal"],
+      "properties": {
+        "ok": { "const": false },
+        "operation": { "const": "projection" },
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "projection": { "$ref": "#/$defs/projection" },
+        "refusal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  ]
+}

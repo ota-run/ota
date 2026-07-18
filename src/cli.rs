@@ -185,6 +185,11 @@ enum Commands {
         #[command(subcommand)]
         command: ProofCommands,
     },
+    /// Render and validate provider projections from canonical contract truth.
+    Ci {
+        #[command(subcommand)]
+        command: CiCommands,
+    },
     #[command(display_order = 5)]
     /// Propose reviewed contract mutations from bounded Ota intents.
     Assist {
@@ -705,6 +710,114 @@ enum Commands {
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommands,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum CiCommands {
+    /// Emit the provider-neutral governance projection for one contract workflow.
+    Projection {
+        /// Declared contract workflow to project.
+        #[arg(long)]
+        workflow: String,
+        /// Select the execution mode represented by this projection.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Target operating system represented by this projection.
+        #[arg(long, value_enum)]
+        target_os: CiTargetOs,
+        /// Fail unless the evaluated projection has this semantic identity.
+        #[arg(long)]
+        expect_identity: Option<String>,
+        /// Print machine-readable JSON.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// GitHub Actions projection commands.
+    Github {
+        #[command(subcommand)]
+        command: CiGithubCommands,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum CiGithubCommands {
+    /// Render an Ota-owned reusable GitHub workflow without writing files.
+    Render {
+        /// Declared contract workflow to project.
+        #[arg(long)]
+        workflow: String,
+        /// Optional target path included in output metadata; render never writes it.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// GitHub runner label for the generated reusable workflow.
+        #[arg(long, default_value = "ubuntu-latest")]
+        runner: String,
+        /// Select the execution mode represented by this generated lane.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Target operating system represented by this generated projection.
+        #[arg(long, value_enum)]
+        target_os: CiTargetOs,
+        /// Print machine-readable JSON.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Verify an Ota-owned reusable workflow and its human-owned caller reference.
+    Check {
+        /// Declared contract workflow to project.
+        #[arg(long)]
+        workflow: String,
+        /// Ota-owned reusable workflow path.
+        #[arg(long)]
+        output: PathBuf,
+        /// Human-owned GitHub caller workflow path.
+        #[arg(long)]
+        caller: PathBuf,
+        /// GitHub runner label for the generated reusable workflow.
+        #[arg(long, default_value = "ubuntu-latest")]
+        runner: String,
+        /// Select the execution mode represented by this generated lane.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Target operating system represented by this generated projection.
+        #[arg(long, value_enum)]
+        target_os: CiTargetOs,
+        /// Print machine-readable JSON.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Atomically synchronize an Ota-owned reusable workflow after verifying its caller.
+    Sync {
+        /// Declared contract workflow to project.
+        #[arg(long)]
+        workflow: String,
+        /// Ota-owned reusable workflow path.
+        #[arg(long)]
+        output: PathBuf,
+        /// Human-owned GitHub caller workflow path.
+        #[arg(long)]
+        caller: PathBuf,
+        /// GitHub runner label for the generated reusable workflow.
+        #[arg(long, default_value = "ubuntu-latest")]
+        runner: String,
+        /// Select the execution mode represented by this generated lane.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Target operating system represented by this generated projection.
+        #[arg(long, value_enum)]
+        target_os: CiTargetOs,
+        /// Print machine-readable JSON.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
     },
 }
 
@@ -1332,6 +1445,29 @@ impl From<RunBackend> for crate::schema::Backend {
             RunBackend::Container => crate::schema::Backend::Container,
             RunBackend::Remote => crate::schema::Backend::Remote,
         }
+    }
+}
+
+fn ci_projection_mode(backend: Option<RunBackend>) -> Option<&'static str> {
+    backend.map(|backend| match backend {
+        RunBackend::Native => "native",
+        RunBackend::Container => "container",
+        RunBackend::Remote => "remote",
+    })
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CiTargetOs {
+    Linux,
+    Macos,
+    Windows,
+}
+
+fn ci_target_os(target_os: CiTargetOs) -> &'static str {
+    match target_os {
+        CiTargetOs::Linux => "linux",
+        CiTargetOs::Macos => "macos",
+        CiTargetOs::Windows => "windows",
     }
 }
 
@@ -4785,6 +4921,106 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Ci {
+            command:
+                CiCommands::Projection {
+                    workflow,
+                    backend,
+                    target_os,
+                    expect_identity,
+                    json,
+                    path,
+                },
+        } => commands::ci_projection(
+            path.as_deref(),
+            file.as_deref(),
+            &workflow,
+            ci_projection_mode(backend),
+            ci_target_os(target_os),
+            expect_identity.as_deref(),
+            format_from_json(json),
+        ),
+        Commands::Ci {
+            command:
+                CiCommands::Github {
+                    command:
+                        CiGithubCommands::Render {
+                            workflow,
+                            output,
+                            runner,
+                            backend,
+                            target_os,
+                            json,
+                            path,
+                        },
+                },
+        } => commands::ci_github_render(
+            path.as_deref(),
+            file.as_deref(),
+            &workflow,
+            output.as_deref(),
+            &runner,
+            ci_projection_mode(backend),
+            ci_target_os(target_os),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Ci {
+            command:
+                CiCommands::Github {
+                    command:
+                        CiGithubCommands::Check {
+                            workflow,
+                            output,
+                            caller,
+                            runner,
+                            backend,
+                            target_os,
+                            json,
+                            path,
+                        },
+                },
+        } => commands::ci_github_check(
+            path.as_deref(),
+            file.as_deref(),
+            &workflow,
+            &output,
+            &caller,
+            &runner,
+            ci_projection_mode(backend),
+            ci_target_os(target_os),
+            false,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Ci {
+            command:
+                CiCommands::Github {
+                    command:
+                        CiGithubCommands::Sync {
+                            workflow,
+                            output,
+                            caller,
+                            runner,
+                            backend,
+                            target_os,
+                            json,
+                            path,
+                        },
+                },
+        } => commands::ci_github_check(
+            path.as_deref(),
+            file.as_deref(),
+            &workflow,
+            &output,
+            &caller,
+            &runner,
+            ci_projection_mode(backend),
+            ci_target_os(target_os),
+            true,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Assist {
             command:
                 AssistCommands::DeclareReadiness {
@@ -5914,6 +6150,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Proof { .. } => {
             "run `ota doctor` to inspect blockers first, or rerun `ota proof runtime` with one explicit workflow"
         }
+        Commands::Ci { .. } => {
+            "run `ota ci github render --workflow <name>` to inspect the canonical managed projection"
+        }
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
         }
@@ -6135,6 +6374,18 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Proof {
             command: ProofCommands::Runtime { json, .. },
         }
+        | Commands::Ci {
+            command:
+                CiCommands::Github {
+                    command:
+                        CiGithubCommands::Render { json, .. }
+                        | CiGithubCommands::Check { json, .. }
+                        | CiGithubCommands::Sync { json, .. },
+                },
+        }
+        | Commands::Ci {
+            command: CiCommands::Projection { json, .. },
+        }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
         | Commands::Diff { json, .. }
@@ -6226,6 +6477,14 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Env { .. } => "ota env",
         Commands::Proof { command } => match command {
             ProofCommands::Runtime { .. } => "ota proof runtime",
+        },
+        Commands::Ci { command } => match command {
+            CiCommands::Projection { .. } => "ota ci projection",
+            CiCommands::Github { command } => match command {
+                CiGithubCommands::Render { .. } => "ota ci github render",
+                CiGithubCommands::Check { .. } => "ota ci github check",
+                CiGithubCommands::Sync { .. } => "ota ci github sync",
+            },
         },
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",

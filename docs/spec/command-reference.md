@@ -85,6 +85,10 @@ ota currently ships these commands:
 - `ota execution plan`
 - `ota execution topology`
 - `ota proof runtime`
+- `ota ci projection`
+- `ota ci github render`
+- `ota ci github check`
+- `ota ci github sync`
 - `ota assist declare-readiness`
 - `ota assist declare-service`
 - `ota assist bind-task`
@@ -707,6 +711,70 @@ JSON output:
   source-mismatched, or scope-mismatched evidence remains `unknown`
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
+
+## `ota ci projection` and `ota ci github`
+
+Render a dedicated, Ota-owned reusable GitHub Actions workflow after `ota.yaml` has become the
+reviewed execution authority. Use it to remove duplicated bootstrap and verification shell from
+CI without letting Ota take over triggers, permissions, secrets, runners, environments, or
+deployment jobs.
+
+```bash
+ota ci github render --workflow verify --target-os linux
+ota ci github render --workflow verify --target-os linux --output .github/workflows/ota-governance.yml --json
+ota ci github check --workflow verify --target-os linux \
+  --output .github/workflows/ota-governance.yml \
+  --caller .github/workflows/ci.yml
+ota ci github sync --workflow verify --target-os linux \
+  --output .github/workflows/ota-governance.yml \
+  --caller .github/workflows/ci.yml
+ota ci projection --workflow verify --mode container --target-os linux --json
+ota ci github render --workflow verify --mode container --target-os linux
+```
+
+Current behavior:
+
+- `render` is pure: it prints deterministic reusable-workflow YAML and never writes the optional
+  `--output` target.
+- `ota ci projection` is the provider-neutral source of truth. It evaluates the selected agent
+  closure and any declared proof assurance before rendering; policy-denied or review-required
+  lanes fail projection with the same canonical reason the runner would enforce. `--mode` selects its native,
+  container, or remote plane; provider adapters consume that exact projection rather than
+  reconstructing contract authority.
+- Omitting `--mode` resolves the selected task's effective contract default. `--target-os` is
+  explicit projection truth and must match the intended CI operating system. Supplying an
+  unavailable mode for that target is refused before rendering. A denied projection remains inspectable in
+  JSON with its evaluated identity, governance decision, and refusal basis.
+- The generated workflow owns checkout, immutable adapter revisions, `ota-run/setup` with
+  `source: contract`, selected `ota validate`, `ota doctor --workflow`, safe-surface discovery,
+  agent dry-run, and either agent execution plus receipt archival or, for a proof-required lane,
+  one authoritative `ota proof runtime` execution. A proof claim never bypasses agent admission.
+  It derives the visible GitHub check name from the canonical V11.5 `merge_check_id`.
+- The human-owned caller must invoke the generated path and pass its exact
+  `ota_projection_identity` and `ota_target_os`. It may also choose `ota_runner`; the renderer's `--runner` value is
+  only the reusable workflow's default. Ota checks the projection identity rather than
+  reconstructing execution commands from caller YAML.
+- The generated workflow verifies identity through `ota ci projection --expect-identity`, not a
+  provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
+- `check` fails for a missing, stale, manually changed, or unowned generated workflow, or when the
+  caller points at a different semantic projection.
+- `sync` is explicit and atomic. It creates a missing output or replaces only a file carrying the
+  Ota ownership marker. It never writes the caller, so update that provider-owned file first when a
+  contract change produces a new projection identity.
+- `--output` and `--caller` must be normalized repo-relative `.yml` or `.yaml` paths under
+  `.github/workflows`. Ota rejects absolute or traversal paths and refuses to use the caller as
+  its managed output.
+
+The first cut projects one declared workflow with `run.task`. It intentionally does not generate a
+full CI workflow or infer provider policy. Existing workflow YAML remains useful detection evidence,
+but it cannot silently rewrite `ota.yaml`.
+
+JSON output carries `ok`, `operation`, `projection.identity`, selected workflow/task, runner,
+`merge_check_ids`, `proof_required`, `render_identity`, `binding_identity`, managed output path, caller path, and
+whether `sync` mutated its owned file. `render_identity` is adapter-scoped; `binding_identity` also
+binds the parsed human-owned caller reference.
+Failures carry a stable `code`, including `managed_output_unowned`, `managed_output_stale`, and
+`caller_projection_reference_mismatch`.
 
 ## `ota assist declare-readiness`
 

@@ -63,8 +63,27 @@ durable agent workflow belongs in the canonical Ota skill.
   `workflows.<name>.proof.claim: bounded`; Doctor reports `bounded_proof` as `unknown` until a
   matching immutable archive exists, then `supported`. Bedrock proves that transition on its
   offline replay lane without inventing seam or negative-control evidence; Lead Quorum proves the
-  independent `unknown` path without an archive. V11.15 is now active: render, check, and sync
-  must share one GitHub reusable-workflow projection model.
+  independent `unknown` path without an archive.
+- active V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
+  now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
+  proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that
+  object through one renderer powering `ota ci github render`, `check`, and atomic `sync`.
+  It emits separate projection, render, and parsed-caller binding identities; generated content
+  runs validation, doctor, safe discovery, agent dry-run, execution, receipt archival, and a
+  declared runtime proof when the selected workflow owns one. Agent-safe lanes retain `--agent`;
+  proof claims do not bypass agent admission, and proof-required lanes use one authoritative execution. Kylrix renders valid distinct native
+  and container reusable lanes without collapsing its separately selected `sqlite-dev` runtime
+  proof into `verify`. Strict V11.14 agent and proof assurance admission is evaluated before
+  projection render/check; denied or review-required lanes return their canonical refusal rather
+  than generating a green wrapper. Remaining V11.15 proof is a committed Kylrix caller/matrix
+  pressure pass; do not claim full CI migration until generated lanes preserve the existing
+  native/container evidence.
+  Projection identity now reuses the canonical normalized semantic snapshot identity used by
+  receipts; omitted mode resolves from the selected task's effective contract default, while an
+  unavailable explicit mode is refused. Denied provider-neutral JSON preserves the evaluated
+  projection and typed refusal. Managed workflow paths reject symlink escape, and the neutral
+  projection carries bootstrap posture, proof claim, and target-OS identity for the first GitHub
+  adapter.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt

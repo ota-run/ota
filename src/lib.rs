@@ -23,12 +23,14 @@
 pub(crate) mod adapter_inputs;
 pub(crate) mod agent_boundary_docs;
 pub(crate) mod capabilities;
+pub(crate) mod ci_projection;
 pub mod claim_assurance;
 pub mod cli;
 pub(crate) mod contract_drift;
 pub mod detector;
 pub mod doctor;
 pub(crate) mod execution;
+pub(crate) mod github_projection;
 pub(crate) mod hydration_provenance;
 pub(crate) mod jsonc;
 pub mod output;
@@ -40,6 +42,7 @@ pub mod published_docs_manifest;
 pub(crate) mod replay_inputs;
 pub mod runner;
 pub mod schema;
+pub(crate) mod semantic_identity;
 pub(crate) mod terminal;
 #[cfg(test)]
 pub mod test_support;

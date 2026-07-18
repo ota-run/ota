@@ -50,6 +50,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
 - [json-schemas/diff.json](json-schemas/diff.json)
 - [json-schemas/explain.json](json-schemas/explain.json)
+- [json-schemas/github-projection.json](json-schemas/github-projection.json)
+- [json-schemas/ci-projection.json](json-schemas/ci-projection.json)
 - [json-schemas/version.json](json-schemas/version.json)
 
 ## General notes
@@ -71,6 +73,9 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything, including reusable readiness probes, reusable runtime surfaces, structured task launch sources, normalized listeners, and attached surface names
 - use `ota proof runtime --json` when you want one thin clean-machine runtime-proof wrapper that captures the canonical topology, doctor, and up artifacts for a selected runtime path
+- use `ota ci github render --json`, `check --json`, or `sync --json` when you need the
+  deterministic GitHub reusable-workflow projection, its caller binding, and managed-file drift
+  result without scraping YAML or text output
 - use `ota services --json` when you want the declared managed-service inventory, including manager shape, readiness declaration, endpoint projections, and dependencies
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
@@ -116,6 +121,9 @@ human text output:
 - `ota run <task> --dry-run --json`: use `summary`, `resolved`, `requested_task`, `env`,
   `toolchains`, and `plan`; repo-level run JSON is currently preview-only and requires `--dry-run`
 - `ota proof runtime --json`: use `mode`, `workflow`, `phase`, `summary`, and `artifacts`; inspect the referenced `doctor.json` and `topology.json` artifacts instead of expecting the proof wrapper to duplicate those payloads
+- `ota ci github <render|check|sync> --json`: use `ok`, `operation`, `projection.identity`,
+  `projection.workflow`, `projection.task`, `projection.merge_check_ids`, `output_path`,
+  `caller_path`, and `mutated`; on failure use stable `code` and `message`, not text rendering
 - `ota services --json`: use `services`, grouped `members` when present, and nested `manager`, `readiness`, `endpoints`, and `depends_on`; readiness may include `endpoint`, and endpoint objects may include `context` when the endpoint name and execution context differ
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
@@ -805,6 +813,75 @@ Failure:
   "errors": ["..."]
 }
 ```
+
+## `ota ci projection --json` and `ota ci github <render|check|sync> --json`
+
+`ota ci projection --workflow <name> --mode <native|container|remote> --target-os <linux|macos|windows> --json` emits the canonical
+provider-neutral governance projection; its schema is [ci-projection.json](json-schemas/ci-projection.json).
+GitHub projection commands consume that object. `render` has
+`mutated: false` and returns the generated YAML under `projection.rendered`; an optional output path
+is metadata only. `check` compares the marked managed file and caller reference without writing.
+`sync` may set `mutated: true` only after it has verified the caller's structural binding and
+the existing target is absent or Ota-owned.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "operation": "check",
+  "projection": {
+    "projection": {
+      "workflow": "verify",
+      "task": "verify",
+      "mode": "native",
+      "target_os": "linux",
+      "bootstrap": { "source_kind": "version", "source_identity": "v1.6.24" },
+      "proof_required": false,
+      "governance": {
+        "agent_admission": {
+          "decision": "allow",
+          "basis": ["agent_closure_admitted"]
+        }
+      },
+      "identity": "sha256:..."
+    },
+    "runner": "ubuntu-latest",
+    "content_identity": "sha256:...",
+    "render_identity": "sha256:..."
+  },
+  "output_path": ".github/workflows/ota-governance.yml",
+  "caller_path": ".github/workflows/ci.yml",
+  "binding_identity": "sha256:...",
+  "mutated": false
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "code": "managed_output_stale",
+  "message": "..."
+}
+```
+
+`managed_output_unowned`, `caller_projection_reference_mismatch`, and normalized
+`.github/workflows`-path refusal are separate failures. `render_identity` binds the canonical
+projection to the GitHub adapter version, normalized adapter inputs, and generated content;
+`binding_identity` additionally binds that render to the parsed caller reference. A caller or output mismatch never triggers
+a silent synchronization.
+
+Generated lanes always follow the contract's agent-safe admission path. A `proof` claim qualifies
+evidence breadth; it does not authorize an unsafe execution lane. For an admitted proof-required
+workflow, the generated adapter uses `ota proof runtime` as the sole real execution lane.
+
+`semantic_contract_identity` is the same normalized semantic snapshot identity carried by Ota
+receipts. `bootstrap` carries the portable contract-owned bootstrap posture, and `proof_claim`
+names the declared proof requirement. A denied provider-neutral projection still returns its
+evaluated `projection` plus a typed `refusal` in JSON, so CI consumers can inspect the exact
+identity, decision, and basis rather than infer them from an error string.
 
 ## `ota proof runtime --json`
 

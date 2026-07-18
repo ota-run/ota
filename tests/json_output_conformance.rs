@@ -229,6 +229,189 @@ fn version_json_output_matches_published_schema() {
 }
 
 #[test]
+fn github_projection_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: github-projection-fixture
+tasks:
+  verify:
+    run: echo verify
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+agent:
+  safe_tasks:
+    - verify
+"#,
+    );
+    let output = ".github/workflows/ota-governance.yml";
+    let caller = ".github/workflows/ci.yml";
+    let canonical = run_ota(
+        &[
+            "ci",
+            "projection",
+            "--json",
+            "--workflow",
+            "verify",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("ci-projection.json", &canonical);
+    assert_eq!(canonical["projection"]["mode"], "native");
+    let resolved_default = run_ota(
+        &[
+            "ci",
+            "projection",
+            "--json",
+            "--workflow",
+            "verify",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("ci-projection.json", &resolved_default);
+    assert_eq!(resolved_default["projection"]["mode"], "native");
+    assert_eq!(
+        resolved_default["projection"]["identity"],
+        canonical["projection"]["identity"]
+    );
+    let render = run_ota(
+        &[
+            "ci",
+            "github",
+            "render",
+            "--json",
+            "--workflow",
+            "verify",
+            "--output",
+            output,
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("github-projection.json", &render);
+    assert_eq!(
+        render["projection"]["projection"]["identity"],
+        canonical["projection"]["identity"]
+    );
+    let identity = render["projection"]["projection"]["identity"]
+        .as_str()
+        .expect("projection identity");
+    let caller_path = fixture.path().join(caller);
+    fs::create_dir_all(caller_path.parent().expect("caller parent")).expect("caller directory");
+    fs::write(
+        &caller_path,
+        format!(
+            "jobs:\n  ota:\n    uses: ./.github/workflows/ota-governance.yml\n    with:\n      ota_projection_identity: {identity}\n      ota_target_os: linux\n"
+        ),
+    )
+    .expect("caller workflow");
+
+    let sync = run_ota(
+        &[
+            "ci",
+            "github",
+            "sync",
+            "--json",
+            "--workflow",
+            "verify",
+            "--output",
+            output,
+            "--caller",
+            caller,
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("github-projection.json", &sync);
+    assert_eq!(sync["mutated"], true);
+    let repeated_sync = run_ota(
+        &[
+            "ci",
+            "github",
+            "sync",
+            "--json",
+            "--workflow",
+            "verify",
+            "--output",
+            output,
+            "--caller",
+            caller,
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("github-projection.json", &repeated_sync);
+    assert_eq!(repeated_sync["mutated"], false);
+    let check = run_ota(
+        &[
+            "ci",
+            "github",
+            "check",
+            "--json",
+            "--workflow",
+            "verify",
+            "--output",
+            output,
+            "--caller",
+            caller,
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("github-projection.json", &check);
+    assert_eq!(check["mutated"], false);
+    assert_eq!(sync["binding_identity"], check["binding_identity"]);
+
+    fs::write(fixture.path().join(output), "name: externally-owned\n").expect("tamper output");
+    let rejected = run_ota_failure_stdout_json(
+        &[
+            "ci",
+            "github",
+            "sync",
+            "--json",
+            "--workflow",
+            "verify",
+            "--output",
+            output,
+            "--caller",
+            caller,
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("github-projection.json", &rejected);
+    assert_eq!(rejected["code"], "managed_output_unowned");
+}
+
+#[test]
 fn execution_plan_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

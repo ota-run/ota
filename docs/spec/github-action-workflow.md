@@ -194,6 +194,50 @@ or `ota proof` commands, use the contract-owned installer action instead of dupl
 That setup mode reads `agent.bootstrap.ota.source` from the checked-out `ota.yaml` and runs the
 matching official installer flow through the single public `ota-run/setup` surface.
 
+## Managed reusable projection
+
+When a repo wants Ota to own its CI verification lane rather than only report on it, generate a
+dedicated reusable workflow and keep a small human-owned caller for scheduling and provider policy:
+
+```bash
+ota ci github render --workflow verify \
+  --target-os linux \
+  --output .github/workflows/ota-governance.yml
+ota ci github check --workflow verify \
+  --target-os linux \
+  --output .github/workflows/ota-governance.yml \
+  --caller .github/workflows/ci.yml
+ota ci github sync --workflow verify \
+  --target-os linux \
+  --output .github/workflows/ota-governance.yml \
+  --caller .github/workflows/ci.yml
+ota ci projection --workflow verify --mode container --target-os linux --json
+ota ci github render --workflow verify --mode container --target-os linux
+```
+
+The caller retains triggers, permissions, runners, secrets, concurrency, environments, and
+deployment jobs. It must reference the generated workflow and its exact
+`ota_projection_identity` and `ota_target_os`; it may pass `ota_runner` as provider-owned runner selection. `sync`
+writes only the marked generated file, never the caller. This is one-way authority: existing
+workflow files remain useful onboarding evidence, but reviewed
+`ota.yaml` is the source of Ota-owned setup and verification truth.
+
+The generated adapter verifies its identity with Ota itself, not a provider-shell primitive. The
+caller keeps runner selection provider-owned, while `ota_target_os` binds the selected operating
+system into the projection identity.
+
+The generated lane runs contract validation, Doctor, safe-surface discovery, and an agent-mode dry
+run. It then runs agent execution plus receipt archival, or uses `ota proof runtime` as the sole
+real execution lane when the selected workflow requires proof. A proof claim never admits an
+otherwise unsafe task.
+The generated action revisions are immutable so render identity covers the adapter dependencies.
+A distinct runtime workflow remains a distinct projection;
+Ota does not infer that one workflow's proof is evidence for another.
+
+Use `--mode container` to materialize a separate container projection when the selected contract lane
+advertises container execution. Native and container lanes intentionally have different projection
+identities; a caller must select the generated lane it intends to schedule.
+
 `ota doctor` now flags workflow-owned ota install truth when the repo already declares
 `agent.bootstrap.ota.source`. If a job keeps explicit `ota-version`, raw installer commands,
 branch/revision env markers, or source-install helpers in workflow YAML, treat that as
