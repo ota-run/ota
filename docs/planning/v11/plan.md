@@ -53,6 +53,7 @@ Source direction:
 - [V11.13 plan](../v11.13/plan.md)
 - [V11.14 plan](../v11.14/plan.md)
 - [V11.15 plan](../v11.15/plan.md)
+- [V11.16 plan](../v11.16/plan.md)
 
 V11 theme:
 
@@ -136,6 +137,10 @@ The completed trust/product follow-ons are:
 The next active provider-adapter slice is:
 
 - [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md)
+
+The following planned execution-trust slice is:
+
+- [V11.16: fresh-boundary setup proof](../v11.16/plan.md)
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
