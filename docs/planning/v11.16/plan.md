@@ -27,15 +27,17 @@
 
 # V11.16: Fresh-Boundary Setup Proof
 
-Status: planned. This follows active V11.15. Do not begin implementation until managed GitHub
-projection has one renderer shared by render, check, and sync.
+Status: planned. This follows active V11.15 under version discipline only. Managed GitHub
+projection is not an architectural prerequisite: V11.16 derives execution-boundary truth from the
+selected runtime and existing canonical producer/admission evidence, whether the lane is invoked
+locally, in CI, or through a future generated workflow.
 
 ## Problem
 
 A contract can declare setup accurately while a run succeeds only because ambient state already
 exists: a warmed virtual environment, downloaded model, inherited environment variable, running
-service, or hand-applied migration. Probing a repo-owned executable before its declared setup
-closure materializes it is the same failure class.
+service, or hand-applied migration. A fresh container can still mount a persistent cache or use an
+existing database, so one boundary-wide label cannot honestly describe every material dependency.
 
 A green task must not imply that the selected setup path created every prerequisite this run used.
 Likewise, an ordinary native host run must not be described as a cold start merely because Ota did
@@ -44,39 +46,56 @@ not observe pre-existing state.
 ## Product Principle
 
 Materialize first, then probe. A setup or runtime assertion may rely only on state the selected
-execution closure created or explicitly inherited. Freshness is runner-derived execution truth,
-not maintainer prose.
+execution closure created or explicitly inherited. Each material prerequisite has runner-derived
+boundary evidence; the human-facing freshness summary is a strict function of that evidence, not
+maintainer prose or a caller-controlled environment signal.
 
 ## Scope
 
-V11.16 adds one receipt/proof-owned execution-boundary record. The first shape distinguishes:
+V11.16 adds one receipt/proof-owned `execution_boundary` record. Its authoritative truth is a
+per-prerequisite `prerequisites[]` evidence set, not a single global state:
 
-- `boundary_kind`: `ephemeral_container`, `provider_ephemeral_runner`, `persistent_context`, or
-  `host_unknown`;
-- `freshness`: `cold_start_verified`, `persistent_state_reused`, or `unknown`;
-- `setup_materialization`: selected prerequisite outputs created this run, reused intentionally,
-  or not observed;
-- `probe_admission`: whether a repo-owned prerequisite was probed only after its selected producer
-  closure succeeded;
-- `ambient_state_boundaries[]`: named unresolved state classes such as `host_environment`,
-  `preexisting_service`, or `persistent_dependency_cache`.
+- `id` and `class`: stable prerequisite identity and one of `filesystem`, `dependency_cache`,
+  `service`, `volume`, `environment`, or `image_runtime`;
+- `boundary`: selected boundary kind, lifecycle, and isolation posture used when deriving the
+  summary;
+- `selected_by`: the selected task/workflow and producer closure that made the prerequisite
+  material to this proof;
+- `state`: `created_this_run`, `declared_immutable_input`, `verified_reused`, or `unknown`;
+- `basis`: the runner-derived producer/admission basis, or a verified boundary-attestation
+  reference;
+- `ambient_boundary`: an explicit unresolved class when the state is `unknown`.
 
-The record is runner-derived or boundary-attested. It does not become caller assertion merely
-because the contract selects a container mode.
+`execution_boundary.summary` is strictly derived from `prerequisites[]`:
 
-## Truth Rules
+- `cold_start_verified` only when the selected boundary is isolated and every material
+  prerequisite is `created_this_run` or `declared_immutable_input`;
+- `persistent_state_reused` when any material prerequisite is `verified_reused`;
+- `unknown` otherwise.
 
-- `cold_start_verified` requires a runner-owned isolated boundary plus evidence that the selected
-  setup closure materialized the prerequisites it later probed or executed.
-- `provider_ephemeral_runner` is not automatically cold proof. Ota may report the provider fact,
-  but must retain `unknown` freshness unless it can establish the relevant filesystem, service, and
-  cache boundary honestly.
-- Native host execution defaults to `host_unknown`; Ota must not infer absence of ambient state.
-- Persistent lifecycle execution must report `persistent_state_reused` whenever selected paths use
-  a known persistent context, volume, cache, or already-running service.
-- A required repo-owned executable, generated config, or declared setup artifact may not be probed
-  before its selected producer closure succeeds. Failure to establish that ordering is an explicit
-  preflight boundary, not a best-effort probe.
+An immutable container image or pinned toolchain is a legitimate `declared_immutable_input`; it
+need not be recreated by setup, but must carry the immutable identity Ota evaluated. A verified
+reused cache, volume, service, or environment blocks a cold-start summary even when its reuse is
+intentional.
+
+## Evidence And Attestation Rules
+
+- `provider_ephemeral_runner` is not automatically cold proof. A provider assertion can support a
+  prerequisite only through a verified boundary attestation containing its issuer kind and immutable
+  issuer identity, current run identity, selected-scope identity, payload digest, verification
+  result, and `evidence_class: attested`.
+- A caller-controlled signal such as `CI=true`, a workflow label, or free-text provider claim never
+  promotes a prerequisite beyond `unknown`.
+- Native host execution defaults material host, environment, cache, and service prerequisites to
+  `unknown` unless Ota has stronger runner-owned evidence.
+- A persistent attachment, volume, cache, or already-running service is `verified_reused` only
+  when Ota can identify and verify the selected reused boundary; otherwise it remains `unknown`.
+- A required repo-owned executable, generated config, or declared setup artifact must consume the
+  existing canonical producer-before-probe admission result. V11.16 must close only remaining
+  selected runtime paths; it must not create proof-specific ordering logic parallel to Doctor's
+  shipped producer/admission evaluator.
+- Missing attestation identity, a scope mismatch, invalid verification, or an unclassified material
+  prerequisite yields `unknown`; no partial attestation can be summarized as cold proof.
 
 ## Contract Boundary
 
@@ -94,20 +113,30 @@ cleanup. Its archived proof record must preserve the same execution-boundary rec
 receive an additive projection later; ordinary `ota run` success must not claim runtime freshness
 it did not prove.
 
-Human proof output must render the freshness state and every unresolved ambient boundary beside the
-terminal proof verdict. A green proof with `host_unknown` must remain visibly qualified.
+The JSON schema must require `execution_boundary.prerequisites[]`, each prerequisite state and
+basis, and the derived `execution_boundary.summary`. It must reject a cold summary when a material
+prerequisite is `verified_reused` or `unknown`, and reject an `attested` basis without the complete
+attestation identity/verification record. The archive preserves byte-identical boundary evidence.
+
+Human proof output must render the derived summary and every unresolved ambient boundary beside the
+terminal proof verdict. A green proof with `unknown` material state must remain visibly qualified.
 
 ## Implementation Order
 
-1. Define runner-owned execution-boundary types and derive them from selected execution scope,
-   lifecycle, producer closure, and observed persistent attachments/services.
-2. Enforce producer-before-probe admission for repo-owned executables and generated artifacts on
-   the selected native and container paths.
-3. Emit the record in runtime-proof JSON, archive it with the proof, and render it in human proof
-   output.
-4. Add fixtures for cold ephemeral materialization, host-unknown execution, persistent reuse, and
-   rejected premature probing.
-5. Pressure-test a repo-local virtualenv lane and a container-backed setup lane on clean CI.
+1. Define runner-owned prerequisite evidence types and derive their selected material set from
+   execution scope, lifecycle, existing producer/admission results, attachments, services, and
+   immutable contract inputs.
+2. Reuse canonical producer-before-probe admission evidence on all remaining selected native and
+   container runtime paths; add only the missing integration coverage.
+3. Define verified boundary-attestation parsing and rejection, including issuer, run, scope, digest,
+   and verification binding.
+4. Emit the per-prerequisite record and derived summary in runtime-proof JSON, archive it with the
+   proof, and render it in human proof output.
+5. Add schema and regression fixtures for all-created/immutable cold proof, mixed persistent reuse,
+   host unknown, forged or stale provider attestation, and rejected premature probing.
+6. Pressure-test Lead Quorum's repo-local virtualenv lane and Athena's ephemeral container app plus
+   host-managed PostgreSQL runtime lane on clean CI. The latter must remain mixed/qualified unless
+   Ota can identify a selected service boundary honestly.
 
 ## Non-Goals
 
@@ -121,10 +150,16 @@ terminal proof verdict. A green proof with `host_unknown` must remain visibly qu
 
 V11.16 is complete when:
 
-- runtime proof distinguishes verified cold start, known persistent reuse, and unknown host state;
-- no selected repo-owned prerequisite is probed before its declared producer closure succeeds;
-- proof archives preserve the exact boundary evidence that supported the freshness result;
+- every selected material prerequisite has exactly one state and basis in JSON;
+- `cold_start_verified` is emitted only for an isolated boundary whose complete selected
+  prerequisite set is `created_this_run` or `declared_immutable_input`;
+- a mixed-state fixture with a reused cache, volume, or service derives
+  `persistent_state_reused`, never cold proof;
+- a forged, stale, scope-mismatched, or caller-controlled provider assertion remains `unknown` and
+  cannot produce `evidence_class: attested`;
+- no selected repo-owned prerequisite is probed before its canonical producer closure succeeds;
+- proof archives preserve the exact prerequisite and attestation evidence that supported the
+  derived summary, and schema conformance covers live JSON and archived proof JSON;
 - human and JSON output keep a green proof from over-reading unresolved ambient state;
-- native and container fixtures cover the same prerequisite ordering rule;
-- one real Python/virtualenv repo and one container-backed repo pressure-test the model without
+- Lead Quorum and Athena pressure the native producer and container/service boundaries without
   repo-local shell workarounds.
