@@ -26,8 +26,8 @@
 
 # V11.15: Managed GitHub Actions Governance Projection
 
-Status: planned. This follows active V11.14. Do not begin implementation until V11.14 is complete
-and its assurance/policy truth is pressure-proven.
+Status: active. V11.14 assurance/policy truth is complete and pressure-proven. Implement this
+slice without reopening its canonical evaluator or policy semantics.
 
 V11.5 defines the required foundation: required-lane projection, stable `merge_check_id` identity,
 merge-gate output, and contract-to-CI drift evaluation. Those semantics must be complete before

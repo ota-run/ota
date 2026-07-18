@@ -41,7 +41,7 @@ durable agent workflow belongs in the canonical Ota skill.
   receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
   dry-run, and real native plus container agent-safe execution. Strict-policy admission for lanes
   that require declared pins remains a future policy refinement rather than an implicit default.
-- active V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
+- completed V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer
   declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;
@@ -61,8 +61,10 @@ durable agent workflow belongs in the canonical Ota skill.
   admission remains unchanged without that policy requirement. Generic deterministic workflows
   without a declared dependency seam can opt into this same assurance through
   `workflows.<name>.proof.claim: bounded`; Doctor reports `bounded_proof` as `unknown` until a
-  matching immutable archive exists, then `supported`. Bedrock pressure proves that transition on
-  its offline replay lane without inventing seam or negative-control evidence.
+  matching immutable archive exists, then `supported`. Bedrock proves that transition on its
+  offline replay lane without inventing seam or negative-control evidence; Lead Quorum proves the
+  independent `unknown` path without an archive. V11.15 is now active: render, check, and sync
+  must share one GitHub reusable-workflow projection model.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt
@@ -206,10 +208,6 @@ durable agent workflow belongs in the canonical Ota skill.
   the provider, Dockerfile, repo-relative context, and local tag without raw `docker build` glue.
   Lead Quorum proves the direct image build; Flagr carries the equivalent integration-image task,
   with its live build awaiting a healthy Docker daemon on the pressure host.
-- V11.14 is planned as the next contract-claim assurance layer. It keeps contract declaration,
-  V11.3 closure enforcement, observable evidence assurance, and policy admission separate so a
-  wrong-but-internally-consistent claim is `unknown` or `contradicted`, never silently verified.
-  This is planning only; it does not change current agent-mode admission semantics.
 - `V11.11` contract-derived proof boundaries is implemented in Ota commit `e3bbdf02`.
   `ota proof runtime --json` now emits terminal `proof_verdict`, and Lead Quorum pressure proved
   `passed_with_unproven_boundaries` on the app lane across Ubuntu and macOS.

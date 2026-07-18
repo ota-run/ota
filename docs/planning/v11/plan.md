@@ -131,12 +131,9 @@ The completed trust/product follow-ons are:
 - [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
 - [V11.13: generated artifact lineage](../v11.13/plan.md)
-
-The next planned trust/governance slice is:
-
 - [V11.14: contract-claim assurance](../v11.14/plan.md)
 
-The following planned provider-adapter slice is:
+The next active provider-adapter slice is:
 
 - [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md)
 
@@ -165,9 +162,10 @@ The completed trust-refinement sequence established:
 - V11.13 names generated source as a contract-owned producer/consumer artifact instead of relying
   on procedural ordering alone
 
-The next planned trust-refinement move is V11.14. It distinguishes a maintainer claim, the closure
-the runner can enforce, observable evidence supporting or contradicting that claim, and the policy
-decision that admits it.
+V11.14 completes the trust-refinement sequence by keeping a maintainer claim, the closure the
+runner can enforce, observable evidence supporting or contradicting that claim, and the policy
+decision that admits it separate. Its Athena and Lead Quorum pressure paths prove both supported
+and unknown assurance outcomes before V11.15 begins.
 
 ## Included capabilities
 
