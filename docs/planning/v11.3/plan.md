@@ -29,7 +29,7 @@ execution, refuses unsafe paths at the runner boundary, and emits canonical refu
 
 Release target:
 
-- planned slice after `v11.2`
+- partially implemented continuation after `v11.2`; refusal canaries remain open
 
 Source direction:
 

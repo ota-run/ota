@@ -71917,19 +71917,48 @@ tasks:
         production_source.to_string()
     }
 
+    fn finding_literal_bodies(source: &str) -> Vec<&str> {
+        let mut bodies = Vec::new();
+        let mut remaining = source;
+        while let Some(start) = remaining.find("Finding {") {
+            let body = &remaining[start + "Finding {".len()..];
+            let mut depth = 1usize;
+            let mut end = None;
+            for (index, character) in body.char_indices() {
+                match character {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(index);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let end = end.expect("Finding literal should have a closing brace");
+            bodies.push(&body[..end]);
+            remaining = &body[end + 1..];
+        }
+        bodies
+    }
+
     #[test]
     fn shipped_commands_findings_require_explicit_identity_metadata() {
         let production_source = commands_production_source();
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
         let finding_without_identity =
-            production_source.split("Finding {").skip(1).any(|finding| {
-                finding.lines().take(10).any(|line| {
-                    matches!(
-                        line.trim(),
-                        "identity: None," | "identity: Default::default(),"
-                    )
-                })
-            });
+            finding_literal_bodies(&production_source)
+                .into_iter()
+                .any(|finding| {
+                    finding.lines().any(|line| {
+                        matches!(
+                            line.trim(),
+                            "identity: None," | "identity: Default::default(),"
+                        )
+                    })
+                });
 
         assert!(
             !finding_without_identity,

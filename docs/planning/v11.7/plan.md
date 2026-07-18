@@ -29,7 +29,7 @@ grant authority, crossing-time liveness/scope checks, and authorizer binding rem
 
 Release target:
 
-- completed slice after `v11.6`
+- partially implemented continuation after `v11.6`; reusable grant authority remains open
 
 Source direction:
 

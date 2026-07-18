@@ -29,7 +29,7 @@ application and receipt-bound compiled-policy identity/freshness remain open.
 
 Release target:
 
-- completed slice after `v11.7`
+- partially implemented continuation after `v11.7`; provider-enforced sandbox application remains open
 
 Source direction:
 

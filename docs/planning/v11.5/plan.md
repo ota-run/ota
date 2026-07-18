@@ -29,7 +29,7 @@ evaluation are shipped; CI-owned refusal-canary execution remains open.
 
 Release target:
 
-- completed slice after `v11.4`
+- partially implemented continuation after `v11.4`; CI-owned refusal canaries remain open
 
 Source direction:
 
