@@ -42,7 +42,8 @@ durable agent workflow belongs in the canonical Ota skill.
   dry-run, and real native plus container agent-safe execution. Strict-policy admission for lanes
   that require declared pins remains a future policy refinement rather than an implicit default.
 - active V11.14 contract-claim assurance: the shared `claim_assurance` domain now supplies the
-  first additive `ota doctor --json` carrier for declared agent-safe tasks. It keeps maintainer
+  first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
+  claims. It keeps maintainer
   declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;
   declaration plus closure remains `unknown` without non-self-origin evidence. Its first
   deterministic contradiction is a typed `reset_compose_service_volume` action that omits the
@@ -57,8 +58,11 @@ durable agent workflow belongs in the canonical Ota skill.
   Opt-in
   `policies.agent.claim_assurance` requirements now drive the same canonical `deny` or `review`
   decision through Doctor, `ota run --agent`, previews, and `ota up --agent`; default agent
-  admission remains unchanged without that policy requirement. Immutable proof-breadth evidence
-  remains next.
+  admission remains unchanged without that policy requirement. Generic deterministic workflows
+  without a declared dependency seam can opt into this same assurance through
+  `workflows.<name>.proof.claim: bounded`; Doctor reports `bounded_proof` as `unknown` until a
+  matching immutable archive exists, then `supported`. Bedrock pressure proves that transition on
+  its offline replay lane without inventing seam or negative-control evidence.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt
