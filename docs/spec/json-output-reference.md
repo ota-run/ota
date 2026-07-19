@@ -844,6 +844,9 @@ Success:
           "merge_check_id": "ota.refusal-canary.task.publish"
         }
       ],
+      "toolchains": [
+        { "name": "go", "source": "go", "version": "1.26" }
+      ],
       "bootstrap": { "source_kind": "version", "source_identity": "v1.6.24" },
       "proof_required": false,
       "governance": {
@@ -896,6 +899,10 @@ receipts. `bootstrap` carries the portable contract-owned bootstrap posture, and
 names the declared proof requirement. A denied provider-neutral projection still returns its
 evaluated `projection` plus a typed `refusal` in JSON, so CI consumers can inspect the exact
 identity, decision, and basis rather than infer them from an error string.
+
+`projection.toolchains[]` is the normalized, selected-closure toolchain requirement for the target
+OS. It is contract truth, not a runner-image assumption. Provider adapters may render supported
+setup steps from it; unsupported required sources fail render rather than becoming ambient setup.
 
 `projection.refusal_canaries[]` is the canonical contract-owned negative-control set for the
 selected CI lane. Each unique entry carries `kind`, `target`, and a stable `merge_check_id` that

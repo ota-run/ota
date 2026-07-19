@@ -6,7 +6,7 @@
     "projection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "mode", "target_os", "merge_check_ids", "refusal_canaries", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
+      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "mode", "target_os", "merge_check_ids", "refusal_canaries", "toolchains", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
       "properties": {
         "schema_version": { "const": 1 },
         "semantic_contract_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
@@ -26,6 +26,19 @@
               "kind": { "enum": ["task", "workflow"] },
               "target": { "type": "string" },
               "merge_check_id": { "type": "string" }
+            }
+          }
+        },
+        "toolchains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "source", "version"],
+            "properties": {
+              "name": { "type": "string" },
+              "source": { "enum": ["rustup", "corepack", "sdkman", "uv", "go", "ruby", "dotnet", "mise", "unspecified"] },
+              "version": { "type": "string" }
             }
           }
         },

@@ -29,15 +29,16 @@ use serde::Serialize;
 use serde_yaml::{Mapping, Value as YamlValue};
 use sha2::{Digest, Sha256};
 
-use crate::ci_projection::CiProjection;
 #[cfg(test)]
 use crate::ci_projection::build_ci_projection;
+use crate::ci_projection::{CiProjection, CiProjectionToolchain};
 #[cfg(test)]
 use crate::schema::Contract;
 
 pub(crate) const OWNERSHIP_MARKER: &str = "# ota:managed-github-projection v1";
 const GITHUB_CHECKOUT_REV: &str = "34e114876b0b11c390a56381ad16ebd13914f8d5";
 const OTA_SETUP_REV: &str = "493cba84bf7f7c11c9e8e996d832d93a89c62184";
+const GITHUB_SETUP_GO_REV: &str = "924ae3a1cded613372ab5595356fb5720e22ba16";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitHubProjection {
@@ -90,6 +91,7 @@ pub(crate) fn render_github_projection_from_projection(
     let workflow_yaml = yaml_scalar(&projection.workflow);
     let runner_yaml = yaml_scalar(runner);
     let mode_flag = format!(" --mode {}", projection.mode);
+    let toolchain_setup_steps = github_toolchain_setup_steps(&projection.toolchains)?;
     let provider_checks = projection
         .merge_check_ids
         .iter()
@@ -131,6 +133,7 @@ pub(crate) fn render_github_projection_from_projection(
                     "      - uses: ota-run/setup@{OTA_SETUP_REV}\n",
                     "        with:\n",
                     "          source: contract\n",
+                    "{toolchain_setup_steps}",
                     "      - name: Verify Ota projection identity\n",
                     "        run: ota ci projection --workflow {workflow_yaml}{mode_flag} --target-os ${{{{ inputs.ota_target_os }}}} --expect-identity ${{{{ inputs.ota_projection_identity }}}} --json\n",
                     "      - name: Prove agent refusal canary\n",
@@ -147,6 +150,7 @@ pub(crate) fn render_github_projection_from_projection(
                 command = command,
                 GITHUB_CHECKOUT_REV = GITHUB_CHECKOUT_REV,
                 OTA_SETUP_REV = OTA_SETUP_REV,
+                toolchain_setup_steps = toolchain_setup_steps,
             )
         })
         .collect::<String>();
@@ -202,6 +206,7 @@ pub(crate) fn render_github_projection_from_projection(
             "      - uses: ota-run/setup@{OTA_SETUP_REV}\n",
             "        with:\n",
             "          source: contract\n",
+            "{toolchain_setup_steps}",
             "      - name: Verify Ota projection identity\n",
             "        run: ota ci projection --workflow {workflow_yaml}{mode_flag} --target-os ${{{{ inputs.ota_target_os }}}} --expect-identity ${{{{ inputs.ota_projection_identity }}}} --json\n",
             "      - name: Validate contract\n",
@@ -224,6 +229,7 @@ pub(crate) fn render_github_projection_from_projection(
         mode_flag = mode_flag,
         GITHUB_CHECKOUT_REV = GITHUB_CHECKOUT_REV,
         OTA_SETUP_REV = OTA_SETUP_REV,
+        toolchain_setup_steps = toolchain_setup_steps,
         execution_steps = execution_steps,
         refusal_canary_jobs = refusal_canary_jobs,
     );
@@ -244,6 +250,27 @@ pub(crate) fn render_github_projection_from_projection(
         render_identity,
         rendered,
     })
+}
+
+fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<String, String> {
+    toolchains
+        .iter()
+        .map(|toolchain| match toolchain.source.as_str() {
+            "go" => Ok(format!(
+                concat!(
+                    "      - uses: actions/setup-go@{GITHUB_SETUP_GO_REV}\n",
+                    "        with:\n",
+                    "          go-version: {version}\n"
+                ),
+                GITHUB_SETUP_GO_REV = GITHUB_SETUP_GO_REV,
+                version = yaml_scalar(&toolchain.version),
+            )),
+            source => Err(format!(
+                "GitHub projection cannot provision required toolchain `{}` with source `{source}`; choose a supported provider adapter or keep the lane outside managed execution",
+                toolchain.name
+            )),
+        })
+        .collect()
 }
 
 fn github_job_id(check_id: &str) -> String {
@@ -346,9 +373,17 @@ mod tests {
 version: 1
 project:
   name: fixture
+toolchains:
+  go:
+    version: "1.26"
+    fulfillment:
+      source: go
+      mode: none
 tasks:
   verify:
     run: echo verify
+    requirements:
+      toolchains: [go]
   publish:
     run: echo publish
 workflows:
@@ -457,6 +492,12 @@ agent:
                 .rendered
                 .contains("ota-run/setup@493cba84bf7f7c11c9e8e996d832d93a89c62184")
         );
+        assert!(
+            first
+                .rendered
+                .contains("actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
+        );
+        assert!(first.rendered.contains("go-version: '1.26'"));
         assert!(
             first
                 .rendered

@@ -76,7 +76,10 @@ durable agent workflow belongs in the canonical Ota skill.
   Each unique contract refusal canary is now emitted as its own provider check with a stable
   `merge_check_id`; the GitHub adapter publishes the scope-qualified provider-check mapping so
   native/container and OS lanes stay independently requireable. The generated check invokes Ota's
-  `--expect-refusal` runner boundary directly.
+  `--expect-refusal` runner boundary directly. Projection also carries selected-closure,
+  provider-neutral `toolchains[]`; the GitHub adapter renders Go setup from the contract through
+  an immutable Action revision and refuses unsupported required sources rather than relying on an
+  ambient hosted-runner toolchain.
   Kylrix renders valid distinct native
   and container reusable lanes without collapsing its separately selected `sqlite-dev` runtime
   proof into `verify`. Strict V11.14 agent and proof assurance admission is evaluated before

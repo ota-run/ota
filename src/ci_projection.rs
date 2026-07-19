@@ -24,7 +24,7 @@
 //   limitations under the License.
 
 use crate::contract_drift::{merge_check_id_for_lane_task, merge_check_id_for_refusal_canary};
-use crate::schema::Contract;
+use crate::schema::{Contract, ToolchainFulfillmentSource};
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
 use sha2::Digest;
@@ -41,6 +41,8 @@ pub(crate) struct CiProjection {
     pub target_os: String,
     pub merge_check_ids: Vec<String>,
     pub refusal_canaries: Vec<CiProjectionRefusalCanary>,
+    /// Contract-owned toolchains required by the selected workflow closure.
+    pub toolchains: Vec<CiProjectionToolchain>,
     pub proof_required: bool,
     pub proof_claim: Option<String>,
     pub bootstrap: CiProjectionBootstrap,
@@ -61,6 +63,14 @@ pub(crate) struct CiProjectionRefusalCanary {
     pub kind: String,
     pub target: String,
     pub merge_check_id: String,
+}
+
+/// A provider-neutral toolchain requirement. Provider adapters decide how to satisfy it.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CiProjectionToolchain {
+    pub name: String,
+    pub source: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +110,7 @@ struct CiProjectionIdentity<'a> {
     target_os: &'a str,
     merge_check_ids: &'a [String],
     refusal_canaries: &'a [CiProjectionRefusalCanary],
+    toolchains: &'a [CiProjectionToolchain],
     proof_required: bool,
     proof_claim: &'a Option<String>,
     bootstrap: &'a CiProjectionBootstrap,
@@ -194,6 +205,7 @@ pub(crate) fn build_ci_projection(
     );
     let proof_required = workflow.proof.claim_value().is_some();
     let proof_claim = workflow.proof.claim_value().map(str::to_string);
+    let toolchains = selected_projection_toolchains(contract, workflow_name, target_os)?;
     let bootstrap = contract
         .agent
         .as_ref()
@@ -227,6 +239,7 @@ pub(crate) fn build_ci_projection(
         target_os: target_os.to_string(),
         merge_check_ids,
         refusal_canaries,
+        toolchains,
         proof_required,
         proof_claim,
         bootstrap,
@@ -274,6 +287,7 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
                 target_os: &projection.target_os,
                 merge_check_ids: &projection.merge_check_ids,
                 refusal_canaries: &projection.refusal_canaries,
+                toolchains: &projection.toolchains,
                 proof_required: projection.proof_required,
                 proof_claim: &projection.proof_claim,
                 bootstrap: &projection.bootstrap,
@@ -283,6 +297,50 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
         )
     );
     Ok(())
+}
+
+fn selected_projection_toolchains(
+    contract: &Contract,
+    workflow_name: &str,
+    target_os: &str,
+) -> Result<Vec<CiProjectionToolchain>, String> {
+    let mut names = BTreeSet::new();
+    for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        names.extend(task.requirements.toolchains.iter().cloned());
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let toolchain = contract.toolchains.get(name.as_str())?;
+            toolchain.required_for_os(target_os).then(|| {
+                Ok(CiProjectionToolchain {
+                    name,
+                    source: toolchain
+                        .fulfillment_source()
+                        .map(toolchain_source_label)
+                        .unwrap_or("unspecified")
+                        .to_string(),
+                    version: toolchain.version_for_os(target_os).to_string(),
+                })
+            })
+        })
+        .collect()
+}
+
+fn toolchain_source_label(source: ToolchainFulfillmentSource) -> &'static str {
+    match source {
+        ToolchainFulfillmentSource::Rustup => "rustup",
+        ToolchainFulfillmentSource::Corepack => "corepack",
+        ToolchainFulfillmentSource::Sdkman => "sdkman",
+        ToolchainFulfillmentSource::Uv => "uv",
+        ToolchainFulfillmentSource::Go => "go",
+        ToolchainFulfillmentSource::Ruby => "ruby",
+        ToolchainFulfillmentSource::Dotnet => "dotnet",
+        ToolchainFulfillmentSource::Mise => "mise",
+    }
 }
 
 #[cfg(test)]
@@ -364,6 +422,49 @@ agent:
                 .merge_check_ids
                 .contains(&String::from("ota.refusal-canary.workflow.release"))
         );
+    }
+
+    #[test]
+    fn projection_carries_selected_closure_toolchains_with_target_os_version() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: toolchain-fixture
+toolchains:
+  go:
+    version: ">=1.26,<1.27"
+    fulfillment:
+      source: go
+      mode: none
+    platforms:
+      macos:
+        version: "1.26.1"
+tasks:
+  setup:
+    run: go mod download
+    requirements:
+      toolchains: [go]
+  verify:
+    run: go test ./...
+    depends_on: [setup]
+    requirements:
+      toolchains: [go]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("fixture contract should parse");
+
+        let projection = build_ci_projection(&contract, "verify", "native", "macos")
+            .expect("projection should build");
+        assert_eq!(projection.toolchains.len(), 1);
+        assert_eq!(projection.toolchains[0].name, "go");
+        assert_eq!(projection.toolchains[0].source, "go");
+        assert_eq!(projection.toolchains[0].version, "1.26.1");
     }
 
     #[test]

@@ -746,7 +746,7 @@ Current behavior:
   unavailable mode for that target is refused before rendering. A denied projection remains inspectable in
   JSON with its evaluated identity, governance decision, and refusal basis.
 - The generated workflow owns checkout, immutable adapter revisions, `ota-run/setup` with
-  `source: contract`, selected `ota validate`, `ota doctor --workflow`, safe-surface discovery,
+  `source: contract`, provider-adapter setup for contract-required toolchains, selected `ota validate`, `ota doctor --workflow`, safe-surface discovery,
   agent dry-run, and either agent execution plus receipt archival or, for a proof-required lane,
   one authoritative `ota proof runtime` execution. Each declared, unique
   `agent.refusal_canaries` control renders as its own provider check using Ota's
@@ -760,6 +760,9 @@ Current behavior:
   reconstructing execution commands from caller YAML.
 - The generated workflow verifies identity through `ota ci projection --expect-identity`, not a
   provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
+  `projection.toolchains[]` is provider-neutral contract truth. The GitHub adapter currently
+  renders an immutable `actions/setup-go` step for `source: go`; it refuses a required toolchain
+  source it cannot provision rather than silently assuming the selected runner image provides it.
 - `check` fails for a missing, stale, manually changed, or unowned generated workflow, or when the
   caller points at a different semantic projection.
 - `sync` is explicit and atomic. It creates a missing output or replaces only a file carrying the
@@ -774,7 +777,7 @@ full CI workflow or infer provider policy. Existing workflow YAML remains useful
 but it cannot silently rewrite `ota.yaml`.
 
 JSON output carries `ok`, `operation`, `projection.identity`, selected workflow/task, runner,
-`merge_check_ids`, adapter `provider_checks`, `proof_required`, `render_identity`, `binding_identity`, managed output path, caller path, and
+`merge_check_ids`, required `toolchains`, adapter `provider_checks`, `proof_required`, `render_identity`, `binding_identity`, managed output path, caller path, and
 whether `sync` mutated its owned file. `render_identity` is adapter-scoped; `binding_identity` also
 binds the parsed human-owned caller reference.
 Failures carry a stable `code`, including `managed_output_unowned`, `managed_output_stale`, and
