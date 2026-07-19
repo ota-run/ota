@@ -263,7 +263,7 @@ fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<
                     "          go-version: {version}\n"
                 ),
                 GITHUB_SETUP_GO_REV = GITHUB_SETUP_GO_REV,
-                version = yaml_scalar(&toolchain.version),
+                version = yaml_scalar(&github_go_version_spec(&toolchain.version)?),
             )),
             source => Err(format!(
                 "GitHub projection cannot provision required toolchain `{}` with source `{source}`; choose a supported provider adapter or keep the lane outside managed execution",
@@ -271,6 +271,47 @@ fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<
             )),
         })
         .collect()
+}
+
+/// `actions/setup-go` accepts a release selector, not Ota's full comparator-set syntax.
+/// Preserve contract ranges in the neutral projection, then select the explicit lower release for
+/// this adapter. A malformed or unsupported comparator remains a render refusal.
+fn github_go_version_spec(version: &str) -> Result<String, String> {
+    let trimmed = version.trim();
+    let constraints = trimmed.split(',').map(str::trim).collect::<Vec<_>>();
+    let candidate = if constraints.len() == 1 {
+        constraints[0]
+    } else {
+        let Some(lower) = constraints[0].strip_prefix(">=").map(str::trim) else {
+            return Err(format!(
+                "GitHub projection cannot derive an actions/setup-go selector from required Go version `{version}`"
+            ));
+        };
+        if constraints[1..].iter().any(|constraint| {
+            !constraint
+                .strip_prefix('<')
+                .map(str::trim)
+                .is_some_and(is_numeric_version)
+        }) {
+            return Err(format!(
+                "GitHub projection cannot derive an actions/setup-go selector from required Go version `{version}`"
+            ));
+        }
+        lower
+    };
+    if !is_numeric_version(candidate) {
+        return Err(format!(
+            "GitHub projection cannot derive an actions/setup-go selector from required Go version `{version}`"
+        ));
+    }
+    Ok(candidate.to_string())
+}
+
+fn is_numeric_version(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.')
 }
 
 fn github_job_id(check_id: &str) -> String {
@@ -375,7 +416,7 @@ project:
   name: fixture
 toolchains:
   go:
-    version: "1.26"
+    version: ">=1.26,<1.27"
     fulfillment:
       source: go
       mode: none
@@ -581,5 +622,15 @@ workflows:
                 .rendered
                 .contains("ota up --workflow 'verify' --mode native --agent --json")
         );
+    }
+
+    #[test]
+    fn github_go_version_selector_uses_the_declared_lower_bound() {
+        assert_eq!(
+            github_go_version_spec(">=1.26,<1.27").expect("range should project"),
+            "1.26"
+        );
+        assert!(github_go_version_spec(">=1.26,not-a-range").is_err());
+        assert!(github_go_version_spec("stable").is_err());
     }
 }

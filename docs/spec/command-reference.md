@@ -761,8 +761,10 @@ Current behavior:
 - The generated workflow verifies identity through `ota ci projection --expect-identity`, not a
   provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
   `projection.toolchains[]` is provider-neutral contract truth. The GitHub adapter currently
-  renders an immutable `actions/setup-go` step for `source: go`; it refuses a required toolchain
-  source it cannot provision rather than silently assuming the selected runner image provides it.
+  renders an immutable `actions/setup-go` step for `source: go`, translating the contract's
+  supported lower-bound range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`);
+  it refuses a required toolchain source or range it cannot provision rather than silently assuming
+  the selected runner image provides it.
 - `check` fails for a missing, stale, manually changed, or unowned generated workflow, or when the
   caller points at a different semantic projection.
 - `sync` is explicit and atomic. It creates a missing output or replaces only a file carrying the
