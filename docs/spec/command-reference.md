@@ -760,11 +760,12 @@ Current behavior:
   reconstructing execution commands from caller YAML.
 - The generated workflow verifies identity through `ota ci projection --expect-identity`, not a
   provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
-  `projection.toolchains[]` is provider-neutral contract truth. The GitHub adapter currently
-  renders an immutable `actions/setup-go` step for `source: go`, translating the contract's
-  supported lower-bound range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`);
-  it refuses a required toolchain source or range it cannot provision rather than silently assuming
-  the selected runner image provides it.
+  `projection.toolchains[]` is provider-neutral contract truth. The GitHub adapter renders
+  immutable `actions/setup-go` for `source: go`, translating the contract's supported lower-bound
+  range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`), and immutable
+  `actions/setup-node` for `toolchains.node` fulfilled through `source: corepack`, preserving the
+  declared Node semver selector. It refuses a required toolchain source or range it cannot provision
+  rather than silently assuming the selected runner image provides it.
 - `check` fails for a missing, stale, manually changed, or unowned generated workflow, or when the
   caller points at a different semantic projection.
 - `sync` is explicit and atomic. It creates a missing output or replaces only a file carrying the

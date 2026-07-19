@@ -39,6 +39,7 @@ pub(crate) const OWNERSHIP_MARKER: &str = "# ota:managed-github-projection v1";
 const GITHUB_CHECKOUT_REV: &str = "34e114876b0b11c390a56381ad16ebd13914f8d5";
 const OTA_SETUP_REV: &str = "493cba84bf7f7c11c9e8e996d832d93a89c62184";
 const GITHUB_SETUP_GO_REV: &str = "924ae3a1cded613372ab5595356fb5720e22ba16";
+const GITHUB_SETUP_NODE_REV: &str = "a0853c24544627f65ddf259abe73b1d18a591444";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitHubProjection {
@@ -255,8 +256,8 @@ pub(crate) fn render_github_projection_from_projection(
 fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<String, String> {
     toolchains
         .iter()
-        .map(|toolchain| match toolchain.source.as_str() {
-            "go" => Ok(format!(
+        .map(|toolchain| match (toolchain.name.as_str(), toolchain.source.as_str()) {
+            (_, "go") => Ok(format!(
                 concat!(
                     "      - uses: actions/setup-go@{GITHUB_SETUP_GO_REV}\n",
                     "        with:\n",
@@ -265,7 +266,16 @@ fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<
                 GITHUB_SETUP_GO_REV = GITHUB_SETUP_GO_REV,
                 version = yaml_scalar(&github_go_version_spec(&toolchain.version)?),
             )),
-            source => Err(format!(
+            ("node", "corepack") => Ok(format!(
+                concat!(
+                    "      - uses: actions/setup-node@{GITHUB_SETUP_NODE_REV}\n",
+                    "        with:\n",
+                    "          node-version: {version}\n"
+                ),
+                GITHUB_SETUP_NODE_REV = GITHUB_SETUP_NODE_REV,
+                version = yaml_scalar(&github_node_version_spec(&toolchain.version)?),
+            )),
+            (_, source) => Err(format!(
                 "GitHub projection cannot provision required toolchain `{}` with source `{source}`; choose a supported provider adapter or keep the lane outside managed execution",
                 toolchain.name
             )),
@@ -305,6 +315,16 @@ fn github_go_version_spec(version: &str) -> Result<String, String> {
         ));
     }
     Ok(candidate.to_string())
+}
+
+/// `actions/setup-node` consumes Node semver selectors directly, including the bounded ranges
+/// Ota contracts use. Reject an empty declaration rather than falling back to the hosted image.
+fn github_node_version_spec(version: &str) -> Result<String, String> {
+    let version = version.trim();
+    if version.is_empty() {
+        return Err("GitHub projection cannot derive an actions/setup-node selector from an empty Node version".to_string());
+    }
+    Ok(version.to_string())
 }
 
 fn is_numeric_version(value: &str) -> bool {
@@ -632,5 +652,26 @@ workflows:
         );
         assert!(github_go_version_spec(">=1.26,not-a-range").is_err());
         assert!(github_go_version_spec("stable").is_err());
+    }
+
+    #[test]
+    fn github_node_corepack_toolchain_preserves_the_contract_selector() {
+        let rendered = github_toolchain_setup_steps(&[CiProjectionToolchain {
+            name: "node".to_string(),
+            source: "corepack".to_string(),
+            version: "^22.12.0".to_string(),
+        }])
+        .expect("Node/Corepack should project");
+        assert!(rendered.contains("actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444"));
+        assert!(rendered.contains("node-version: '^22.12.0'"));
+        assert!(github_node_version_spec(" ").is_err());
+        assert!(
+            github_toolchain_setup_steps(&[CiProjectionToolchain {
+                name: "node".to_string(),
+                source: "mise".to_string(),
+                version: "22".to_string(),
+            }])
+            .is_err()
+        );
     }
 }
