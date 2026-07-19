@@ -772,7 +772,8 @@ Current behavior:
   immutable `actions/setup-go` for `source: go`, translating the contract's supported lower-bound
   range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`), and immutable
   `actions/setup-node` for `toolchains.node` fulfilled through `source: corepack`, preserving the
-  declared Node semver selector, immutable `ruby/setup-ruby` for `toolchains.ruby` fulfilled
+  declared Node semver selector while disabling setup-node's provider cache until Ota activates
+  the declared package manager, immutable `ruby/setup-ruby` for `toolchains.ruby` fulfilled
   through `source: ruby`, immutable `actions/setup-python` plus `astral-sh/setup-uv` for
   `toolchains.python` fulfilled through `source: uv`, and immutable `actions/setup-dotnet` for
   `toolchains.dotnet` fulfilled through `source: dotnet`, translating supported lower-bound Python

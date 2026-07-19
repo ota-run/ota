@@ -295,7 +295,8 @@ fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<
                 concat!(
                     "      - uses: actions/setup-node@{GITHUB_SETUP_NODE_REV}\n",
                     "        with:\n",
-                    "          node-version: {version}\n"
+                    "          node-version: {version}\n",
+                    "          package-manager-cache: false\n"
                 ),
                 GITHUB_SETUP_NODE_REV = GITHUB_SETUP_NODE_REV,
                 version = yaml_scalar(&github_node_version_spec(&toolchain.version)?),
@@ -846,6 +847,7 @@ workflows:
         .expect("Node/Corepack should project");
         assert!(rendered.contains("actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444"));
         assert!(rendered.contains("node-version: '^22.12.0'"));
+        assert!(rendered.contains("package-manager-cache: false"));
         assert!(github_node_version_spec(" ").is_err());
         assert!(
             github_toolchain_setup_steps(&[CiProjectionToolchain {

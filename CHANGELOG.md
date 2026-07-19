@@ -30,6 +30,10 @@
   direct `yarn` or `pnpm` commands run. A globally installed but incompatible package-manager shim
   can no longer bypass the contract-owned Corepack version.
 
+- fixed managed GitHub Node/Corepack projection to disable setup-node's provider cache before Ota
+  activates the contract-owned package manager. setup-node can no longer invoke an ambient Yarn
+  shim before Ota's selected workflow preparation runs.
+
 - fixed managed CI projection so finite verification workflows execute their selected task after
   `ota up` preparation instead of treating readiness-only `ota up` success as verification proof.
   The provider-neutral projection now binds `run_execution` as `finite_task` or `service_runtime`.
