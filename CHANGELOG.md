@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed managed CI projection so finite verification workflows execute their selected task after
+  `ota up` preparation instead of treating readiness-only `ota up` success as verification proof.
+  The provider-neutral projection now binds `run_execution` as `finite_task` or `service_runtime`.
+
 - fixed managed CI projection admission to evaluate the same full workflow closure as
   `ota up --agent`. A safe run task can no longer render a generated lane when an unsafe prepare,
   setup, or attach phase would be refused by the runner.

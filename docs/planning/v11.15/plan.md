@@ -108,6 +108,11 @@ prepare, setup, run, and attach roots as `ota up --agent`. A proof claim describ
 breadth; it is not execution authority. A denied or review-required workflow remains an
 inspectable refusal until a future contract- or policy-owned CI execution authority exists.
 
+Projection also owns the selected `run_execution` shape. Provider adapters prepare every workflow
+through `ota up`; `finite_task` lanes then execute the selected task through `ota run --agent`,
+while `service_runtime` and proof lanes retain their single runtime-owned execution path. A
+generated verification job must never treat readiness-only `ota up` success as finite-task proof.
+
 For an admitted proof-required workflow, `ota proof runtime` is the authoritative execution lane.
 The generated adapter may preview the lane, but must not first run `ota up` and then rerun the same
 runtime through proof. Projection identity includes the explicit `target_os` (`linux`, `macos`, or

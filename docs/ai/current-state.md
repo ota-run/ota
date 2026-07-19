@@ -96,6 +96,12 @@ durable agent workflow belongs in the canonical Ota skill.
   unsafe setup phase was later refused by `ota up --agent`. Projection now shares the runner's
   ordered prepare/setup/run/attach admission roots, and Outline's unchanged `checks` workflow
   returns the same inspectable `requested_task_not_safe` refusal from projection and render.
+  A clean Flagr deployment pressure clone then exposed a second renderer defect: finite workflows
+  used readiness-only `ota up` as their only generated execution step. Projection now binds
+  `run_execution` as `finite_task` or `service_runtime`; finite lanes prepare with `ota up` and
+  execute the selected task through `ota run --agent`. Flagr's Docker release and Pages deployment
+  workflows remain provider-owned and unmodified while all four managed verification bindings stay
+  checkable.
   Do not claim V11.15 complete until one mixed deployment/release workflow proves the same
   adapter boundary without replacing provider-owned policy.
   Projection identity now reuses the canonical normalized semantic snapshot identity used by

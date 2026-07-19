@@ -24,7 +24,7 @@
 //   limitations under the License.
 
 use crate::contract_drift::{merge_check_id_for_lane_task, merge_check_id_for_refusal_canary};
-use crate::schema::{Backend, Contract, ToolchainFulfillmentSource};
+use crate::schema::{Backend, Contract, TaskRuntimeKind, ToolchainFulfillmentSource};
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
 use sha2::Digest;
@@ -36,6 +36,9 @@ pub(crate) struct CiProjection {
     pub semantic_contract_identity: String,
     pub workflow: String,
     pub task: String,
+    /// The selected workflow run task's execution shape. Provider adapters use this to preserve
+    /// the runner's finite-task versus service-runtime boundary without reinterpreting the contract.
+    pub run_execution: CiProjectionRunExecution,
     pub mode: String,
     /// The operating system selected for this projection, independent of a provider runner label.
     pub target_os: String,
@@ -56,6 +59,13 @@ pub(crate) struct CiProjectionBootstrap {
     pub source_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_identity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CiProjectionRunExecution {
+    FiniteTask,
+    ServiceRuntime,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +118,7 @@ struct CiProjectionIdentity<'a> {
     semantic_contract_identity: &'a str,
     workflow: &'a str,
     task: &'a str,
+    run_execution: &'a CiProjectionRunExecution,
     mode: &'a str,
     target_os: &'a str,
     merge_check_ids: &'a [String],
@@ -155,6 +166,13 @@ pub(crate) fn build_ci_projection(
         "remote" => Backend::Remote,
         _ => unreachable!("projection mode was validated above"),
     };
+    let run_execution = contract
+        .tasks
+        .get(task.as_str())
+        .and_then(|task| task.service_runtime_for_backend(backend))
+        .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+        .then_some(CiProjectionRunExecution::ServiceRuntime)
+        .unwrap_or(CiProjectionRunExecution::FiniteTask);
     let unsupported_task = contract
         .selected_workflow_task_closure_names(Some(workflow_name))
         .into_iter()
@@ -269,6 +287,7 @@ pub(crate) fn build_ci_projection(
         semantic_contract_identity,
         workflow: workflow_name.to_string(),
         task,
+        run_execution,
         mode: mode.to_string(),
         target_os: target_os.to_string(),
         merge_check_ids,
@@ -317,6 +336,7 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
                 semantic_contract_identity: &projection.semantic_contract_identity,
                 workflow: &projection.workflow,
                 task: &projection.task,
+                run_execution: &projection.run_execution,
                 mode: &projection.mode,
                 target_os: &projection.target_os,
                 merge_check_ids: &projection.merge_check_ids,

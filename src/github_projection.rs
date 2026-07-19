@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256};
 
 #[cfg(test)]
 use crate::ci_projection::build_ci_projection;
-use crate::ci_projection::{CiProjection, CiProjectionToolchain};
+use crate::ci_projection::{CiProjection, CiProjectionRunExecution, CiProjectionToolchain};
 #[cfg(test)]
 use crate::schema::Contract;
 
@@ -94,6 +94,7 @@ pub(crate) fn render_github_projection_from_projection(
     let check_name = &projection.merge_check_ids[0];
     let job_id = github_job_id(check_name);
     let workflow_yaml = yaml_scalar(&projection.workflow);
+    let task_yaml = yaml_scalar(&projection.task);
     let runner_yaml = yaml_scalar(runner);
     let mode_flag = format!(" --mode {}", projection.mode);
     let toolchain_setup_steps = github_toolchain_setup_steps(&projection.toolchains)?;
@@ -168,10 +169,24 @@ pub(crate) fn render_github_projection_from_projection(
             workflow_yaml = workflow_yaml,
             mode_flag = mode_flag,
         )
+    } else if projection.run_execution == CiProjectionRunExecution::FiniteTask {
+        format!(
+            concat!(
+                "      - name: Prepare contract lane\n",
+                "        run: ota up --workflow {workflow_yaml}{mode_flag} --agent --json\n",
+                "      - name: Execute finite contract task\n",
+                "        run: ota run {task_yaml}{mode_flag} --agent\n",
+                "      - name: Archive workflow readiness receipt\n",
+                "        run: ota receipt --workflow {workflow_yaml}{mode_flag} --archive --json\n"
+            ),
+            workflow_yaml = workflow_yaml,
+            task_yaml = task_yaml,
+            mode_flag = mode_flag,
+        )
     } else {
         format!(
             concat!(
-                "      - name: Run contract lane\n",
+                "      - name: Run contract service lane\n",
                 "        run: ota up --workflow {workflow_yaml}{mode_flag} --agent --json\n",
                 "      - name: Archive contract receipt\n",
                 "        run: ota receipt --workflow {workflow_yaml}{mode_flag} --archive --json\n"
@@ -590,6 +605,10 @@ agent:
         assert_ne!(first.content_identity, alternate_runner.content_identity);
         assert_ne!(first.render_identity, alternate_runner.render_identity);
         assert_eq!(container.projection.mode, "container");
+        assert_eq!(
+            first.projection.run_execution,
+            CiProjectionRunExecution::FiniteTask
+        );
         assert!(
             container
                 .rendered
@@ -661,6 +680,17 @@ agent:
                 .contains("actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
         );
         assert!(first.rendered.contains("go-version: '1.26'"));
+        assert!(
+            first
+                .rendered
+                .contains("ota run 'verify' --mode native --agent")
+        );
+        assert!(first.rendered.contains("- name: Prepare contract lane"));
+        assert!(
+            first
+                .rendered
+                .contains("- name: Execute finite contract task")
+        );
         assert!(
             first
                 .rendered
@@ -744,6 +774,55 @@ workflows:
                 .rendered
                 .contains("ota up --workflow 'verify' --mode native --agent --json")
         );
+    }
+
+    #[test]
+    fn renderer_keeps_service_runtime_execution_on_the_up_path() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: service-projection-fixture
+surfaces:
+  web:
+    kind: http
+    port: 3000
+tasks:
+  serve:
+    launch:
+      kind: command
+      exe: sh
+      args: ["-c", "sleep 1"]
+    runtime:
+      kind: service
+      surfaces: [web]
+workflows:
+  default: serve
+  serve:
+    run:
+      task: serve
+"#,
+        )
+        .expect("service fixture contract should parse");
+        let projection =
+            render_github_projection(&contract, "serve", "ubuntu-latest", "native", "linux")
+                .expect("service projection should render");
+
+        assert_eq!(
+            projection.projection.run_execution,
+            CiProjectionRunExecution::ServiceRuntime
+        );
+        assert!(
+            projection
+                .rendered
+                .contains("- name: Run contract service lane")
+        );
+        assert!(
+            projection
+                .rendered
+                .contains("ota up --workflow 'serve' --mode native --agent --json")
+        );
+        assert!(!projection.rendered.contains("ota run 'serve'"));
     }
 
     #[test]

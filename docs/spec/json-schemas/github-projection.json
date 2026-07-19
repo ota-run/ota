@@ -6,12 +6,13 @@
     "projection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "mode", "target_os", "merge_check_ids", "refusal_canaries", "toolchains", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
+      "required": ["schema_version", "semantic_contract_identity", "workflow", "task", "run_execution", "mode", "target_os", "merge_check_ids", "refusal_canaries", "toolchains", "proof_required", "proof_claim", "bootstrap", "governance", "ownership", "identity"],
       "properties": {
         "schema_version": { "const": 1 },
         "semantic_contract_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "workflow": { "type": "string" },
         "task": { "type": "string" },
+        "run_execution": { "enum": ["finite_task", "service_runtime"] },
         "mode": { "enum": ["native", "container", "remote"] },
         "target_os": { "enum": ["linux", "macos", "windows"] },
         "merge_check_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },

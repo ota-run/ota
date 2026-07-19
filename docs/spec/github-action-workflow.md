@@ -227,8 +227,9 @@ caller keeps runner selection provider-owned, while `ota_target_os` binds the se
 system into the projection identity.
 
 The generated lane runs contract validation, Doctor, safe-surface discovery, and an agent-mode dry
-run. It then runs agent execution plus receipt archival, or uses `ota proof runtime` as the sole
-real execution lane when the selected workflow requires proof. A proof claim never admits an
+run. It prepares every workflow with `ota up`; when the selected run task is finite, it then runs
+that exact task through `ota run --agent` before archiving workflow readiness. Service-runtime and
+proof-required lanes retain one authoritative runtime execution path. A proof claim never admits an
 otherwise unsafe task.
 The generated action revisions are immutable so render identity covers the adapter dependencies.
 A distinct runtime workflow remains a distinct projection;

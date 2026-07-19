@@ -835,6 +835,7 @@ Success:
     "projection": {
       "workflow": "verify",
       "task": "verify",
+      "run_execution": "finite_task",
       "mode": "native",
       "target_os": "linux",
       "refusal_canaries": [

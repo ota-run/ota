@@ -742,6 +742,9 @@ Current behavior:
   lanes fail projection with the same canonical reason the runner would enforce. `--mode` selects its native,
   container, or remote plane; provider adapters consume that exact projection rather than
   reconstructing contract authority.
+- The projection carries `run_execution` as `finite_task` or `service_runtime`. Generated adapters
+  prepare every lane with `ota up`; they execute a finite run task through `ota run --agent` after
+  preparation, while service and proof lanes retain their one authoritative runtime path.
 - Omitting `--mode` resolves the selected task's effective contract default. `--target-os` is
   explicit projection truth and must match the intended CI operating system. Supplying an
   unavailable mode for that target is refused before rendering. A denied projection remains inspectable in
