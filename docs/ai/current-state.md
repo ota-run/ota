@@ -84,11 +84,16 @@ durable agent workflow belongs in the canonical Ota skill.
   from later failing before aggregate members run.
   Kylrix renders valid distinct native
   and container reusable lanes without collapsing its separately selected `sqlite-dev` runtime
-  proof into `verify`. Strict V11.14 agent and proof assurance admission is evaluated before
-  projection render/check; denied or review-required lanes return their canonical refusal rather
-  than generating a green wrapper. Remaining V11.15 proof is a committed Kylrix caller/matrix
-  pressure pass; do not claim full CI migration until generated lanes preserve the existing
-  native/container evidence.
+  proof into `verify`; its committed caller/matrix preserves the existing native/container
+  evidence. NopCommerce independently proves generated .NET verification on both native and
+  container lanes: the native lane projects the declared .NET 10 toolchain through an immutable
+  `actions/setup-dotnet` revision, while the container lane uses only the declared SDK image.
+  Both lanes bootstrap Ota from the pressure contract, verify their projection identity, run the
+  agent-admitted workflow closure, and archive a receipt in GitHub run `29686807594`. Strict
+  V11.14 agent and proof assurance admission is evaluated before projection render/check; denied
+  or review-required lanes return their canonical refusal rather than generating a green wrapper.
+  Do not claim V11.15 complete until one mixed deployment/release workflow proves the same
+  adapter boundary without replacing provider-owned policy.
   Projection identity now reuses the canonical normalized semantic snapshot identity used by
   receipts; omitted mode resolves from the selected task's effective contract default, while an
   unavailable explicit mode is refused. Denied provider-neutral JSON preserves the evaluated
