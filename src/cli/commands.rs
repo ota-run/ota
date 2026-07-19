@@ -66522,6 +66522,61 @@ agent:
     }
 
     #[test]
+    fn up_agent_dry_run_json_records_agent_actor_mode() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "true"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::up_with_agent(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            Some("verify"),
+            true,
+            OutputFormat::Json,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("preview json");
+        assert!(
+            json["governance"]["preflight"]["decision_inputs"]
+                .as_array()
+                .expect("decision inputs")
+                .iter()
+                .any(|entry| entry["id"] == "actor_mode:agent")
+        );
+    }
+
+    #[test]
     fn up_agent_json_refuses_unsafe_workflow_task_before_execution() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
@@ -113662,6 +113717,7 @@ fn append_up_preview_service_phase_actions(
     }
 }
 
+#[cfg(test)]
 fn build_up_preview(
     contract: &Contract,
     resolved_path: &Path,
@@ -113669,6 +113725,26 @@ fn build_up_preview(
     workflow_name: Option<&str>,
     run_behavior_preference: UpRunBehaviorPreference,
     preflight: &DoctorReport,
+) -> RepoUpPreview {
+    build_up_preview_with_actor(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        run_behavior_preference,
+        preflight,
+        false,
+    )
+}
+
+fn build_up_preview_with_actor(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    run_behavior_preference: UpRunBehaviorPreference,
+    preflight: &DoctorReport,
+    agent: bool,
 ) -> RepoUpPreview {
     let primary_task = selected_up_primary_task_name(contract, workflow_name);
     let (backend, lifecycle, target, context, image) = if let Some(task_name) = primary_task {
@@ -113847,7 +113923,7 @@ fn build_up_preview(
             overrides,
             run_behavior_preference,
             &summary,
-            false,
+            agent,
             None,
         ),
         blockers: preflight
@@ -116247,13 +116323,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             findings: vec![blocker.clone()],
         };
         if dry_run {
-            let preview = build_up_preview(
+            let preview = build_up_preview_with_actor(
                 contract,
                 resolved_path,
                 overrides,
                 workflow_name,
                 run_behavior_preference,
                 &report,
+                agent,
             );
             let receipt = preview_receipt(
                 contract,
@@ -116328,13 +116405,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         &mut preflight,
     );
     if dry_run {
-        let preview = build_up_preview(
+        let preview = build_up_preview_with_actor(
             contract,
             resolved_path,
             overrides,
             workflow_name,
             run_behavior_preference,
             &preflight,
+            agent,
         );
         let preview_ok = !doctor_verdict_blocks_preview(preview.summary.verdict);
         let status = doctor_readiness_status_label(preview.summary.verdict);
