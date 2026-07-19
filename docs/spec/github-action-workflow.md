@@ -227,10 +227,11 @@ caller keeps runner selection provider-owned, while `ota_target_os` binds the se
 system into the projection identity.
 
 The generated lane runs contract validation, Doctor, safe-surface discovery, and an agent-mode dry
-run. It prepares every workflow with `ota up`; when the selected run task is finite, it then runs
-that exact task through `ota run --agent` before archiving workflow readiness. Service-runtime and
-proof-required lanes retain one authoritative runtime execution path. A proof claim never admits an
-otherwise unsafe task.
+run. For a finite selected task, it runs that task directly through `ota run --agent`; `ota run`
+owns the full dependency closure, so a separate mutating `ota up` would create redundant work and
+cannot carry ephemeral container state into the task. Service-runtime and proof-required lanes
+retain one authoritative runtime execution path. A proof claim never admits an otherwise unsafe
+task.
 The generated action revisions are immutable so render identity covers the adapter dependencies.
 A distinct runtime workflow remains a distinct projection;
 Ota does not infer that one workflow's proof is evidence for another.

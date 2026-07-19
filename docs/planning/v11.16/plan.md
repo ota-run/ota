@@ -63,6 +63,13 @@ or an unordered digest list:
 Only the asserted target closure can determine target freshness. The derivation-input closure
 determines derivation posture and must never turn a freshly rebuilt target into persistent state.
 
+For an ephemeral selected closure, the runner owns one run-scoped execution session for every
+compatible container boundary. Dependency producers and consumers may share that session only when
+their resolved image, context, lifecycle, isolation mounts, network, publication shape, and
+execution identity match. Ota creates it before the first compatible closure step and destroys it
+only after the requested closure terminates. A later CLI invocation is a distinct run and never
+inherits that session. Incompatible boundaries remain isolated and must not be silently merged.
+
 The graph has stable nodes for prerequisites, producer executions, consumer executions,
 boundaries, and immutable inputs. It has typed edges:
 
@@ -146,6 +153,10 @@ also preventing legitimate immutable inputs from being treated as unexplained am
   existing canonical producer-before-probe admission result. V11.16 must close only remaining
   selected runtime paths; it must not create proof-specific ordering logic parallel to Doctor's
   shipped producer/admission evaluator.
+- An ephemeral dependency producer and its compatible consumer must execute in the same
+  runner-owned session. It is not sufficient that each task independently receives an ephemeral
+  container from the same image: unmounted package caches, tool activation, and process-local
+  materialization would otherwise disappear between closure steps.
 - Missing attestation identity, a scope mismatch, invalid verification, or an unclassified material
   prerequisite yields `unknown`; no partial attestation can be summarized as cold proof.
 
@@ -195,17 +206,21 @@ terminal proof verdict. A green proof with `unknown` material state must remain 
    generated SDKs, and rendered configuration.
 3. Reuse canonical producer-before-probe admission evidence on all remaining selected native and
    container runtime paths; add only the missing integration coverage.
-4. Define verified boundary-attestation parsing and rejection, including issuer, run, scope, digest,
+4. Add compatible ephemeral-closure session ownership to the runner. Keep session identity and
+   cleanup runner-authored, reuse only matching boundaries, and reject any attempt to cross an
+   incompatible context or lifecycle implicitly.
+5. Define verified boundary-attestation parsing and rejection, including issuer, run, scope, digest,
    and verification binding.
-5. Implement the shared semantic evaluator and reject invalid cross-graph relationships before
+6. Implement the shared semantic evaluator and reject invalid cross-graph relationships before
    JSON serialization or archive.
-6. Emit the graph, readable prerequisite projection, and derived verdicts in runtime-proof JSON,
+7. Emit the graph, readable prerequisite projection, and derived verdicts in runtime-proof JSON,
    archive them with the proof, and render them in human proof output.
-7. Add schema and semantic regression fixtures for ordered multi-producer mutation with two
+8. Add schema and semantic regression fixtures for ordered multi-producer mutation with two
    assertions, all-created/immutable cold proof, cold cache-assisted reconstruction, mixed
    persistent reuse, host unknown, forged or stale provider attestation, and rejected premature
    probing.
-8. Pressure-test Lead Quorum's repo-local virtualenv lane and Athena's ephemeral container app plus
+9. Pressure-test Lead Quorum's repo-local virtualenv lane, OrchardCore's typed .NET restore plus
+   build/test closure in one ephemeral container session, and Athena's ephemeral container app plus
    host-managed PostgreSQL runtime lane on clean CI. The latter must remain mixed/qualified unless
    Ota can identify a selected service boundary honestly.
 
@@ -238,6 +253,9 @@ V11.16 is complete when:
   two-assertion fixture proves each assertion binds its own matching producer edge by runner-owned
   sequence and causality;
 - no selected repo-owned prerequisite is probed before its canonical producer closure succeeds;
+- a typed dependency hydration producer followed by a compatible finite consumer uses one
+  run-scoped ephemeral session; a container-only OrchardCore restore/build/test fixture proves
+  package materialization survives the closure and is removed after it;
 - proof archives preserve the exact graph, prerequisite, and attestation evidence that supported
   the derived verdicts, and schema conformance covers live JSON and archived proof JSON;
 - human and JSON output keep a green proof from over-reading unresolved ambient state;

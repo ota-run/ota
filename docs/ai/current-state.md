@@ -98,12 +98,14 @@ durable agent workflow belongs in the canonical Ota skill.
   returns the same inspectable `requested_task_not_safe` refusal from projection and render.
   A clean Flagr deployment pressure clone then exposed a second renderer defect: finite workflows
   used readiness-only `ota up` as their only generated execution step. Projection now binds
-  `run_execution` as `finite_task` or `service_runtime`; finite lanes prepare with `ota up` and
-  execute the selected task through `ota run --agent`. Flagr's Docker release and Pages deployment
-  workflows remain provider-owned and unmodified while all four managed verification bindings stay
-  checkable.
-  Do not claim V11.15 complete until one mixed deployment/release workflow proves the same
-  adapter boundary without replacing provider-owned policy.
+  `run_execution` as `finite_task` or `service_runtime`; finite lanes retain a dry-run `ota up`
+  admission preview, then execute their selected closure directly through `ota run --agent`.
+  Compatible ephemeral container closure steps now share one runner-owned session, so typed
+  hydration state survives into its finite consumer without leaking across CLI invocations.
+  OrchardCore proves that .NET restore/build/test path locally in both native and container modes;
+  its tag-triggered release CI remains provider-owned and untouched. Do not claim V11.15 complete
+  until this mixed deployment/release boundary has a pushed matrix proof and one additional
+  independent pressure repository confirms the same adapter contract.
   Projection identity now reuses the canonical normalized semantic snapshot identity used by
   receipts; omitted mode resolves from the selected task's effective contract default, while an
   unavailable explicit mode is refused. Denied provider-neutral JSON preserves the evaluated

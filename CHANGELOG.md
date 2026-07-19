@@ -34,9 +34,12 @@
   activates the contract-owned package manager. setup-node can no longer invoke an ambient Yarn
   shim before Ota's selected workflow preparation runs.
 
-- fixed managed CI projection so finite verification workflows execute their selected task after
-  `ota up` preparation instead of treating readiness-only `ota up` success as verification proof.
-  The provider-neutral projection now binds `run_execution` as `finite_task` or `service_runtime`.
+- fixed managed CI projection so finite verification workflows execute their selected
+  `ota run --agent` closure directly after the dry-run admission preview, rather than treating
+  readiness-only `ota up` success as verification proof. The renderer no longer performs a
+  redundant mutable `ota up` whose ephemeral container state cannot carry into the later task
+  invocation; provider-neutral projection now binds `run_execution` as `finite_task` or
+  `service_runtime`.
 
 - fixed managed CI projection admission to evaluate the same full workflow closure as
   `ota up --agent`. A safe run task can no longer render a generated lane when an unsafe prepare,

@@ -6742,6 +6742,19 @@ struct TaskRunState {
     native_activation_env_cache: BTreeMap<String, BTreeMap<String, String>>,
     fulfilled_toolchain_keys: BTreeSet<String>,
     fulfilled_toolchains: BTreeMap<String, Vec<String>>,
+    ephemeral_closure_sessions: EphemeralClosureSessions,
+}
+
+#[derive(Debug, Default)]
+struct EphemeralClosureSessions {
+    sessions: BTreeMap<String, EphemeralClosureSession>,
+}
+
+#[derive(Debug)]
+struct EphemeralClosureSession {
+    container_name: String,
+    engine: String,
+    owner_task: String,
 }
 
 #[derive(Debug, Clone)]
@@ -7336,6 +7349,10 @@ fn run_task_internal(
             ),
         );
     }
+    state.execution_note = merge_execution_note(
+        state.execution_note.take(),
+        cleanup_ephemeral_closure_sessions(&mut state),
+    );
     let exit_code = execute_result?;
     // Preserve the child exit code on its task step, but make the top-level result stable for an
     // observed user interrupt. Consumers can then distinguish interruption from task failure.
@@ -9066,6 +9083,7 @@ fn execute_task_with_hooks(
             None
         },
         mode.clone(),
+        Some(&mut state.ephemeral_closure_sessions),
     )?;
     if let Some(evidence) = backend_fulfillment.as_mut() {
         if backend_fulfillment_preparation
@@ -9936,6 +9954,7 @@ fn execute_task_command(
     deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
+    ephemeral_sessions: Option<&mut EphemeralClosureSessions>,
 ) -> Result<TaskCommandOutput, RunError> {
     let backend_kind = resolved_execution_backend_kind(backend);
     let base_working_dir = task
@@ -10037,6 +10056,7 @@ fn execute_task_command(
             deferred_backend_fulfillment,
             host_port_override,
             mode,
+            ephemeral_sessions,
         ),
         (_, PreparedTaskExecution::Shell { command, cwd }) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
@@ -10099,6 +10119,7 @@ fn execute_task_command(
                     deferred_backend_fulfillment,
                     host_port_override,
                     mode.clone(),
+                    ephemeral_sessions,
                 )?;
 
                 if should_retry_after_container_dependency_permission_failure(
@@ -10133,6 +10154,7 @@ fn execute_task_command(
                         deferred_backend_fulfillment,
                         host_port_override,
                         mode,
+                        None,
                     )?;
                     let recovery_note = String::from(
                         "ota reset dependency-isolation container state after a permission failure and retried once",
@@ -10213,6 +10235,7 @@ fn execute_prepare_task(
     deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
+    mut ephemeral_sessions: Option<&mut EphemeralClosureSessions>,
 ) -> Result<TaskCommandOutput, RunError> {
     if let crate::schema::TaskPrepareSpec::Sequence(spec) = prepare {
         let mut stdout = String::new();
@@ -10233,6 +10256,7 @@ fn execute_prepare_task(
                 deferred_backend_fulfillment,
                 host_port_override,
                 mode.clone(),
+                ephemeral_sessions.as_deref_mut(),
             )?;
             stdout.push_str(&step_output.stdout);
             stderr.push_str(&step_output.stderr);
@@ -10297,6 +10321,7 @@ fn execute_prepare_task(
                 deferred_backend_fulfillment,
                 host_port_override,
                 mode.clone(),
+                ephemeral_sessions.as_deref_mut(),
             )?;
             stdout.push_str(&step_output.stdout);
             stderr.push_str(&step_output.stderr);
@@ -10337,6 +10362,7 @@ fn execute_prepare_task(
         deferred_backend_fulfillment,
         host_port_override,
         mode,
+        ephemeral_sessions,
     )
 }
 
@@ -10355,6 +10381,7 @@ fn execute_prepare_sequence_step(
     deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
+    ephemeral_sessions: Option<&mut EphemeralClosureSessions>,
 ) -> Result<TaskCommandOutput, RunError> {
     match step {
         crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
@@ -10372,6 +10399,7 @@ fn execute_prepare_sequence_step(
                 deferred_backend_fulfillment,
                 host_port_override,
                 mode,
+                ephemeral_sessions,
             )
         }
         crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => execute_prepare_task(
@@ -10388,6 +10416,7 @@ fn execute_prepare_sequence_step(
             deferred_backend_fulfillment,
             host_port_override,
             mode,
+            ephemeral_sessions,
         ),
         crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => execute_prepare_task(
             contract,
@@ -10403,6 +10432,7 @@ fn execute_prepare_sequence_step(
             deferred_backend_fulfillment,
             host_port_override,
             mode,
+            ephemeral_sessions,
         ),
         crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(spec) => {
             execute_native_file_action_task(
@@ -10559,6 +10589,7 @@ fn execute_helm_dependency_hydration_prepare(
             deferred_backend_fulfillment,
             host_port_override,
             mode.clone(),
+            None,
         )?;
         stdout.push_str(&output.stdout);
         stderr.push_str(&output.stderr);
@@ -10612,6 +10643,7 @@ fn execute_helm_dependency_hydration_prepare(
         deferred_backend_fulfillment,
         host_port_override,
         mode,
+        None,
     )?;
     stdout.push_str(&output.stdout);
     stderr.push_str(&output.stderr);
@@ -12956,6 +12988,7 @@ pub(crate) fn run_backend_command_captured(
         None,
         None,
         TaskExecutionMode::Capture,
+        None,
     )
 }
 
@@ -13012,6 +13045,7 @@ pub(crate) fn run_backend_argv_command_captured_with_env(
         None,
         None,
         TaskExecutionMode::Capture,
+        None,
     )
 }
 
@@ -21301,7 +21335,8 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
     let preferred = effective.backend;
     let lifecycle = effective.lifecycle;
 
-    if let Some(override_backend) = overrides.backend
+    if contract.tasks.contains_key(task_name)
+        && let Some(override_backend) = overrides.backend
         && !task_supports_execution_backend(contract, task_name, override_backend, current_os())
     {
         let supported_modes = [Backend::Native, Backend::Container, Backend::Remote]
@@ -23071,6 +23106,128 @@ fn container_command_with_cwd(command: &str, cwd: Option<&str>) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_ephemeral_closure_session_command(
+    task_name: &str,
+    context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
+    repo_ownership_token: &str,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
+    secret_env_names: &BTreeSet<String>,
+    image: &str,
+    engine: &str,
+    memory_bytes: Option<u64>,
+    compose_networks: &[String],
+    dependency_isolation_paths: &[String],
+    mode: TaskExecutionMode,
+    sessions: &mut EphemeralClosureSessions,
+) -> Result<TaskCommandOutput, RunError> {
+    let identity_seed = container_identity_seed(
+        context_name,
+        shared_local_backend_name,
+        &[],
+        dependency_isolation_paths,
+        memory_bytes,
+    );
+    let session_key = format!(
+        "{}|{}|{}|{}|{}",
+        image,
+        engine,
+        context_name.unwrap_or_default(),
+        identity_seed.unwrap_or_default(),
+        compose_networks.join(",")
+    );
+
+    if !sessions.sessions.contains_key(&session_key) {
+        let container_name = ephemeral_container_name_for_seed(
+            working_dir,
+            image,
+            engine,
+            Some(session_key.as_str()),
+        );
+        let _ = reap_repo_owned_ephemeral_containers(task_name, engine, repo_ownership_token)?;
+        let create = create_idle_ephemeral_container(
+            task_name,
+            working_dir,
+            context_name,
+            repo_ownership_token,
+            image,
+            engine,
+            &container_name,
+            memory_bytes,
+            compose_networks,
+            &[],
+            dependency_isolation_paths,
+            env_overrides,
+            secret_env_names,
+        )?;
+        if create.exit_code != 0 {
+            return Ok(container_command_failure(create, container_name));
+        }
+        if let Some(failure) =
+            ensure_container_networks(engine, &container_name, compose_networks, task_name)?
+        {
+            let _ = remove_persistent_container(engine, &container_name, task_name);
+            return Ok(container_command_failure(failure, container_name));
+        }
+        let start = container_command_output(engine, &["start", &container_name], None, task_name)?;
+        if start.exit_code != 0 {
+            let _ = remove_persistent_container(engine, &container_name, task_name);
+            return Ok(container_command_failure(start, container_name));
+        }
+        sessions.sessions.insert(
+            session_key.clone(),
+            EphemeralClosureSession {
+                container_name,
+                engine: engine.to_string(),
+                owner_task: task_name.to_string(),
+            },
+        );
+    }
+
+    let session = sessions
+        .sessions
+        .get(&session_key)
+        .expect("ephemeral closure session should exist after creation");
+    exec_persistent_container_task_command(
+        task_name,
+        None,
+        command,
+        env_overrides,
+        path_export,
+        secret_env_names,
+        engine,
+        mode,
+        &session.container_name,
+        None,
+    )
+}
+
+fn cleanup_ephemeral_closure_sessions(state: &mut TaskRunState) -> Option<String> {
+    let mut notes = Vec::new();
+    for session in state.ephemeral_closure_sessions.sessions.values() {
+        match remove_persistent_container(
+            session.engine.as_str(),
+            session.container_name.as_str(),
+            session.owner_task.as_str(),
+        ) {
+            Ok(output) if output.exit_code == 0 => {}
+            Ok(output) => notes.push(format!(
+                "ephemeral closure container `{}` cleanup exited with code {}",
+                session.container_name, output.exit_code
+            )),
+            Err(error) => notes.push(format!(
+                "ephemeral closure container `{}` cleanup failed: {error}",
+                session.container_name
+            )),
+        }
+    }
+    (!notes.is_empty()).then(|| notes.join("; "))
+}
+
 fn execute_container_task_command(
     contract: Option<&Contract>,
     task_name: &str,
@@ -23092,6 +23249,7 @@ fn execute_container_task_command(
     deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
+    ephemeral_sessions: Option<&mut EphemeralClosureSessions>,
 ) -> Result<TaskCommandOutput, RunError> {
     let repo_ownership_token = repo_ownership_token_for_working_dir(task_name, working_dir)?;
     let command = wrap_container_command_for_corepack_activation(contract, task_name, command);
@@ -23111,6 +23269,31 @@ fn execute_container_task_command(
     let runtime_listener_publications = task_runtime_listener_publications(runtime);
     match lifecycle {
         Lifecycle::Ephemeral => {
+            if let Some(sessions) = ephemeral_sessions
+                && runtime.is_none()
+                && publications.is_empty()
+                && deferred_backend_fulfillment.is_none()
+                && host_port_override.is_none()
+            {
+                return execute_ephemeral_closure_session_command(
+                    task_name,
+                    context_name,
+                    shared_local_backend_name,
+                    &repo_ownership_token,
+                    &command,
+                    working_dir,
+                    env_overrides,
+                    path_export,
+                    secret_env_names,
+                    image,
+                    engine,
+                    memory_bytes,
+                    compose_networks,
+                    dependency_isolation_paths,
+                    mode,
+                    sessions,
+                );
+            }
             let mut reclaimed_orphaned_ephemeral_count =
                 reap_repo_owned_ephemeral_containers(task_name, engine, &repo_ownership_token)?
                     .len();
@@ -40623,6 +40806,57 @@ tasks:
             "{}",
             outcome.stderr
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finite_ephemeral_container_closure_reuses_one_session_and_cleans_up() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  restore:
+    run: printf restored > restore-state.txt
+  verify:
+    run: test -f restore-state.txt
+    depends_on: [restore]
+"#,
+        );
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "verify")
+            .expect("ephemeral dependency closure should execute");
+
+        assert_eq!(outcome.exit_code, 0, "{}", outcome.stderr);
+        assert_eq!(outcome.executed_tasks, vec!["restore", "verify"]);
+
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+            .expect("fake engine log should exist");
+        assert_eq!(log.matches("run-ephemeral").count(), 1, "{log}");
+        assert_eq!(log.matches("start").count(), 1, "{log}");
+        assert_eq!(log.matches("exec").count(), 2, "{log}");
+        assert_eq!(log.matches("rm").count(), 1, "{log}");
+
+        let state_dir = fixture.dir.path().join("bin/docker-state");
+        let leaked = fs::read_dir(&state_dir)
+            .expect("fake engine state should exist")
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "path")
+            });
+        assert!(!leaked, "ephemeral closure session should be cleaned up");
     }
 
     #[cfg(unix)]
@@ -60254,6 +60488,7 @@ tasks:
             None,
             None,
             TaskExecutionMode::Capture,
+            None,
         )
         .expect("file action should execute for container backend");
 
@@ -60305,6 +60540,7 @@ project:
             None,
             None,
             TaskExecutionMode::Capture,
+            None,
         )
         .expect("native shell execution should succeed");
 

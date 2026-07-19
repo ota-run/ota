@@ -172,8 +172,6 @@ pub(crate) fn render_github_projection_from_projection(
     } else if projection.run_execution == CiProjectionRunExecution::FiniteTask {
         format!(
             concat!(
-                "      - name: Prepare contract lane\n",
-                "        run: ota up --workflow {workflow_yaml}{mode_flag} --agent --json\n",
                 "      - name: Execute finite contract task\n",
                 "        run: ota run {task_yaml}{mode_flag} --agent\n",
                 "      - name: Archive workflow readiness receipt\n",
@@ -613,7 +611,7 @@ agent:
         assert!(
             container
                 .rendered
-                .contains("ota up --workflow 'verify' --mode container --agent")
+                .contains("ota run 'verify' --mode container --agent")
         );
         assert!(first.rendered.contains("ota tasks --safe --use --json"));
         assert!(first.rendered.contains("ota validate . --json"));
@@ -686,7 +684,12 @@ agent:
                 .rendered
                 .contains("ota run 'verify' --mode native --agent")
         );
-        assert!(first.rendered.contains("- name: Prepare contract lane"));
+        assert!(!first.rendered.contains("- name: Prepare contract lane"));
+        assert!(
+            !first
+                .rendered
+                .contains("ota up --workflow 'verify' --mode native --agent --json")
+        );
         assert!(
             first
                 .rendered
