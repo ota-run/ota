@@ -68,6 +68,9 @@
 - widened the GitHub projection adapter to provision contract-owned Node/Corepack lanes with an
   immutable `actions/setup-node` revision while preserving the declared Node semver selector;
   unsupported fulfillment sources still fail rendering rather than falling back to a hosted image.
+- widened the same provider adapter to project contract-owned Ruby lanes with immutable
+  `ruby/setup-ruby`, preserving the declared Ruby release selector instead of requiring caller YAML
+  to duplicate runtime setup.
 
 - added `workflows.<name>.proof.claim: bounded` for archive-backed verification proof lanes that
   do not declare a dependency seam. Doctor now evaluates the same `proof_breadth` assurance model
