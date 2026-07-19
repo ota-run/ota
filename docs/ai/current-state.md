@@ -103,9 +103,15 @@ durable agent workflow belongs in the canonical Ota skill.
   Compatible ephemeral container closure steps now share one runner-owned session, so typed
   hydration state survives into its finite consumer without leaking across CLI invocations.
   OrchardCore proves that .NET restore/build/test path locally in both native and container modes;
-  its tag-triggered release CI remains provider-owned and untouched. Do not claim V11.15 complete
-  until this mixed deployment/release boundary has a pushed matrix proof and one additional
-  independent pressure repository confirms the same adapter contract.
+  its tag-triggered release CI remains provider-owned and untouched. Its pushed matrix and Caddy's
+  independent green native/container governance matrix now satisfy the two-repository pressure
+  target. Caddy also hardened the GitHub adapter's Go lower-bound projection: a valid one-sided
+  contract range such as `>=1.25.1` now renders its explicit lower release through immutable
+  `actions/setup-go`. Caddy's upstream start/stop shell smoke remains separately modeled and
+  explicitly outside the generated build/test lane; Ota must not call that narrower lane full
+  upstream CI equivalence until it can recover the lifecycle assertion without reducing it to a
+  command-shaped approximation. Perform the final V11.15 completion review before changing its
+  plan status.
   Projection identity now reuses the canonical normalized semantic snapshot identity used by
   receipts; omitted mode resolves from the selected task's effective contract default, while an
   unavailable explicit mode is refused. Denied provider-neutral JSON preserves the evaluated

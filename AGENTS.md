@@ -61,6 +61,19 @@ available locally. Every pressure repo must prove the advertised task, workflow,
 matrix, and bootstrap surfaces, and must separately identify repo issues from genuine Ota platform
 gaps.
 
+Every pressure conclusion must include an explicit **uncovered-material-behavior inventory**. For
+each material behavior not exercised or governed by Ota, classify it as exactly one of:
+
+- contract-owned and proved;
+- explicitly bounded or `not_proved` with the boundary carried in machine-readable output;
+- repo-owned behavior outside the declared Ota scope; or
+- a named Ota platform gap with a proposed ownership surface.
+
+Do not let a green task, workflow, or matrix imply repo-global governance. In particular, call out
+adjacent lifecycle sequences, readiness assertions, teardown/cleanup, external systems, provider
+policy, and shell orchestration whenever Ota does not model and prove them. A pressure note and
+handoff must state that inventory explicitly; silence is not an acceptable classification.
+
 The completion bar is complete execution governance: every material repo behavior must be either
 contract-owned, explicitly bounded as external or not proved, or recorded as a named Ota platform
 gap. A green matrix alone does not close a repo if material truth remains implicit in prose,

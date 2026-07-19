@@ -54,6 +54,8 @@ Source direction:
 - [V11.14 plan](../v11.14/plan.md)
 - [V11.15 plan](../v11.15/plan.md)
 - [V11.16 plan](../v11.16/plan.md)
+- [V11.17 plan](../v11.17/plan.md)
+- [V11.18 plan](../v11.18/plan.md)
 
 V11 theme:
 
@@ -155,6 +157,10 @@ The following planned execution-trust slice is:
 The following planned replay-governance slice is:
 
 - [V11.17: trusted replay baseline regeneration](../v11.17/plan.md)
+
+The following planned lifecycle-proof slice is:
+
+- [V11.18: managed lifecycle-sequence proof](../v11.18/plan.md)
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
