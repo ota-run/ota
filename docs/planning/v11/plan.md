@@ -127,10 +127,6 @@ The implemented OSS governance slices after that are:
 The following governance slices have open acceptance work and must not be represented as complete
 until their stated pressure or implementation bars close:
 
-- [V11.3: agent-scoped execution enforcement](../v11.3/plan.md) - runner enforcement and
-  contract-owned refusal canaries are implemented; real-repo pressure verification remains open.
-- [V11.5: CI and merge-gate projection](../v11.5/plan.md) - required lanes and drift are shipped;
-  CI-owned refusal canary execution remains open.
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;
   reusable grant authority and crossing-time liveness remain open.
 - [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - compiled
@@ -138,6 +134,10 @@ until their stated pressure or implementation bars close:
 
 The completed trust/product follow-ons are:
 
+- [V11.3: agent-scoped execution enforcement](../v11.3/plan.md) - implementation and real-repo
+  refusal-canary pressure complete.
+- [V11.5: CI and merge-gate projection](../v11.5/plan.md) - required lanes, drift, and CI-owned
+  refusal-canary checks complete through the V11.15 GitHub adapter.
 - [V11.9: governance truth reconciliation and evidence classes](../v11.9/plan.md)
 - [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md)
 - [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
@@ -146,9 +146,10 @@ The completed trust/product follow-ons are:
 - [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation complete; release
   reconciliation remains active.
 
-The next active provider-adapter slice is:
+The completed provider-adapter slice is:
 
-- [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md)
+- [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md) - implementation and
+  real-repo pressure complete; release reconciliation remains active.
 
 The following planned execution-trust slice is:
 

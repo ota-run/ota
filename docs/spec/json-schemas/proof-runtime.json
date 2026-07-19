@@ -31,6 +31,7 @@
         "phase": { "type": "string" },
         "stage_family": { "const": "proof" },
         "proof_scope": { "$ref": "#/$defs/proofScope" },
+        "execution_boundary": { "$ref": "#/$defs/executionBoundary" },
         "dependency_evidence": {
           "type": "array",
           "items": { "$ref": "#/$defs/dependencyEvidence" }
@@ -110,6 +111,130 @@
         "workflow": { "type": ["string", "null"] },
         "task": { "type": ["string", "null"] },
         "intent": { "type": ["string", "null"] }
+      }
+    },
+    "executionBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "identity",
+        "asserted_target_closure",
+        "derivation_input_closure",
+        "prerequisites",
+        "edges",
+        "target_freshness",
+        "derivation_posture"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "type": "string", "pattern": "^sha256:" },
+        "asserted_target_closure": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "derivation_input_closure": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/boundaryPrerequisite" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/boundaryEdge" }
+        },
+        "target_freshness": {
+          "type": "string",
+          "enum": ["cold_start_verified", "persistent_state_reused", "unknown"]
+        },
+        "derivation_posture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["materialization", "immutable_inputs"],
+          "properties": {
+            "materialization": {
+              "type": "string",
+              "enum": ["fully_derived", "cache_assisted", "unknown"]
+            },
+            "immutable_inputs": {
+              "type": "string",
+              "enum": ["none", "inherited_immutable", "unknown"]
+            }
+          }
+        }
+      }
+    },
+    "boundaryPrerequisite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "class", "precondition", "state"],
+      "properties": {
+        "id": { "type": "string" },
+        "class": {
+          "type": "string",
+          "enum": ["filesystem", "dependency_cache", "service", "volume", "environment", "image_runtime"]
+        },
+        "declared_artifacts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "declared_producers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "precondition": { "type": "string", "enum": ["absent", "present", "cleared", "unknown"] },
+        "state": { "type": "string", "enum": ["created_this_run", "declared_immutable_input", "verified_reused", "unknown"] },
+        "materializations": { "type": "array", "items": { "$ref": "#/$defs/boundaryMaterialization" } },
+        "assertions": { "type": "array", "items": { "$ref": "#/$defs/boundaryAssertion" } },
+        "terminal_established_by_edge_id": { "type": "string" },
+        "ambient_boundary": { "type": "string" }
+      }
+    },
+    "boundaryMaterialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_id", "producer_execution", "identity", "evidence_class", "sequence"],
+      "properties": {
+        "edge_id": { "type": "string" },
+        "producer_execution": { "type": "string" },
+        "identity": { "type": "string" },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
+        "sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "boundaryAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_id", "consumer_execution", "identity", "evidence_class", "sequence", "established_by_edge_id"],
+      "properties": {
+        "edge_id": { "type": "string" },
+        "consumer_execution": { "type": "string" },
+        "identity": { "type": "string" },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "established_by_edge_id": { "type": "string" }
+      }
+    },
+    "boundaryEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "prerequisite_id", "execution_id", "boundary_id", "scope", "identity", "evidence_class", "sequence"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string", "enum": ["produced", "asserted_at", "consumed", "derived_from", "reused_from", "cleared_before"] },
+        "prerequisite_id": { "type": "string" },
+        "execution_id": { "type": "string" },
+        "boundary_id": { "type": "string" },
+        "scope": { "type": "string" },
+        "identity": { "type": "string" },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] },
+        "sequence": { "type": "integer", "minimum": 0 }
       }
     },
     "proofNotProved": {

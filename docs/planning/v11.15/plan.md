@@ -26,15 +26,14 @@
 
 # V11.15: Managed GitHub Actions Governance Projection
 
-Status: active. V11.14 assurance/policy implementation is complete and pressure-proven. Implement this
-slice without reopening its canonical evaluator or policy semantics.
+Status: implementation and real-repo pressure complete; release reconciliation remains active.
+V11.14 assurance/policy implementation is complete and pressure-proven. This slice consumed its
+canonical evaluator and policy semantics without reopening them.
 
 V11.5 defines the required foundation used here: required-lane projection, stable
-`merge_check_id` identity, merge-gate output, and contract-to-CI drift evaluation. Those specific
-semantics are complete before V11.15 implementation begins. V11.5 refusal-canary execution remains
-an open companion capability; V11.15 must not claim to project or enforce CI-owned canaries until it
-ships. V11.15 does not reopen either concern; it adds one narrow GitHub Actions adapter that
-materializes the implemented V11.5 result as a managed reusable workflow.
+`merge_check_id` identity, merge-gate output, contract-to-CI drift evaluation, and CI-owned
+refusal-canary execution. V11.15 materializes that implemented V11.5 result as one narrow managed
+GitHub Actions reusable-workflow adapter without reopening its canonical semantics.
 
 ## Problem
 

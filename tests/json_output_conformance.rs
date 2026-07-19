@@ -817,6 +817,12 @@ workflows:
     assert_eq!(json["proof_scope"]["proof_class"], "slice_proof");
     assert_eq!(json["proof_scope"]["workflow"], "app");
     assert_eq!(json["proof_scope"]["task"], "setup");
+    assert_eq!(json["execution_boundary"]["schema_version"], 1);
+    assert_eq!(json["execution_boundary"]["target_freshness"], "unknown");
+    assert_eq!(
+        json["execution_boundary"]["asserted_target_closure"],
+        serde_json::json!([])
+    );
     assert_eq!(
         json["not_proved"][0]["kind"],
         "external_network_path_not_proved"

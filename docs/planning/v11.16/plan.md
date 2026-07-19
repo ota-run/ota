@@ -27,10 +27,12 @@
 
 # V11.16: Fresh-Boundary Setup Proof
 
-Status: planned. This follows active V11.15 under version discipline only. Managed GitHub
-projection is not an architectural prerequisite: V11.16 derives execution-boundary truth from the
-selected runtime and existing canonical producer/admission evidence, whether the lane is invoked
-locally, in CI, or through a future generated workflow.
+Status: active. The shared semantic evaluator and additive `ota proof runtime --json` carrier are
+implemented; they conservatively inventory declared generated filesystem targets as `unknown`
+until the runner can witness their complete precondition, materialization, and assertion chain.
+Managed GitHub projection is not an architectural prerequisite: V11.16 derives execution-boundary
+truth from the selected runtime and existing canonical producer/admission evidence, whether the
+lane is invoked locally, in CI, or through a future generated workflow.
 
 ## Problem
 

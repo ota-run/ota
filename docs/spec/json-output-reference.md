@@ -941,6 +941,13 @@ Notes:
   execution or readiness evaluation failed; parse/load failures do not enter this carrier
 - `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
+- `execution_boundary` is additive runner-authored prerequisite provenance. Its `identity` binds
+  the sorted asserted-target and derivation-input closures, declared artifact/producer ownership,
+  prerequisite records, and ordered causal edges. `target_freshness` is independent from
+  `derivation_posture`: `unknown` means Ota did not witness the complete precondition,
+  materialization, and assertion chain; it must not be treated as a cold start. The first carrier
+  inventories declared generated filesystem artifacts conservatively and leaves them `unknown`
+  until Ota can attest their production and assertion in the selected runtime closure.
 - `dependency_evidence[]` is additive positive seam evidence for the selected runtime path.
   The current first carrier is intentionally narrow: Ota emits `level: reachable` only when a
   declared service seam is also part of the selected workflow's required-service closure and Ota
@@ -1012,7 +1019,8 @@ Notes:
   scope, and explicit `replay_posture: witness_only`. The mutable `.ota/proof/<lane>/` working
   bundle remains supporting evidence, not a replay-grade witness. Archive consumers also verify
   that `contract_snapshot_ref` resolves to the same content-addressed snapshot as
-  `contract_snapshot_hash` before using the record as assurance evidence.
+  `contract_snapshot_hash` before using the record as assurance evidence. The archive retains the
+  exact same `execution_boundary` record and identity as the emitted proof output.
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface

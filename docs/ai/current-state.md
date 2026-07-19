@@ -65,7 +65,14 @@ durable agent workflow belongs in the canonical Ota skill.
   matching immutable archive exists, then `supported`. Bedrock proves that transition on its
   offline replay lane without inventing seam or negative-control evidence; Lead Quorum proves the
   independent `unknown` path without an archive.
-- active V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
+- active V11.16 fresh-boundary setup proof foundation: `ota proof runtime --json` and archived
+  runtime proof records now carry an additive content-addressed `execution_boundary` graph. The
+  shared evaluator enforces ordered producer/assertion identity bindings and derives target
+  freshness independently from cache-assisted derivation posture. The current carrier inventories
+  contract-declared generated filesystem targets but leaves them `unknown` until Ota can witness
+  their precondition, materialization, and assertion from the selected runtime closure; do not
+  over-read this first carrier as cold-start proof.
+- completed V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
   now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
   proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that
   object through one renderer powering `ota ci github render`, `check`, and atomic `sync`.
@@ -110,8 +117,10 @@ durable agent workflow belongs in the canonical Ota skill.
   `actions/setup-go`. Caddy's upstream start/stop shell smoke remains separately modeled and
   explicitly outside the generated build/test lane; Ota must not call that narrower lane full
   upstream CI equivalence until it can recover the lifecycle assertion without reducing it to a
-  command-shaped approximation. Perform the final V11.15 completion review before changing its
-  plan status.
+  command-shaped approximation. The final V11.15 review passed focused neutral projection,
+  GitHub renderer, JSON-conformance, and formatting checks; Kylrix plus OrchardCore/Caddy satisfy
+  the two-repository pressure bar. V11.15 is implementation and pressure complete; release
+  reconciliation remains active.
   Projection identity now reuses the canonical normalized semantic snapshot identity used by
   receipts; omitted mode resolves from the selected task's effective contract default, while an
   unavailable explicit mode is refused. Denied provider-neutral JSON preserves the evaluated

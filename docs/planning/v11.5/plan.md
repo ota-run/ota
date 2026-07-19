@@ -24,12 +24,13 @@
 
 # V11.5 Plan
 
-Status: partially implemented. Required-lane projection, merge-check identity, and workflow drift
-evaluation are shipped; CI-owned refusal-canary execution remains open.
+Status: implementation and real-repo pressure complete. Required-lane projection, merge-check
+identity, workflow drift evaluation, and CI-owned refusal-canary execution are shipped.
 
 Release target:
 
-- partially implemented continuation after `v11.4`; CI-owned refusal canaries remain open
+- completed continuation after `v11.4`; GitHub-managed canary checks are pressure-proven through
+  V11.15
 
 Source direction:
 

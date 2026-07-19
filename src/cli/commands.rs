@@ -77,6 +77,11 @@ use crate::execution::{
     container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
     execution_target, format_backend, format_lifecycle, selected_container_engine_from_backend,
 };
+use crate::execution_boundary::{
+    BoundaryPrerequisite, DerivationPosture, EXECUTION_BOUNDARY_SCHEMA_VERSION,
+    ExecutionBoundaryRecord, ImmutableInputPosture, MaterializationPosture, PreconditionState,
+    PrerequisiteClass, PrerequisiteState, TargetFreshness, evaluate_execution_boundary,
+};
 use crate::github_projection::{
     CallerProjectionBinding, GitHubProjection, OWNERSHIP_MARKER, caller_projection_binding,
     managed_projection_identity, render_github_projection_from_projection,
@@ -3634,6 +3639,13 @@ pub fn proof_runtime(
                             likely_cause_evidence: proof_likely_cause_evidence,
                             next: proof_next.as_deref(),
                         };
+                        let execution_boundary = match proof_runtime_execution_boundary(
+                            contract,
+                            effective_workflow_selector.as_deref(),
+                        ) {
+                            Ok(boundary) => boundary,
+                            Err(error) => return CommandOutput::failure(error),
+                        };
                         let archive = if let Some(context) = proof_archive_context.as_ref() {
                             let record = ProofRuntimeArchiveRecord {
                                 kind: "runtime_proof",
@@ -3645,6 +3657,7 @@ pub fn proof_runtime(
                                 replay_posture: "witness_only",
                                 scope: &context.scope,
                                 proof: &proof_status,
+                                execution_boundary: &execution_boundary,
                             };
                             match write_proof_runtime_archive(
                                 contract_working_dir(&target.contract_path),
@@ -3658,10 +3671,11 @@ pub fn proof_runtime(
                         };
                         CommandOutput {
                             stdout: archive.map_or_else(
-                                || to_json(&proof_status),
+                                || proof_runtime_status_json(&proof_status, &execution_boundary),
                                 |archive| {
                                     to_json(&ProofRuntimeArchivedStatus {
                                         proof: &proof_status,
+                                        execution_boundary: &execution_boundary,
                                         archive,
                                     })
                                 },
@@ -93087,6 +93101,7 @@ workflows:
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("proof runtime json");
         assert_eq!(json["ok"], true, "{}", output.stdout);
+        assert_eq!(json["execution_boundary"]["target_freshness"], "unknown");
         let archive_identity = json["archive"]["identity"]
             .as_str()
             .expect("proof archive identity");
@@ -93105,6 +93120,10 @@ workflows:
         assert_eq!(archive["kind"], "runtime_proof");
         assert_eq!(archive["version"], 1);
         assert_eq!(archive["replay_posture"], "witness_only");
+        assert_eq!(
+            archive["execution_boundary"]["identity"],
+            json["execution_boundary"]["identity"]
+        );
         assert_eq!(archive["scope"]["workflow"], "app");
         assert_eq!(archive["scope"]["backend"], "native");
         assert!(
@@ -103337,6 +103356,7 @@ struct ProofRuntimeArchiveRecord<'a> {
     replay_posture: &'static str,
     scope: &'a ProofRuntimeArchiveScope,
     proof: &'a ProofRuntimeStatus<'a>,
+    execution_boundary: &'a ExecutionBoundaryRecord,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103361,6 +103381,7 @@ struct ProofRuntimeArchiveReadProof {
 struct ProofRuntimeArchivedStatus<'a> {
     #[serde(flatten)]
     proof: &'a ProofRuntimeStatus<'a>,
+    execution_boundary: &'a ExecutionBoundaryRecord,
     archive: ProofRuntimeArchive,
 }
 
@@ -104013,6 +104034,86 @@ fn proof_runtime_scope(
             .as_ref()
             .and_then(|summary| summary.intent.map(str::to_string)),
     }
+}
+
+// The first V11.16 carrier inventories only contract-declared generated filesystem targets.
+// It remains unknown until runner evidence establishes precondition, materialization, and use.
+fn proof_runtime_execution_boundary(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Result<ExecutionBoundaryRecord, String> {
+    let mut prerequisites = BTreeMap::new();
+    let mut asserted_target_closure = Vec::new();
+    let mut derivation_input_closure = Vec::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        for artifact_name in &task.requires_artifacts {
+            let Some(artifact) = contract.artifacts.get(artifact_name) else {
+                continue;
+            };
+            for path in &artifact.paths {
+                let id = format!("filesystem:{path}");
+                asserted_target_closure.push(id.clone());
+                let prerequisite =
+                    prerequisites
+                        .entry(id.clone())
+                        .or_insert_with(|| BoundaryPrerequisite {
+                            id,
+                            class: PrerequisiteClass::Filesystem,
+                            declared_artifacts: Vec::new(),
+                            declared_producers: Vec::new(),
+                            precondition: PreconditionState::Unknown,
+                            state: PrerequisiteState::Unknown,
+                            materializations: Vec::new(),
+                            assertions: Vec::new(),
+                            terminal_established_by_edge_id: None,
+                            ambient_boundary: Some(String::from(
+                                "artifact_production_not_observed",
+                            )),
+                        });
+                prerequisite.declared_artifacts.push(artifact_name.clone());
+                prerequisite
+                    .declared_producers
+                    .push(artifact.producer.clone());
+            }
+            for input in &artifact.inputs {
+                derivation_input_closure.push(format!("filesystem:{input}"));
+            }
+        }
+    }
+    evaluate_execution_boundary(ExecutionBoundaryRecord {
+        schema_version: EXECUTION_BOUNDARY_SCHEMA_VERSION,
+        identity: String::new(),
+        asserted_target_closure,
+        derivation_input_closure,
+        prerequisites: prerequisites.into_values().collect(),
+        edges: Vec::new(),
+        target_freshness: TargetFreshness::Unknown,
+        derivation_posture: DerivationPosture {
+            materialization: MaterializationPosture::Unknown,
+            immutable_inputs: ImmutableInputPosture::Unknown,
+        },
+    })
+}
+
+fn proof_runtime_status_json(
+    proof: &ProofRuntimeStatus<'_>,
+    execution_boundary: &ExecutionBoundaryRecord,
+) -> String {
+    let mut value = serde_json::to_value(proof)
+        .expect("runtime proof status must serialize before execution boundary is attached");
+    value
+        .as_object_mut()
+        .expect("runtime proof status must serialize as an object")
+        .insert(
+            String::from("execution_boundary"),
+            serde_json::to_value(execution_boundary)
+                .expect("execution boundary must serialize into runtime proof output"),
+        );
+    serde_json::to_string_pretty(&value)
+        .expect("runtime proof output with execution boundary must serialize")
 }
 
 fn proof_runtime_negative_control(

@@ -30,6 +30,7 @@ pub(crate) mod contract_drift;
 pub mod detector;
 pub mod doctor;
 pub(crate) mod execution;
+pub(crate) mod execution_boundary;
 pub(crate) mod github_projection;
 pub(crate) mod hydration_provenance;
 pub(crate) mod jsonc;

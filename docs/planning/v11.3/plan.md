@@ -24,13 +24,13 @@
 
 # V11.3 Plan
 
-Status: implementation complete; real-repo pressure verification remains open. Agent-mode task and workflow
-execution now resolves the full closure before execution, refuses unsafe paths at the runner boundary, emits
+Status: implementation and real-repo pressure complete. Agent-mode task and workflow execution now
+resolves the full closure before execution, refuses unsafe paths at the runner boundary, emits
 canonical refusal evidence, and supports contract-owned refusal canaries against that same boundary.
 
 Release target:
 
-- implementation continuation after `v11.2`; pressure verification remains open
+- implementation continuation after `v11.2`; pressure-proven on Athena and Kylrix
 
 Source direction:
 

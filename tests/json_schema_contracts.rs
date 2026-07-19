@@ -362,6 +362,7 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(success.get("mode").is_some());
     assert!(success.get("workflow").is_some());
     assert!(success.get("phase").is_some());
+    assert!(success.get("execution_boundary").is_some());
     assert!(success.get("summary").is_some());
     assert!(success.get("dependency_evidence").is_some());
     assert!(success.get("seam_observations").is_some());
@@ -378,6 +379,12 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     let not_proved = &schema["$defs"]["proofNotProved"]["properties"];
     assert!(not_proved.get("proof_obligation_id").is_some());
     assert!(not_proved.get("reason").is_some());
+    let boundary = &schema["$defs"]["executionBoundary"];
+    assert_eq!(boundary["properties"]["schema_version"]["const"], 1);
+    assert_eq!(
+        boundary["properties"]["target_freshness"]["enum"],
+        serde_json::json!(["cold_start_verified", "persistent_state_reused", "unknown"])
+    );
     let kinds = not_proved["kind"]["enum"]
         .as_array()
         .expect("proof boundary kinds");
