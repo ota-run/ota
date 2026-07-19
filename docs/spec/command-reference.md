@@ -768,9 +768,11 @@ Current behavior:
   immutable `actions/setup-go` for `source: go`, translating the contract's supported lower-bound
   range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`), and immutable
   `actions/setup-node` for `toolchains.node` fulfilled through `source: corepack`, preserving the
-  declared Node semver selector, and immutable `ruby/setup-ruby` for `toolchains.ruby` fulfilled
-  through `source: ruby`. It refuses a required toolchain source or range it cannot provision rather
-  than silently assuming the selected runner image provides it.
+  declared Node semver selector, immutable `ruby/setup-ruby` for `toolchains.ruby` fulfilled
+  through `source: ruby`, and immutable `actions/setup-python` plus `astral-sh/setup-uv` for
+  `toolchains.python` fulfilled through `source: uv`, translating supported lower-bound Python
+  ranges to a concrete Python release. It refuses a required toolchain source or range it cannot
+  provision rather than silently assuming the selected runner image provides it.
 - `check` fails for a missing, stale, manually changed, or unowned generated workflow, or when the
   caller points at a different semantic projection.
 - `sync` is explicit and atomic. It creates a missing output or replaces only a file carrying the

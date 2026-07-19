@@ -72,6 +72,10 @@
   selected toolchain belongs to `native`, `container`, or `remote` execution; the GitHub adapter
   provisions only native-owned toolchains and leaves container runtime ownership with the declared
   execution image.
+- widened the GitHub projection adapter to provision native Python toolchains fulfilled through
+  `source: uv` with immutable `actions/setup-python` and `astral-sh/setup-uv` revisions. Supported
+  lower-bound Python ranges project to an explicit runtime selector; unsupported sources and ranges
+  still refuse rendering.
 - widened the GitHub projection adapter to provision contract-owned Node/Corepack lanes with an
   immutable `actions/setup-node` revision while preserving the declared Node semver selector;
   unsupported fulfillment sources still fail rendering rather than falling back to a hosted image.

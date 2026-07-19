@@ -41,6 +41,8 @@ const OTA_SETUP_REV: &str = "493cba84bf7f7c11c9e8e996d832d93a89c62184";
 const GITHUB_SETUP_GO_REV: &str = "924ae3a1cded613372ab5595356fb5720e22ba16";
 const GITHUB_SETUP_NODE_REV: &str = "a0853c24544627f65ddf259abe73b1d18a591444";
 const GITHUB_SETUP_RUBY_REV: &str = "003a5c4d8d6321bd302e38f6f0ec593f77f06600";
+const GITHUB_SETUP_PYTHON_REV: &str = "ece7cb06caefa5fff74198d8649806c4678c61a1";
+const GITHUB_SETUP_UV_REV: &str = "d0cc045d04ccac9d8b7881df0226f9e82c39688e";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitHubProjection {
@@ -291,6 +293,17 @@ fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<
                 GITHUB_SETUP_RUBY_REV = GITHUB_SETUP_RUBY_REV,
                 version = yaml_scalar(&github_ruby_version_spec(&toolchain.version)?),
             )),
+            ("python", "uv") => Ok(format!(
+                concat!(
+                    "      - uses: actions/setup-python@{GITHUB_SETUP_PYTHON_REV}\n",
+                    "        with:\n",
+                    "          python-version: {version}\n",
+                    "      - uses: astral-sh/setup-uv@{GITHUB_SETUP_UV_REV}\n"
+                ),
+                GITHUB_SETUP_PYTHON_REV = GITHUB_SETUP_PYTHON_REV,
+                GITHUB_SETUP_UV_REV = GITHUB_SETUP_UV_REV,
+                version = yaml_scalar(&github_python_version_spec(&toolchain.version)?),
+            )),
             (_, source) => Err(format!(
                 "GitHub projection cannot provision required toolchain `{}` with source `{source}`; choose a supported provider adapter or keep the lane outside managed execution",
                 toolchain.name
@@ -341,6 +354,47 @@ fn github_node_version_spec(version: &str) -> Result<String, String> {
         return Err("GitHub projection cannot derive an actions/setup-node selector from an empty Node version".to_string());
     }
     Ok(version.to_string())
+}
+
+/// `actions/setup-python` accepts a concrete release selector. Preserve comparator truth in the
+/// neutral projection and derive only its explicit numeric lower bound for this adapter.
+fn github_python_version_spec(version: &str) -> Result<String, String> {
+    github_lower_bounded_numeric_selector(version, "actions/setup-python")
+}
+
+fn github_lower_bounded_numeric_selector(version: &str, action: &str) -> Result<String, String> {
+    let trimmed = version.trim();
+    let constraints = trimmed.split(',').map(str::trim).collect::<Vec<_>>();
+    let candidate = if constraints.len() == 1 {
+        constraints[0]
+            .strip_prefix(">=")
+            .or_else(|| constraints[0].strip_prefix('='))
+            .unwrap_or(constraints[0])
+            .trim()
+    } else {
+        let Some(lower) = constraints[0].strip_prefix(">=").map(str::trim) else {
+            return Err(format!(
+                "GitHub projection cannot derive an {action} selector from required Python version `{version}`"
+            ));
+        };
+        if constraints[1..].iter().any(|constraint| {
+            !constraint
+                .strip_prefix('<')
+                .map(str::trim)
+                .is_some_and(is_numeric_version)
+        }) {
+            return Err(format!(
+                "GitHub projection cannot derive an {action} selector from required Python version `{version}`"
+            ));
+        }
+        lower
+    };
+    if !is_numeric_version(candidate) {
+        return Err(format!(
+            "GitHub projection cannot derive an {action} selector from required Python version `{version}`"
+        ));
+    }
+    Ok(candidate.to_string())
 }
 
 /// Ruby setup accepts the declared release selector directly. Reject an empty selector rather
@@ -721,6 +775,21 @@ workflows:
         assert!(rendered.contains("ruby/setup-ruby@003a5c4d8d6321bd302e38f6f0ec593f77f06600"));
         assert!(rendered.contains("ruby-version: '3.3.11'"));
         assert!(github_ruby_version_spec(" ").is_err());
+    }
+
+    #[test]
+    fn github_python_uv_toolchain_projects_pinned_runtime_and_uv() {
+        let rendered = github_toolchain_setup_steps(&[CiProjectionToolchain {
+            name: "python".to_string(),
+            source: "uv".to_string(),
+            version: ">=3.12,<3.14".to_string(),
+            execution_scopes: vec!["native".to_string()],
+        }])
+        .expect("Python through uv should project");
+        assert!(rendered.contains("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"));
+        assert!(rendered.contains("python-version: '3.12'"));
+        assert!(rendered.contains("astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e"));
+        assert!(github_python_version_spec("stable").is_err());
     }
 
     #[test]
