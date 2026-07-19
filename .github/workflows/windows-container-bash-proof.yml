@@ -99,6 +99,7 @@ jobs:
           if /I "%COMMAND%"=="rm" exit /b 0
           if /I "%COMMAND%"=="create" goto create
           if /I "%COMMAND%"=="start" exit /b 0
+          if /I "%COMMAND%"=="exec" exit /b 0
 
           echo unsupported docker command %COMMAND% 1>&2
           exit /b 1
