@@ -46,37 +46,82 @@ not observe pre-existing state.
 ## Product Principle
 
 Materialize first, then probe. A setup or runtime assertion may rely only on state the selected
-execution closure created or explicitly inherited. Each material prerequisite has runner-derived
-boundary evidence; the human-facing freshness summary is a strict function of that evidence, not
-maintainer prose or a caller-controlled environment signal.
+execution closure created or explicitly inherited. Ota records runner-authored prerequisite
+provenance, not a maintainer-authored cold-start claim. Each material prerequisite has
+runner-derived boundary evidence; the human-facing freshness summary is a strict function of that
+evidence, not maintainer prose or a caller-controlled environment signal.
 
 ## Scope
 
 V11.16 adds one receipt/proof-owned `execution_boundary` record. Its authoritative truth is a
-per-prerequisite `prerequisites[]` evidence set, not a single global state:
+runner-authored prerequisite evidence graph with two explicit closures, not a single global state
+or an unordered digest list:
+
+- `asserted_target_closure`: mutable and immutable targets whose state the selected proof asserts;
+- `derivation_input_closure`: upstream inputs used to materialize those targets, including caches.
+
+Only the asserted target closure can determine target freshness. The derivation-input closure
+determines derivation posture and must never turn a freshly rebuilt target into persistent state.
+
+The graph has stable nodes for prerequisites, producer executions, consumer executions,
+boundaries, and immutable inputs. It has typed edges:
+
+- `produced`: a producer execution materialized a prerequisite identity;
+- `asserted_at`: a real consumer execution had an asserted prerequisite identity available at its
+  execution boundary;
+- `consumed`: adapter-instrumented evidence proves the consumer actually used that prerequisite;
+- `derived_from`: one prerequisite identity was derived from another input;
+- `reused_from`: a prerequisite was reconstructed with a persistent cache or boundary input;
+- `cleared_before`: Ota witnessed an empty or cleared mutable target before this producer ran.
+
+Every edge carries the execution ID, boundary ID, prerequisite ID, selected task/workflow scope,
+producer or consumer identity where applicable, evidence class, typed observed identity, and a
+runner-owned monotonic `sequence`. Wall-clock time is diagnostic only: `sequence` and graph
+causality decide which producer established the identity available to, or consumed by, each
+assertion.
+
+`prerequisites[]` is a derived, readable projection over the asserted-target closure, with linked
+derivation-input edges retained in the graph.
+For each prerequisite it records:
 
 - `id` and `class`: stable prerequisite identity and one of `filesystem`, `dependency_cache`,
   `service`, `volume`, `environment`, or `image_runtime`;
-- `boundary`: selected boundary kind, lifecycle, and isolation posture used when deriving the
-  summary;
-- `selected_by`: the selected task/workflow and producer closure that made the prerequisite
-  material to this proof;
+- `precondition`: `absent`, `present`, `cleared`, or `unknown`, with the runner observation that
+  established it;
+- ordered `materializations[]`: producer execution, created identity, evidence class, and
+  sequence;
+- ordered `assertions[]`: consumer execution, recovered identity, evidence class, sequence, and
+  `established_by_edge_id` pointing to the causally matching producer edge for that assertion;
+- optional `terminal_established_by_edge_id`: the final producer for display only; it cannot replace
+  per-assertion causal bindings when a prerequisite is changed and asserted again;
 - `state`: `created_this_run`, `declared_immutable_input`, `verified_reused`, or `unknown`;
-- `basis`: the runner-derived producer/admission basis, or a verified boundary-attestation
-  reference;
 - `ambient_boundary`: an explicit unresolved class when the state is `unknown`.
 
-`execution_boundary.summary` is strictly derived from `prerequisites[]`:
+The first cut is intentionally narrow: filesystem artifacts such as `.venv`, `node_modules`,
+generated SDKs, and rendered configuration receive full graph evidence. Services, databases,
+volumes, and provider-managed runtime state remain `unknown` unless a shipped adapter can provide
+the same trustworthy boundary and identity evidence.
 
-- `cold_start_verified` only when the selected boundary is isolated and every material
-  prerequisite is `created_this_run` or `declared_immutable_input`;
-- `persistent_state_reused` when any material prerequisite is `verified_reused`;
+`execution_boundary.target_freshness` is strictly derived from the asserted target closure only:
+
+- `cold_start_verified` only when every mutable prerequisite was runner-observed absent or cleared
+  at the selected boundary, materialized by a producer in this run, and asserted with the matching
+  identity; every immutable asserted target must be declared and identity-verified; no asserted
+  target prerequisite may be `verified_reused` or `unknown`;
+- `persistent_state_reused` when any asserted target prerequisite is `verified_reused`;
 - `unknown` otherwise.
 
-An immutable container image or pinned toolchain is a legitimate `declared_immutable_input`; it
-need not be recreated by setup, but must carry the immutable identity Ota evaluated. A verified
-reused cache, volume, service, or environment blocks a cold-start summary even when its reuse is
-intentional.
+`execution_boundary.derivation_posture` is independent from freshness. It must preserve both:
+
+- `materialization`: `fully_derived`, `cache_assisted`, or `unknown`;
+- `immutable_inputs`: `none`, `inherited_immutable`, or `unknown`.
+
+A clean target reconstructed from a verified download cache may therefore be
+`cold_start_verified` and `cache_assisted`: the cache is in the derivation-input closure, while the
+new target is in the asserted target closure. An immutable container image or pinned toolchain is a
+legitimate `inherited_immutable` input; it need not be recreated by setup, but its declared
+identity must be verified. This split prevents a fast cache from pretending to be hermetic while
+also preventing legitimate immutable inputs from being treated as unexplained ambient state.
 
 ## Evidence And Attestation Rules
 
@@ -90,6 +135,13 @@ intentional.
   `unknown` unless Ota has stronger runner-owned evidence.
 - A persistent attachment, volume, cache, or already-running service is `verified_reused` only
   when Ota can identify and verify the selected reused boundary; otherwise it remains `unknown`.
+- A consumer assertion is authoritative only when it is emitted from the real selected consumer
+  execution and its recovered identity is causally bound through that assertion's
+  `established_by_edge_id`. A post-run hash or path check may emit `asserted_at`; it cannot emit
+  `consumed` or promote a prerequisite to `created_this_run` without stronger runner or adapter
+  evidence.
+- Multiple producers preserve ordered mutation provenance. Ota must emit the producer that
+  established the final asserted identity, not merely an unordered list of matching producers.
 - A required repo-owned executable, generated config, or declared setup artifact must consume the
   existing canonical producer-before-probe admission result. V11.16 must close only remaining
   selected runtime paths; it must not create proof-specific ordering logic parallel to Doctor's
@@ -103,6 +155,10 @@ Do not add a broad `fresh` or `cold_start` authoring flag. Existing contract tru
 producer tasks, artifact lineage, execution lifecycle, shared backends, attachments, and runtime
 paths. V11.16 derives the execution-boundary record from that canonical truth.
 
+V11.17 promotion and replay must reference the immutable V11.16 graph identity plus both selected
+closure identities. It must not create a parallel freshness model, auto-select the newest graph, or
+treat a typed expected digest as a substitute for runner-authored materialization provenance.
+
 A later policy slice may require cold-start verification for selected lanes. This slice only emits
 honest evidence and preserves existing execution behavior by default.
 
@@ -113,28 +169,43 @@ cleanup. Its archived proof record must preserve the same execution-boundary rec
 receive an additive projection later; ordinary `ota run` success must not claim runtime freshness
 it did not prove.
 
-The JSON schema must require `execution_boundary.prerequisites[]`, each prerequisite state and
-basis, and the derived `execution_boundary.summary`. It must reject a cold summary when a material
-prerequisite is `verified_reused` or `unknown`, and reject an `attested` basis without the complete
-attestation identity/verification record. The archive preserves byte-identical boundary evidence.
+JSON Schema enforces the record structure: graph identity, both selected closures, nodes, ordered
+edges, `prerequisites[]`, `target_freshness`, and `derivation_posture`. The shared semantic
+execution-boundary evaluator enforces cross-record truth before serialization and archive: closure
+membership, edge ordering, producer-to-assertion identity matching, per-assertion causal bindings,
+freshness derivation, and attestation verification. It rejects dishonest graph states rather than
+leaving those invariants to JSON Schema or output producers. The archive preserves byte-identical
+boundary evidence.
 
 Human proof output must render the derived summary and every unresolved ambient boundary beside the
 terminal proof verdict. A green proof with `unknown` material state must remain visibly qualified.
 
 ## Implementation Order
 
-1. Define runner-owned prerequisite evidence types and derive their selected material set from
-   execution scope, lifecycle, existing producer/admission results, attachments, services, and
-   immutable contract inputs.
-2. Reuse canonical producer-before-probe admission evidence on all remaining selected native and
+1. Define runner-owned graph nodes, ordered edges, asserted-target and derivation-input closures,
+   and canonical graph identity from execution scope, lifecycle, existing producer/admission
+   results, attachments, services, and immutable contract inputs. Hash canonical JSON containing
+   only semantic graph fields: schema version, normalized repo-relative identities, both sorted
+   closures, nodes sorted by stable node ID, and edges sorted by `sequence` then stable edge ID.
+   The semantic evaluator rejects duplicate edge IDs and ambiguous sequence/order relationships.
+   Exclude diagnostic timestamps and presentation-only fields.
+2. Implement filesystem prerequisite evidence first: precondition observation, producer
+   materialization, `asserted_at` observation, optional instrumented `consumed` evidence,
+   per-assertion causal producer binding, and typed identity recovery for `.venv`, `node_modules`,
+   generated SDKs, and rendered configuration.
+3. Reuse canonical producer-before-probe admission evidence on all remaining selected native and
    container runtime paths; add only the missing integration coverage.
-3. Define verified boundary-attestation parsing and rejection, including issuer, run, scope, digest,
+4. Define verified boundary-attestation parsing and rejection, including issuer, run, scope, digest,
    and verification binding.
-4. Emit the per-prerequisite record and derived summary in runtime-proof JSON, archive it with the
-   proof, and render it in human proof output.
-5. Add schema and regression fixtures for all-created/immutable cold proof, mixed persistent reuse,
-   host unknown, forged or stale provider attestation, and rejected premature probing.
-6. Pressure-test Lead Quorum's repo-local virtualenv lane and Athena's ephemeral container app plus
+5. Implement the shared semantic evaluator and reject invalid cross-graph relationships before
+   JSON serialization or archive.
+6. Emit the graph, readable prerequisite projection, and derived verdicts in runtime-proof JSON,
+   archive them with the proof, and render them in human proof output.
+7. Add schema and semantic regression fixtures for ordered multi-producer mutation with two
+   assertions, all-created/immutable cold proof, cold cache-assisted reconstruction, mixed
+   persistent reuse, host unknown, forged or stale provider attestation, and rejected premature
+   probing.
+8. Pressure-test Lead Quorum's repo-local virtualenv lane and Athena's ephemeral container app plus
    host-managed PostgreSQL runtime lane on clean CI. The latter must remain mixed/qualified unless
    Ota can identify a selected service boundary honestly.
 
@@ -150,16 +221,25 @@ terminal proof verdict. A green proof with `unknown` material state must remain 
 
 V11.16 is complete when:
 
-- every selected material prerequisite has exactly one state and basis in JSON;
-- `cold_start_verified` is emitted only for an isolated boundary whose complete selected
-  prerequisite set is `created_this_run` or `declared_immutable_input`;
+- asserted-target and derivation-input closures, graph nodes, graph edges, canonical graph identity,
+  and readable prerequisite projection are schema-valid and pass the shared semantic evaluator;
+- every asserted target prerequisite has a precondition observation, ordered producer and
+  `asserted_at`/`consumed` evidence where applicable, and one derived state;
+- `cold_start_verified` is emitted only when every mutable prerequisite was observed absent or
+  cleared, materialized in this run, and asserted with a matching final-producer identity, while
+  every immutable asserted target is declared and identity-verified;
 - a mixed-state fixture with a reused cache, volume, or service derives
   `persistent_state_reused`, never cold proof;
+- a cache-assisted reconstruction can remain `cold_start_verified` because its reused cache is in
+  the derivation-input closure, while its independent derivation posture remains `cache_assisted`;
 - a forged, stale, scope-mismatched, or caller-controlled provider assertion remains `unknown` and
   cannot produce `evidence_class: attested`;
+- an unordered or stale producer record cannot establish a consumer assertion; a multi-producer,
+  two-assertion fixture proves each assertion binds its own matching producer edge by runner-owned
+  sequence and causality;
 - no selected repo-owned prerequisite is probed before its canonical producer closure succeeds;
-- proof archives preserve the exact prerequisite and attestation evidence that supported the
-  derived summary, and schema conformance covers live JSON and archived proof JSON;
+- proof archives preserve the exact graph, prerequisite, and attestation evidence that supported
+  the derived verdicts, and schema conformance covers live JSON and archived proof JSON;
 - human and JSON output keep a green proof from over-reading unresolved ambient state;
 - Lead Quorum and Athena pressure the native producer and container/service boundaries without
   repo-local shell workarounds.

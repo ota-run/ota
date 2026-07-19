@@ -31,6 +31,18 @@ Status: planned. This follows V11.16 under version discipline. It extends V11.10
 governance and V11.13 producer-owned artifact lineage; it does not reopen their completed core
 models.
 
+## V11.16 Evidence Dependency
+
+V11.17 consumes, but does not reimplement, V11.16's runner-authored prerequisite evidence graph.
+A recorded regeneration attestation binds the immutable `execution_boundary_graph_identity` and
+its asserted-target and derivation-input closure identities that produced its artifact set. That
+establishes the historical derivation posture of the promoted baseline.
+
+A later replay must capture and evaluate its own V11.16 graph for its own execution. It must never
+copy, recompute from, or promote the recording graph into a current-run freshness claim. Promotion
+therefore preserves provenance of the accepted baseline; it does not certify that a future replay
+was cold-start verified, hermetic, or derived under the same conditions.
+
 ## Problem
 
 `expected_identity` is appropriate when a contract consumes an independently immutable input. It
@@ -89,7 +101,8 @@ The resulting rules are:
   one immutable, content-addressed regeneration attestation;
 - the attestation, not a contract literal, binds artifact name, output paths and SHA-256 identities,
   source identity, contract snapshot, selected lane and mode, execution receipt/proof identity, and
-  creation time;
+  creation time, V11.16 `execution_boundary_graph_identity`, asserted-target closure identity, and
+  derivation-input closure identity;
 - an explicit promotion operation selects one recorded attestation and atomically writes the
   portable authority manifest. It may only promote a complete, scope-matching recorded attestation;
   it never chooses the newest successful recording implicitly;
@@ -143,6 +156,8 @@ includes:
 - stable artifact identity and complete output identity set;
 - producer task, source identity, semantic contract snapshot, execution boundary, and
   receipt/proof identity;
+- the immutable V11.16 execution-boundary graph identity plus asserted-target and derivation-input
+  closure identities for the producer run;
 - attestation digest and creation time;
 - `evidence_class: attested` for the Ota-authored record;
 - current replay comparison: `matched`, `drifted`, or `unavailable`, with the promoted selected
@@ -163,11 +178,13 @@ Doctor and policy surfaces derive from it rather than calculating a second basel
    outputs, portable authority-manifest location, explicit consumer ownership, and no ordinary
    execution path to regeneration.
 2. Add explicit regeneration admission and atomic Ota-authored recorded-attestation capture at the
-   producer decision site.
+   producer decision site, binding the producer run's V11.16 graph identity plus asserted-target
+   and derivation-input closure identities.
 3. Add an explicit promotion operation that validates recorded scope and complete identity before
    atomically writing the portable manifest; implement recorded, promoted, and revoked state.
 4. Bind replay input resolution to the manifest's promoted immutable attestation and use a
-   runner-owned copy or read-only mount for strict replay.
+   runner-owned copy or read-only mount for strict replay. Capture a separate V11.16 graph for the
+   replay run; do not inherit the recorded baseline's freshness or derivation posture.
 5. Emit the same promotion and attestation references in archived receipts, replay proof JSON, and
    human output; add schema conformance for every carrier.
 6. Add fixtures for valid regeneration and promotion, newest-recording-not-promoted, revoked
@@ -193,13 +210,17 @@ V11.17 is complete when:
   select a regeneration lane;
 - a successful explicit regeneration produces one Ota-authored, content-addressed `recorded`
   attestation bound to the canonical output manifest, source, contract snapshot, scope, and
-  archived receipt/proof;
+  archived receipt/proof, including the producer run's immutable V11.16 graph and selected
+  asserted-target and derivation-input closure identities;
 - only an explicit promotion can select a recorded attestation. Replay never selects newest, and a
   revoked or unpromoted attestation is unavailable;
 - a fresh clone or CI runner can verify the promoted artifact identity from the committed authority
   manifest without local receipt history;
 - strict replay uses a runner-owned copy or read-only mount. A backend unable to enforce that
   boundary refuses strict replay; non-strict mutation is explicitly detected and reported;
+- replay output records its own V11.16 graph separately from the recorded baseline's graph; no
+  promoted baseline can upgrade the current replay to `cold_start_verified` or otherwise inherit
+  historical derivation posture;
 - no command automatically updates a contract digest, promotion manifest, attestation, or baseline
   artifact during replay;
 - JSON and archive schemas require the same recorded-attestation, promotion, canonical output
