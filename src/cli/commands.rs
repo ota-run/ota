@@ -77170,6 +77170,58 @@ workflows:
     }
 
     #[test]
+    fn native_corepack_activation_runs_even_when_a_package_manager_is_present() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: corepack-native-activation
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      yarn: "4.11.0"
+tasks:
+  verify:
+    command:
+      exe: yarn
+      args: [lint]
+    requirements:
+      toolchains: [node]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].tool_name, "yarn");
+        assert_eq!(
+            actions[0].acquisition.provider,
+            ToolAcquisitionProvider::Corepack
+        );
+    }
+
+    #[test]
     fn up_preview_renders_activation_actions() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -112705,9 +112757,20 @@ fn selected_activation_actions_for_mode(
                     .findings
                     .iter()
                     .any(|finding| finding_targets_activation_action(finding, action))
+                    || corepack_activation_is_required_for_native_execution(action)
                     || activation_action_needs_local_bootstrap(action))
         })
         .collect()
+}
+
+fn corepack_activation_is_required_for_native_execution(
+    action: &RequirementActivationAction,
+) -> bool {
+    action.backend == Backend::Native
+        && matches!(
+            action.acquisition.provider,
+            ToolAcquisitionProvider::Corepack
+        )
 }
 
 fn activation_action_needs_local_bootstrap(action: &RequirementActivationAction) -> bool {

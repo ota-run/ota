@@ -2118,6 +2118,9 @@ Current behavior:
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
   activation lane before setup when it is safe and selected; shipped paths now cover both
   Corepack-managed tools and explicit shell-command acquisition
+- on a selected native Corepack path, ota activates every declared package manager before direct
+  task commands run, so `yarn` or `pnpm` resolves to the contract-owned version rather than an
+  ambient global shim
 - when the selected workflow setup or run task references `requirements.native` entries with
   `activation.kind`, ota resolves that native activation environment first; Windows
   `visual_studio_dev_shell` and generic `command` activations both apply to the affected native
