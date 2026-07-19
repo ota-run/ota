@@ -760,6 +760,8 @@ Current behavior:
   reconstructing execution commands from caller YAML.
 - The generated workflow verifies identity through `ota ci projection --expect-identity`, not a
   provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
+  Ota refuses the projection before rendering when any executable member of the selected workflow
+  closure or its resolved execution context does not support that target OS and mode.
   `projection.toolchains[]` is provider-neutral contract truth. The GitHub adapter renders
   immutable `actions/setup-go` for `source: go`, translating the contract's supported lower-bound
   range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`), and immutable

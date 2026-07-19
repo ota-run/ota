@@ -65,6 +65,9 @@
   use one authoritative runtime-proof execution; render and caller binding identities are separate; `sync` is
   atomic and refuses unowned files, caller paths, absolute/traversal paths, or any attempt to
   rewrite provider-owned scheduling policy.
+- hardened target-OS admission for every provider-neutral projection: the selected workflow closure
+  must support both the requested execution mode and each resolved execution context on that OS;
+  Ota refuses impossible provider jobs before render, check, or sync.
 - widened the GitHub projection adapter to provision contract-owned Node/Corepack lanes with an
   immutable `actions/setup-node` revision while preserving the declared Node semver selector;
   unsupported fulfillment sources still fail rendering rather than falling back to a hosted image.

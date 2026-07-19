@@ -24,7 +24,7 @@
 //   limitations under the License.
 
 use crate::contract_drift::{merge_check_id_for_lane_task, merge_check_id_for_refusal_canary};
-use crate::schema::{Contract, ToolchainFulfillmentSource};
+use crate::schema::{Backend, Contract, ToolchainFulfillmentSource};
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
 use sha2::Digest;
@@ -145,6 +145,38 @@ pub(crate) fn build_ci_projection(
     if !contract.tasks.contains_key(&task) {
         return Err(format!(
             "workflow `{workflow_name}` references missing task `{task}`"
+        ));
+    }
+    let backend = match mode {
+        "native" => Backend::Native,
+        "container" => Backend::Container,
+        "remote" => Backend::Remote,
+        _ => unreachable!("projection mode was validated above"),
+    };
+    let unsupported_task = contract
+        .selected_workflow_task_closure_names(Some(workflow_name))
+        .into_iter()
+        .filter_map(|task_name| {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|candidate| (task_name, candidate))
+        })
+        // Aggregate nodes orchestrate their concrete closure; they do not execute directly.
+        .find(|(_, candidate)| {
+            candidate.aggregate.is_none()
+                && (!candidate.active_for_os(target_os)
+                    || !candidate.supports_execution_backend(
+                        contract.execution.as_ref(),
+                        backend,
+                        target_os,
+                    )
+                    || !contract.task_active_for_backend_on_os(candidate, backend, target_os))
+        })
+        .map(|(task_name, _)| task_name);
+    if let Some(unsupported_task) = unsupported_task {
+        return Err(format!(
+            "workflow `{workflow_name}` task closure member `{unsupported_task}` does not support `{mode}` execution on `{target_os}`"
         ));
     }
     let semantic_contract_identity = semantic_contract_identity(contract)?;
@@ -465,6 +497,36 @@ workflows:
         assert_eq!(projection.toolchains[0].name, "go");
         assert_eq!(projection.toolchains[0].source, "go");
         assert_eq!(projection.toolchains[0].version, "1.26.1");
+    }
+
+    #[test]
+    fn projection_rejects_a_target_os_outside_the_selected_context_scope() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: context-platform-fixture
+execution:
+  contexts:
+    host:
+      backend: native
+      only_on: [linux, macos]
+tasks:
+  verify:
+    context: host
+    run: echo verify
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("fixture contract should parse");
+
+        let error = build_ci_projection(&contract, "verify", "native", "windows")
+            .expect_err("Windows projection must reject a Linux/macOS-only context");
+        assert!(error.contains("does not support `native` execution on `windows`"));
     }
 
     #[test]

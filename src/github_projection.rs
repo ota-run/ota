@@ -466,6 +466,9 @@ toolchains:
 tasks:
   verify:
     run: echo verify
+    execution:
+      modes:
+        container: {}
     requirements:
       toolchains: [go]
   publish:
