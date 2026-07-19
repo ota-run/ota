@@ -55,9 +55,9 @@
 
 - extended managed CI projection with provider-neutral selected-closure `toolchains[]`. The first
   GitHub adapter renders Go from contract-owned `source: go` version truth using an immutable
-  `actions/setup-go` revision, translates supported Go lower-bound ranges into the provider's
-  release selector, and refuses unsupported required provisioning sources or version forms instead
-  of silently depending on a hosted runner image.
+  `actions/setup-go` revision, translates supported one-sided or bounded Go lower-bound ranges
+  into the provider's release selector, and refuses unsupported required provisioning sources or
+  version forms instead of silently depending on a hosted runner image.
 
 - extended managed CI projection with contract-owned `agent.refusal_canaries`. Provider-neutral
   projections now carry de-duplicated task/workflow control identities and stable merge-check IDs;

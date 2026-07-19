@@ -344,6 +344,9 @@ fn github_go_version_spec(version: &str) -> Result<String, String> {
     let constraints = trimmed.split(',').map(str::trim).collect::<Vec<_>>();
     let candidate = if constraints.len() == 1 {
         constraints[0]
+            .strip_prefix(">=")
+            .map(str::trim)
+            .unwrap_or(constraints[0])
     } else {
         let Some(lower) = constraints[0].strip_prefix(">=").map(str::trim) else {
             return Err(format!(
@@ -834,6 +837,10 @@ workflows:
         assert_eq!(
             github_go_version_spec(">=1.26,<1.27").expect("range should project"),
             "1.26"
+        );
+        assert_eq!(
+            github_go_version_spec(">=1.25.1").expect("lower-bound should project"),
+            "1.25.1"
         );
         assert!(github_go_version_spec(">=1.26,not-a-range").is_err());
         assert!(github_go_version_spec("stable").is_err());
