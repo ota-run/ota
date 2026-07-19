@@ -68,6 +68,10 @@
 - hardened target-OS admission for every provider-neutral projection: the selected workflow closure
   must support both the requested execution mode and each resolved execution context on that OS;
   Ota refuses impossible provider jobs before render, check, or sync.
+- added execution-scoped projection toolchains. Provider-neutral JSON now identifies whether each
+  selected toolchain belongs to `native`, `container`, or `remote` execution; the GitHub adapter
+  provisions only native-owned toolchains and leaves container runtime ownership with the declared
+  execution image.
 - widened the GitHub projection adapter to provision contract-owned Node/Corepack lanes with an
   immutable `actions/setup-node` revision while preserving the declared Node semver selector;
   unsupported fulfillment sources still fail rendering rather than falling back to a hosted image.

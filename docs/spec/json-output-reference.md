@@ -845,7 +845,7 @@ Success:
         }
       ],
       "toolchains": [
-        { "name": "go", "source": "go", "version": "1.26" }
+        { "name": "go", "source": "go", "version": "1.26", "execution_scopes": ["native"] }
       ],
       "bootstrap": { "source_kind": "version", "source_identity": "v1.6.24" },
       "proof_required": false,

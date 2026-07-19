@@ -34,11 +34,17 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "source", "version"],
+            "required": ["name", "source", "version", "execution_scopes"],
             "properties": {
               "name": { "type": "string" },
               "source": { "enum": ["rustup", "corepack", "sdkman", "uv", "go", "ruby", "dotnet", "mise", "unspecified"] },
-              "version": { "type": "string" }
+              "version": { "type": "string" },
+              "execution_scopes": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "enum": ["native", "container", "remote"] }
+              }
             }
           }
         },

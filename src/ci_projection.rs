@@ -28,7 +28,7 @@ use crate::schema::{Backend, Contract, ToolchainFulfillmentSource};
 use crate::semantic_identity::semantic_contract_identity;
 use serde::Serialize;
 use sha2::Digest;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CiProjection {
@@ -65,12 +65,14 @@ pub(crate) struct CiProjectionRefusalCanary {
     pub merge_check_id: String,
 }
 
-/// A provider-neutral toolchain requirement. Provider adapters decide how to satisfy it.
+/// A provider-neutral toolchain requirement. `execution_scopes` keeps ownership explicit so an
+/// adapter only provisions toolchains that execute on the provider runner.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CiProjectionToolchain {
     pub name: String,
     pub source: String,
     pub version: String,
+    pub execution_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -237,7 +239,7 @@ pub(crate) fn build_ci_projection(
     );
     let proof_required = workflow.proof.claim_value().is_some();
     let proof_claim = workflow.proof.claim_value().map(str::to_string);
-    let toolchains = selected_projection_toolchains(contract, workflow_name, target_os)?;
+    let toolchains = selected_projection_toolchains(contract, workflow_name, backend, target_os)?;
     let bootstrap = contract
         .agent
         .as_ref()
@@ -334,18 +336,38 @@ pub(crate) fn refresh_ci_projection_identity(projection: &mut CiProjection) -> R
 fn selected_projection_toolchains(
     contract: &Contract,
     workflow_name: &str,
+    backend: Backend,
     target_os: &str,
 ) -> Result<Vec<CiProjectionToolchain>, String> {
-    let mut names = BTreeSet::new();
+    let execution_scope = match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    };
+    let mut scopes = BTreeMap::<String, BTreeSet<String>>::new();
     for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name)) {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        names.extend(task.requirements.toolchains.iter().cloned());
+        if task.aggregate.is_some() {
+            continue;
+        }
+        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        for toolchain_name in contract.task_toolchain_names_for_execution_for_os(
+            task,
+            backend,
+            context_name,
+            target_os,
+        ) {
+            scopes
+                .entry(toolchain_name)
+                .or_default()
+                .insert(execution_scope.to_string());
+        }
     }
-    names
+    scopes
         .into_iter()
-        .filter_map(|name| {
+        .filter_map(|(name, execution_scopes)| {
             let toolchain = contract.toolchains.get(name.as_str())?;
             toolchain.required_for_os(target_os).then(|| {
                 Ok(CiProjectionToolchain {
@@ -356,6 +378,7 @@ fn selected_projection_toolchains(
                         .unwrap_or("unspecified")
                         .to_string(),
                     version: toolchain.version_for_os(target_os).to_string(),
+                    execution_scopes: execution_scopes.into_iter().collect(),
                 })
             })
         })
@@ -497,6 +520,48 @@ workflows:
         assert_eq!(projection.toolchains[0].name, "go");
         assert_eq!(projection.toolchains[0].source, "go");
         assert_eq!(projection.toolchains[0].version, "1.26.1");
+        assert_eq!(projection.toolchains[0].execution_scopes, ["native"]);
+    }
+
+    #[test]
+    fn projection_keeps_container_owned_toolchains_out_of_provider_scope() {
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: container-toolchain-fixture
+execution:
+  contexts:
+    app:
+      backend: container
+      container:
+        image: ruby:3.3
+toolchains:
+  ruby:
+    version: "3.3.11"
+    fulfillment:
+      source: ruby
+      mode: run
+tasks:
+  verify:
+    context: app
+    run: ruby -v
+    execution:
+      default_mode: container
+    requirements:
+      toolchains: [ruby]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("fixture contract should parse");
+
+        let projection = build_ci_projection(&contract, "verify", "container", "linux")
+            .expect("container projection should build");
+        assert_eq!(projection.toolchains[0].execution_scopes, ["container"]);
     }
 
     #[test]

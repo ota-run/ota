@@ -762,7 +762,9 @@ Current behavior:
   provider-shell assertion. Runner selection remains provider-owned; target OS is bound explicitly.
   Ota refuses the projection before rendering when any executable member of the selected workflow
   closure or its resolved execution context does not support that target OS and mode.
-  `projection.toolchains[]` is provider-neutral contract truth. The GitHub adapter renders
+  `projection.toolchains[]` is provider-neutral contract truth and each entry carries its selected
+  `execution_scopes`. The GitHub adapter provisions only `native`-scoped toolchains; container and
+  remote scopes remain owned by their declared execution boundaries. It renders
   immutable `actions/setup-go` for `source: go`, translating the contract's supported lower-bound
   range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`), and immutable
   `actions/setup-node` for `toolchains.node` fulfilled through `source: corepack`, preserving the

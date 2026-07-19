@@ -257,6 +257,12 @@ pub(crate) fn render_github_projection_from_projection(
 fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<String, String> {
     toolchains
         .iter()
+        .filter(|toolchain| {
+            toolchain
+                .execution_scopes
+                .iter()
+                .any(|scope| scope == "native")
+        })
         .map(|toolchain| match (toolchain.name.as_str(), toolchain.source.as_str()) {
             (_, "go") => Ok(format!(
                 concat!(
@@ -686,6 +692,7 @@ workflows:
             name: "node".to_string(),
             source: "corepack".to_string(),
             version: "^22.12.0".to_string(),
+            execution_scopes: vec!["native".to_string()],
         }])
         .expect("Node/Corepack should project");
         assert!(rendered.contains("actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444"));
@@ -696,6 +703,7 @@ workflows:
                 name: "node".to_string(),
                 source: "mise".to_string(),
                 version: "22".to_string(),
+                execution_scopes: vec!["native".to_string()],
             }])
             .is_err()
         );
@@ -707,10 +715,23 @@ workflows:
             name: "ruby".to_string(),
             source: "ruby".to_string(),
             version: "3.3.11".to_string(),
+            execution_scopes: vec!["native".to_string()],
         }])
         .expect("Ruby should project");
         assert!(rendered.contains("ruby/setup-ruby@003a5c4d8d6321bd302e38f6f0ec593f77f06600"));
         assert!(rendered.contains("ruby-version: '3.3.11'"));
         assert!(github_ruby_version_spec(" ").is_err());
+    }
+
+    #[test]
+    fn github_projection_does_not_provision_container_owned_toolchains_on_the_host() {
+        let rendered = github_toolchain_setup_steps(&[CiProjectionToolchain {
+            name: "ruby".to_string(),
+            source: "ruby".to_string(),
+            version: "3.3.11".to_string(),
+            execution_scopes: vec!["container".to_string()],
+        }])
+        .expect("container-owned Ruby should not require host provisioning");
+        assert!(rendered.is_empty());
     }
 }
