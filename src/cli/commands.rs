@@ -2009,9 +2009,13 @@ fn ci_projection_for_contract(
         }),
         ..ExecutionOverrides::default()
     };
-    if let Some(refusal) =
-        agent_execution_refusal_with_policy(contract, contract_path, &projection.task, overrides)
-    {
+    if let Some(refusal) = agent_workflow_execution_refusal_with_policy(
+        contract,
+        contract_path,
+        Some(workflow),
+        overrides,
+        UpRunBehaviorPreference::Auto,
+    ) {
         projection.governance.agent_admission.decision = if refusal.reason.contains("review") {
             String::from("review")
         } else {
@@ -2022,8 +2026,8 @@ fn ci_projection_for_contract(
         return Err((
             refusal.reason.to_string(),
             format!(
-                "workflow `{workflow}` cannot be projected for agent execution because task `{}` is not admitted",
-                projection.task
+                "workflow `{workflow}` cannot be projected for agent execution because closure task `{}` is not admitted",
+                refusal.requested_task
             ),
             Some(projection),
         ));
@@ -18069,6 +18073,24 @@ fn agent_execution_refusal_with_policy(
     agent_execution_admission(contract, contract_path, task_name, overrides)
         .refusal()
         .cloned()
+}
+
+/// CI projection must use the same ordered workflow roots as `ota up --agent`; checking only the
+/// run task could publish a lane whose setup or prepare phase the runner later refuses.
+fn agent_workflow_execution_refusal_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+) -> Option<AgentExecutionRefusal> {
+    selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
+        .into_iter()
+        .find_map(|task_name| {
+            agent_execution_admission(contract, contract_path, task_name.as_str(), overrides)
+                .refusal()
+                .cloned()
+        })
 }
 
 pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> TaskEffectiveSafety {
@@ -55562,6 +55584,58 @@ workflows:
         assert_eq!(
             inspectable_refusal["projection"]["governance"]["agent_admission"]["decision"],
             "deny"
+        );
+        let unsafe_setup_contract_path = repo.path().join("unsafe-setup-ota.yaml");
+        fs::write(
+            &unsafe_setup_contract_path,
+            r#"
+version: 1
+project:
+  name: unsafe-setup-github-projection-fixture
+tasks:
+  setup:
+    command:
+      exe: sh
+      args: ["-c", "true"]
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "true"]
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .unwrap();
+        let unsafe_setup = ci_projection_for_contract(
+            &parse_contract_str(
+                &unsafe_setup_contract_path,
+                &fs::read_to_string(&unsafe_setup_contract_path).unwrap(),
+            )
+            .unwrap(),
+            &unsafe_setup_contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("an unsafe setup phase must refuse CI projection");
+        assert_eq!(unsafe_setup.0, "requested_task_not_safe");
+        let denied_projection = unsafe_setup.2.expect("denial remains inspectable");
+        assert_eq!(denied_projection.task, "verify");
+        assert_eq!(
+            denied_projection.governance.agent_admission.decision,
+            "deny"
+        );
+        assert_eq!(
+            denied_projection.governance.agent_admission.basis,
+            ["requested_task_not_safe"]
         );
         let unsafe_proof_contract_path = repo.path().join("unsafe-proof-ota.yaml");
         fs::write(
@@ -116257,23 +116331,22 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             workflow_name,
         ));
     }
-    if agent {
-        for task_name in
-            selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
-        {
-            if let Some(refusal) =
-                agent_execution_admission(contract, resolved_path, task_name.as_str(), overrides)
-                    .refusal()
-            {
-                return Ok(up_agent_execution_refusal_result(
-                    contract,
-                    resolved_path,
-                    workflow_name,
-                    overrides,
-                    refusal,
-                ));
-            }
-        }
+    if agent
+        && let Some(refusal) = agent_workflow_execution_refusal_with_policy(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            run_behavior_preference,
+        )
+    {
+        return Ok(up_agent_execution_refusal_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            &refusal,
+        ));
     }
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);

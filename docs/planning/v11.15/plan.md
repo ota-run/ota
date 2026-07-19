@@ -103,7 +103,8 @@ adapter; they must not restate bootstrap or verification commands already declar
 
 ### Admission and proof execution
 
-Projection always consumes the runner's agent-closure admission. A proof claim describes evidence
+Projection always consumes the runner's full selected workflow admission, using the same ordered
+prepare, setup, run, and attach roots as `ota up --agent`. A proof claim describes evidence
 breadth; it is not execution authority. A denied or review-required workflow remains an
 inspectable refusal until a future contract- or policy-owned CI execution authority exists.
 

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed managed CI projection admission to evaluate the same full workflow closure as
+  `ota up --agent`. A safe run task can no longer render a generated lane when an unsafe prepare,
+  setup, or attach phase would be refused by the runner.
+
 - extended managed GitHub CI projection to render native `toolchains.dotnet` through an immutable
   `actions/setup-dotnet` revision. Container-owned .NET toolchains remain owned by their declared
   execution image.

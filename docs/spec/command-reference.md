@@ -736,8 +736,9 @@ Current behavior:
 
 - `render` is pure: it prints deterministic reusable-workflow YAML and never writes the optional
   `--output` target.
-- `ota ci projection` is the provider-neutral source of truth. It evaluates the selected agent
-  closure and any declared proof assurance before rendering; policy-denied or review-required
+- `ota ci projection` is the provider-neutral source of truth. It evaluates the full selected
+  workflow agent closure, including declared prepare, setup, run, and attach task roots, and any
+  declared proof assurance before rendering; policy-denied or review-required
   lanes fail projection with the same canonical reason the runner would enforce. `--mode` selects its native,
   container, or remote plane; provider adapters consume that exact projection rather than
   reconstructing contract authority.
