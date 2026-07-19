@@ -43,6 +43,7 @@ const GITHUB_SETUP_NODE_REV: &str = "a0853c24544627f65ddf259abe73b1d18a591444";
 const GITHUB_SETUP_RUBY_REV: &str = "003a5c4d8d6321bd302e38f6f0ec593f77f06600";
 const GITHUB_SETUP_PYTHON_REV: &str = "ece7cb06caefa5fff74198d8649806c4678c61a1";
 const GITHUB_SETUP_UV_REV: &str = "d0cc045d04ccac9d8b7881df0226f9e82c39688e";
+const GITHUB_SETUP_DOTNET_REV: &str = "26b0ec14cb23fa6904739307f278c14f94c95bf1";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct GitHubProjection {
@@ -304,6 +305,15 @@ fn github_toolchain_setup_steps(toolchains: &[CiProjectionToolchain]) -> Result<
                 GITHUB_SETUP_UV_REV = GITHUB_SETUP_UV_REV,
                 version = yaml_scalar(&github_python_version_spec(&toolchain.version)?),
             )),
+            ("dotnet", "dotnet") => Ok(format!(
+                concat!(
+                    "      - uses: actions/setup-dotnet@{GITHUB_SETUP_DOTNET_REV}\n",
+                    "        with:\n",
+                    "          dotnet-version: {version}\n"
+                ),
+                GITHUB_SETUP_DOTNET_REV = GITHUB_SETUP_DOTNET_REV,
+                version = yaml_scalar(&github_dotnet_version_spec(&toolchain.version)?),
+            )),
             (_, source) => Err(format!(
                 "GitHub projection cannot provision required toolchain `{}` with source `{source}`; choose a supported provider adapter or keep the lane outside managed execution",
                 toolchain.name
@@ -360,6 +370,12 @@ fn github_node_version_spec(version: &str) -> Result<String, String> {
 /// neutral projection and derive only its explicit numeric lower bound for this adapter.
 fn github_python_version_spec(version: &str) -> Result<String, String> {
     github_lower_bounded_numeric_selector(version, "actions/setup-python")
+}
+
+/// `actions/setup-dotnet` accepts a concrete SDK selector. Preserve the contract comparator set
+/// in the neutral projection and select the explicit numeric lower bound in the GitHub adapter.
+fn github_dotnet_version_spec(version: &str) -> Result<String, String> {
+    github_lower_bounded_numeric_selector(version, "actions/setup-dotnet")
 }
 
 fn github_lower_bounded_numeric_selector(version: &str, action: &str) -> Result<String, String> {
@@ -790,6 +806,20 @@ workflows:
         assert!(rendered.contains("python-version: '3.12'"));
         assert!(rendered.contains("astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e"));
         assert!(github_python_version_spec("stable").is_err());
+    }
+
+    #[test]
+    fn github_dotnet_toolchain_projects_the_declared_lower_bound() {
+        let rendered = github_toolchain_setup_steps(&[CiProjectionToolchain {
+            name: "dotnet".to_string(),
+            source: "dotnet".to_string(),
+            version: ">=10.0.103,<10.1.0".to_string(),
+            execution_scopes: vec!["native".to_string()],
+        }])
+        .expect(".NET should project");
+        assert!(rendered.contains("actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1"));
+        assert!(rendered.contains("dotnet-version: '10.0.103'"));
+        assert!(github_dotnet_version_spec("stable").is_err());
     }
 
     #[test]

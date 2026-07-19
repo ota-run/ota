@@ -769,9 +769,10 @@ Current behavior:
   range (for example `>=1.26,<1.27`) into Go's release selector (`1.26`), and immutable
   `actions/setup-node` for `toolchains.node` fulfilled through `source: corepack`, preserving the
   declared Node semver selector, immutable `ruby/setup-ruby` for `toolchains.ruby` fulfilled
-  through `source: ruby`, and immutable `actions/setup-python` plus `astral-sh/setup-uv` for
-  `toolchains.python` fulfilled through `source: uv`, translating supported lower-bound Python
-  ranges to a concrete Python release. It refuses a required toolchain source or range it cannot
+  through `source: ruby`, immutable `actions/setup-python` plus `astral-sh/setup-uv` for
+  `toolchains.python` fulfilled through `source: uv`, and immutable `actions/setup-dotnet` for
+  `toolchains.dotnet` fulfilled through `source: dotnet`, translating supported lower-bound Python
+  and .NET ranges to concrete provider releases. It refuses a required toolchain source or range it cannot
   provision rather than silently assuming the selected runner image provides it.
 - `check` fails for a missing, stale, manually changed, or unowned generated workflow, or when the
   caller points at a different semantic projection.

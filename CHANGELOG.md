@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- extended managed GitHub CI projection to render native `toolchains.dotnet` through an immutable
+  `actions/setup-dotnet` revision. Container-owned .NET toolchains remain owned by their declared
+  execution image.
+
 - fixed aggregate-task execution-mode admission to use the same concrete member-closure rule as
   task discovery and CI projection. A container-capable aggregate can no longer render a valid
   projection while `ota up --mode container` rejects it before its member tasks run.
