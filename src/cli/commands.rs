@@ -55684,6 +55684,61 @@ workflows:
         )
         .expect_err("a proof claim must not bypass agent admission");
         assert_eq!(unsafe_proof.0, "requested_task_not_safe");
+        let strict_proof_contract_path = repo.path().join("strict-proof-ota.yaml");
+        fs::write(
+            &strict_proof_contract_path,
+            r#"
+version: 1
+project:
+  name: strict-proof-github-projection-fixture
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "true"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+    proof:
+      claim: bounded
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(repo.path().join(".ota")).unwrap();
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  agent:
+    claim_assurance:
+      proof_breadth:
+        minimum_status: supported
+        on_insufficient: deny
+"#,
+        )
+        .unwrap();
+        let proof_policy_denial = ci_projection(
+            Some(strict_proof_contract_path.as_path()),
+            None,
+            "verify",
+            Some("native"),
+            "linux",
+            None,
+            OutputFormat::Json,
+        );
+        assert_eq!(proof_policy_denial.exit_code, 1);
+        let proof_policy_denial: serde_json::Value =
+            serde_json::from_str(proof_policy_denial.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(proof_policy_denial["code"], "proof_assurance_policy_deny");
+        assert_eq!(
+            proof_policy_denial["projection"]["governance"]["proof_assurance"]["policy_decision"],
+            "deny"
+        );
         let caller_path = repo.path().join(".github/workflows/ci.yml");
         fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
         fs::write(
