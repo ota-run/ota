@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed aggregate-task execution-mode admission to use the same concrete member-closure rule as
+  task discovery and CI projection. A container-capable aggregate can no longer render a valid
+  projection while `ota up --mode container` rejects it before its member tasks run.
+
 - extended managed CI projection with provider-neutral selected-closure `toolchains[]`. The first
   GitHub adapter renders Go from contract-owned `source: go` version truth using an immutable
   `actions/setup-go` revision, and refuses unsupported required provisioning sources instead of

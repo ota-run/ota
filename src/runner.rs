@@ -21302,17 +21302,12 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
     let lifecycle = effective.lifecycle;
 
     if let Some(override_backend) = overrides.backend
-        && let Some(task) = contract.tasks.get(task_name)
-        && !task.supports_execution_backend(
-            contract.execution.as_ref(),
-            override_backend,
-            current_os(),
-        )
+        && !task_supports_execution_backend(contract, task_name, override_backend, current_os())
     {
         let supported_modes = [Backend::Native, Backend::Container, Backend::Remote]
             .into_iter()
             .filter(|backend| {
-                task.supports_execution_backend(contract.execution.as_ref(), *backend, current_os())
+                task_supports_execution_backend(contract, task_name, *backend, current_os())
             })
             .map(|backend| match backend {
                 Backend::Native => "native",
@@ -21549,6 +21544,34 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                 })
         }
     }
+}
+
+/// Aggregate tasks are orchestration-only. Their admissible execution modes are the intersection
+/// of their concrete dependency closure, matching task discovery and CI projection semantics.
+fn task_supports_execution_backend(
+    contract: &Contract,
+    task_name: &str,
+    backend: Backend,
+    os: &str,
+) -> bool {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return false;
+    };
+    if task.aggregate.is_none() {
+        return task.supports_execution_backend(contract.execution.as_ref(), backend, os)
+            && contract.task_active_for_backend_on_os(task, backend, os);
+    }
+    let concrete_members = contract
+        .task_dependency_closure_names([task_name.to_string()])
+        .into_iter()
+        .filter_map(|member_name| contract.tasks.get(member_name.as_str()))
+        .filter(|member| member.aggregate.is_none())
+        .collect::<Vec<_>>();
+    !concrete_members.is_empty()
+        && concrete_members.iter().all(|member| {
+            member.supports_execution_backend(contract.execution.as_ref(), backend, os)
+                && contract.task_active_for_backend_on_os(member, backend, os)
+        })
 }
 
 pub(crate) fn resolve_context_execution_backend(
@@ -52143,6 +52166,47 @@ tasks:
                 .unwrap()
                 .contains("run-ephemeral")
         );
+    }
+
+    #[test]
+    fn aggregate_task_inherits_concrete_container_mode_support() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: aggregate-container-fixture
+execution:
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: golang:1.26-bookworm
+tasks:
+  test:
+    run: echo test
+    execution:
+      modes:
+        container: {}
+  verify:
+    aggregate:
+      tasks: [test]
+"#,
+        )
+        .expect("contract should parse");
+
+        let backend = resolve_execution_backend(
+            &contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("aggregate should inherit its concrete member container mode");
+        assert!(matches!(
+            backend,
+            ResolvedExecutionBackend::Container { .. }
+        ));
     }
 
     #[test]

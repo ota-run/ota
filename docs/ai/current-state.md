@@ -79,7 +79,9 @@ durable agent workflow belongs in the canonical Ota skill.
   `--expect-refusal` runner boundary directly. Projection also carries selected-closure,
   provider-neutral `toolchains[]`; the GitHub adapter renders Go setup from the contract through
   an immutable Action revision and refuses unsupported required sources rather than relying on an
-  ambient hosted-runner toolchain.
+  ambient hosted-runner toolchain. Aggregate execution-mode admission now uses the same concrete
+  member-closure rule as projection and task discovery, preventing a valid container projection
+  from later failing before aggregate members run.
   Kylrix renders valid distinct native
   and container reusable lanes without collapsing its separately selected `sqlite-dev` runtime
   proof into `verify`. Strict V11.14 agent and proof assurance admission is evaluated before
