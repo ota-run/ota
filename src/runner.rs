@@ -51,6 +51,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::macros::format_description;
 
@@ -1394,6 +1395,7 @@ pub struct RunOutcome {
     pub host_service_cleanup: Vec<HostServiceCleanupEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
+    pub execution_boundary: Option<crate::execution_boundary::ExecutionBoundaryRecord>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1416,6 +1418,17 @@ pub struct CapturedRunOutcome {
     pub host_service_cleanup: Vec<HostServiceCleanupEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
+    pub execution_boundary: Option<crate::execution_boundary::ExecutionBoundaryRecord>,
+}
+
+pub const EXECUTION_BOUNDARY_TRACE_PATH_ENV: &str = "OTA_RUNNER_EXECUTION_BOUNDARY_TRACE_PATH";
+pub const EXECUTION_BOUNDARY_TRACE_TOKEN_ENV: &str = "OTA_RUNNER_EXECUTION_BOUNDARY_TRACE_TOKEN";
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecutionBoundaryTrace {
+    pub execution_boundary: crate::execution_boundary::ExecutionBoundaryRecord,
+    pub token_identity: String,
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5126,6 +5139,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
         host_service_cleanup: outcome.host_service_cleanup,
         execution_note: outcome.execution_note,
         interrupted: outcome.interrupted,
+        execution_boundary: outcome.execution_boundary,
     })
 }
 
@@ -6737,12 +6751,330 @@ struct TaskRunState {
     host_service_cleanup: Vec<HostServiceCleanupEvidence>,
     execution_note: Option<String>,
     interrupted: bool,
+    execution_boundary_id: String,
+    execution_boundary_sequence: u64,
+    virtualenv_boundaries: BTreeMap<String, VirtualenvBoundaryState>,
     fulfilled_backend_units: BTreeMap<String, BackendFulfillmentEvidence>,
     fulfilled_backend_source_managed_actions: BTreeMap<String, Vec<ProvisioningAction>>,
     native_activation_env_cache: BTreeMap<String, BTreeMap<String, String>>,
     fulfilled_toolchain_keys: BTreeSet<String>,
     fulfilled_toolchains: BTreeMap<String, Vec<String>>,
     ephemeral_closure_sessions: EphemeralClosureSessions,
+}
+
+#[derive(Debug, Clone)]
+struct VirtualenvBoundaryState {
+    path: String,
+    precondition: crate::execution_boundary::PreconditionState,
+    precondition_identity: Option<String>,
+    producer_task: Option<String>,
+    identity: Option<String>,
+    producer_edge_id: Option<String>,
+    materialized_sequence: Option<u64>,
+    assertions: Vec<(String, String, u64)>,
+}
+
+fn runner_execution_boundary_id() -> String {
+    let mut seed = [0_u8; 16];
+    if getrandom::getrandom(&mut seed).is_err() {
+        seed[..8].copy_from_slice(
+            &OffsetDateTime::now_utc()
+                .unix_timestamp_nanos()
+                .to_le_bytes(),
+        );
+        seed[8..].copy_from_slice(&(std::process::id() as u64).to_le_bytes());
+    }
+    sha256_identity(&seed)
+}
+
+fn virtualenv_boundary_identity(path: &Path) -> Option<String> {
+    let contents = fs::read(path.join("pyvenv.cfg")).ok()?;
+    Some(sha256_identity(&contents))
+}
+
+fn sha256_identity(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut identity = String::from("sha256:");
+    for byte in digest {
+        identity.push_str(format!("{byte:02x}").as_str());
+    }
+    identity
+}
+
+fn execution_boundary_trace_signature(
+    token: &str,
+    record: &crate::execution_boundary::ExecutionBoundaryRecord,
+) -> Result<String, String> {
+    let record = serde_json::to_vec(record)
+        .map_err(|error| format!("could not serialize execution-boundary trace: {error}"))?;
+    let mut signed = Vec::with_capacity(token.len() + 1 + record.len());
+    signed.extend_from_slice(token.as_bytes());
+    signed.push(0);
+    signed.extend_from_slice(&record);
+    Ok(sha256_identity(&signed))
+}
+
+fn write_execution_boundary_trace_if_requested(
+    record: Option<&crate::execution_boundary::ExecutionBoundaryRecord>,
+) -> Result<(), RunError> {
+    let (Some(path), Some(token), Some(record)) = (
+        env::var_os(EXECUTION_BOUNDARY_TRACE_PATH_ENV),
+        env::var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV).ok(),
+        record,
+    ) else {
+        return Ok(());
+    };
+    let signature = execution_boundary_trace_signature(&token, record).map_err(|message| {
+        RunError::FileActionFailed {
+            task: String::from("execution-boundary"),
+            message,
+        }
+    })?;
+    let trace = ExecutionBoundaryTrace {
+        execution_boundary: record.clone(),
+        token_identity: sha256_identity(token.as_bytes()),
+        signature,
+    };
+    let path = PathBuf::from(path);
+    let temporary = path.with_extension("tmp");
+    let bytes = serde_json::to_vec(&trace).map_err(|error| RunError::FileActionFailed {
+        task: String::from("execution-boundary"),
+        message: format!("could not serialize execution-boundary trace: {error}"),
+    })?;
+    fs::write(&temporary, bytes).map_err(|error| RunError::FileActionFailed {
+        task: String::from("execution-boundary"),
+        message: format!("could not write execution-boundary trace: {error}"),
+    })?;
+    fs::rename(&temporary, &path).map_err(|error| RunError::FileActionFailed {
+        task: String::from("execution-boundary"),
+        message: format!("could not finalize execution-boundary trace: {error}"),
+    })
+}
+
+pub fn read_execution_boundary_trace(
+    path: &Path,
+    token: &str,
+) -> Result<crate::execution_boundary::ExecutionBoundaryRecord, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("could not read runner execution-boundary trace: {error}"))?;
+    let trace: ExecutionBoundaryTrace = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("runner execution-boundary trace is not valid JSON: {error}"))?;
+    if trace.token_identity != sha256_identity(token.as_bytes()) {
+        return Err(String::from(
+            "runner execution-boundary trace belongs to a different proof transaction",
+        ));
+    }
+    let expected = execution_boundary_trace_signature(token, &trace.execution_boundary)?;
+    if trace.signature != expected {
+        return Err(String::from(
+            "runner execution-boundary trace signature did not verify",
+        ));
+    }
+    crate::execution_boundary::evaluate_execution_boundary(trace.execution_boundary)
+}
+
+fn remove_execution_boundary_trace_env(command: &mut Command) {
+    command.env_remove(EXECUTION_BOUNDARY_TRACE_PATH_ENV);
+    command.env_remove(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV);
+}
+
+fn observe_virtualenv_boundary_precondition(
+    state: &mut TaskRunState,
+    task_name: &str,
+    path: &str,
+    working_dir: &Path,
+) {
+    let path = path.trim();
+    let id = format!("filesystem:{path}");
+    state.virtualenv_boundaries.entry(id).or_insert_with(|| {
+        let full_path = working_dir.join(path);
+        let present = full_path.exists();
+        VirtualenvBoundaryState {
+            path: path.to_string(),
+            precondition: if present {
+                crate::execution_boundary::PreconditionState::Present
+            } else {
+                crate::execution_boundary::PreconditionState::Absent
+            },
+            precondition_identity: present
+                .then(|| virtualenv_boundary_identity(&full_path))
+                .flatten(),
+            producer_task: Some(task_name.to_string()),
+            identity: None,
+            producer_edge_id: None,
+            materialized_sequence: None,
+            assertions: Vec::new(),
+        }
+    });
+}
+
+fn record_virtualenv_boundary_materialization(
+    state: &mut TaskRunState,
+    task_name: &str,
+    path: &str,
+    working_dir: &Path,
+) {
+    let id = format!("filesystem:{}", path.trim());
+    let Some(identity) = virtualenv_boundary_identity(&working_dir.join(path.trim())) else {
+        return;
+    };
+    let sequence = state.execution_boundary_sequence.saturating_add(1);
+    let Some(boundary) = state.virtualenv_boundaries.get_mut(&id) else {
+        return;
+    };
+    boundary.producer_task = Some(task_name.to_string());
+    if boundary.precondition != crate::execution_boundary::PreconditionState::Absent {
+        return;
+    }
+    state.execution_boundary_sequence = sequence;
+    boundary.identity = Some(identity);
+    boundary.producer_edge_id = Some(format!("{id}:produced:{sequence}"));
+    boundary.materialized_sequence = Some(sequence);
+}
+
+fn record_virtualenv_boundary_assertion(
+    state: &mut TaskRunState,
+    task_name: &str,
+    execution: &PreparedTaskExecution,
+    working_dir: &Path,
+) {
+    let PreparedTaskExecution::NativeCommand { exe, .. } = execution else {
+        return;
+    };
+    let mut sequence = state.execution_boundary_sequence;
+    for (id, boundary) in &mut state.virtualenv_boundaries {
+        let prefix = format!("{}/bin/", boundary.path.trim_end_matches('/'));
+        if !exe.starts_with(prefix.as_str()) || boundary.producer_edge_id.is_none() {
+            continue;
+        }
+        let Some(identity) = virtualenv_boundary_identity(&working_dir.join(&boundary.path)) else {
+            continue;
+        };
+        if boundary.identity.as_deref() != Some(identity.as_str()) {
+            continue;
+        }
+        sequence = sequence.saturating_add(1);
+        boundary
+            .assertions
+            .push((task_name.to_string(), identity, sequence));
+        debug_assert!(id.starts_with("filesystem:"));
+    }
+    state.execution_boundary_sequence = sequence;
+}
+
+fn execution_boundary_record_from_run_state(
+    state: &TaskRunState,
+) -> Option<crate::execution_boundary::ExecutionBoundaryRecord> {
+    use crate::execution_boundary::{
+        BoundaryAssertion, BoundaryEdge, BoundaryEdgeKind, BoundaryEvidenceClass,
+        BoundaryMaterialization, BoundaryPrerequisite, DerivationPosture,
+        EXECUTION_BOUNDARY_SCHEMA_VERSION, ImmutableInputPosture, MaterializationPosture,
+        PrerequisiteClass, PrerequisiteState, TargetFreshness, evaluate_execution_boundary,
+    };
+
+    if state.virtualenv_boundaries.is_empty() {
+        return None;
+    }
+    let mut prerequisites = Vec::new();
+    let mut edges = Vec::new();
+    let mut asserted_target_closure = Vec::new();
+    for (id, boundary) in &state.virtualenv_boundaries {
+        asserted_target_closure.push(id.clone());
+        let mut materializations = Vec::new();
+        if let (Some(identity), Some(edge_id), Some(sequence), Some(producer_task)) = (
+            boundary.identity.as_ref(),
+            boundary.producer_edge_id.as_ref(),
+            boundary.materialized_sequence,
+            boundary.producer_task.as_ref(),
+        ) {
+            materializations.push(BoundaryMaterialization {
+                edge_id: edge_id.clone(),
+                producer_execution: producer_task.clone(),
+                identity: identity.clone(),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence,
+            });
+            edges.push(BoundaryEdge {
+                id: edge_id.clone(),
+                kind: BoundaryEdgeKind::Produced,
+                prerequisite_id: id.clone(),
+                execution_id: producer_task.clone(),
+                boundary_id: state.execution_boundary_id.clone(),
+                scope: String::from("task_closure"),
+                identity: identity.clone(),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence,
+            });
+        }
+        let assertions = boundary
+            .assertions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (consumer, identity, sequence))| {
+                let producer_edge_id = boundary.producer_edge_id.as_ref()?.clone();
+                let edge_id = format!("{id}:asserted_at:{}", index + 1);
+                edges.push(BoundaryEdge {
+                    id: edge_id.clone(),
+                    kind: BoundaryEdgeKind::AssertedAt,
+                    prerequisite_id: id.clone(),
+                    execution_id: consumer.clone(),
+                    boundary_id: state.execution_boundary_id.clone(),
+                    scope: String::from("task_closure"),
+                    identity: identity.clone(),
+                    evidence_class: BoundaryEvidenceClass::Attested,
+                    sequence: *sequence,
+                });
+                Some(BoundaryAssertion {
+                    edge_id,
+                    consumer_execution: consumer.clone(),
+                    identity: identity.clone(),
+                    evidence_class: BoundaryEvidenceClass::Attested,
+                    sequence: *sequence,
+                    established_by_edge_id: producer_edge_id,
+                })
+            })
+            .collect();
+        let created = boundary.identity.is_some();
+        let reused = boundary.precondition_identity.is_some();
+        prerequisites.push(BoundaryPrerequisite {
+            id: id.clone(),
+            class: PrerequisiteClass::Filesystem,
+            declared_artifacts: Vec::new(),
+            declared_producers: boundary.producer_task.iter().cloned().collect(),
+            precondition: boundary.precondition,
+            state: if created {
+                PrerequisiteState::CreatedThisRun
+            } else if reused {
+                PrerequisiteState::VerifiedReused
+            } else {
+                PrerequisiteState::Unknown
+            },
+            materializations,
+            assertions,
+            terminal_established_by_edge_id: boundary.producer_edge_id.clone(),
+            ambient_boundary: (!created).then(|| {
+                if reused {
+                    String::from("persistent_virtualenv_reused")
+                } else {
+                    String::from("virtualenv_identity_unavailable")
+                }
+            }),
+        });
+    }
+    evaluate_execution_boundary(crate::execution_boundary::ExecutionBoundaryRecord {
+        schema_version: EXECUTION_BOUNDARY_SCHEMA_VERSION,
+        identity: String::new(),
+        asserted_target_closure,
+        derivation_input_closure: Vec::new(),
+        prerequisites,
+        edges,
+        target_freshness: TargetFreshness::Unknown,
+        derivation_posture: DerivationPosture {
+            materialization: MaterializationPosture::Unknown,
+            immutable_inputs: ImmutableInputPosture::Unknown,
+        },
+    })
+    .ok()
 }
 
 #[derive(Debug, Default)]
@@ -7291,6 +7623,7 @@ fn run_task_internal(
     }
     let current_os = current_os();
     let mut state = TaskRunState::default();
+    state.execution_boundary_id = runner_execution_boundary_id();
     state.execution_note = preflight_execution_note;
     let execution_interrupt_epoch = current_run_interrupt_epoch();
     let execute_result = execute_task_with_hooks(
@@ -7363,7 +7696,8 @@ fn run_task_internal(
         .iter()
         .map(|step| step.name.clone())
         .collect();
-    Ok(CapturedRunOutcome {
+    let execution_boundary = execution_boundary_record_from_run_state(&state);
+    let outcome = CapturedRunOutcome {
         executed_tasks,
         task_steps: state.task_steps,
         exit_code,
@@ -7386,7 +7720,10 @@ fn run_task_internal(
         host_service_cleanup: state.host_service_cleanup,
         execution_note: state.execution_note,
         interrupted: state.interrupted,
-    })
+        execution_boundary,
+    };
+    write_execution_boundary_trace_if_requested(outcome.execution_boundary.as_ref())?;
+    Ok(outcome)
 }
 
 fn required_service_closure(contract: &Contract, service_names: &[String]) -> BTreeSet<String> {
@@ -7448,6 +7785,7 @@ fn run_host_shell_command(
         } => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
+            remove_execution_boundary_trace_env(&mut process);
             if capture_output {
                 let mut child = process
                     .stdin(Stdio::inherit())
@@ -7506,24 +7844,28 @@ fn run_host_shell_command(
                     .map_err(|error| format!("failed to execute `{command}`: {error}"))
             }
         }
-        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => shell_command(command)
-            .current_dir(working_dir)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .and_then(|child| child.wait_with_output())
-            .map(|output| TaskCommandOutput {
-                exit_code: output.status.code().unwrap_or(1),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                target: None,
-                runtime: None,
-                service_termination: None,
-                execution_note: None,
-                interrupted: false,
-            })
-            .map_err(|error| format!("failed to execute `{command}`: {error}")),
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
+            let mut process = shell_command(command);
+            process.current_dir(working_dir);
+            remove_execution_boundary_trace_env(&mut process);
+            process
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|child| child.wait_with_output())
+                .map(|output| TaskCommandOutput {
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                    target: None,
+                    runtime: None,
+                    service_termination: None,
+                    execution_note: None,
+                    interrupted: false,
+                })
+                .map_err(|error| format!("failed to execute `{command}`: {error}"))
+        }
     }
 }
 
@@ -7680,6 +8022,7 @@ fn execute_native_launch_command(
         .args(args)
         .current_dir(working_dir)
         .envs(env_overrides.iter());
+    remove_execution_boundary_trace_env(&mut process);
 
     match mode {
         TaskExecutionMode::Stream {
@@ -9063,6 +9406,9 @@ fn execute_task_with_hooks(
                 None
             };
     }
+    if let Some(crate::schema::TaskActionSpec::EnsureVirtualenv(spec)) = task.action.as_ref() {
+        observe_virtualenv_boundary_precondition(state, task_name, &spec.path, working_dir);
+    }
     let command_output = execute_task_command(
         Some(contract),
         Some(task),
@@ -9085,6 +9431,19 @@ fn execute_task_with_hooks(
         mode.clone(),
         Some(&mut state.ephemeral_closure_sessions),
     )?;
+    if command_output.exit_code == 0
+        && let Some(crate::schema::TaskActionSpec::EnsureVirtualenv(spec)) = task.action.as_ref()
+    {
+        record_virtualenv_boundary_materialization(state, task_name, &spec.path, working_dir);
+    }
+    let virtualenv_consumer_executed = command_output.exit_code == 0
+        || (command_output.runtime.is_some() && !command_output.interrupted);
+    if virtualenv_consumer_executed && matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        // Finite commands must complete successfully. A resolved service runtime proves that Ota
+        // spawned the selected repo-local executable; its later cleanup exit is not an assertion
+        // failure. This remains `asserted_at`, not a claim that the service shaped an output.
+        record_virtualenv_boundary_assertion(state, task_name, &prepared_execution, working_dir);
+    }
     if let Some(evidence) = backend_fulfillment.as_mut() {
         if backend_fulfillment_preparation
             .deferred_ephemeral_container
@@ -11958,6 +12317,7 @@ fn execute_ensure_virtualenv_action(
     let mut command = Command::new(spec.provider.label());
     command.current_dir(working_dir);
     command.envs(env_overrides);
+    remove_execution_boundary_trace_env(&mut command);
     command.arg("venv");
     if let Some(python) = spec.python.as_deref() {
         command.arg("--python");
@@ -30678,14 +31038,15 @@ mod tests {
 
     use super::{
         BackendFulfillmentStrategy, BackendRequirementGap, CapturedRunOutcome,
-        ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
-        HttpReadinessRequest, LEGACY_EXECUTION_CONTEXT_NAME, PreparedTaskExecution,
-        ProvisioningExecutionTarget, ResolvedExecutionBackend, ResolvedSharedLocalBackend,
-        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
-        ResolvedTaskRuntimeHost, ResolvedTaskRuntimeListener, ResolvedTaskRuntimeResolution,
-        RunError, RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
-        RuntimeReadinessTarget, StreamLogFile, StreamLogTee, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
+        ContainerPortPublication, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
+        EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, EnvResolutionSource, ExecutedTaskStep,
+        ExecutionOverrides, HttpReadinessRequest, LEGACY_EXECUTION_CONTEXT_NAME,
+        PreparedTaskExecution, ProvisioningExecutionTarget, ResolvedExecutionBackend,
+        ResolvedSharedLocalBackend, ResolvedTaskRuntime, ResolvedTaskRuntimeBind,
+        ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, ResolvedTaskRuntimeListener,
+        ResolvedTaskRuntimeResolution, RunError, RuntimeListenerHostPublicationFailure,
+        RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogFile, StreamLogTee,
+        TaskExecutionMode, TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
         TaskTargetActivationStatus, TaskTargetResolutionSource, acquire_repo_execution_lock,
         activation_loader_label, backend_fulfillment_plan, clean_execution, clean_execution_report,
         container_identity_seed, contract_working_dir, current_os, effective_task_env_for_backend,
@@ -30695,16 +31056,17 @@ mod tests {
         parse_windows_env_block, persistent_cleanup_targets, persistent_container_name,
         persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
-        preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
-        register_active_repo_execution, repo_execution_lock_owner_for_backend,
-        repo_execution_lock_path, repo_ota_state_dir, resolve_execution_backend,
-        resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
-        resolve_task_env_details_for_task, resolve_task_inputs, resolve_task_target_binding_url,
-        resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
-        run_task_captured_with_args_with_overrides, run_task_with_args,
-        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
-        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
-        shell_quote, version_matches_requirement, write_active_repo_execution_records,
+        preparing_loader_label, producer_owned_service_next, read_execution_boundary_trace,
+        ready_runtime_public_endpoint_line, register_active_repo_execution,
+        repo_execution_lock_owner_for_backend, repo_execution_lock_path, repo_ota_state_dir,
+        resolve_execution_backend, resolve_execution_backend_with_contract_path, resolve_task_env,
+        resolve_task_env_details, resolve_task_env_details_for_task, resolve_task_inputs,
+        resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
+        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
+        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend, shell_quote, version_matches_requirement,
+        write_active_repo_execution_records,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -41304,6 +41666,7 @@ tasks:
                 host_service_cleanup: vec![],
                 execution_note: None,
                 interrupted: false,
+                execution_boundary: None,
             }
         );
     }
@@ -64224,6 +64587,9 @@ tasks:
         write_fake_bin(&bin_dir, "python3", python3_body);
 
         let original_path = env::var_os("PATH");
+        let original_trace_path = env::var_os(EXECUTION_BOUNDARY_TRACE_PATH_ENV);
+        let original_trace_token = env::var_os(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV);
+        let trace_path = fixture.dir.path().join("runner-execution-boundary.json");
         let mut path_entries = vec![bin_dir];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
@@ -64231,6 +64597,8 @@ tasks:
         let joined_path = env::join_paths(path_entries).unwrap();
         unsafe {
             env::set_var("PATH", joined_path);
+            env::set_var(EXECUTION_BOUNDARY_TRACE_PATH_ENV, &trace_path);
+            env::set_var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, "runner-test-token");
         }
 
         let outcome = run_task(&fixture.contract, fixture.file_path(), "test").expect(
@@ -64240,6 +64608,14 @@ tasks:
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
+        }
+        match original_trace_path {
+            Some(path) => unsafe { env::set_var(EXECUTION_BOUNDARY_TRACE_PATH_ENV, path) },
+            None => unsafe { env::remove_var(EXECUTION_BOUNDARY_TRACE_PATH_ENV) },
+        }
+        match original_trace_token {
+            Some(token) => unsafe { env::set_var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, token) },
+            None => unsafe { env::remove_var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV) },
         }
 
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
@@ -64255,6 +64631,30 @@ tasks:
             combined_output.contains("ensured virtualenv `.venv` with uv"),
             "{combined_output}"
         );
+        let boundary = outcome
+            .execution_boundary
+            .expect("runner should emit virtualenv prerequisite provenance");
+        assert_eq!(boundary.prerequisites.len(), 1);
+        if cfg!(windows) {
+            assert_eq!(
+                boundary.target_freshness,
+                crate::execution_boundary::TargetFreshness::Unknown
+            );
+        } else {
+            assert_eq!(
+                boundary.target_freshness,
+                crate::execution_boundary::TargetFreshness::ColdStartVerified
+            );
+            assert_eq!(boundary.prerequisites[0].assertions.len(), 1);
+        }
+        let trace = read_execution_boundary_trace(&trace_path, "runner-test-token")
+            .expect("runner trace should verify after task completion");
+        assert_eq!(trace.identity, boundary.identity);
+        let mut trace_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&trace_path).unwrap()).unwrap();
+        trace_json["signature"] = serde_json::Value::String(String::from("sha256:forged"));
+        fs::write(&trace_path, serde_json::to_vec(&trace_json).unwrap()).unwrap();
+        assert!(read_execution_boundary_trace(&trace_path, "runner-test-token").is_err());
     }
 
     #[test]

@@ -28,8 +28,11 @@
 # V11.16: Fresh-Boundary Setup Proof
 
 Status: active. The shared semantic evaluator and additive `ota proof runtime --json` carrier are
-implemented; they conservatively inventory declared generated filesystem targets as `unknown`
-until the runner can witness their complete precondition, materialization, and assertion chain.
+implemented. The first runner-attested path covers native `ensure_virtualenv` producers followed
+by a runner-recorded native `.venv/bin/*` consumer execution: Ota records the precondition, `pyvenv.cfg`
+identity, producer edge, and post-success `asserted_at` edge before deriving freshness. Other
+generated filesystem targets, container paths, Windows virtualenv executables, services, volumes,
+caches, and provider-managed state remain `unknown` until the runner can witness the same chain.
 Managed GitHub projection is not an architectural prerequisite: V11.16 derives execution-boundary
 truth from the selected runtime and existing canonical producer/admission evidence, whether the
 lane is invoked locally, in CI, or through a future generated workflow.
@@ -106,10 +109,13 @@ For each prerequisite it records:
 - `state`: `created_this_run`, `declared_immutable_input`, `verified_reused`, or `unknown`;
 - `ambient_boundary`: an explicit unresolved class when the state is `unknown`.
 
-The first cut is intentionally narrow: filesystem artifacts such as `.venv`, `node_modules`,
-generated SDKs, and rendered configuration receive full graph evidence. Services, databases,
-volumes, and provider-managed runtime state remain `unknown` unless a shipped adapter can provide
-the same trustworthy boundary and identity evidence.
+The implemented first cut is intentionally narrow: native repo-local `.venv` materialized by
+`ensure_virtualenv` and asserted through a native `.venv/bin/*` execution receives full graph
+evidence. The assertion proves the runtime executable boundary, not output shaping. `node_modules`,
+generated SDKs, rendered configuration, container paths, Windows virtualenv executables, databases,
+volumes, and provider-managed runtime state remain
+`unknown` until a shipped runner or adapter can provide the same trustworthy boundary and identity
+evidence.
 
 `execution_boundary.target_freshness` is strictly derived from the asserted target closure only:
 
@@ -204,8 +210,10 @@ terminal proof verdict. A green proof with `unknown` material state must remain 
    Exclude diagnostic timestamps and presentation-only fields.
 2. Implement filesystem prerequisite evidence first: precondition observation, producer
    materialization, `asserted_at` observation, optional instrumented `consumed` evidence,
-   per-assertion causal producer binding, and typed identity recovery for `.venv`, `node_modules`,
-   generated SDKs, and rendered configuration.
+   per-assertion causal producer binding, and typed identity recovery. The shipped first path is
+   native `ensure_virtualenv` plus `.venv/bin/*`; it proves the executable boundary, not output
+   shaping. Widen to `node_modules`, generated SDKs, and
+   rendered configuration only with equivalent runner-owned evidence.
 3. Reuse canonical producer-before-probe admission evidence on all remaining selected native and
    container runtime paths; add only the missing integration coverage.
 4. Add compatible ephemeral-closure session ownership to the runner. Keep session identity and

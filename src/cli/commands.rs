@@ -161,10 +161,11 @@ use crate::replay_inputs::{
 };
 use crate::runner::{
     CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason, CleanExecutionReport,
-    CleanExecutionResourceKind, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
-    ExecutionOverrides, HostRuntimeReadinessProbe, LoadedDeclaredEnvSource,
-    RepoExecutionConflictReason, RepoExecutionLockOwner, ResolvedEnvValue,
-    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
+    CleanExecutionResourceKind, DeclaredEnvSourceStatus, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
+    EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
+    HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, RepoExecutionConflictReason,
+    RepoExecutionLockOwner, ResolvedEnvValue, ResolvedExecutionBackend,
+    ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
@@ -177,10 +178,11 @@ use crate::runner::{
     env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
     load_declared_env_sources, load_policy_env_overlay, named_execution_context,
     persistent_container_name, planned_env_file_outputs_for_task_closure,
-    preflight_native_runtime_listener_binds, reported_task_context_for_backend,
-    resolve_declared_env_source_value, resolve_effective_task_container_backend,
-    resolve_execution_backend, resolve_execution_backend_with_contract_path,
-    resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
+    preflight_native_runtime_listener_binds, read_execution_boundary_trace,
+    reported_task_context_for_backend, resolve_declared_env_source_value,
+    resolve_effective_task_container_backend, resolve_execution_backend,
+    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
+    resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
@@ -3197,6 +3199,18 @@ pub fn proof_runtime(
                 let topology_artifact_path = artifact_dir.join("topology.json");
                 let doctor_artifact_path = artifact_dir.join("doctor.json");
                 let up_log_artifact_path = artifact_dir.join("up.log");
+                let execution_boundary_trace_path = artifact_dir.join("execution-boundary.json");
+                let execution_boundary_trace_token = match proof_runtime_seam_marker() {
+                    Ok(token) => token,
+                    Err(error) => return CommandOutput::failure(error),
+                };
+                if execution_boundary_trace_path.exists()
+                    && let Err(error) = fs::remove_file(&execution_boundary_trace_path)
+                {
+                    return CommandOutput::failure(format!(
+                        "could not clear stale runner execution-boundary trace: {error}"
+                    ));
+                }
                 let topology_artifact_display = compact_path(&topology_artifact_path, ".");
                 let doctor_artifact_display = compact_path(&doctor_artifact_path, ".");
                 let up_log_artifact_display = compact_path(&up_log_artifact_path, ".");
@@ -3232,6 +3246,8 @@ pub fn proof_runtime(
                     overrides,
                     &seam_markers,
                     &up_log_artifact_path,
+                    &execution_boundary_trace_path,
+                    &execution_boundary_trace_token,
                 ) {
                     Ok(child) => child,
                     Err(error) => return CommandOutput::failure(error.to_string()),
@@ -3325,6 +3341,13 @@ pub fn proof_runtime(
                 } else {
                     None
                 };
+                // The detached child finalizes its runner-authored boundary record as its
+                // service process exits. Consume it only after proof-owned cleanup has made
+                // that finalization possible.
+                let runner_execution_boundary = proof_runtime_read_execution_boundary_trace(
+                    &execution_boundary_trace_path,
+                    &execution_boundary_trace_token,
+                );
                 let cleanup_failure_detail = repo_cleanup_error
                     .as_ref()
                     .and_then(proof_runtime_cleanup_failure_detail);
@@ -3639,9 +3662,10 @@ pub fn proof_runtime(
                             likely_cause_evidence: proof_likely_cause_evidence,
                             next: proof_next.as_deref(),
                         };
-                        let execution_boundary = match proof_runtime_execution_boundary(
+                        let execution_boundary = match proof_runtime_execution_boundary_with_runner(
                             contract,
                             effective_workflow_selector.as_deref(),
+                            runner_execution_boundary,
                         ) {
                             Ok(boundary) => boundary,
                             Err(error) => return CommandOutput::failure(error),
@@ -103671,6 +103695,8 @@ fn spawn_proof_runtime_up_process(
     overrides: ExecutionOverrides,
     seam_markers: &[(String, String, String)],
     up_log_artifact_path: &Path,
+    execution_boundary_trace_path: &Path,
+    execution_boundary_trace_token: &str,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
         format!("could not resolve the current ota executable for runtime proof: {error}")
@@ -103687,6 +103713,14 @@ fn spawn_proof_runtime_up_process(
         .current_dir(working_dir)
         .args(proof_runtime_up_args(overrides));
     command.envs(runtime_proof_child_env());
+    command.env(
+        EXECUTION_BOUNDARY_TRACE_PATH_ENV,
+        execution_boundary_trace_path,
+    );
+    command.env(
+        EXECUTION_BOUNDARY_TRACE_TOKEN_ENV,
+        execution_boundary_trace_token,
+    );
     if !seam_markers.is_empty() {
         let bindings = serde_json::to_string(
             &seam_markers
@@ -103722,6 +103756,22 @@ fn spawn_proof_runtime_up_process(
     command
         .spawn()
         .map_err(|error| format!("could not start detached `ota up` for runtime proof: {error}"))
+}
+
+fn proof_runtime_read_execution_boundary_trace(
+    path: &Path,
+    token: &str,
+) -> Option<ExecutionBoundaryRecord> {
+    // The detached child may finalize its runner-authored record while the outer proof is
+    // completing service cleanup. Only a verified current-transaction record may promote truth.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match read_execution_boundary_trace(path, token) {
+            Ok(record) => return Some(record),
+            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            Err(_) => return None,
+        }
+    }
 }
 
 // Runtime proof owns cleanup. Its child must leave the service running until the outer proof
@@ -104151,6 +104201,35 @@ fn proof_runtime_execution_boundary(
             immutable_inputs: ImmutableInputPosture::Unknown,
         },
     })
+}
+
+fn proof_runtime_execution_boundary_with_runner(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    runner_boundary: Option<ExecutionBoundaryRecord>,
+) -> Result<ExecutionBoundaryRecord, String> {
+    let mut boundary = proof_runtime_execution_boundary(contract, workflow_name)?;
+    let Some(runner_boundary) = runner_boundary else {
+        return Ok(boundary);
+    };
+
+    let mut prerequisites = boundary
+        .prerequisites
+        .into_iter()
+        .map(|prerequisite| (prerequisite.id.clone(), prerequisite))
+        .collect::<BTreeMap<_, _>>();
+    for prerequisite in runner_boundary.prerequisites {
+        prerequisites.insert(prerequisite.id.clone(), prerequisite);
+    }
+    boundary.prerequisites = prerequisites.into_values().collect();
+    boundary
+        .asserted_target_closure
+        .extend(runner_boundary.asserted_target_closure);
+    boundary
+        .derivation_input_closure
+        .extend(runner_boundary.derivation_input_closure);
+    boundary.edges.extend(runner_boundary.edges);
+    evaluate_execution_boundary(boundary)
 }
 
 fn proof_runtime_status_json(

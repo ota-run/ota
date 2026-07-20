@@ -65,13 +65,13 @@ durable agent workflow belongs in the canonical Ota skill.
   matching immutable archive exists, then `supported`. Bedrock proves that transition on its
   offline replay lane without inventing seam or negative-control evidence; Lead Quorum proves the
   independent `unknown` path without an archive.
-- active V11.16 fresh-boundary setup proof foundation: `ota proof runtime --json` and archived
-  runtime proof records now carry an additive content-addressed `execution_boundary` graph. The
-  shared evaluator enforces ordered producer/assertion identity bindings and derives target
-  freshness independently from cache-assisted derivation posture. The current carrier inventories
-  contract-declared generated filesystem targets but leaves them `unknown` until Ota can witness
-  their precondition, materialization, and assertion from the selected runtime closure; do not
-  over-read this first carrier as cold-start proof.
+- active V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime proof
+  records now carry an additive content-addressed `execution_boundary` graph. Native
+  `ensure_virtualenv` followed by a runner-recorded `.venv/bin/*` consumer now produces runner-attested
+  precondition, materialization, and `asserted_at` identity edges, deriving either
+  `cold_start_verified` or `persistent_state_reused`. Other filesystem targets, containers,
+  Windows virtualenvs, services beyond their executable boundary, volumes, caches, and provider state remain `unknown`; do not
+  over-read this narrow first path as repo-global cold-start proof.
 - completed V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
   now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
   proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that

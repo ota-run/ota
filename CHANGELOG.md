@@ -125,11 +125,12 @@
   and `ota up` before task startup on missing or mismatched pins, and preserves expected plus
   observed identity in the resulting blocked receipt instead of reducing the failure to text
 
-- added the first V11.16 `execution_boundary` carrier to `ota proof runtime --json` and archived
-  runtime proofs. Ota now publishes a content-addressed, runner-derived prerequisite graph with
-  separate target-freshness and derivation-posture summaries. The initial generated-artifact
-  inventory remains explicitly `unknown` until Ota witnesses precondition, materialization, and
-  assertion evidence for the selected runtime closure.
+- added native virtualenv provenance to the V11.16 `execution_boundary` carrier in
+  `ota proof runtime --json` and archived runtime proofs. Ota now records a repo-local
+  `ensure_virtualenv` precondition, `pyvenv.cfg` identity, producer edge, and post-success native
+  `.venv/bin/*` assertion before deriving `cold_start_verified` or
+  `persistent_state_reused`. Other filesystem targets, containers, Windows virtualenvs, services,
+  volumes, caches, and provider-managed state remain explicitly `unknown`.
 
 - fixed CI bootstrap drift recovery to distinguish `ota-run/action` reporting steps from Ota
   installers: an Action step with `install: never` no longer emits a false bootstrap-drift warning
