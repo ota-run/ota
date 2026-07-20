@@ -98,6 +98,12 @@ durable agent workflow belongs in the canonical Ota skill.
   creating the repo environment on Apple Silicon. Lead Quorum pressure proves both the fresh
   `cold_start_verified` and second-run `persistent_state_reused` paths without an absolute-path
   contract workaround.
+  Ruby-owned Bundler fulfillment now follows the same selected-path order in container mode:
+  Doctor validates the Ruby provider rather than rejecting a base-image Bundler version that Ota
+  will replace through typed run-path fulfillment. Athena proves `ruby:3.3.11-bookworm` with its
+  ambient Bundler `2.5.22` can fulfill the declared `2.5.3` before Bundler dependency hydration.
+  Its full app-proof remains bounded by the repo-owned host PostgreSQL service; Ota does not start
+  or claim lifecycle proof for that service.
   The shared evaluator now canonicalizes prerequisite and edge ordering before identity hashing,
   rejects prerequisites that ambiguously appear in both selected closures, and refuses edges outside
   those closures or producer/assertion records whose canonical edge, identity, sequence, or evidence

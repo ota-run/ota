@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
+  different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor
+  now validates the Ruby provider and admits Ota's typed `gem install bundler --version <version>`
+  fulfillment before dependency hydration. A fulfillable base-image Bundler mismatch no longer
+  blocks the same container run path that will materialize the declared version.
+
 - added `command.interaction` field to `command:` task bodies. Allowed values are `auto` (default),
   `forbidden`, and `required`. With `auto` or `required`, when Ota runs in a
   human TTY context with a native execution backend, stdin/stdout/stderr are inherited by the

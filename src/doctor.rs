@@ -9799,6 +9799,14 @@ fn diagnose_command_version(
         return probe_started;
     }
 
+    // Ruby owns Bundler fulfillment through the selected Ruby runtime. The base image can carry a
+    // different Bundler version; that is not a readiness blocker when Ota will install the
+    // declared version before executing the selected closure. Ruby runtime readiness is diagnosed
+    // independently, so this does not hide an unavailable fulfillment provider.
+    if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "ruby") {
+        return probe_started;
+    }
+
     if run_path_fulfillment_allowed
         && tool_acquisition
             .is_some_and(|acquisition| acquisition.provider == ToolAcquisitionProvider::Corepack)
@@ -26663,6 +26671,11 @@ tasks:
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         write_fake_command(&bin_dir, "ruby", "#!/bin/sh\necho ruby 3.3.11p0\n");
+        write_fake_command(
+            &bin_dir,
+            "bundle",
+            "#!/bin/sh\necho Bundler version 2.5.22\n",
+        );
 
         let original_path = env::var_os("PATH");
         unsafe {
