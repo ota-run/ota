@@ -131,6 +131,9 @@
   `.venv/bin/*` assertion before deriving `cold_start_verified` or
   `persistent_state_reused`. Other filesystem targets, containers, Windows virtualenvs, services,
   volumes, caches, and provider-managed state remain explicitly `unknown`.
+- preserved that runner-authored virtualenv provenance across separate workflow setup and runtime
+  task transactions, so a later `ensure_virtualenv` observation cannot erase an earlier
+  absent-and-materialized boundary before the selected `.venv/bin/*` consumer asserts it.
 
 - fixed CI bootstrap drift recovery to distinguish `ota-run/action` reporting steps from Ota
   installers: an Action step with `install: never` no longer emits a false bootstrap-drift warning

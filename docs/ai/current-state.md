@@ -69,9 +69,11 @@ durable agent workflow belongs in the canonical Ota skill.
   records now carry an additive content-addressed `execution_boundary` graph. Native
   `ensure_virtualenv` followed by a runner-recorded `.venv/bin/*` consumer now produces runner-attested
   precondition, materialization, and `asserted_at` identity edges, deriving either
-  `cold_start_verified` or `persistent_state_reused`. Other filesystem targets, containers,
-  Windows virtualenvs, services beyond their executable boundary, volumes, caches, and provider state remain `unknown`; do not
-  over-read this narrow first path as repo-global cold-start proof.
+  `cold_start_verified` or `persistent_state_reused`. Signed runner trace hydration preserves
+  producer provenance across separate workflow setup and runtime task transactions. Other
+  filesystem targets, containers, Windows virtualenvs, services beyond their executable boundary,
+  volumes, caches, and provider state remain `unknown`; do not over-read this narrow first path as
+  repo-global cold-start proof.
 - completed V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
   now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
   proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that

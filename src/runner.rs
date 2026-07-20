@@ -6787,6 +6787,78 @@ fn runner_execution_boundary_id() -> String {
     sha256_identity(&seed)
 }
 
+fn hydrate_virtualenv_boundaries_from_trace(state: &mut TaskRunState, working_dir: &Path) {
+    let (Some(path), Some(token)) = (
+        env::var_os(EXECUTION_BOUNDARY_TRACE_PATH_ENV),
+        env::var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV).ok(),
+    ) else {
+        return;
+    };
+    let Ok(record) = read_execution_boundary_trace(Path::new(&path), &token) else {
+        return;
+    };
+    for prerequisite in record.prerequisites {
+        if prerequisite.class != crate::execution_boundary::PrerequisiteClass::Filesystem {
+            continue;
+        }
+        let id = prerequisite.id.clone();
+        let Some(path) = id.strip_prefix("filesystem:") else {
+            continue;
+        };
+        let path = path.to_string();
+        let Some(materialization) = prerequisite
+            .materializations
+            .iter()
+            .max_by_key(|materialization| materialization.sequence)
+        else {
+            continue;
+        };
+        if virtualenv_boundary_identity(&working_dir.join(&path)).as_deref()
+            != Some(materialization.identity.as_str())
+        {
+            continue;
+        }
+        let assertions = prerequisite
+            .assertions
+            .iter()
+            .filter(|assertion| {
+                assertion.established_by_edge_id == materialization.edge_id
+                    && assertion.identity == materialization.identity
+            })
+            .map(|assertion| {
+                (
+                    assertion.consumer_execution.clone(),
+                    assertion.identity.clone(),
+                    assertion.sequence,
+                )
+            })
+            .collect::<Vec<_>>();
+        state.execution_boundary_sequence = state
+            .execution_boundary_sequence
+            .max(materialization.sequence)
+            .max(
+                assertions
+                    .iter()
+                    .map(|(_, _, sequence)| *sequence)
+                    .max()
+                    .unwrap_or(0),
+            );
+        state.virtualenv_boundaries.insert(
+            id,
+            VirtualenvBoundaryState {
+                path,
+                precondition: prerequisite.precondition,
+                precondition_identity: None,
+                producer_task: Some(materialization.producer_execution.clone()),
+                identity: Some(materialization.identity.clone()),
+                producer_edge_id: Some(materialization.edge_id.clone()),
+                materialized_sequence: Some(materialization.sequence),
+                assertions,
+            },
+        );
+    }
+}
+
 fn virtualenv_boundary_identity(path: &Path) -> Option<String> {
     let contents = fs::read(path.join("pyvenv.cfg")).ok()?;
     Some(sha256_identity(&contents))
@@ -6923,7 +6995,9 @@ fn record_virtualenv_boundary_materialization(
         return;
     };
     boundary.producer_task = Some(task_name.to_string());
-    if boundary.precondition != crate::execution_boundary::PreconditionState::Absent {
+    if boundary.precondition != crate::execution_boundary::PreconditionState::Absent
+        || boundary.materialized_sequence.is_some()
+    {
         return;
     }
     state.execution_boundary_sequence = sequence;
@@ -7624,6 +7698,7 @@ fn run_task_internal(
     let current_os = current_os();
     let mut state = TaskRunState::default();
     state.execution_boundary_id = runner_execution_boundary_id();
+    hydrate_virtualenv_boundaries_from_trace(&mut state, working_dir);
     state.execution_note = preflight_execution_note;
     let execution_interrupt_epoch = current_run_interrupt_epoch();
     let execute_result = execute_task_with_hooks(
@@ -7686,7 +7761,18 @@ fn run_task_internal(
         state.execution_note.take(),
         cleanup_ephemeral_closure_sessions(&mut state),
     );
-    let exit_code = execute_result?;
+    let exit_code = match execute_result {
+        Ok(exit_code) => exit_code,
+        Err(error) => {
+            // Runtime proof may stop the selected service after readiness. Preserve any signed
+            // producer/assertion evidence collected before that shutdown instead of collapsing it
+            // to an ambient fallback record.
+            let _ = write_execution_boundary_trace_if_requested(
+                execution_boundary_record_from_run_state(&state).as_ref(),
+            );
+            return Err(error);
+        }
+    };
     // Preserve the child exit code on its task step, but make the top-level result stable for an
     // observed user interrupt. Consumers can then distinguish interruption from task failure.
     let exit_code = if state.interrupted { 130 } else { exit_code };
@@ -64601,8 +64687,11 @@ tasks:
             env::set_var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, "runner-test-token");
         }
 
+        let setup = run_task(&fixture.contract, fixture.file_path(), "setup:venv")
+            .expect("setup should materialize the virtualenv before the later consumer run");
+        assert_eq!(setup.exit_code, 0, "{setup:?}");
         let outcome = run_task(&fixture.contract, fixture.file_path(), "test").expect(
-            "depends_on virtualenv materialization should run before repo-local tool probing",
+            "a later repo-local tool consumer should recover the earlier proof transaction producer",
         );
 
         match original_path {
@@ -64626,7 +64715,10 @@ tasks:
             fixture.dir.path().join(".venv/bin/python")
         };
         assert!(venv_python.exists(), "{venv_python:?}");
-        let combined_output = format!("{}{}", outcome.stdout, outcome.stderr);
+        let combined_output = format!(
+            "{}{}{}{}",
+            setup.stdout, setup.stderr, outcome.stdout, outcome.stderr
+        );
         assert!(
             combined_output.contains("ensured virtualenv `.venv` with uv"),
             "{combined_output}"
@@ -64635,6 +64727,10 @@ tasks:
             .execution_boundary
             .expect("runner should emit virtualenv prerequisite provenance");
         assert_eq!(boundary.prerequisites.len(), 1);
+        assert_eq!(
+            boundary.prerequisites[0].precondition,
+            crate::execution_boundary::PreconditionState::Absent
+        );
         if cfg!(windows) {
             assert_eq!(
                 boundary.target_freshness,
