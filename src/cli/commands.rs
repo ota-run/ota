@@ -177,9 +177,10 @@ use crate::runner::{
     ensure_task_adapter_inputs_ready, ensure_task_env_files_ready_with_planned_outputs,
     env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
     load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, planned_env_file_outputs_for_task_closure,
-    preflight_native_runtime_listener_binds, read_execution_boundary_trace,
-    reported_task_context_for_backend, resolve_declared_env_source_value,
+    persistent_container_name, plan_task_execution_with_overrides,
+    planned_env_file_outputs_for_task_closure, preflight_native_runtime_listener_binds,
+    read_execution_boundary_trace, reported_task_context_for_backend,
+    resolve_command_terminal_passthrough, resolve_declared_env_source_value,
     resolve_effective_task_container_backend, resolve_execution_backend,
     resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
     resolve_task_env_details, resolve_task_env_details_for_task,
@@ -191,18 +192,18 @@ use crate::runner::{
     task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
-    AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
-    ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
-    ServiceReadinessSpec, TaskDependencyHydrationSourceSpec, TaskNetworkEffectKind,
-    TaskNodePackageManagerKind, TaskPrepareSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
-    TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec, TaskRuntimeProjectionSpec,
-    TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
-    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec, split_workflow_selector,
+    AgentConfig, Backend, CommandInteractionPosture, ContainerBackend, Contract, EnvRequirement,
+    EnvSource, EnvSourceKind, ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface,
+    ServiceReadinessKind, ServiceReadinessSpec, TaskDependencyHydrationSourceSpec,
+    TaskNetworkEffectKind, TaskNodePackageManagerKind, TaskPrepareSpec, TaskRuntimeBindSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec,
+    TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
+    TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
+    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
+    parse_memory_size_bytes, parse_readiness_duration_spec, split_workflow_selector,
 };
 use crate::semantic_identity::{
     contract_snapshot_hash, normalize_semantic_json, normalized_contract_snapshot_json,
@@ -17472,6 +17473,7 @@ pub(crate) fn run_command_with_agent_reason(
                     agent,
                     reason,
                     show_receipt,
+                    stream,
                     run_command_streaming_enabled(stream),
                     persist_logs,
                 ) {
@@ -19220,6 +19222,12 @@ fn render_run_preview_target(
                             resolved: unresolved_execution_plan,
                             overrides: applied_overrides,
                             requested_task,
+                            interaction: run_preview_interaction_summary(
+                                &target.contract,
+                                task_name.as_str(),
+                                governance_overrides,
+                                agent,
+                            ),
                             requested_context,
                             selected_context,
                             env_summary: env_report.summary,
@@ -19348,6 +19356,12 @@ fn render_run_preview_target(
                 resolved: execution_plan,
                 overrides: applied_overrides,
                 requested_task: requested_task.clone(),
+                interaction: run_preview_interaction_summary(
+                    &target.contract,
+                    task_name.as_str(),
+                    overrides,
+                    agent,
+                ),
                 requested_context,
                 selected_context,
                 env_summary: env_report.summary,
@@ -55493,8 +55507,9 @@ mod tests {
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
         render_validate_success_output, render_windows_uninstall_scheduled, run_execution_receipt,
-        run_execution_receipt_with_shared, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
-        windows_uninstall_script, workspace_refresh_command, write_detected_merge,
+        run_execution_receipt_with_shared, should_use_command_terminal_passthrough,
+        strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
+        workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
@@ -55515,7 +55530,6 @@ mod tests {
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningPlanEntry,
         ProvisioningTargetKind,
     };
-
     #[test]
     fn github_projection_sync_and_check_share_one_renderer() {
         let repo = tempdir().expect("repo tempdir");
@@ -62507,6 +62521,7 @@ tasks:
                 exe: "pnpm",
                 args: vec!["test:live"],
                 cwd: None,
+                interaction: "auto",
             }),
             compose: None,
             launch: None,
@@ -62598,6 +62613,7 @@ tasks:
                 exe: "cargo",
                 args: vec!["test"],
                 cwd: None,
+                interaction: "auto",
             }),
             compose: None,
             launch: None,
@@ -92002,6 +92018,121 @@ workflows:
         );
     }
 
+    #[test]
+    fn up_required_interaction_blocks_before_workflow_setup() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: required-interaction-up
+tasks:
+  setup:
+    run: echo setup > setup-ran
+  login:
+    command:
+      exe: sh
+      args: [-c, "echo login"]
+      interaction: required
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: login
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("app"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(!result.ok);
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "preconditions");
+        assert_eq!(result.task.as_deref(), Some("login"));
+        assert!(result.report.findings.iter().any(|finding| {
+            finding
+                .identity
+                .as_ref()
+                .is_some_and(|identity| identity.code == "OTA_INTERACTION_REQUIRED")
+        }));
+        assert!(!repo.path().join("setup-ran").exists());
+    }
+
+    #[test]
+    fn up_required_interaction_in_setup_closure_blocks_before_prepare() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: required-interaction-setup-closure
+tasks:
+  prepare:
+    run: echo prepare > prepare-ran
+  login:
+    command:
+      exe: sh
+      args: [-c, "echo login"]
+      interaction: required
+  setup:
+    depends_on: [login]
+    run: echo setup > setup-ran
+  verify:
+    run: echo verify
+workflows:
+  default: app
+  app:
+    prepare:
+      task: prepare
+    setup:
+      task: setup
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("app"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(!result.ok);
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.task.as_deref(), Some("login"));
+        assert!(!repo.path().join("prepare-ran").exists());
+        assert!(!repo.path().join("setup-ran").exists());
+    }
+
+    #[test]
+    fn closure_passthrough_flag_controls_terminal_passthrough() {
+        assert!(should_use_command_terminal_passthrough(true));
+        assert!(!should_use_command_terminal_passthrough(false));
+    }
+
     #[cfg(unix)]
     #[test]
     fn up_runs_workflow_owned_prepare_action_before_setup() {
@@ -95135,6 +95266,7 @@ fn run_contract_targets(
     agent: bool,
     reason: Option<&str>,
     show_receipt: bool,
+    force_stream: bool,
     stream_output: bool,
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
@@ -95151,6 +95283,7 @@ fn run_contract_targets(
             agent,
             reason,
             show_receipt,
+            force_stream,
             stream_output,
             persist_logs,
         );
@@ -95176,6 +95309,7 @@ fn run_contract_targets(
             agent,
             reason,
             show_receipt,
+            force_stream,
             stream_output,
             persist_logs,
         )?);
@@ -95193,6 +95327,7 @@ fn run_single_contract_target(
     agent: bool,
     reason: Option<&str>,
     show_receipt: bool,
+    force_stream: bool,
     stream_output: bool,
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
@@ -95209,6 +95344,88 @@ fn run_single_contract_target(
     {
         return Err(failure);
     }
+
+    // Closure-wide interaction preflight: refuse before any dependency or task execution when
+    // any task in the full dependency closure has `interaction: required` and no interactive
+    // terminal is available. This check covers the entire planned execution set so that Ota
+    // never starts a dependency only to fail partway through the closure.
+    let mut closure_allows_terminal_passthrough = false;
+    let closure_plan = plan_task_execution_with_overrides(&target.contract, task_name, overrides)
+        .map_err(|error| RunCommandFailure {
+        message: stylize_text_failure("ota run", &render_run_error(error)),
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })?;
+    for step in &closure_plan.steps {
+        let closure_task = &step.task;
+        let Some(posture) = task_command_interaction_posture_for_backend(
+            &target.contract,
+            closure_task,
+            step.backend,
+        ) else {
+            continue;
+        };
+
+        let is_native = step.backend == Backend::Native;
+        let task_terminal_available =
+            resolve_command_terminal_passthrough(posture, agent, is_native);
+
+        if posture == CommandInteractionPosture::Required && !task_terminal_available {
+            let error = RunError::InteractionRequired {
+                task: closure_task.clone(),
+            };
+            let blocked = run_error_receipt_blocked_entries(&error);
+            let message = render_run_error(error);
+            let mut receipt = run_execution_receipt_with_shared(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                &[],
+                None,
+                1,
+                false,
+                None,
+                None,
+                Some(format!(
+                    "rerun task `{closure_task}` from a human native terminal"
+                )),
+            );
+            receipt.blocked = blocked;
+            attach_task_crossing_to_receipt(
+                &mut receipt,
+                &target.contract,
+                task_name,
+                overrides,
+                agent,
+                reason,
+            );
+            refresh_execution_receipt_status(&mut receipt);
+            let summary =
+                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            return Err(RunCommandFailure {
+                message: stylize_text_failure("ota run", &message),
+                summary: Some(summary),
+                exit_code: 1,
+                receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+            });
+        }
+
+        if task_terminal_available
+            && (!force_stream || posture == CommandInteractionPosture::Required)
+        {
+            closure_allows_terminal_passthrough = true;
+        }
+    }
+
     if let Some(failure) = run_selected_precondition_failure(
         task_name,
         overrides,
@@ -95218,7 +95435,14 @@ fn run_single_contract_target(
     ) {
         return Err(failure);
     }
-    if stream_output || task_requires_interactive_stream(&target.contract, task_name, overrides) {
+
+    let use_terminal_passthrough =
+        should_use_command_terminal_passthrough(closure_allows_terminal_passthrough);
+
+    if stream_output
+        || use_terminal_passthrough
+        || task_requires_interactive_stream(&target.contract, task_name, overrides)
+    {
         return run_single_contract_target_streaming(
             task_name,
             overrides,
@@ -95230,6 +95454,7 @@ fn run_single_contract_target(
             show_receipt,
             &details_footer,
             persist_logs,
+            use_terminal_passthrough,
         );
     }
 
@@ -95245,6 +95470,102 @@ fn run_single_contract_target(
         &details_footer,
         persist_logs,
     )
+}
+
+fn should_use_command_terminal_passthrough(closure_allows_terminal_passthrough: bool) -> bool {
+    closure_allows_terminal_passthrough
+}
+
+fn task_command_interaction_posture_for_backend(
+    contract: &Contract,
+    task_name: &str,
+    backend: Backend,
+) -> Option<CommandInteractionPosture> {
+    contract.tasks.get(task_name).and_then(|task| {
+        task.resolved_execution_for_backend(backend, current_os())
+            .and_then(|execution| {
+                execution
+                    .command()
+                    .map(|command| command.interaction.unwrap_or_default())
+            })
+    })
+}
+
+fn run_preview_interaction_summary(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    agent: bool,
+) -> Option<crate::output::RunPreviewInteractionSummary> {
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    let posture = task_command_interaction_posture_for_backend(contract, task_name, backend)?;
+    let terminal_available =
+        resolve_command_terminal_passthrough(posture, agent, backend == Backend::Native);
+    let resolution = match posture {
+        CommandInteractionPosture::Required if !terminal_available => "refused",
+        CommandInteractionPosture::Forbidden => "piped",
+        _ if terminal_available => "terminal_passthrough",
+        _ => "piped",
+    };
+    Some(crate::output::RunPreviewInteractionSummary {
+        posture: posture.as_str().to_string(),
+        resolution: resolution.to_string(),
+        terminal_available,
+    })
+}
+
+/// Returns the typed precondition blocker for a selected workflow run task that requires a real
+/// terminal. This must run before workflow prepare/setup phases so they cannot mutate state before
+/// Ota refuses a task that cannot execute in the current boundary.
+fn up_required_command_interaction_blocker(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    run_behavior_preference: UpRunBehaviorPreference,
+    mode: RepoExecutionMode,
+) -> Option<(String, Finding)> {
+    for root_task in selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
+    {
+        let Ok(plan) = plan_task_execution_with_overrides(contract, root_task.as_str(), overrides)
+        else {
+            continue;
+        };
+        for step in plan.steps {
+            let Some(posture) = task_command_interaction_posture_for_backend(
+                contract,
+                step.task.as_str(),
+                step.backend,
+            ) else {
+                continue;
+            };
+            if posture != CommandInteractionPosture::Required
+                || resolve_command_terminal_passthrough(
+                    posture,
+                    agent,
+                    step.backend == Backend::Native && matches!(mode, RepoExecutionMode::Stream),
+                )
+            {
+                continue;
+            }
+            let task_name = step.task;
+            return Some((
+                task_name.clone(),
+                Finding::identified(
+                    "OTA_INTERACTION_REQUIRED",
+                    "execution",
+                    "repo",
+                    FindingSeverity::Error,
+                    "Interactive terminal required",
+                    format!(
+                        "workflow execution task `{task_name}` declares `command.interaction: required`, but this execution boundary cannot provide a human terminal"
+                    ),
+                    "rerun from a human native terminal, or declare `interaction: auto` or `forbidden` when the task can run without prompts",
+                ),
+            ));
+        }
+    }
+    None
 }
 
 fn task_requires_interactive_stream(
@@ -95603,6 +95924,7 @@ fn run_single_contract_target_streaming(
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
+    terminal_passthrough: bool,
 ) -> Result<String, RunCommandFailure> {
     if let Err(error) =
         materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
@@ -95652,20 +95974,30 @@ fn run_single_contract_target_streaming(
         exit_code: 1,
         receipt: None,
     })?;
+    // When terminal_passthrough is active, do not capture output through Ota's pipe layer —
+    // the child owns the terminal directly. Receipt output will be empty, which is reported
+    // honestly rather than pretending captured evidence exists.
+    let capture_output = !terminal_passthrough;
     let prepared_logs = prepare_streaming_durable_run_logs(
         &target.contract_path,
         task_name.as_str(),
         member,
-        persist_logs,
+        persist_logs && capture_output,
     );
+    let live_log = if capture_output {
+        prepared_logs.live_log.clone()
+    } else {
+        None
+    };
     match run_task_with_args_with_overrides_and_stream_capture(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
         task_inputs,
         overrides,
-        true,
-        prepared_logs.live_log.clone(),
+        capture_output,
+        live_log,
+        terminal_passthrough,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
             let log_capture = if prepared_logs.capture.logs.is_some() {
@@ -95677,7 +96009,7 @@ fn run_single_contract_target_streaming(
                     member,
                     &outcome.stdout,
                     &outcome.stderr,
-                    persist_logs,
+                    persist_logs && capture_output,
                 )
             };
             let mut receipt = run_execution_receipt_with_shared(
@@ -95755,7 +96087,7 @@ fn run_single_contract_target_streaming(
                     member,
                     &outcome.stdout,
                     &outcome.stderr,
-                    persist_logs,
+                    persist_logs && capture_output,
                 )
             };
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
@@ -114376,19 +114708,42 @@ fn run_up_task(
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     mode: RepoExecutionMode,
+    agent: bool,
 ) -> Result<CommandRunResult, RunError> {
     match mode {
-        RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides_with_policy(
-            contract,
-            resolved_path,
-            task_name,
-            true,
-            &[],
-            overrides,
-            false,
-            None,
-            policy_env,
-        )
+        RepoExecutionMode::Stream => {
+            let terminal_passthrough =
+                plan_task_execution_with_overrides(contract, task_name, overrides)
+                    .ok()
+                    .is_some_and(|plan| {
+                        plan.steps.iter().any(|step| {
+                            let Some(posture) = task_command_interaction_posture_for_backend(
+                                contract,
+                                step.task.as_str(),
+                                step.backend,
+                            ) else {
+                                return false;
+                            };
+                            resolve_command_terminal_passthrough(
+                                posture,
+                                agent,
+                                step.backend == Backend::Native,
+                            )
+                        })
+                    });
+            run_task_with_progress_and_args_and_overrides_with_policy(
+                contract,
+                resolved_path,
+                task_name,
+                true,
+                &[],
+                overrides,
+                !terminal_passthrough,
+                None,
+                terminal_passthrough,
+                policy_env,
+            )
+        }
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
             executed_tasks: outcome.executed_tasks,
@@ -115932,6 +116287,7 @@ fn run_up_required_services_phase(
                         emit_progress: false,
                         capture_output: true,
                         live_log: None,
+                        allow_terminal_passthrough: false,
                     },
                     RepoExecutionMode::Capture => crate::runner::TaskExecutionMode::Capture,
                 },
@@ -116647,6 +117003,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             &refusal,
         ));
     }
+    let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
     let prepare_action = selected_up_prepare_action(contract, workflow_name);
@@ -116668,6 +117025,91 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             refusal,
         )
     };
+    if let Some((task_name, blocker)) = up_required_command_interaction_blocker(
+        contract,
+        workflow_name,
+        overrides,
+        agent,
+        run_behavior_preference,
+        mode,
+    ) {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![blocker.clone()],
+        };
+        if dry_run {
+            let preview = build_up_preview_with_actor(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                run_behavior_preference,
+                &report,
+                agent,
+            );
+            let receipt = preview_receipt(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                "BLOCKED",
+                &report.findings,
+            );
+            return Ok(RepoUpResult {
+                ok: false,
+                status: "BLOCKED",
+                phase: "preview",
+                report,
+                preview: Some(preview),
+                governance_preflight: None,
+                receipt,
+                service: None,
+                service_command: None,
+                task: Some(task_name),
+                task_command: None,
+                exit_code: None,
+                stdout,
+                stderr,
+            });
+        }
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "preconditions",
+            preview: None,
+            governance_preflight: Some(derive_preflight(&report, None)),
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &report,
+                ),
+                "BLOCKED",
+                "preconditions",
+                workflow_name,
+                None,
+                Some(task_name.as_str()),
+                &report.findings,
+                None,
+                Some(blocker.next.clone()),
+            ),
+            report,
+            service: None,
+            service_command: None,
+            task: Some(task_name),
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
     let task_execution_overrides = up_task_execution_overrides(
         contract,
         resolved_path,
@@ -116760,7 +117202,6 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             stderr: String::new(),
         });
     }
-    let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let execution_dir = contract_working_dir(resolved_path);
     let mut preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
         contract,
@@ -117527,6 +117968,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             prepare_overrides,
             policy_env,
             mode,
+            agent,
         ) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
@@ -117827,6 +118269,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             task_execution_overrides,
             policy_env,
             mode,
+            agent,
         ) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
@@ -118041,6 +118484,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     task_execution_overrides,
                     policy_env,
                     mode,
+                    agent,
                 )
             };
         match run_result {
@@ -118208,6 +118652,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             overrides,
             policy_env,
             RepoExecutionMode::Stream,
+            agent,
         ) {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_none() => {
                 stdout.push_str(&outcome.stdout);
@@ -121273,6 +121718,7 @@ fn run_workspace_repo_task(
                         ExecutionOverrides::default(),
                         false,
                         None,
+                        false,
                         Some(&repo.policy_env),
                     )
                     .map(|result| CommandRunResult {

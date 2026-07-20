@@ -662,6 +662,12 @@ Notes:
   input instead of shell `cd ... && helm ...`, chart positionals, or `--namespace`
 - `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
   `script`; it exposes the launch kind plus the structured command or packaged container metadata
+- `tasks[*].command.interaction` is the resolved interaction posture for a structured `command:`
+  task after defaulting. Consumers should treat it as one of `auto`, `forbidden`, or `required`.
+- for a selected structured `command:` task, `ota run --dry-run --json` additionally publishes
+  `interaction.posture`, `interaction.resolution`, and `interaction.terminal_available`;
+  resolution is one of `terminal_passthrough`, `piped`, or `refused` for that invocation boundary.
+  Other task-body families omit `interaction` rather than inventing a posture they do not own.
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
   default command-host slice reports `command_host`, while observer-backed task probes report the
   named task plane they resolve through

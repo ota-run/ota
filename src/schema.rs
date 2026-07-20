@@ -6525,6 +6525,36 @@ impl TaskLaunchSpec {
     }
 }
 
+/// Controls whether a child process spawned by a `command:` task body may access an interactive
+/// terminal. This governs prompt/TTY availability only. It does not change agent safety posture,
+/// task effects, execution mode, or backend selection.
+///
+/// - `auto` (default): when Ota's own stdout is attached to a TTY and the execution context is native, the
+///   child inherits stdin/stdout/stderr so that TTY-detection tools (e.g. Wrangler) see a real
+///   terminal. Captured and agent execution stays non-interactive; ordinary CI runs do too because
+///   they do not expose a TTY.
+/// - `forbidden`: the child receives non-interactive stdio with stdin closed; it never sees a TTY.
+/// - `required`: a real TTY must be available; Ota refuses the task before starting any
+///   dependencies when the context is non-interactive or agent-mode.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandInteractionPosture {
+    #[default]
+    Auto,
+    Forbidden,
+    Required,
+}
+
+impl CommandInteractionPosture {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Forbidden => "forbidden",
+            Self::Required => "required",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCommandLaunchSpec {
@@ -6535,6 +6565,10 @@ pub struct TaskCommandLaunchSpec {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_projection: Option<TaskCommandRuntimeProjectionSpec>,
+    /// Controls whether this command may access a real interactive terminal.
+    /// Omitting this field is equivalent to `auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction: Option<CommandInteractionPosture>,
 }
 
 impl TaskCommandSpec {
@@ -9942,6 +9976,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                     ],
                     cwd: None,
                     runtime_projection: None,
+                    interaction: None,
                 }),
                 stop: Some(TaskCommandSpec {
                     exe: String::from("brew"),
@@ -9952,6 +9987,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                     ],
                     cwd: None,
                     runtime_projection: None,
+                    interaction: None,
                 }),
             }),
             ..ServiceSpec::default()

@@ -43,7 +43,9 @@
         "args": {
           "type": "array",
           "items": { "type": "string" }
-        }
+        },
+        "cwd": { "type": "string" },
+        "interaction": { "enum": ["auto", "forbidden", "required"], "default": "auto" }
       }
     },
     "taskAction": {

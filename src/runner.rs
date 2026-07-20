@@ -73,18 +73,18 @@ use crate::provisioning::{
     apply_provisioning_request_with_target,
 };
 use crate::schema::{
-    Backend, CheckKind, CheckSpec, ContainerBackend, Contract, EnvRequirement, EnvSourceKind,
-    ExecutionContext, ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment,
-    ExtensionKind, FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind,
-    NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
-    RemoteBackend, RequirementSurface, RuntimeRequirement, TaskModeBranchSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskRuntimeSpec, TaskServiceEnvBindingFormat, TaskServiceEnvBindingSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    Backend, CheckKind, CheckSpec, CommandInteractionPosture, ContainerBackend, Contract,
+    EnvRequirement, EnvSourceKind, ExecutionContext, ExecutionSharedBackendEnvironment,
+    ExecutionSharedBackendFulfillment, ExtensionKind, FileCheckExpectation, Lifecycle,
+    NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
+    NativePrerequisiteActivationSpec, ReadinessProbeTargetKind, RemoteBackend, RequirementSurface,
+    RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskRuntimeSpec,
+    TaskServiceEnvBindingFormat, TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider, ToolAcquisitionSpec,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 #[cfg(test)]
@@ -1181,6 +1181,11 @@ pub enum RunError {
         orchestrator: String,
         details: String,
     },
+    #[error(
+        "task `{task}` declares `interaction: required` but no interactive terminal is available; \
+         re-run in an interactive terminal or change `interaction` to `auto` or `forbidden`"
+    )]
+    InteractionRequired { task: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3048,6 +3053,7 @@ fn projected_compose_launch_command_for_task(
         args: projected_args,
         cwd: None,
         runtime_projection: None,
+        interaction: None,
     }
 }
 
@@ -3416,6 +3422,7 @@ fn projected_compose_invocation_command_for_task(
         args: projected_args,
         cwd: task.compose_adapter_cwd_for_backend(backend),
         runtime_projection: None,
+        interaction: None,
     }
 }
 
@@ -3453,6 +3460,7 @@ fn dependency_hydration_command_specs(
                 args: Vec::new(),
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
@@ -3481,6 +3489,7 @@ fn dependency_hydration_command_specs(
                 args,
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
@@ -3496,6 +3505,7 @@ fn dependency_hydration_command_specs(
                     ],
                     cwd: Some(source.cwd.clone()),
                     runtime_projection: None,
+                    interaction: None,
                 });
             }
             commands.push(crate::schema::TaskCommandSpec {
@@ -3503,6 +3513,7 @@ fn dependency_hydration_command_specs(
                 args: vec![String::from("install")],
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             });
             commands
         }
@@ -3512,6 +3523,7 @@ fn dependency_hydration_command_specs(
                 args: vec![String::from("install")],
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
@@ -3520,6 +3532,7 @@ fn dependency_hydration_command_specs(
                 args: source.command_args(),
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
@@ -3536,6 +3549,7 @@ fn dependency_hydration_command_specs(
                 args,
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => {
@@ -3544,6 +3558,7 @@ fn dependency_hydration_command_specs(
                 args: vec![String::from("mod"), String::from("download")],
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => {
@@ -3556,6 +3571,7 @@ fn dependency_hydration_command_specs(
                 ],
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => {
@@ -3573,6 +3589,7 @@ fn dependency_hydration_command_specs(
                 args,
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => {
@@ -3585,6 +3602,7 @@ fn dependency_hydration_command_specs(
                 args: vec![String::from("dependencies")],
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => {
@@ -3593,6 +3611,7 @@ fn dependency_hydration_command_specs(
                 args: vec![String::from("fetch")],
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
         crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
@@ -3610,6 +3629,7 @@ fn dependency_hydration_command_specs(
                 args,
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
+                interaction: None,
             }]
         }
     }
@@ -4993,6 +5013,7 @@ pub fn run_task_with_overrides(
         overrides,
         false,
         None,
+        false,
     )
 }
 
@@ -5011,6 +5032,7 @@ pub fn run_task_with_args_with_overrides(
         overrides,
         false,
         None,
+        false,
     )
 }
 
@@ -5022,6 +5044,7 @@ pub(crate) fn run_task_with_args_with_overrides_and_stream_capture(
     overrides: ExecutionOverrides,
     capture_stream_output: bool,
     live_log: Option<StreamLogTee>,
+    allow_terminal_passthrough: bool,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides(
         contract,
@@ -5032,6 +5055,7 @@ pub(crate) fn run_task_with_args_with_overrides_and_stream_capture(
         overrides,
         capture_stream_output,
         live_log,
+        allow_terminal_passthrough,
     )
 }
 
@@ -5050,6 +5074,7 @@ pub fn run_task_with_progress(
         ExecutionOverrides::default(),
         false,
         None,
+        false,
     )
 }
 
@@ -5069,6 +5094,7 @@ pub fn run_task_with_progress_and_overrides(
         overrides,
         false,
         None,
+        false,
     )
 }
 
@@ -5081,6 +5107,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides(
     overrides: ExecutionOverrides,
     capture_stream_output: bool,
     live_log: Option<StreamLogTee>,
+    allow_terminal_passthrough: bool,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides_with_policy(
         contract,
@@ -5091,6 +5118,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides(
         overrides,
         capture_stream_output,
         live_log,
+        allow_terminal_passthrough,
         None,
     )
 }
@@ -5104,6 +5132,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
     overrides: ExecutionOverrides,
     capture_stream_output: bool,
     live_log: Option<StreamLogTee>,
+    allow_terminal_passthrough: bool,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<RunOutcome, RunError> {
     let outcome = run_task_internal(
@@ -5117,6 +5146,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
             emit_progress,
             capture_output: capture_stream_output,
             live_log,
+            allow_terminal_passthrough,
         },
     )?;
 
@@ -5217,6 +5247,34 @@ pub fn run_task_captured_with_args_with_overrides_with_policy(
         policy_env,
         TaskExecutionMode::Capture,
     )
+}
+
+/// Resolve whether a command task should use terminal passthrough (i.e. inherit real stdio)
+/// for the current invocation.
+///
+/// Rules:
+/// - Agent mode always returns `false`; agents must never acquire an interactive terminal.
+/// - `interaction: forbidden` always returns `false`.
+/// - Explicit `interaction: auto` returns `true` only when Ota's own stdin/stdout/stderr are real
+///   TTYs.
+/// - `interaction: required` returns `true` only when Ota's stdin/stdout/stderr are TTYs; the caller is
+///   responsible for emitting a preflight refusal when this returns `false` for a `required`
+///   posture.
+/// - Non-native backends return `false`; container/remote adapters cannot provide a host TTY.
+pub fn resolve_command_terminal_passthrough(
+    posture: CommandInteractionPosture,
+    agent: bool,
+    is_native: bool,
+) -> bool {
+    if agent || !is_native {
+        return false;
+    }
+    match posture {
+        CommandInteractionPosture::Forbidden => false,
+        CommandInteractionPosture::Auto | CommandInteractionPosture::Required => {
+            io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
+        }
+    }
 }
 
 fn install_run_interrupt_handler() {
@@ -6635,6 +6693,7 @@ pub(crate) enum TaskExecutionMode {
         emit_progress: bool,
         capture_output: bool,
         live_log: Option<StreamLogTee>,
+        allow_terminal_passthrough: bool,
     },
     Capture,
     CaptureActivation,
@@ -6645,11 +6704,13 @@ enum PreparedTaskExecution {
     Shell {
         command: String,
         cwd: Option<String>,
+        interaction: Option<CommandInteractionPosture>,
     },
     NativeCommand {
         exe: String,
         args: Vec<String>,
         cwd: Option<String>,
+        interaction: Option<CommandInteractionPosture>,
     },
     Preparation {
         prepare: crate::schema::TaskPrepareSpec,
@@ -8406,6 +8467,7 @@ fn run_host_structured_command(
         None,
         command.exe.as_str(),
         &command.args,
+        Some(command.interaction.unwrap_or_default()),
         working_dir,
         &BTreeMap::new(),
         mode,
@@ -8527,6 +8589,34 @@ fn cmd_quote(value: &str) -> String {
     quoted
 }
 
+fn finite_command_stdin(interaction: Option<CommandInteractionPosture>) -> Stdio {
+    if interaction.is_some() {
+        Stdio::null()
+    } else {
+        Stdio::inherit()
+    }
+}
+
+fn required_command_terminal_is_available(
+    interaction: Option<CommandInteractionPosture>,
+    mode: &TaskExecutionMode,
+    backend: &ResolvedExecutionBackend,
+) -> bool {
+    interaction != Some(CommandInteractionPosture::Required)
+        || (matches!(
+            mode,
+            TaskExecutionMode::Stream {
+                capture_output: false,
+                allow_terminal_passthrough: true,
+                ..
+            }
+        ) && resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Required,
+            false,
+            matches!(backend, ResolvedExecutionBackend::Native { .. }),
+        ))
+}
+
 fn execute_native_launch_command(
     contract: Option<&Contract>,
     task: Option<&crate::schema::TaskSpec>,
@@ -8534,11 +8624,17 @@ fn execute_native_launch_command(
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     exe: &str,
     args: &[String],
+    interaction: Option<CommandInteractionPosture>,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     mode: TaskExecutionMode,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
+    if !required_command_terminal_is_available(interaction, &mode, backend) {
+        return Err(RunError::InteractionRequired {
+            task: task_name.to_string(),
+        });
+    }
     let runtime_spec = runtime;
     let resolved_executable = resolve_native_launch_executable(exe);
     let mut process = Command::new(&resolved_executable);
@@ -8553,8 +8649,19 @@ fn execute_native_launch_command(
             emit_progress,
             capture_output,
             live_log,
+            allow_terminal_passthrough,
         } => {
-            if emit_progress {
+            // Terminal passthrough: when `capture_output` is false (set by the CLI when
+            // `use_terminal_passthrough` is active) and this step's command interaction posture
+            // is not `Forbidden`, skip the pipe-backed progress path and let the child inherit
+            // all three stdio streams directly. This is the path that lets Wrangler (and similar
+            // tools) detect a real TTY. The `emit_progress` spinner is bypassed to avoid the
+            // pipe interception it requires.
+            let step_inherits = allow_terminal_passthrough
+                && !capture_output
+                && interaction != Some(CommandInteractionPosture::Forbidden);
+
+            if emit_progress && !step_inherits {
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start_with_policy(
                     &running_loader_label(task_name, backend),
@@ -8562,7 +8669,7 @@ fn execute_native_launch_command(
                 );
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = process
-                    .stdin(Stdio::inherit())
+                    .stdin(finite_command_stdin(interaction))
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()
@@ -8671,7 +8778,7 @@ fn execute_native_launch_command(
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
-                        .stdin(Stdio::inherit())
+                        .stdin(finite_command_stdin(interaction))
                         .stdout(Stdio::piped())
                         .stderr(Stdio::piped())
                         .spawn()
@@ -8776,7 +8883,7 @@ fn execute_native_launch_command(
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut child = process
-                .stdin(Stdio::inherit())
+                .stdin(finite_command_stdin(interaction))
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -9825,12 +9932,14 @@ fn execute_task_with_hooks(
             PreparedTaskExecution::Shell {
                 command: shell_command,
                 cwd: command_cwd,
+                interaction: Some(command.interaction.unwrap_or_default()),
             }
         } else {
             PreparedTaskExecution::NativeCommand {
                 exe: command.exe.clone(),
                 args: command.args.clone(),
                 cwd: command.cwd.clone(),
+                interaction: Some(command.interaction.unwrap_or_default()),
             }
         }
     } else if let Some(compose) = execution.compose() {
@@ -9842,6 +9951,7 @@ fn execute_task_with_hooks(
             PreparedTaskExecution::Shell {
                 command: shell_command,
                 cwd: command_cwd,
+                interaction: None,
             }
         } else {
             let _ = compose;
@@ -9849,6 +9959,7 @@ fn execute_task_with_hooks(
                 exe: command.exe.clone(),
                 args: command.args.clone(),
                 cwd: command.cwd.clone(),
+                interaction: None,
             }
         }
     } else {
@@ -9860,12 +9971,14 @@ fn execute_task_with_hooks(
                     PreparedTaskExecution::Shell {
                         command: shell_command,
                         cwd: command_cwd,
+                        interaction: None,
                     }
                 } else {
                     PreparedTaskExecution::NativeCommand {
                         exe: command.exe.clone(),
                         args: command.args.clone(),
                         cwd: command.cwd.clone(),
+                        interaction: None,
                     }
                 }
             }
@@ -9878,12 +9991,14 @@ fn execute_task_with_hooks(
                     PreparedTaskExecution::Shell {
                         command: shell_command,
                         cwd: command_cwd,
+                        interaction: None,
                     }
                 } else {
                     PreparedTaskExecution::NativeCommand {
                         exe: command.exe.clone(),
                         args: command.args.clone(),
                         cwd: command.cwd.clone(),
+                        interaction: None,
                     }
                 }
             }
@@ -9895,6 +10010,7 @@ fn execute_task_with_hooks(
             None => PreparedTaskExecution::Shell {
                 command: shell_command.expect("shell execution should provide a command"),
                 cwd: None,
+                interaction: None,
             },
         }
     };
@@ -10873,7 +10989,12 @@ fn execute_task_command(
     match (backend, execution) {
         (
             ResolvedExecutionBackend::Native { .. },
-            PreparedTaskExecution::NativeCommand { exe, args, .. },
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                interaction,
+                ..
+            },
         ) => {
             let native_compose_override = task
                 .zip(contract)
@@ -10917,6 +11038,7 @@ fn execute_task_command(
                 effective_runtime,
                 exe,
                 args,
+                *interaction,
                 effective_working_dir.as_path(),
                 &resolved_env,
                 mode,
@@ -10960,7 +11082,14 @@ fn execute_task_command(
             mode,
             ephemeral_sessions,
         ),
-        (_, PreparedTaskExecution::Shell { command, cwd }) => match backend {
+        (
+            _,
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            },
+        ) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
                 preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
                 preflight_native_runtime_listener_binds(task_name, runtime)?;
@@ -10974,6 +11103,7 @@ fn execute_task_command(
                     task_name,
                     runtime,
                     command.as_str(),
+                    *interaction,
                     effective_working_dir.as_path(),
                     &resolved_env,
                     mode,
@@ -11248,7 +11378,11 @@ fn execute_prepare_task(
         task_name,
         prepare,
         backend,
-        PreparedTaskExecution::Shell { command, cwd: None },
+        PreparedTaskExecution::Shell {
+            command,
+            cwd: None,
+            interaction: None,
+        },
     )?;
     execute_task_command(
         contract,
@@ -11692,10 +11826,12 @@ fn prepared_structured_command_for_backend(
             exe: exe.to_string(),
             args,
             cwd: None,
+            interaction: None,
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, exe, &args),
             cwd: None,
+            interaction: None,
         },
     }
 }
@@ -11709,10 +11845,12 @@ fn prepared_structured_command_spec_for_backend(
             exe: command.exe.clone(),
             args: command.args.clone(),
             cwd: command.cwd.clone(),
+            interaction: None,
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, command.exe.as_str(), &command.args),
             cwd: command.cwd.clone(),
+            interaction: None,
         },
     }
 }
@@ -12243,7 +12381,11 @@ fn wrap_prepare_shell_preview_for_orchestrator(
         return Ok(command);
     };
     match wrap_prepared_execution_for_orchestrator(
-        PreparedTaskExecution::Shell { command, cwd: None },
+        PreparedTaskExecution::Shell {
+            command,
+            cwd: None,
+            interaction: None,
+        },
         backend,
         selection,
         orchestrator,
@@ -13882,6 +14024,7 @@ pub(crate) fn run_backend_command_captured(
         &PreparedTaskExecution::Shell {
             command: command.to_string(),
             cwd: None,
+            interaction: None,
         },
         working_dir,
         &BTreeMap::new(),
@@ -13928,10 +14071,12 @@ pub(crate) fn run_backend_argv_command_captured_with_env(
             exe: exe.to_string(),
             args: args.to_vec(),
             cwd: None,
+            interaction: None,
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, exe, args),
             cwd: None,
+            interaction: None,
         },
     };
     execute_task_command(
@@ -14773,46 +14918,59 @@ fn wrap_prepared_execution_for_mise(
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
-            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_mise_task_command(backend, orchestrator, command.as_str()),
                 cwd,
+                interaction,
             }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
-            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_mise_exec_shell_command(backend, orchestrator, command.as_str()),
                 cwd,
+                interaction,
             }),
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
-                Ok(PreparedTaskExecution::Shell {
-                    command: wrap_mise_exec_argv_command(
-                        backend,
-                        orchestrator,
-                        exe.as_str(),
-                        &args,
-                    ),
-                    cwd,
-                })
-            }
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_mise_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
+                cwd,
+                interaction,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
-                Ok(PreparedTaskExecution::Shell {
-                    command: wrap_mise_subcommand_argv_command(
-                        backend,
-                        orchestrator,
-                        exe.as_str(),
-                        &args,
-                    ),
-                    cwd,
-                })
-            }
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_mise_subcommand_argv_command(
+                    backend,
+                    orchestrator,
+                    exe.as_str(),
+                    &args,
+                ),
+                cwd,
+                interaction,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -14914,46 +15072,59 @@ fn wrap_prepared_execution_for_devbox(
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
-            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_devbox_task_command(backend, orchestrator, command.as_str()),
                 cwd,
+                interaction,
             }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
-            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_devbox_exec_shell_command(backend, orchestrator, command.as_str()),
                 cwd,
+                interaction,
             }),
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
-                Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devbox_exec_argv_command(
-                        backend,
-                        orchestrator,
-                        exe.as_str(),
-                        &args,
-                    ),
-                    cwd,
-                })
-            }
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devbox_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
+                cwd,
+                interaction,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
-                Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devbox_subcommand_argv_command(
-                        backend,
-                        orchestrator,
-                        exe.as_str(),
-                        &args,
-                    ),
-                    cwd,
-                })
-            }
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devbox_subcommand_argv_command(
+                    backend,
+                    orchestrator,
+                    exe.as_str(),
+                    &args,
+                ),
+                cwd,
+                interaction,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -15041,46 +15212,59 @@ fn wrap_prepared_execution_for_devenv(
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
-            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_devenv_task_command(backend, orchestrator, command.as_str()),
                 cwd,
+                interaction,
             }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
-            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell {
+                command,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_devenv_exec_shell_command(backend, orchestrator, command.as_str()),
                 cwd,
+                interaction,
             }),
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
-                Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devenv_exec_argv_command(
-                        backend,
-                        orchestrator,
-                        exe.as_str(),
-                        &args,
-                    ),
-                    cwd,
-                })
-            }
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devenv_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
+                cwd,
+                interaction,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
-            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
-                Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devenv_subcommand_argv_command(
-                        backend,
-                        orchestrator,
-                        exe.as_str(),
-                        &args,
-                    ),
-                    cwd,
-                })
-            }
+            PreparedTaskExecution::NativeCommand {
+                exe,
+                args,
+                cwd,
+                interaction,
+            } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devenv_subcommand_argv_command(
+                    backend,
+                    orchestrator,
+                    exe.as_str(),
+                    &args,
+                ),
+                cwd,
+                interaction,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -22730,6 +22914,7 @@ fn execute_remote_task_command(
             emit_progress,
             capture_output,
             live_log,
+            ..
         } => {
             if emit_progress {
                 if capture_output {
@@ -23359,11 +23544,17 @@ fn execute_native_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     command: &str,
+    interaction: Option<CommandInteractionPosture>,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     mode: TaskExecutionMode,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
+    if !required_command_terminal_is_available(interaction, &mode, backend) {
+        return Err(RunError::InteractionRequired {
+            task: task_name.to_string(),
+        });
+    }
     let runtime_spec = runtime;
     let mut process = shell_command(command);
     process.current_dir(working_dir).envs(env_overrides.iter());
@@ -23376,8 +23567,12 @@ fn execute_native_task_command(
             emit_progress,
             capture_output,
             live_log,
+            allow_terminal_passthrough,
         } => {
-            if emit_progress {
+            let step_inherits = allow_terminal_passthrough
+                && !capture_output
+                && interaction != Some(CommandInteractionPosture::Forbidden);
+            if emit_progress && !step_inherits {
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start_with_policy(
                     &running_loader_label(task_name, backend),
@@ -23385,7 +23580,7 @@ fn execute_native_task_command(
                 );
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = process
-                    .stdin(Stdio::inherit())
+                    .stdin(finite_command_stdin(interaction))
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()
@@ -23494,7 +23689,7 @@ fn execute_native_task_command(
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
-                        .stdin(Stdio::inherit())
+                        .stdin(finite_command_stdin(interaction))
                         .stdout(Stdio::piped())
                         .stderr(Stdio::piped())
                         .spawn()
@@ -23617,7 +23812,7 @@ fn execute_native_task_command(
                 }
             }
             let mut child = process
-                .stdin(Stdio::inherit())
+                .stdin(finite_command_stdin(interaction))
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -25616,6 +25811,7 @@ awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if
                 emit_progress: false,
                 capture_output: true,
                 live_log: None,
+                allow_terminal_passthrough: false,
             },
         )
     } else {
@@ -25632,6 +25828,7 @@ awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if
                 emit_progress: false,
                 capture_output: true,
                 live_log: None,
+                allow_terminal_passthrough: false,
             },
         )
     };
@@ -25662,6 +25859,7 @@ fn remote_target_probe_http_reachable(
                 emit_progress: false,
                 capture_output: true,
                 live_log: None,
+                allow_terminal_passthrough: false,
             },
         )
     } else {
@@ -25678,6 +25876,7 @@ fn remote_target_probe_http_reachable(
                 emit_progress: false,
                 capture_output: true,
                 live_log: None,
+                allow_terminal_passthrough: false,
             },
         )
     };
@@ -31602,14 +31801,15 @@ mod tests {
         preparing_loader_label, producer_owned_service_next, read_execution_boundary_trace,
         ready_runtime_public_endpoint_line, register_active_repo_execution,
         repo_execution_lock_owner_for_backend, repo_execution_lock_path, repo_ota_state_dir,
-        resolve_execution_backend, resolve_execution_backend_with_contract_path, resolve_task_env,
-        resolve_task_env_details, resolve_task_env_details_for_task, resolve_task_inputs,
-        resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
-        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
-        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
-        run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend, shell_quote, version_matches_requirement,
-        write_active_repo_execution_records, write_execution_boundary_trace_if_requested,
+        resolve_command_terminal_passthrough, resolve_execution_backend,
+        resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
+        resolve_task_env_details_for_task, resolve_task_inputs, resolve_task_target_binding_url,
+        resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
+        run_task_captured_with_args_with_overrides, run_task_with_args,
+        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
+        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
+        shell_quote, version_matches_requirement, write_active_repo_execution_records,
+        write_execution_boundary_trace_if_requested,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -35762,6 +35962,7 @@ tasks:
                 emit_progress: false,
                 capture_output: true,
                 live_log: None,
+                allow_terminal_passthrough: false,
             },
             fixture.dir.path(),
             std::env::consts::OS,
@@ -35924,6 +36125,7 @@ tasks:
                 emit_progress: false,
                 capture_output: true,
                 live_log: None,
+                allow_terminal_passthrough: false,
             },
             fixture.dir.path(),
             std::env::consts::OS,
@@ -41579,6 +41781,7 @@ tasks:
             ExecutionOverrides::default(),
             true,
             None,
+            false,
         )
         .expect("stream run with capture should succeed");
 
@@ -41622,6 +41825,7 @@ tasks:
             ExecutionOverrides::default(),
             true,
             Some(live_log),
+            false,
         )
         .expect("stream run with live log tee should succeed");
 
@@ -41688,6 +41892,7 @@ tasks:
             ExecutionOverrides::default(),
             true,
             None,
+            false,
         )
         .expect("stream run with capture should succeed");
 
@@ -61435,6 +61640,7 @@ project:
             &PreparedTaskExecution::Shell {
                 command: String::from("ota-managed-test-tool"),
                 cwd: None,
+                interaction: None,
             },
             fixture.dir.path(),
             &BTreeMap::new(),
@@ -67747,5 +67953,213 @@ tasks:
             }
             fs::write(path, contents.trim_start()).unwrap();
         }
+    }
+
+    // ── command.interaction tests ──────────────────────────────────────────────
+
+    use crate::schema::CommandInteractionPosture;
+
+    #[test]
+    fn command_interaction_forbidden_stays_piped() {
+        // forbidden always returns false regardless of tty/agent/native
+        assert!(!resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Forbidden,
+            false,
+            true
+        ));
+        assert!(!resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Forbidden,
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn command_interaction_auto_agent_stays_piped() {
+        // agent mode always returns false for auto
+        assert!(!resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Auto,
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn command_interaction_required_agent_stays_piped() {
+        // agent mode always returns false for required
+        assert!(!resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Required,
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn command_interaction_auto_non_native_stays_piped() {
+        // container/remote backend returns false
+        assert!(!resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Auto,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn command_interaction_required_non_native_stays_piped() {
+        // container/remote backend returns false
+        assert!(!resolve_command_terminal_passthrough(
+            CommandInteractionPosture::Required,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn command_interaction_posture_omitted_resolves_to_auto() {
+        // Human native terminal runs may interact unless the contract explicitly forbids it.
+        let yaml = r#"
+version: 1
+project:
+  name: test
+tasks:
+  deploy:
+    command:
+      exe: npm
+      args: [run, deploy]
+"#;
+        let contract =
+            crate::parser::parse_contract_str(std::path::Path::new("ota.yaml"), yaml).unwrap();
+        let task = contract.tasks.get("deploy").unwrap();
+        assert_eq!(
+            task.command
+                .as_ref()
+                .and_then(|command| command.interaction)
+                .unwrap_or_default(),
+            crate::schema::CommandInteractionPosture::Auto
+        );
+    }
+
+    #[test]
+    fn command_interaction_posture_survives_orchestrator_wrapping() {
+        let yaml = r#"
+version: 1
+project:
+  name: test
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files: [mise.toml]
+tasks:
+  deploy:
+    command:
+      exe: npm
+      args: [run, deploy]
+      interaction: required
+    execution:
+      orchestrator:
+        ref: mise
+        mode: exec
+"#;
+        let contract =
+            crate::parser::parse_contract_str(std::path::Path::new("ota.yaml"), yaml).unwrap();
+        let task = contract.tasks.get("deploy").unwrap();
+        let selection = task
+            .orchestrator_for_backend(crate::schema::Backend::Native)
+            .unwrap();
+        let orchestrator = contract.orchestrators.get("mise").unwrap();
+        let wrapped = super::wrap_prepared_execution_for_orchestrator(
+            PreparedTaskExecution::NativeCommand {
+                exe: String::from("npm"),
+                args: vec![String::from("run"), String::from("deploy")],
+                cwd: None,
+                interaction: Some(CommandInteractionPosture::Required),
+            },
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            selection,
+            orchestrator,
+        )
+        .unwrap();
+        assert!(matches!(
+            wrapped,
+            PreparedTaskExecution::Shell {
+                interaction: Some(CommandInteractionPosture::Required),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn required_interaction_is_refused_inside_captured_runner_boundary() {
+        let working_dir = tempfile::tempdir().unwrap();
+        let error = super::execute_native_launch_command(
+            None,
+            None,
+            "login",
+            None,
+            "sh",
+            &[String::from("-c"), String::from("exit 0")],
+            Some(CommandInteractionPosture::Required),
+            working_dir.path(),
+            &BTreeMap::new(),
+            TaskExecutionMode::Capture,
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+        )
+        .expect_err("captured execution must refuse required interaction");
+        assert!(matches!(error, RunError::InteractionRequired { task } if task == "login"));
+    }
+
+    #[test]
+    fn command_interaction_posture_forbidden_parses() {
+        let yaml = r#"
+version: 1
+project:
+  name: test
+tasks:
+  deploy:
+    command:
+      exe: npm
+      args: [run, deploy]
+      interaction: forbidden
+"#;
+        let contract =
+            crate::parser::parse_contract_str(std::path::Path::new("ota.yaml"), yaml).unwrap();
+        let task = contract.tasks.get("deploy").unwrap();
+        assert_eq!(
+            task.command
+                .as_ref()
+                .and_then(|command| command.interaction)
+                .unwrap_or_default(),
+            crate::schema::CommandInteractionPosture::Forbidden
+        );
+    }
+
+    #[test]
+    fn command_interaction_posture_required_parses() {
+        let yaml = r#"
+version: 1
+project:
+  name: test
+tasks:
+  deploy:
+    command:
+      exe: wrangler
+      args: [deploy]
+      interaction: required
+"#;
+        let contract =
+            crate::parser::parse_contract_str(std::path::Path::new("ota.yaml"), yaml).unwrap();
+        let task = contract.tasks.get("deploy").unwrap();
+        assert_eq!(
+            task.command
+                .as_ref()
+                .and_then(|command| command.interaction)
+                .unwrap_or_default(),
+            crate::schema::CommandInteractionPosture::Required
+        );
     }
 }

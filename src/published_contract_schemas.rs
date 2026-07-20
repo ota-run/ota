@@ -1388,7 +1388,10 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "required": ["exe"],
       "properties": {
         "exe": { "type": "string" },
-        "args": { "$ref": "#/$defs/stringArray" }
+        "args": { "$ref": "#/$defs/stringArray" },
+        "cwd": { "type": "string" },
+        "runtime_projection": { "$ref": "#/$defs/taskCommandRuntimeProjection" },
+        "interaction": { "enum": ["auto", "forbidden", "required"], "default": "auto" }
       }
     },
     "taskCompose": {

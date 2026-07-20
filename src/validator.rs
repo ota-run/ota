@@ -40,16 +40,17 @@ use crate::execution::{
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
-    AgentBootstrapOtaSource, AgentPosture, Backend, CheckKind, ContainerBackend, Contract,
-    EnvConfig, ExecutionContext, ExecutionSharedBackend, ExecutionSharedBackendFulfillment,
-    ExecutionSharedBackendScope, ExtensionKind, Lifecycle, NativePrerequisitePlatformSpec,
-    OrchestratorKind, RuntimeRequirement, ServiceProducerSpec, ServiceSpec, TaskActionSpec,
-    TaskCommandSpec, TaskEnsureBundleStepSpec, TaskLaunchSpec, TaskModeBranchSpec,
-    TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
-    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    AgentBootstrapOtaSource, AgentPosture, Backend, CheckKind, CommandInteractionPosture,
+    ContainerBackend, Contract, EnvConfig, ExecutionContext, ExecutionSharedBackend,
+    ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope, ExtensionKind, Lifecycle,
+    NativePrerequisitePlatformSpec, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
+    ServiceSpec, TaskActionSpec, TaskCommandSpec, TaskEnsureBundleStepSpec, TaskLaunchSpec,
+    TaskModeBranchSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
+    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
+    ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -2873,7 +2874,14 @@ fn validate_tasks(
                 )))
             }
             (_, _, Some(command), _) => {
-                validate_finite_task_command(name, "task", "command", command, errors);
+                validate_finite_task_command(
+                    name,
+                    "task",
+                    "command",
+                    command,
+                    task.workflow_backend(contract.execution.as_ref()),
+                    errors,
+                );
             }
             (_, _, _, Some(compose)) => {
                 validate_task_compose_execution(name, "task", "compose", compose, errors);
@@ -3116,13 +3124,14 @@ fn validate_tasks(
                         "task `{name}` variant #{index} must declare a non-empty `command.exe`"
                     )))
                 }
-                (None, None, Some(command), None) => validate_finite_task_command(
-                    name,
-                    &format!("variant #{index}"),
-                    "command",
-                    command,
-                    errors,
-                ),
+            (None, None, Some(command), None) => validate_finite_task_command(
+                name,
+                &format!("variant #{index}"),
+                "command",
+                command,
+                task.workflow_backend(contract.execution.as_ref()),
+                errors,
+            ),
                 (None, None, None, Some(compose)) => validate_task_compose_execution(
                     name,
                     &format!("variant #{index}"),
@@ -3619,6 +3628,7 @@ fn validate_task_mode_execution(
                 &format!("mode `{mode_name}`"),
                 "command",
                 command,
+                mode,
                 errors,
             ),
             (None, None, None, Some(compose), None, None) => validate_task_compose_execution(
@@ -4502,11 +4512,20 @@ fn validate_finite_task_command(
     scope: &str,
     field_path: &str,
     command: &crate::schema::TaskCommandSpec,
+    backend: Backend,
     errors: &mut Vec<ValidationError>,
 ) {
     if command.runtime_projection.is_some() {
         errors.push(ValidationError::new(format!(
             "{scope} `{task_name}` must not declare `{field_path}.runtime_projection`; this surface is only valid for `launch.kind: command`"
+        )));
+    }
+    if command.interaction == Some(CommandInteractionPosture::Required)
+        && matches!(backend, Backend::Container | Backend::Remote)
+    {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` declares `{field_path}.interaction: required` but its execution backend is `{}`, which cannot provide an interactive terminal; use `auto` or `forbidden`, or select native execution",
+            if backend == Backend::Container { "container" } else { "remote" }
         )));
     }
 }
@@ -4541,6 +4560,11 @@ fn validate_task_launch(
             if command.exe.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
                     "{scope} `{task_name}` must declare a non-empty `launch.exe`"
+                )));
+            }
+            if command.interaction.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` must not declare `launch.interaction`; terminal interaction is only supported by finite `command:` task bodies"
                 )));
             }
             validate_command_launch_runtime_projection(task_name, scope, command, runtime, errors);
@@ -30135,6 +30159,70 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_interaction_on_command_launch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: wrangler
+      args: [login]
+      interaction: required
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("launch interaction must be rejected");
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "must not declare `launch.interaction`; terminal interaction is only supported by finite `command:` task bodies",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_required_interaction_in_container_mode_command() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: container
+  contexts:
+    container:
+      backend: container
+      container:
+        image: alpine:3.21
+tasks:
+  login:
+    execution:
+      modes:
+        container:
+          command:
+            exe: wrangler
+            args: [login]
+            interaction: required
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("container interaction must be rejected");
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "mode `container` `login` declares `command.interaction: required` but its execution backend is `container`",
+            )
+        }));
     }
 
     #[test]

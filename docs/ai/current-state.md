@@ -35,6 +35,14 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
+- active finite-command interaction slice: omitted `tasks.<name>.command.interaction` resolves to
+  `auto`, allowing terminal passthrough only for human native terminal execution. Explicit
+  `forbidden` keeps every prepared closure step noninteractive, while `required` refuses before
+  dependencies or workflow prepare/setup phases when the selected boundary cannot provide a
+  terminal. Effective posture survives mode selection and orchestrator wrapping; dry-run JSON
+  publishes the invocation-specific `terminal_passthrough`, `piped`, or `refused` resolution.
+  Agent, captured, container, remote, and ordinary non-TTY CI execution do not acquire terminal
+  capability.
 - active replay-input identity hardening: optional task `replay_inputs[].expected_identity` pins
   now validate canonical SHA-256 values, surface missing or mismatched artifacts through Doctor,
   block dry-run/run/up before task startup, and preserve expected plus observed identity in the

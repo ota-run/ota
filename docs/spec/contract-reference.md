@@ -2481,6 +2481,20 @@ tasks:
 - `command.cwd`: optional repo-relative working directory for that structured finite command; use it
   when the task truth is one executable plus stable argv rooted in a repo subdirectory instead of
   hiding `cd ... && ...` shell glue in `run` or `script`
+- `command.interaction`: optional terminal interaction posture for the child process; controls
+  whether the command may inherit a real interactive TTY from the host terminal; omitting this
+  field is equivalent to `auto`
+  - `auto` (default): when Ota itself is attached to a real TTY and the execution backend is
+    native, stdin/stdout/stderr are inherited so the child process detects an interactive
+    terminal; in agent mode and ordinary non-TTY CI or other non-TTY contexts the process uses
+    non-interactive captured execution
+  - `forbidden`: always use non-interactive execution with stdin closed regardless of context; the
+    child process never sees a TTY
+  - `required`: like `auto` in a human TTY context, but refuses execution with a preflight error
+    when no interactive terminal can be provided (ordinary CI, agent mode, non-TTY); use this when the
+    task cannot make progress without interactive prompts (for example, Wrangler OAuth login).
+    `required` takes precedence over `--stream`: Ota passes the terminal through and does not
+    claim pipe-captured command output for that invocation.
 
 Ota does not maintain an allowlist for `command.exe`. The examples above are illustrative, not exhaustive; the executable may be any repo-truthful binary or path as long as the contract declares its requirements honestly.
 

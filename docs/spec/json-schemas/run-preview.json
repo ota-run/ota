@@ -141,6 +141,16 @@
         "command": { "type": "string" }
       }
     },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["posture", "resolution", "terminal_available"],
+      "properties": {
+        "posture": { "enum": ["auto", "forbidden", "required"] },
+        "resolution": { "enum": ["terminal_passthrough", "piped", "refused"] },
+        "terminal_available": { "type": "boolean" }
+      }
+    },
     "governance": {
       "type": "object",
       "additionalProperties": false,
@@ -305,6 +315,7 @@
         "resolved": { "$ref": "./execution.json#/oneOf/0/properties/resolved" },
         "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
         "requested_task": { "$ref": "./tasks.json#/oneOf/0/properties/tasks/items" },
+        "interaction": { "$ref": "#/$defs/interaction" },
         "requested_context": { "type": "string" },
         "selected_context": { "type": "string" },
         "env_summary": { "$ref": "#/$defs/envSummary" },

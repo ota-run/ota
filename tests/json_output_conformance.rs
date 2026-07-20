@@ -1122,6 +1122,8 @@ tasks:
       args:
         - run
         - pytest
+      cwd: backend
+      interaction: required
 "#,
     );
 
@@ -1135,6 +1137,83 @@ tasks:
     assert_eq!(json["tasks"][0]["command"]["exe"], "uv");
     assert_eq!(json["tasks"][0]["command"]["args"][0], "run");
     assert_eq!(json["tasks"][0]["command"]["args"][1], "pytest");
+    assert_eq!(json["tasks"][0]["command"]["cwd"], "backend");
+    assert_eq!(json["tasks"][0]["command"]["interaction"], "required");
+}
+
+#[test]
+fn tasks_json_output_reports_resolved_default_auto_interaction() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-command-interaction-demo
+tasks:
+  auto:
+    command:
+      exe: wrangler
+      args: [login]
+      interaction: auto
+  captured:
+    command:
+      exe: cargo
+      args: [test]
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    let auto = json["tasks"]
+        .as_array()
+        .expect("task array")
+        .iter()
+        .find(|task| task["name"] == "auto")
+        .expect("auto task");
+    let captured = json["tasks"]
+        .as_array()
+        .expect("task array")
+        .iter()
+        .find(|task| task["name"] == "captured")
+        .expect("captured task");
+    assert_eq!(auto["command"]["interaction"], "auto");
+    assert_eq!(captured["command"]["interaction"], "auto");
+}
+
+#[test]
+fn run_dry_run_json_reports_invocation_interaction_resolution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-command-interaction-preview
+tasks:
+  login:
+    command:
+      exe: sh
+      args: [-c, "echo login"]
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "run",
+            "login",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_eq!(json["interaction"]["posture"], "auto");
+    assert_eq!(json["interaction"]["resolution"], "piped");
+    assert_eq!(json["interaction"]["terminal_available"], false);
 }
 
 #[test]
@@ -2101,6 +2180,10 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("run-preview.json", &json);
+    assert!(
+        json.get("interaction").is_none(),
+        "non-command task bodies must not publish a fabricated interaction posture"
+    );
 }
 
 #[test]

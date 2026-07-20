@@ -3478,3 +3478,231 @@ tasks:
          path resolution instead of Ota's resolve_engine_path() function."
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn ota_run_command_interaction_auto_grants_tty_and_stream_keeps_pipes() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: tty-demo
+tasks:
+  detect-tty:
+    command:
+      exe: sh
+      args:
+        - -c
+        - |
+          if [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
+            echo CHILD_TTY
+          else
+            echo CHILD_NOTTY
+          fi
+      interaction: auto
+  require-tty:
+    command:
+      exe: sh
+      args:
+        - -c
+        - |
+          if [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
+            echo REQUIRED_TTY
+          else
+            echo REQUIRED_NOTTY
+          fi
+      interaction: required
+"#,
+    );
+
+    let ota = env!("CARGO_BIN_EXE_ota");
+
+    let tty_output = Command::new("script")
+        .args(["-q", "/dev/null", ota, "run", "detect-tty"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("script-wrapped ota run should execute");
+    let tty_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&tty_output.stdout),
+        String::from_utf8_lossy(&tty_output.stderr)
+    );
+    assert!(
+        tty_combined.contains("CHILD_TTY"),
+        "auto interaction should inherit a tty in a terminal run\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&tty_output.stdout),
+        String::from_utf8_lossy(&tty_output.stderr),
+    );
+
+    let stream_output = Command::new("script")
+        .args(["-q", "/dev/null", ota, "run", "detect-tty", "--stream"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("script-wrapped ota run --stream should execute");
+    let stream_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stream_output.stdout),
+        String::from_utf8_lossy(&stream_output.stderr)
+    );
+    assert!(
+        stream_combined.contains("CHILD_NOTTY"),
+        "--stream should keep pipe-backed execution even inside a tty\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stream_output.stdout),
+        String::from_utf8_lossy(&stream_output.stderr),
+    );
+
+    let required_output = Command::new("script")
+        .args(["-q", "/dev/null", ota, "run", "require-tty"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("required interaction should execute inside a real pseudo-terminal");
+    let required_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&required_output.stdout),
+        String::from_utf8_lossy(&required_output.stderr)
+    );
+    assert!(
+        required_output.status.success(),
+        "required interaction should not be refused in a real terminal\n{required_combined}"
+    );
+    assert!(
+        required_combined.contains("REQUIRED_TTY"),
+        "{required_combined}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ota_run_command_interaction_is_enforced_per_effective_closure_step() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: tty-closure-demo
+tasks:
+  captured-dependency:
+    command:
+      exe: sh
+      args:
+        - -c
+        - |
+          if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then
+            echo DEPENDENCY_TTY
+          else
+            echo DEPENDENCY_PIPED
+          fi
+      interaction: forbidden
+  interactive-request:
+    depends_on: [captured-dependency]
+    command:
+      exe: sh
+      args:
+        - -c
+        - |
+          if [ -t 0 ] && [ -t 1 ] && [ -t 2 ]; then
+            echo REQUEST_TTY
+          else
+            echo REQUEST_PIPED
+          fi
+"#,
+    );
+
+    let ota = env!("CARGO_BIN_EXE_ota");
+    let output = Command::new("script")
+        .args(["-q", "/dev/null", ota, "run", "interactive-request"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("script-wrapped ota run should execute");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(combined.contains("DEPENDENCY_PIPED"), "{combined}");
+    assert!(!combined.contains("DEPENDENCY_TTY"), "{combined}");
+    assert!(combined.contains("REQUEST_TTY"), "{combined}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ota_run_mode_specific_forbidden_interaction_stays_piped() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: tty-mode-demo
+tasks:
+  detect-tty:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          command:
+            exe: sh
+            args:
+              - -c
+              - |
+                if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then
+                  echo MODE_TTY
+                else
+                  echo MODE_PIPED
+                fi
+            interaction: forbidden
+"#,
+    );
+
+    let ota = env!("CARGO_BIN_EXE_ota");
+    let output = Command::new("script")
+        .args(["-q", "/dev/null", ota, "run", "detect-tty"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("script-wrapped ota run should execute");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(combined.contains("MODE_PIPED"), "{combined}");
+    assert!(!combined.contains("MODE_TTY"), "{combined}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ota_run_legacy_shell_body_preserves_existing_stdin_behavior() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: legacy-shell-stdin
+tasks:
+  legacy:
+    run: |
+      if [ -t 0 ]; then
+        echo LEGACY_STDIN_TTY
+      else
+        echo LEGACY_STDIN_NOTTY
+      fi
+"#,
+    );
+
+    let ota = env!("CARGO_BIN_EXE_ota");
+    let output = Command::new("script")
+        .args(["-q", "/dev/null", ota, "run", "legacy"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("script-wrapped ota run should execute");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(combined.contains("LEGACY_STDIN_TTY"), "{combined}");
+}

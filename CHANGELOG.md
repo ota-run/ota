@@ -26,6 +26,19 @@
 
 ## Unreleased
 
+- added `command.interaction` field to `command:` task bodies. Allowed values are `auto` (default),
+  `forbidden`, and `required`. With `auto` or `required`, when Ota runs in a
+  human TTY context with a native execution backend, stdin/stdout/stderr are inherited by the
+  child process so that interactive tools such as Wrangler can detect a real TTY and open browser
+  OAuth or other interactive flows. In ordinary non-TTY CI, agent mode, or other non-TTY contexts
+  `auto` silently falls back to non-interactive captured execution. `required` returns a preflight
+  refusal error before any dependencies or task execution when an interactive terminal cannot be
+  provided. `forbidden`
+  always uses non-interactive execution with stdin closed. Agent mode never acquires interactive
+  capability from the contract
+  posture. For structured command tasks, dry-run JSON publishes both the effective contract
+  posture and its invocation-specific resolution as `terminal_passthrough`, `piped`, or `refused`.
+
 - fixed native Corepack task execution to activate each selected declared package manager before
   direct `yarn` or `pnpm` commands run. A globally installed but incompatible package-manager shim
   can no longer bypass the contract-owned Corepack version.

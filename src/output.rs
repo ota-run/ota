@@ -1154,6 +1154,13 @@ pub struct RunPreviewRunnableMode {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct RunPreviewInteractionSummary {
+    pub posture: String,
+    pub resolution: String,
+    pub terminal_available: bool,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct ArtifactRoute {
     pub role: String,
     pub kind: String,
@@ -1398,6 +1405,8 @@ pub struct RunPreviewSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<ExecutionPlanOverrides>,
     pub requested_task: TaskSummary<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction: Option<RunPreviewInteractionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4942,6 +4951,8 @@ pub struct TaskCommandSummary<'a> {
     pub args: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<&'a str>,
+    /// Resolved interaction posture after defaulting.
+    pub interaction: &'static str,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -5301,6 +5312,7 @@ fn summarize_task_command<'a>(
         exe: command.exe.as_str(),
         args: command.args.iter().map(String::as_str).collect(),
         cwd: command.cwd.as_deref(),
+        interaction: command.interaction.unwrap_or_default().as_str(),
     })
 }
 
