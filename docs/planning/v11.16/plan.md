@@ -178,6 +178,20 @@ V11.17 promotion and replay must reference the immutable V11.16 graph identity p
 closure identities. It must not create a parallel freshness model, auto-select the newest graph, or
 treat a typed expected digest as a substitute for runner-authored materialization provenance.
 
+### Deferred Database Boundary
+
+Migration lineage is valid evidence about declared schema derivation, not complete database-state
+identity. A future database adapter must require runner- or adapter-witnessed evidence for every
+database prerequisite the selected proof asserts or consumes: immutable engine/base identity,
+ordered migration identities, witnessed application, and, only where that proof depends on them,
+logical seed and target data-state identity.
+
+Unpinned time, randomness, network access, or external state leaves the affected prerequisite or
+derivation path `unknown`; Ota must not widen that uncertainty beyond the selected material
+closure. A pre-existing database boundary may be `verified_reused` only when Ota identifies and
+verifies that boundary. Matching migration lineage alone does not verify schema or data state, and
+pre-existing database state is never `cold_start_verified`.
+
 A later policy slice may require cold-start verification for selected lanes. This slice only emits
 honest evidence and preserves existing execution behavior by default.
 
