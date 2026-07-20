@@ -267,8 +267,9 @@ V11.16 is complete when:
 - `cold_start_verified` is emitted only when every mutable prerequisite was observed absent or
   cleared, materialized in this run, and asserted with a matching final-producer identity, while
   every immutable asserted target is declared and identity-verified;
-- a mixed-state fixture with a reused cache, volume, or service derives
-  `persistent_state_reused`, never cold proof;
+- a mixed-state fixture with a reused asserted-target cache, volume, or service derives
+  `persistent_state_reused`, never cold proof; a cache reused only through the
+  derivation-input closure does not degrade target freshness;
 - a cache-assisted reconstruction can remain `cold_start_verified` because its reused cache is in
   the derivation-input closure, while its independent derivation posture remains `cache_assisted`;
 - a forged, stale, scope-mismatched, or caller-controlled provider assertion remains `unknown` and
