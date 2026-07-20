@@ -943,15 +943,19 @@ Notes:
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
 - `execution_boundary` is additive runner-authored prerequisite provenance. Its `identity` binds
   the sorted asserted-target and derivation-input closures, declared artifact/producer ownership,
-  prerequisite records, and ordered causal edges. `target_freshness` is independent from
+  prerequisite records (including a verified precondition identity when state is reused), and
+  ordered causal edges. `target_freshness` is independent from
   `derivation_posture`: `unknown` means Ota did not witness the complete precondition,
   materialization, and assertion chain; it must not be treated as a cold start. The first
-  runner-attested path covers native `ensure_virtualenv` followed by a runner-recorded native
-  `.venv/bin/*` consumer. It emits `asserted_at`, not `consumed`: Ota observed the recovered
-  virtualenv identity at the selected execution boundary, but does not claim adapter-instrumented
-  process-level use. Other filesystem artifacts, container paths, Windows virtualenv executables,
-  volumes, caches, and provider state remain `unknown` until Ota can attest the same
-  complete chain.
+  runner-attested paths cover native `ensure_virtualenv` followed by a runner-recorded native
+  `.venv/bin/*` consumer, and frozen native pnpm hydration followed by a declared local `pnpm exec`
+  or package-script consumer. The pnpm identity joins its generated `node_modules/.modules.yaml`
+  layout marker to the declared `pnpm-lock.yaml`; it is not a claim to hash the entire mutable
+  dependency tree. Both emit `asserted_at`, not `consumed`: Ota observed the recovered identity at
+  the selected executable or local package-resolution boundary, but does not claim
+  adapter-instrumented process-level use. Other filesystem artifacts, container paths, Windows
+  virtualenv executables, other Node package-manager layouts, volumes, caches, and provider state
+  remain `unknown` until Ota can attest the same complete chain.
 - `dependency_evidence[]` is additive positive seam evidence for the selected runtime path.
   The current first carrier is intentionally narrow: Ota emits `level: reachable` only when a
   declared service seam is also part of the selected workflow's required-service closure and Ota

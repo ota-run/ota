@@ -127,6 +127,10 @@ pub struct BoundaryPrerequisite {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declared_producers: Vec<String>,
     pub precondition: PreconditionState,
+    /// Identity observed at the selected boundary before a producer ran or reuse was admitted.
+    /// It lets later workflow phases verify a reused boundary without treating it as produced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precondition_identity: Option<String>,
     pub state: PrerequisiteState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materializations: Vec<BoundaryMaterialization>,
@@ -275,6 +279,15 @@ fn validate_prerequisite_assertions(
     prerequisite: &BoundaryPrerequisite,
     edges: &BTreeMap<&str, &BoundaryEdge>,
 ) -> Result<(), String> {
+    if prerequisite.state == PrerequisiteState::VerifiedReused
+        && (prerequisite.precondition != PreconditionState::Present
+            || prerequisite.precondition_identity.is_none())
+    {
+        return Err(format!(
+            "execution boundary prerequisite `{}` cannot claim verified reuse without a present precondition identity",
+            prerequisite.id
+        ));
+    }
     let materializations = prerequisite
         .materializations
         .iter()
@@ -440,6 +453,7 @@ mod tests {
                 declared_artifacts: Vec::new(),
                 declared_producers: Vec::new(),
                 precondition: PreconditionState::Cleared,
+                precondition_identity: None,
                 state: PrerequisiteState::CreatedThisRun,
                 materializations: vec![BoundaryMaterialization {
                     edge_id: String::from("edge:produce"),

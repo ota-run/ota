@@ -28,9 +28,12 @@
 # V11.16: Fresh-Boundary Setup Proof
 
 Status: active. The shared semantic evaluator and additive `ota proof runtime --json` carrier are
-implemented. The first runner-attested path covers native `ensure_virtualenv` producers followed
-by a runner-recorded native `.venv/bin/*` consumer execution: Ota records the precondition, `pyvenv.cfg`
-identity, producer edge, and post-success `asserted_at` edge before deriving freshness. Other
+implemented. Runner-attested native paths cover `ensure_virtualenv` producers followed by a
+runner-recorded `.venv/bin/*` consumer, plus frozen-lockfile pnpm hydration followed by a
+declared local `pnpm exec` or package-script consumer. Ota records the precondition, typed
+materialization identity, producer edge, and post-success `asserted_at` edge before deriving
+freshness. The pnpm identity joins the generated `node_modules/.modules.yaml` layout marker with
+the declared `pnpm-lock.yaml`; it does not claim to hash an entire mutable dependency tree. Other
 generated filesystem targets, container paths, Windows virtualenv executables, services, volumes,
 caches, and provider-managed state remain `unknown` until the runner can witness the same chain.
 Managed GitHub projection is not an architectural prerequisite: V11.16 derives execution-boundary
@@ -111,11 +114,12 @@ For each prerequisite it records:
 
 The implemented first cut is intentionally narrow: native repo-local `.venv` materialized by
 `ensure_virtualenv` and asserted through a native `.venv/bin/*` execution receives full graph
-evidence. The assertion proves the runtime executable boundary, not output shaping. `node_modules`,
-generated SDKs, rendered configuration, container paths, Windows virtualenv executables, databases,
-volumes, and provider-managed runtime state remain
-`unknown` until a shipped runner or adapter can provide the same trustworthy boundary and identity
-evidence.
+evidence. Native pnpm hydration receives the same treatment only when `frozen_lockfile: true`, the
+hydration is not Compose-owned, and a declared local `pnpm exec` or package-script consumer runs;
+the composite layout-marker and lockfile identity proves that local package-resolution boundary,
+not output shaping. Generated SDKs, rendered configuration, container paths, Windows virtualenv
+executables, other Node package-manager layouts, databases, volumes, and provider-managed runtime
+state remain `unknown` until a shipped runner or adapter can provide equivalent evidence.
 
 `execution_boundary.target_freshness` is strictly derived from the asserted target closure only:
 
@@ -224,10 +228,11 @@ terminal proof verdict. A green proof with `unknown` material state must remain 
    Exclude diagnostic timestamps and presentation-only fields.
 2. Implement filesystem prerequisite evidence first: precondition observation, producer
    materialization, `asserted_at` observation, optional instrumented `consumed` evidence,
-   per-assertion causal producer binding, and typed identity recovery. The shipped first path is
-   native `ensure_virtualenv` plus `.venv/bin/*`; it proves the executable boundary, not output
-   shaping. Widen to `node_modules`, generated SDKs, and
-   rendered configuration only with equivalent runner-owned evidence.
+   per-assertion causal producer binding, and typed identity recovery. Shipped native paths are
+   `ensure_virtualenv` plus `.venv/bin/*`, and frozen pnpm hydration plus a local `pnpm exec` or
+   package-script consumer; each proves its executable or package-resolution boundary, not output
+   shaping. Widen to other Node layouts, generated SDKs, and rendered configuration only with
+   equivalent runner-owned evidence.
 3. Reuse canonical producer-before-probe admission evidence on all remaining selected native and
    container runtime paths; add only the missing integration coverage.
 4. Add compatible ephemeral-closure session ownership to the runner. Keep session identity and
@@ -243,10 +248,10 @@ terminal proof verdict. A green proof with `unknown` material state must remain 
    assertions, all-created/immutable cold proof, cold cache-assisted reconstruction, mixed
    persistent reuse, host unknown, forged or stale provider attestation, and rejected premature
    probing.
-9. Pressure-test Lead Quorum's repo-local virtualenv lane, OrchardCore's typed .NET restore plus
-   build/test closure in one ephemeral container session, and Athena's ephemeral container app plus
-   host-managed PostgreSQL runtime lane on clean CI. The latter must remain mixed/qualified unless
-   Ota can identify a selected service boundary honestly.
+9. Pressure-test Lead Quorum's repo-local virtualenv lane, Kylrix's native frozen pnpm lane,
+   OrchardCore's typed .NET restore plus build/test closure in one ephemeral container session, and
+   Athena's ephemeral container app plus host-managed PostgreSQL runtime lane on clean CI. The
+   latter must remain mixed/qualified unless Ota can identify a selected service boundary honestly.
 
 ## Non-Goals
 

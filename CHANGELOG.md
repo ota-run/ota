@@ -131,6 +131,16 @@
   `.venv/bin/*` assertion before deriving `cold_start_verified` or
   `persistent_state_reused`. Other filesystem targets, containers, Windows virtualenvs, services,
   volumes, caches, and provider-managed state remain explicitly `unknown`.
+- preserved a verified reused-boundary identity in the execution-boundary graph and signed trace.
+  Later workflow phases can now re-verify an existing virtualenv or pnpm layout at the selected
+  boundary and derive `persistent_state_reused` instead of dropping the evidence or treating it as
+  a new producer result.
+- added native pnpm provenance to the same V11.16 runtime-proof carrier. A frozen-lockfile,
+  non-Compose pnpm hydration can now establish `node_modules` only when a declared local
+  `pnpm exec` or package-script consumer runs. Ota binds pnpm's generated `.modules.yaml` layout
+  marker to the declared lockfile and emits `asserted_at` package-resolution evidence without
+  claiming whole-tree hashing or process-level consumption. Other Node package-manager layouts and
+  container paths remain `unknown`.
 - preserved that runner-authored virtualenv provenance across separate workflow setup and runtime
   task transactions, so a later `ensure_virtualenv` observation cannot erase an earlier
   absent-and-materialized boundary before the selected `.venv/bin/*` consumer asserts it.

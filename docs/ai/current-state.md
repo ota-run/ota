@@ -67,13 +67,16 @@ durable agent workflow belongs in the canonical Ota skill.
   independent `unknown` path without an archive.
 - active V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime proof
   records now carry an additive content-addressed `execution_boundary` graph. Native
-  `ensure_virtualenv` followed by a runner-recorded `.venv/bin/*` consumer now produces runner-attested
-  precondition, materialization, and `asserted_at` identity edges, deriving either
-  `cold_start_verified` or `persistent_state_reused`. Signed runner trace hydration preserves
+  `ensure_virtualenv` followed by a runner-recorded `.venv/bin/*` consumer, and frozen native pnpm
+  hydration followed by a declared local `pnpm exec` or package-script consumer, produce
+  runner-attested precondition, materialization, and `asserted_at` identity edges. The pnpm path
+  binds its generated `node_modules/.modules.yaml` layout marker to the declared lockfile rather
+  than pretending to hash the entire dependency tree. Both paths derive either
+  `cold_start_verified` or `persistent_state_reused`; signed runner trace hydration preserves
   producer provenance across separate workflow setup and runtime task transactions. Other
-  filesystem targets, containers, Windows virtualenvs, services beyond their executable boundary,
-  volumes, caches, and provider state remain `unknown`; do not over-read this narrow first path as
-  repo-global cold-start proof.
+  filesystem targets, containers, Windows virtualenvs, other Node package-manager layouts,
+  services beyond their executable boundary, volumes, caches, and provider state remain `unknown`;
+  do not over-read these narrow paths as repo-global cold-start proof.
 - completed V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
   now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
   proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that

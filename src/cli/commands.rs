@@ -104170,6 +104170,7 @@ fn proof_runtime_execution_boundary(
                             declared_artifacts: Vec::new(),
                             declared_producers: Vec::new(),
                             precondition: PreconditionState::Unknown,
+                            precondition_identity: None,
                             state: PrerequisiteState::Unknown,
                             materializations: Vec::new(),
                             assertions: Vec::new(),

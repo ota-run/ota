@@ -189,6 +189,7 @@
           "items": { "type": "string" }
         },
         "precondition": { "type": "string", "enum": ["absent", "present", "cleared", "unknown"] },
+        "precondition_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "state": { "type": "string", "enum": ["created_this_run", "declared_immutable_input", "verified_reused", "unknown"] },
         "materializations": { "type": "array", "items": { "$ref": "#/$defs/boundaryMaterialization" } },
         "assertions": { "type": "array", "items": { "$ref": "#/$defs/boundaryAssertion" } },
