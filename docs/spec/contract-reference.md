@@ -2569,7 +2569,10 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 - `action.kind: ensure_virtualenv`
   - `action.path`: required repo-relative virtualenv path to create when missing
   - `action.provider`: optional virtualenv provider; currently `uv` (default `uv`)
-  - `action.python`: optional explicit Python selector forwarded to the provider
+  - `action.python`: optional Python selector. An explicit path is forwarded unchanged. For a
+    version selector such as `"3.12"`, native execution prefers a version-compatible local
+    interpreter matching the host architecture, then passes that absolute path to `uv`; when no
+    such local candidate exists, Ota forwards the selector to the provider unchanged.
 - `action.kind: ensure_git_checkout`
   - `action.path`: required repo-relative checkout path to create when missing
   - `action.source.git`: required Git remote URL or clone source

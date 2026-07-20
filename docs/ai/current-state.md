@@ -73,6 +73,14 @@ durable agent workflow belongs in the canonical Ota skill.
   matching immutable archive exists, then `supported`. Bedrock proves that transition on its
   offline replay lane without inventing seam or negative-control evidence; Lead Quorum proves the
   independent `unknown` path without an archive.
+- committed finite command interaction capability (`6b2fa0ca`): structured
+  `tasks.<name>.command.interaction` defaults to `auto`, so a native human TTY passes through only
+  when available. Explicit `forbidden` preserves deterministic captured execution; `required`
+  refuses before any selected task, workflow setup, or dependency work begins when no real
+  terminal can be provided. Agent, container, remote, and ordinary non-TTY CI boundaries never
+  acquire terminal interaction. The task JSON and dry-run JSON expose the resolved posture and
+  invocation resolution; the copy-ready Wrangler OAuth example, canonical skill, public site
+  contract reference, schemas, changelog, and regressions are aligned.
 - active V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime proof
   records now carry an additive content-addressed `execution_boundary` graph. Native
   `ensure_virtualenv` followed by a runner-recorded `.venv/bin/*` consumer, and frozen native pnpm
@@ -85,6 +93,11 @@ durable agent workflow belongs in the canonical Ota skill.
   filesystem targets, containers, Windows virtualenvs, other Node package-manager layouts,
   services beyond their executable boundary, volumes, caches, and provider state remain `unknown`;
   do not over-read these narrow paths as repo-global cold-start proof.
+  Native `ensure_virtualenv` now also resolves a version-compatible local Python matching the host
+  architecture before invoking `uv`, preventing an earlier Rosetta/x86 `PATH` candidate from
+  creating the repo environment on Apple Silicon. Lead Quorum pressure proves both the fresh
+  `cold_start_verified` and second-run `persistent_state_reused` paths without an absolute-path
+  contract workaround.
   The shared evaluator now canonicalizes prerequisite and edge ordering before identity hashing,
   rejects prerequisites that ambiguously appear in both selected closures, and refuses edges outside
   those closures or producer/assertion records whose canonical edge, identity, sequence, or evidence

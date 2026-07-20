@@ -144,6 +144,10 @@
   `.venv/bin/*` assertion before deriving `cold_start_verified` or
   `persistent_state_reused`. Other filesystem targets, containers, Windows virtualenvs, services,
   volumes, caches, and provider-managed state remain explicitly `unknown`.
+- fixed native `ensure_virtualenv` Python selection to prefer a version-compatible interpreter
+  matching the host architecture over an earlier incompatible `PATH` candidate. Ota passes that
+  local executable to `uv`, preventing Rosetta/x86 Python selection on Apple Silicon and its
+  resulting native dependency cross-build failures.
 - preserved a verified reused-boundary identity in the execution-boundary graph and signed trace.
   Later workflow phases can now re-verify an existing virtualenv or pnpm layout at the selected
   boundary and derive `persistent_state_reused` instead of dropping the evidence or treating it as

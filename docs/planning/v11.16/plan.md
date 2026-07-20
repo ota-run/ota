@@ -190,6 +190,20 @@ database prerequisite the selected proof asserts or consumes: immutable engine/b
 ordered migration identities, witnessed application, and, only where that proof depends on them,
 logical seed and target data-state identity.
 
+The contract declares expected logical data obligations, including the scoped relations, views,
+procedures, or projections relevant to the selected proof. The runner or a trusted adapter computes
+the observed identity for that declared scope; maintainers never self-attest a resulting digest.
+That identity must use a canonical logical representation rather than a whole-database dump, with
+stable ordering, null handling, type representation, and adapter/query identity. This avoids noisy
+changes from irrelevant state while keeping the observed scope reproducible.
+
+Runner-witnessed reads, tables, queries, and logical results are corroborating evidence, not the
+definition of proof scope. They may support the declared obligations or expose an undeclared
+dependency, but a single execution cannot prove a complete semantic read-set: caches, views,
+triggers, stored procedures, conditional branches, and incomplete tracing can hide dependencies.
+Missing, partial, or unverifiable instrumentation therefore leaves the affected obligation
+`unknown`; an empty observed read-set never proves that no data dependency exists.
+
 Unpinned time, randomness, network access, or external state leaves the affected prerequisite or
 derivation path `unknown`; Ota must not widen that uncertainty beyond the selected material
 closure. A pre-existing database boundary may be `verified_reused` only when Ota identifies and

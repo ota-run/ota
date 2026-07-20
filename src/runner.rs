@@ -13006,7 +13006,11 @@ fn execute_ensure_virtualenv_action(
     command.arg("venv");
     if let Some(python) = spec.python.as_deref() {
         command.arg("--python");
-        command.arg(python.trim());
+        if let Some(candidate) = resolve_native_virtualenv_python_candidate(python) {
+            command.arg(candidate);
+        } else {
+            command.arg(python.trim());
+        }
     }
     command.arg(path_text);
 
@@ -13045,6 +13049,101 @@ fn execute_ensure_virtualenv_action(
         path_text,
         spec.provider.label()
     )))
+}
+
+/// Prefer a local interpreter that matches both the declared version and the native host
+/// architecture. Passing a bare version to uv otherwise lets PATH order select a Rosetta
+/// interpreter on Apple Silicon even when a native interpreter is available later on PATH.
+fn resolve_native_virtualenv_python_candidate(request: &str) -> Option<PathBuf> {
+    let request = request.trim();
+    if request.is_empty()
+        || Path::new(request).is_absolute()
+        || request.contains('/')
+        || request.contains('\\')
+    {
+        return None;
+    }
+
+    let path = env::var_os("PATH")?;
+    let expected_arch = native_python_architecture();
+    let mut seen = BTreeSet::new();
+    for executable in crate::doctor::runtime_executable_candidates("python", request) {
+        for directory in env::split_paths(&path) {
+            let candidate = directory.join(executable.as_str());
+            let candidate = fs::canonicalize(&candidate).unwrap_or(candidate);
+            if !seen.insert(candidate.clone()) || !is_native_executable_file(candidate.as_path()) {
+                continue;
+            }
+            if native_python_candidate_matches(candidate.as_path(), request, expected_arch) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn native_python_architecture() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" | "arm64" => "arm64",
+        "x86_64" | "amd64" => "x86_64",
+        other => other,
+    }
+}
+
+fn is_native_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn native_python_candidate_matches(path: &Path, request: &str, expected_arch: &str) -> bool {
+    let Ok(output) = Command::new(path)
+        .args([
+            "-c",
+            "import platform, sys; print(sys.version.split()[0]); print(platform.machine())",
+        ])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let Some(version) = lines.next() else {
+        return false;
+    };
+    let Some(architecture) = lines.next() else {
+        return false;
+    };
+    crate::doctor::version_matches(request, version.trim())
+        && native_python_architecture_matches(architecture, expected_arch)
+}
+
+fn native_python_architecture_matches(observed: &str, expected: &str) -> bool {
+    let observed = observed.trim();
+    match expected {
+        "arm64" => {
+            observed.eq_ignore_ascii_case("arm64") || observed.eq_ignore_ascii_case("aarch64")
+        }
+        "x86_64" => {
+            observed.eq_ignore_ascii_case("x86_64") || observed.eq_ignore_ascii_case("amd64")
+        }
+        _ => observed.eq_ignore_ascii_case(expected),
+    }
 }
 
 fn execute_ensure_git_checkout_action(
@@ -61767,6 +61866,87 @@ tasks:
             "{}",
             second.stdout
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ensure_virtualenv_prefers_matching_native_python_over_earlier_path_candidate() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:venv:
+    action:
+      kind: ensure_virtualenv
+      path: .venv
+      python: "3.12"
+"#,
+        );
+        let uv_bin = fixture.dir.path().join("uv-bin");
+        let wrong_bin = fixture.dir.path().join("wrong-bin");
+        let native_bin = fixture.dir.path().join("native-bin");
+        fs::create_dir_all(&uv_bin).unwrap();
+        fs::create_dir_all(&wrong_bin).unwrap();
+        fs::create_dir_all(&native_bin).unwrap();
+        let log_path = fixture.dir.path().join("uv.log");
+        let native_arch = super::native_python_architecture();
+        let wrong_arch = if native_arch == "arm64" {
+            "x86_64"
+        } else {
+            "arm64"
+        };
+        write_fake_bin(
+            &uv_bin,
+            "uv",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$OTA_UV_LOG\"\nif [ \"$1\" = \"venv\" ]; then\n  mkdir -p \"$4\"\n  : > \"$4/pyvenv.cfg\"\n  exit 0\nfi\nexit 1\n",
+        );
+        write_fake_bin(
+            &wrong_bin,
+            "python3.12",
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then\n  printf '3.12.8\\n{wrong_arch}\\n'\n  exit 0\nfi\nexit 1\n"
+            )
+            .as_str(),
+        );
+        write_fake_bin(
+            &native_bin,
+            "python3.12",
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then\n  printf '3.12.8\\n{native_arch}\\n'\n  exit 0\nfi\nexit 1\n"
+            )
+            .as_str(),
+        );
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_UV_LOG");
+        let mut path_entries = vec![uv_bin.clone(), wrong_bin.clone(), native_bin.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+            env::set_var("OTA_UV_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:venv")
+            .expect("ensure_virtualenv action should run");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(log) => unsafe { env::set_var("OTA_UV_LOG", log) },
+            None => unsafe { env::remove_var("OTA_UV_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let command = fs::read_to_string(&log_path).unwrap();
+        assert!(command.contains(native_bin.join("python3.12").to_string_lossy().as_ref()));
+        assert!(!command.contains(wrong_bin.join("python3.12").to_string_lossy().as_ref()));
     }
 
     #[test]
