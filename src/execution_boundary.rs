@@ -197,8 +197,18 @@ pub fn evaluate_execution_boundary(
         &mut record.derivation_input_closure,
         "derivation_input_closure",
     )?;
+    if record
+        .asserted_target_closure
+        .iter()
+        .any(|id| record.derivation_input_closure.binary_search(id).is_ok())
+    {
+        return Err(String::from(
+            "execution boundary prerequisite cannot be both an asserted target and a derivation input",
+        ));
+    }
     normalize_prerequisites(&mut record.prerequisites)?;
-    validate_edges(&record.edges)?;
+    normalize_edges(&mut record.edges);
+    validate_edges(&record)?;
     validate_prerequisites(&record)?;
 
     record.target_freshness = derive_target_freshness(&record);
@@ -211,11 +221,34 @@ pub fn evaluate_execution_boundary(
 
 fn normalize_prerequisites(prerequisites: &mut [BoundaryPrerequisite]) -> Result<(), String> {
     for prerequisite in &mut *prerequisites {
+        if prerequisite.id.trim().is_empty() {
+            return Err(String::from(
+                "execution boundary prerequisite ids must not be empty",
+            ));
+        }
         normalize_closure(&mut prerequisite.declared_artifacts, "declared_artifacts")?;
         normalize_closure(&mut prerequisite.declared_producers, "declared_producers")?;
+        prerequisite.materializations.sort_by(|left, right| {
+            left.sequence
+                .cmp(&right.sequence)
+                .then_with(|| left.edge_id.cmp(&right.edge_id))
+        });
+        prerequisite.assertions.sort_by(|left, right| {
+            left.sequence
+                .cmp(&right.sequence)
+                .then_with(|| left.edge_id.cmp(&right.edge_id))
+        });
     }
     prerequisites.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(())
+}
+
+fn normalize_edges(edges: &mut [BoundaryEdge]) {
+    edges.sort_by(|left, right| {
+        left.sequence
+            .cmp(&right.sequence)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 }
 
 fn normalize_closure(values: &mut Vec<String>, label: &str) -> Result<(), String> {
@@ -229,10 +262,16 @@ fn normalize_closure(values: &mut Vec<String>, label: &str) -> Result<(), String
     Ok(())
 }
 
-fn validate_edges(edges: &[BoundaryEdge]) -> Result<(), String> {
+fn validate_edges(record: &ExecutionBoundaryRecord) -> Result<(), String> {
+    let allowed_prerequisites = record
+        .asserted_target_closure
+        .iter()
+        .chain(&record.derivation_input_closure)
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let mut ids = BTreeSet::new();
     let mut sequences = BTreeSet::new();
-    for edge in edges {
+    for edge in &record.edges {
         if edge.id.trim().is_empty() || !ids.insert(edge.id.as_str()) {
             return Err(format!(
                 "execution boundary edge id `{}` is not unique",
@@ -243,6 +282,22 @@ fn validate_edges(edges: &[BoundaryEdge]) -> Result<(), String> {
             return Err(format!(
                 "execution boundary edge sequence `{}` is not unique",
                 edge.sequence
+            ));
+        }
+        if edge.execution_id.trim().is_empty()
+            || edge.boundary_id.trim().is_empty()
+            || edge.scope.trim().is_empty()
+            || edge.identity.trim().is_empty()
+        {
+            return Err(format!(
+                "execution boundary edge `{}` must bind execution, boundary, scope, and identity",
+                edge.id
+            ));
+        }
+        if !allowed_prerequisites.contains(edge.prerequisite_id.as_str()) {
+            return Err(format!(
+                "execution boundary edge `{}` references prerequisite `{}` outside the selected closures",
+                edge.id, edge.prerequisite_id
             ));
         }
     }
@@ -266,11 +321,49 @@ fn validate_prerequisites(record: &ExecutionBoundaryRecord) -> Result<(), String
         .iter()
         .map(|edge| (edge.id.as_str(), edge))
         .collect::<BTreeMap<_, _>>();
+    let asserted = record
+        .asserted_target_closure
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     for id in &record.asserted_target_closure {
         let prerequisite = prerequisites
             .get(id.as_str())
             .ok_or_else(|| format!("asserted target prerequisite `{id}` has no evidence record"))?;
         validate_prerequisite_assertions(prerequisite, &edges)?;
+    }
+    for edge in &record.edges {
+        if !asserted.contains(edge.prerequisite_id.as_str()) {
+            continue;
+        }
+        let prerequisite = prerequisites
+            .get(edge.prerequisite_id.as_str())
+            .expect("asserted target prerequisite was validated above");
+        match edge.kind {
+            BoundaryEdgeKind::Produced
+                if !prerequisite
+                    .materializations
+                    .iter()
+                    .any(|materialization| materialization.edge_id == edge.id) =>
+            {
+                return Err(format!(
+                    "execution boundary produced edge `{}` is not represented by its prerequisite materialization",
+                    edge.id
+                ));
+            }
+            BoundaryEdgeKind::AssertedAt
+                if !prerequisite
+                    .assertions
+                    .iter()
+                    .any(|assertion| assertion.edge_id == edge.id) =>
+            {
+                return Err(format!(
+                    "execution boundary asserted-at edge `{}` is not represented by its prerequisite assertion",
+                    edge.id
+                ));
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -310,6 +403,7 @@ fn validate_prerequisite_assertions(
             || edge.prerequisite_id != prerequisite.id
             || edge.execution_id != materialization.producer_execution
             || edge.identity != materialization.identity
+            || edge.evidence_class != materialization.evidence_class
             || edge.sequence != materialization.sequence
         {
             return Err(format!(
@@ -343,6 +437,7 @@ fn validate_prerequisite_assertions(
             || edge.prerequisite_id != prerequisite.id
             || edge.execution_id != assertion.consumer_execution
             || edge.identity != assertion.identity
+            || edge.evidence_class != assertion.evidence_class
             || edge.sequence != assertion.sequence
         {
             return Err(format!(
@@ -553,6 +648,7 @@ mod tests {
         let mut record = base_record();
         record.prerequisites[0].state = PrerequisiteState::DeclaredImmutableInput;
         record.prerequisites[0].assertions.clear();
+        record.edges.retain(|edge| edge.id != "edge:assert");
         let record = evaluate_execution_boundary(record).expect("record should evaluate");
         assert_eq!(record.target_freshness, TargetFreshness::Unknown);
     }
@@ -567,5 +663,62 @@ mod tests {
             .push(String::from("task:other-producer"));
         let changed = evaluate_execution_boundary(changed).expect("changed record should evaluate");
         assert_ne!(baseline.identity, changed.identity);
+    }
+
+    #[test]
+    fn canonicalizes_edge_and_prerequisite_evidence_order_before_hashing() {
+        let baseline =
+            evaluate_execution_boundary(base_record()).expect("baseline should evaluate");
+        let mut reordered = base_record();
+        reordered.edges.reverse();
+        reordered.prerequisites[0].materializations.reverse();
+        reordered.prerequisites[0].assertions.reverse();
+        let reordered =
+            evaluate_execution_boundary(reordered).expect("reordered graph should evaluate");
+        assert_eq!(baseline.identity, reordered.identity);
+        assert_eq!(baseline.edges, reordered.edges);
+    }
+
+    #[test]
+    fn rejects_edges_outside_the_selected_closures() {
+        let mut record = base_record();
+        record.edges[0].prerequisite_id = String::from("filesystem:outside");
+        assert!(
+            evaluate_execution_boundary(record)
+                .expect_err("out-of-closure edge must fail")
+                .contains("outside the selected closures")
+        );
+    }
+
+    #[test]
+    fn rejects_produced_edges_not_bound_to_materialization_evidence() {
+        let mut record = base_record();
+        record.edges.push(BoundaryEdge {
+            id: String::from("edge:unbound-produce"),
+            kind: BoundaryEdgeKind::Produced,
+            prerequisite_id: String::from("filesystem:.venv"),
+            execution_id: String::from("task:setup"),
+            boundary_id: String::from("native:host"),
+            scope: String::from("workflow:verify"),
+            identity: String::from("sha256:other"),
+            evidence_class: BoundaryEvidenceClass::Attested,
+            sequence: 5,
+        });
+        assert!(
+            evaluate_execution_boundary(record)
+                .expect_err("unbound produced edge must fail")
+                .contains("not represented by its prerequisite materialization")
+        );
+    }
+
+    #[test]
+    fn rejects_assertion_evidence_class_that_disagrees_with_its_edge() {
+        let mut record = base_record();
+        record.prerequisites[0].assertions[0].evidence_class = BoundaryEvidenceClass::Derived;
+        assert!(
+            evaluate_execution_boundary(record)
+                .expect_err("mismatched assertion provenance must fail")
+                .contains("assertion does not match")
+        );
     }
 }

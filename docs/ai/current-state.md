@@ -77,6 +77,11 @@ durable agent workflow belongs in the canonical Ota skill.
   filesystem targets, containers, Windows virtualenvs, other Node package-manager layouts,
   services beyond their executable boundary, volumes, caches, and provider state remain `unknown`;
   do not over-read these narrow paths as repo-global cold-start proof.
+  The shared evaluator now canonicalizes prerequisite and edge ordering before identity hashing,
+  rejects prerequisites that ambiguously appear in both selected closures, and refuses edges outside
+  those closures or producer/assertion records whose canonical edge, identity, sequence, or evidence
+  class does not match. This closes forged graph-shape paths before runtime-proof JSON or archives
+  are emitted; wider boundary families remain intentionally unimplemented.
 - completed V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
   now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
   proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that
