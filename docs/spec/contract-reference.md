@@ -675,6 +675,11 @@ Current behavior:
 - for `manager.kind: compose`, `ota doctor` derives compose lifecycle commands from manager metadata
 - for `manager.kind: host`, canonical lifecycle ownership lives on `manager.start` / `manager.stop`; legacy top-level `start` / `stop` still parse for compatibility, but new authoring should keep host service lifecycle under the manager block
 - for `manager.kind: host` with `manager.host.kind: systemd`, ota derives lifecycle from the declared unit instead of requiring shell `systemctl` glue
+- `services.<name>.lifecycle.teardown_assertion: manager_inactive` declares that a future
+  lifecycle-proof lane may require the manager's positive inactive-state observation after
+  transaction-owned teardown; it is valid only with a typed manager, never an inverse readiness
+  probe. Systemd observation also requires the declared unit to resolve as loaded; an unknown unit
+  is not treated as inactive
 - for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
 - legacy `services.<name>.readiness.run` still parses for compatibility, but new authoring should keep service readiness on structured `readiness.kind` or reusable `readiness.probe`
 - `services.<name>.readiness.from` selects the execution context for service readiness
@@ -3874,6 +3879,11 @@ Current behavior:
   it negates and the expected typed failure. Ota records a validated control only when the task
   writes a matching transaction-bound failure attestation after the expected failure; a generic
   non-zero exit remains invalid evidence and does not itself prove causality
+- use `workflows.<name>.proof.lifecycle` to declare a bounded lifecycle-proof lane from existing
+  `services.<name>` manager truth. `services[]` contains only canonical service references and an
+  optional `assertion.task` names one finite task Ota executes after those services are ready. The
+  assertion's full dependency closure must remain finite and outside the workflow's normal closure;
+  lifecycle declarations never copy start, stop, readiness, or status commands.
 - keep workflow-instance runtime specialization on the task runtime boundary: override existing listener bind/project ports or readiness fields there instead of inventing a separate workflow-level listener model
 - workflow-instance task runtime overlays currently merge onto an existing top-level task `runtime`; they do not invent new listeners or replace runtime ownership from scratch
 - `runtime_boundary` follows the same selected-path precedence ladder: `execution.runtime_boundary`

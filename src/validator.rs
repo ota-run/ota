@@ -15466,6 +15466,18 @@ fn validate_services(
             }
         }
 
+        if service.lifecycle.is_some() {
+            let has_state_observer = service.manager.as_ref().is_some_and(|manager| {
+                manager.compose_service_ids_command(name).is_some()
+                    || manager.systemd_state_command().is_some()
+            });
+            if !has_state_observer {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` lifecycle requires a typed Compose or systemd active/inactive state observer"
+                )));
+            }
+        }
+
         for (field, value) in [
             ("provider", service.provider.as_deref()),
             ("start", service.start.as_deref()),
@@ -16525,6 +16537,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`workflows.{name}.proof.claim` requires `workflows.{name}.run` so Ota can bind the claim to an executed proof lane"
             )));
         }
+        validate_workflow_lifecycle_proof(contract, name, workflow, errors);
         validate_workflow_negative_controls(contract, name, workflow, errors);
         validate_workflow_seam_observations(contract, name, workflow, errors);
         if let Some(runtime_boundary) = workflow.runtime_boundary.as_ref() {
@@ -17027,6 +17040,166 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 }
             }
         }
+    }
+}
+
+fn validate_workflow_lifecycle_proof(
+    contract: &Contract,
+    workflow_name: &str,
+    workflow: &crate::schema::WorkflowSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(lifecycle) = workflow.proof.lifecycle.as_ref() else {
+        return;
+    };
+    let prefix = format!("workflows.{workflow_name}.proof.lifecycle");
+    if workflow.run.is_none() {
+        errors.push(ValidationError::new(format!(
+            "`{prefix}` requires `workflows.{workflow_name}.run` so lifecycle ownership follows the prerequisite workflow closure"
+        )));
+    }
+    if lifecycle.services.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "`{prefix}.services` must declare at least one canonical service reference"
+        )));
+    }
+
+    let mut selected = BTreeSet::new();
+    let mut validated_services = BTreeSet::new();
+    for service_name in &lifecycle.services {
+        let service_name = service_name.trim();
+        if service_name.is_empty() || !selected.insert(service_name.to_string()) {
+            errors.push(ValidationError::new(format!(
+                "`{prefix}.services` must declare unique non-empty service references"
+            )));
+            continue;
+        }
+        validate_lifecycle_service_closure(
+            contract,
+            service_name,
+            &prefix,
+            &mut validated_services,
+            errors,
+        );
+    }
+
+    let lifecycle_services = lifecycle_service_closure_names(contract, &selected);
+    let normal_closure = contract
+        .selected_workflow_task_closure_names(Some(workflow_name))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for task_name in &normal_closure {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if let Some(service_name) = task
+            .requires_services
+            .iter()
+            .find(|service| lifecycle_services.contains(service.as_str()))
+        {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{workflow_name}` normal closure task `{task_name}` must not require lifecycle service `{service_name}`; Ota acquires lifecycle ownership only after the prerequisite closure completes"
+            )));
+        }
+    }
+
+    let Some(assertion) = lifecycle.assertion.as_ref() else {
+        return;
+    };
+    let task_name = assertion.task.trim();
+    let assertion_prefix = format!("{prefix}.assertion.task");
+    if task_name.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "`{assertion_prefix}` must reference a non-empty finite task"
+        )));
+        return;
+    }
+    if !contract.tasks.contains_key(task_name) {
+        errors.push(ValidationError::new(format!(
+            "`{assertion_prefix}` references unknown task `{}`",
+            assertion.task
+        )));
+        return;
+    }
+
+    for closure_task_name in contract.task_dependency_closure_names([task_name.to_string()]) {
+        let Some(closure_task) = contract.tasks.get(closure_task_name.as_str()) else {
+            continue;
+        };
+        if closure_task.has_any_service_runtime() {
+            errors.push(ValidationError::new(format!(
+                "`{assertion_prefix}` closure task `{closure_task_name}` must be finite, not a service runtime"
+            )));
+        }
+        if normal_closure.contains(closure_task_name.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "`{assertion_prefix}` closure task `{closure_task_name}` must stay outside the normal workflow closure so Ota executes it only after lifecycle readiness"
+            )));
+        }
+    }
+}
+
+fn lifecycle_service_closure_names(
+    contract: &Contract,
+    roots: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    fn visit(contract: &Contract, service_name: &str, selected: &mut BTreeSet<String>) {
+        if !selected.insert(service_name.to_string()) {
+            return;
+        }
+        if let Some(service) = contract.services.get(service_name) {
+            for dependency in &service.depends_on {
+                visit(contract, dependency.trim(), selected);
+            }
+        }
+    }
+
+    let mut selected = BTreeSet::new();
+    for service_name in roots {
+        visit(contract, service_name, &mut selected);
+    }
+    selected
+}
+
+fn validate_lifecycle_service_closure(
+    contract: &Contract,
+    service_name: &str,
+    prefix: &str,
+    validated: &mut BTreeSet<String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !validated.insert(service_name.to_string()) {
+        return;
+    }
+    let Some(service) = contract.services.get(service_name) else {
+        errors.push(ValidationError::new(format!(
+            "`{prefix}.services` references unknown service `{service_name}`"
+        )));
+        return;
+    };
+    if service.manager.is_none() {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` requires a typed manager for lifecycle proof"
+        )));
+    }
+    if service.start_command(service_name).is_none() || service.stop_command(service_name).is_none()
+    {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` manager must provide both start and stop commands for lifecycle proof"
+        )));
+    }
+    if !service.lifecycle.as_ref().is_some_and(|lifecycle| {
+        matches!(
+            lifecycle.teardown_assertion,
+            crate::schema::ServiceLifecycleTeardownAssertionKind::ManagerInactive
+        )
+    }) {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` must declare `lifecycle.teardown_assertion: manager_inactive` for lifecycle proof"
+        )));
+    }
+    for dependency in &service.depends_on {
+        validate_lifecycle_service_closure(contract, dependency.trim(), prefix, validated, errors);
     }
 }
 
@@ -19258,6 +19431,250 @@ workflows:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_lifecycle_proof_with_typed_service_state_and_post_readiness_assertion() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+  assert-postgres:
+    command:
+      exe: sh
+      args: ["-lc", "echo asserted"]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [postgres]
+        assertion:
+          task: assert-postgres
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_lifecycle_proof_without_manager_inactive_assertion() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [postgres]
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("missing teardown assertion rejects");
+        assert!(
+            errors
+                .to_string()
+                .contains("lifecycle.teardown_assertion: manager_inactive")
+        );
+    }
+
+    #[test]
+    fn rejects_service_lifecycle_without_typed_state_observer() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  postgres:
+    start: pg_ctl start
+    stop: pg_ctl stop
+    lifecycle:
+      teardown_assertion: manager_inactive
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("managerless lifecycle must reject");
+        assert!(
+            errors
+                .to_string()
+                .contains("lifecycle requires a typed Compose or systemd")
+        );
+    }
+
+    #[test]
+    fn rejects_lifecycle_assertion_inside_normal_workflow_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+  assert-postgres:
+    run: echo asserted
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: assert-postgres
+    proof:
+      lifecycle:
+        services: [postgres]
+        assertion:
+          task: assert-postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("assertion must stay separate");
+        assert!(
+            errors
+                .to_string()
+                .contains("only after lifecycle readiness")
+        );
+    }
+
+    #[test]
+    fn rejects_lifecycle_assertion_with_non_finite_dependency_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+  assertion-runtime:
+    launch:
+      kind: command
+      exe: sh
+      args: ["-lc", "sleep 60"]
+    runtime:
+      kind: service
+  assert-postgres:
+    command:
+      exe: sh
+      args: ["-lc", "echo asserted"]
+    depends_on: [assertion-runtime]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [postgres]
+        assertion:
+          task: assert-postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("assertion closure must be finite");
+        assert!(
+            errors
+                .to_string()
+                .contains("closure task `assertion-runtime` must be finite")
+        );
+    }
+
+    #[test]
+    fn rejects_normal_workflow_closure_that_starts_a_lifecycle_service() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgres.service
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+    requires_services: [postgres]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [postgres]
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("prerequisite must not start service");
+        assert!(
+            errors
+                .to_string()
+                .contains("must not require lifecycle service `postgres`")
+        );
     }
 
     #[test]

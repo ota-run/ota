@@ -766,6 +766,9 @@ pub struct WorkflowProofSpec {
     pub negative_controls: Vec<WorkflowNegativeControlSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seam_observations: Vec<WorkflowSeamObservationSpec>,
+    /// Declares a bounded manager-owned lifecycle proof for selected services.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<WorkflowLifecycleProofSpec>,
 }
 
 impl WorkflowProofSpec {
@@ -773,6 +776,7 @@ impl WorkflowProofSpec {
         self.claim.is_none()
             && self.negative_controls.is_empty()
             && self.seam_observations.is_empty()
+            && self.lifecycle.is_none()
     }
 
     pub fn claim_value(&self) -> Option<&'static str> {
@@ -784,6 +788,23 @@ impl WorkflowProofSpec {
             None => None,
         }
     }
+}
+
+/// A service-reference-only lifecycle proof declaration under a workflow.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowLifecycleProofSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assertion: Option<WorkflowLifecycleProofAssertionSpec>,
+}
+
+/// An optional finite task executed after lifecycle services are ready.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowLifecycleProofAssertionSpec {
+    pub task: String,
 }
 
 /// The first generic proof declaration is intentionally bounded by the emitted proof artifact.
@@ -4280,9 +4301,24 @@ pub struct ServiceSpec {
     #[serde(default)]
     pub readiness: Option<ServiceReadinessSpec>,
     #[serde(default)]
+    pub lifecycle: Option<ServiceLifecycleSpec>,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub timeout: Option<u64>,
+}
+
+/// Manager-owned lifecycle assertions for a declared service.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceLifecycleSpec {
+    pub teardown_assertion: ServiceLifecycleTeardownAssertionKind,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceLifecycleTeardownAssertionKind {
+    ManagerInactive,
 }
 
 impl ServiceSpec {
@@ -4676,6 +4712,14 @@ health=$({inspect_engine} inspect --format '{{{{if .State.Health}}}}{{{{.State.H
             .and_then(HostServiceManagerSpec::systemd_active_command)
     }
 
+    /// Returns the typed systemd active-state query used by lifecycle proof ownership.
+    pub(crate) fn systemd_state_command(&self) -> Option<String> {
+        (self.kind == ServiceManagerKind::Host)
+            .then_some(self.host.as_ref())
+            .flatten()
+            .and_then(HostServiceManagerSpec::systemd_state_command)
+    }
+
     pub fn compose_cli_exe(&self) -> Option<&'static str> {
         (self.kind == ServiceManagerKind::Compose).then_some(self.engine.as_str())
     }
@@ -4785,6 +4829,14 @@ impl HostServiceManagerSpec {
     pub fn systemd_active_command(&self) -> Option<String> {
         match self.kind {
             HostServiceManagerKind::Systemd => Some(self.systemctl_command("is-active --quiet")),
+        }
+    }
+
+    pub(crate) fn systemd_state_command(&self) -> Option<String> {
+        match self.kind {
+            HostServiceManagerKind::Systemd => {
+                Some(self.systemctl_command("show --property=LoadState --property=ActiveState"))
+            }
         }
     }
 
@@ -10054,6 +10106,12 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
         assert_eq!(
             manager.systemd_active_command().as_deref(),
             Some("systemctl --user is-active --quiet 'redis.service'")
+        );
+        assert_eq!(
+            manager.systemd_state_command().as_deref(),
+            Some(
+                "systemctl --user show --property=LoadState --property=ActiveState 'redis.service'"
+            )
         );
         assert_eq!(service.start_command_spec(), None);
         assert_eq!(service.stop_command_spec(), None);

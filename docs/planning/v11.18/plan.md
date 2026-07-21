@@ -24,7 +24,7 @@
 
 # V11.18: Managed Lifecycle-Sequence Proof
 
-Status: planned. This follows V11.16 and V11.17 under version discipline. It reuses V11.11 proof
+Status: active. This follows V11.16 and V11.17 under version discipline. It reuses V11.11 proof
 boundaries and V11.16 boundary provenance; it does not reopen V11.15's generated build/test
 projection or silently claim upstream CI equivalence.
 
@@ -89,7 +89,8 @@ workflows:
 `workflows.<name>.proof.lifecycle.services[]` references services already declared under
 `services.<name>`. `workflow.run.task` remains the existing prerequisite/build phase and executes
 before Ota acquires any lifecycle lease. `proof.lifecycle.assertion.task` is optional, must name a
-finite task, and executes exactly once after selected services are ready. It is the only
+task whose full dependency closure is finite and disjoint from the normal workflow closure, and
+executes exactly once after selected services are ready. It is the only
 contract-owned post-readiness assertion slot; an omitted assertion is an honest command/state-only
 proof, not an implied application check.
 
@@ -121,6 +122,10 @@ capabilities are the existing Compose service-state control plane, existing syst
 control plane, and an Ota-owned isolated execution boundary whose absence attestation is bound to
 the current transaction. Generic host commands remain ineligible until a later typed adapter can
 provide equivalent positive active and inactive observations.
+
+Systemd state observation must also resolve the declared unit as loaded. `ActiveState=inactive`
+for a missing or unresolved unit is not proof of an inactive managed service and cannot grant a
+cleanup lease.
 
 The lifecycle declaration must not carry commands, paths, ports, process IDs, readiness URLs,
 expected exit codes, or caller-authored result labels. Those belong respectively to existing service

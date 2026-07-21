@@ -81,6 +81,10 @@ durable agent workflow belongs in the canonical Ota skill.
   acquire terminal interaction. The task JSON and dry-run JSON expose the resolved posture and
   invocation resolution; the copy-ready Wrangler OAuth example, canonical skill, public site
   contract reference, schemas, changelog, and regressions are aligned.
+- active V11.18 managed lifecycle-sequence proof: implement service-reference-only lifecycle
+  admission first, then transaction-owned start/readiness/assertion/teardown execution over
+  existing typed Compose and systemd manager controls. Generic host start/stop remains ineligible
+  until it can prove current-boundary inactive state and cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

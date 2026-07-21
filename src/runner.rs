@@ -8741,6 +8741,88 @@ pub(crate) fn run_service_stop_command(
     run_host_shell_command(stop.as_str(), working_dir, mode)
 }
 
+/// A typed manager-owned service state observed for the current runner transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagedServiceState {
+    Active,
+    Inactive,
+}
+
+fn parse_systemd_managed_service_state(
+    service_name: &str,
+    output: &str,
+) -> Result<ManagedServiceState, String> {
+    let properties = output
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.trim(), value.trim()))
+        .collect::<BTreeMap<_, _>>();
+    let load_state = properties.get("LoadState").copied().unwrap_or_default();
+    let active_state = properties.get("ActiveState").copied().unwrap_or_default();
+    if load_state != "loaded" {
+        return Err(format!(
+            "service `{service_name}` has unresolved systemd load state `{load_state}`"
+        ));
+    }
+    match active_state {
+        "active" => Ok(ManagedServiceState::Active),
+        "inactive" => Ok(ManagedServiceState::Inactive),
+        state => Err(format!(
+            "service `{service_name}` has unresolved systemd active state `{state}`"
+        )),
+    }
+}
+
+/// Observe state only through typed Compose or systemd controls. A failed command or an unknown
+/// manager state is intentionally not downgraded to inactive: lifecycle proof must refuse rather
+/// than acquire cleanup authority over an ambiguous service.
+pub(crate) fn observe_managed_service_state(
+    service_name: &str,
+    service: &crate::schema::ServiceSpec,
+    working_dir: &Path,
+) -> Result<ManagedServiceState, String> {
+    let manager = service
+        .manager
+        .as_ref()
+        .ok_or_else(|| format!("service `{service_name}` has no typed manager state observer"))?;
+
+    if let Some(command) = manager.compose_service_ids_command(service_name) {
+        let output =
+            run_host_shell_command(command.as_str(), working_dir, TaskExecutionMode::Capture)?;
+        if output.exit_code != 0 {
+            return Err(format!(
+                "service `{service_name}` compose state observation exited with code {}{}",
+                output.exit_code,
+                render_cleanup_command_output_detail(&output)
+            ));
+        }
+        return Ok(
+            if output.stdout.lines().any(|line| !line.trim().is_empty()) {
+                ManagedServiceState::Active
+            } else {
+                ManagedServiceState::Inactive
+            },
+        );
+    }
+
+    if let Some(command) = manager.systemd_state_command() {
+        let output =
+            run_host_shell_command(command.as_str(), working_dir, TaskExecutionMode::Capture)?;
+        if output.exit_code != 0 {
+            return Err(format!(
+                "service `{service_name}` systemd state observation exited with code {}{}",
+                output.exit_code,
+                render_cleanup_command_output_detail(&output)
+            ));
+        }
+        return parse_systemd_managed_service_state(service_name, output.stdout.as_str());
+    }
+
+    Err(format!(
+        "service `{service_name}` has no supported typed manager state observer"
+    ))
+}
+
 #[derive(Clone, Copy)]
 enum ShellQuoteStyle {
     Posix,
@@ -18659,27 +18741,20 @@ pub(crate) fn selected_workflow_compose_services_started_by_proof(
         let Some(service) = contract.services.get(service_name.as_str()) else {
             continue;
         };
-        let Some(command) = service
-            .manager
-            .as_ref()
-            .and_then(|manager| manager.compose_service_ids_command(service_name.as_str()))
-        else {
+        if !service.manager.as_ref().is_some_and(|manager| {
+            manager
+                .compose_service_ids_command(service_name.as_str())
+                .is_some()
+        }) {
             continue;
-        };
-        let output = run_host_shell_command(
-            command.as_str(),
+        }
+        let state = observe_managed_service_state(
+            service_name.as_str(),
+            service,
             contract_working_dir(contract_path),
-            TaskExecutionMode::CaptureActivation,
         )
         .map_err(|error| format!("required service `{service_name}` state probe: {error}"))?;
-        if output.exit_code != 0 {
-            return Err(format!(
-                "required service `{service_name}` state probe exited with code {}{}",
-                output.exit_code,
-                render_cleanup_command_output_detail(&output)
-            ));
-        }
-        if output.stdout.lines().all(|line| line.trim().is_empty()) {
+        if state == ManagedServiceState::Inactive {
             services_to_cleanup.insert(service_name);
         }
     }
@@ -50794,6 +50869,32 @@ workflows:
         .expect("compose-owned runtime should be skipped");
 
         drop(listener);
+    }
+
+    #[test]
+    fn systemd_managed_state_requires_loaded_unit_identity() {
+        assert_eq!(
+            super::parse_systemd_managed_service_state(
+                "postgres",
+                "LoadState=loaded\nActiveState=inactive\n",
+            ),
+            Ok(super::ManagedServiceState::Inactive)
+        );
+        assert_eq!(
+            super::parse_systemd_managed_service_state(
+                "postgres",
+                "LoadState=loaded\nActiveState=active\n",
+            ),
+            Ok(super::ManagedServiceState::Active)
+        );
+        assert!(
+            super::parse_systemd_managed_service_state(
+                "postgres",
+                "LoadState=not-found\nActiveState=inactive\n",
+            )
+            .expect_err("unknown unit must not be treated as inactive")
+            .contains("load state `not-found`")
+        );
     }
 
     #[cfg(unix)]

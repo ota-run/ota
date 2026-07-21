@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- added the first V11.18 managed lifecycle-proof admission surface. Workflows can reference
+  manager-owned service closures under `proof.lifecycle`, optionally name a finite post-readiness
+  assertion task, and require positive `manager_inactive` teardown observation. Validation keeps
+  the assertion's full dependency closure outside the normal workflow closure, rejects lifecycle
+  ownership without typed Compose or systemd state observation, and preserves generic host commands
+  as ineligible rather than guessing cleanup authority. Runtime systemd observation also refuses
+  unknown units instead of treating them as inactive. Lifecycle sequencing and proof receipts
+  remain a later V11.18 slice.
+
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor
   now validates the Ruby provider and admits Ota's typed `gem install bundler --version <version>`

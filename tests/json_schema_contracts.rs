@@ -2100,6 +2100,8 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
         .expect("taskLaunch oneOf");
     let env_profile_render = &schema["$defs"]["envProfileRender"]["properties"];
     let workflow = &schema["$defs"]["workflowSpec"]["properties"];
+    let workflow_proof = &schema["$defs"]["workflowProof"]["properties"];
+    let service_spec = &schema["$defs"]["serviceSpec"]["properties"];
     let workflow_env = &schema["$defs"]["workflowEnv"]["properties"];
     let workflow_instance_task_overlay =
         &schema["$defs"]["workflowInstanceTaskOverlay"]["properties"];
@@ -2117,6 +2119,27 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
     assert!(workflow.get("instances").is_some());
     assert!(workflow.get("attach").is_some());
     assert!(workflow.get("proof").is_some());
+    assert!(workflow_proof.get("lifecycle").is_some());
+    assert!(schema["$defs"].get("workflowLifecycleProof").is_some());
+    assert_eq!(
+        schema["$defs"]["workflowLifecycleProof"]["required"],
+        json!(["services"])
+    );
+    assert_eq!(
+        schema["$defs"]["workflowLifecycleProof"]["properties"]["services"]["minItems"],
+        json!(1)
+    );
+    assert_eq!(
+        schema["$defs"]["workflowLifecycleProof"]["properties"]["services"]["uniqueItems"],
+        json!(true)
+    );
+    assert!(
+        schema["$defs"]
+            .get("workflowLifecycleProofAssertion")
+            .is_some()
+    );
+    assert!(service_spec.get("lifecycle").is_some());
+    assert!(schema["$defs"].get("serviceLifecycle").is_some());
     assert!(schema["$defs"].get("workflowSeamObservation").is_some());
     assert!(schema["$defs"].get("workflowNegativeControl").is_some());
     assert!(workflow_instance_task_overlay.get("runtime").is_some());

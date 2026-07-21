@@ -794,6 +794,14 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "start_period": { "type": "string" }
       }
     },
+    "serviceLifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["teardown_assertion"],
+      "properties": {
+        "teardown_assertion": { "enum": ["manager_inactive"] }
+      }
+    },
     "serviceSpec": {
       "type": "object",
       "additionalProperties": false,
@@ -810,6 +818,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         },
         "healthcheck": { "type": "string" },
         "readiness": { "$ref": "#/$defs/serviceReadiness" },
+        "lifecycle": { "$ref": "#/$defs/serviceLifecycle" },
         "depends_on": { "$ref": "#/$defs/stringArray" },
         "timeout": { "type": "integer", "minimum": 0 }
       }
@@ -1025,6 +1034,28 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "marker_env": { "type": "string" }
       }
     },
+    "workflowLifecycleProofAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task"],
+      "properties": {
+        "task": { "type": "string" }
+      }
+    },
+    "workflowLifecycleProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["services"],
+      "properties": {
+        "services": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "assertion": { "$ref": "#/$defs/workflowLifecycleProofAssertion" }
+      }
+    },
     "workflowProof": {
       "type": "object",
       "additionalProperties": false,
@@ -1037,6 +1068,9 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "seam_observations": {
           "type": "array",
           "items": { "$ref": "#/$defs/workflowSeamObservation" }
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/workflowLifecycleProof"
         }
       }
     },
