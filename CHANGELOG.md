@@ -148,8 +148,9 @@
   `ota proof runtime --json` and archived runtime proofs. Ota now records a repo-local
   `ensure_virtualenv` precondition, `pyvenv.cfg` identity, producer edge, and post-success native
   `.venv/bin/*` assertion before deriving `cold_start_verified` or
-  `persistent_state_reused`. Other filesystem targets, containers, Windows virtualenvs, services,
-  volumes, caches, and provider-managed state remain explicitly `unknown`.
+  `persistent_state_reused`. Other filesystem targets, container filesystem prerequisites,
+  Windows virtualenvs, services, volumes, caches, and provider-managed state remain explicitly
+  `unknown`.
 - fixed native `ensure_virtualenv` Python selection to prefer a version-compatible interpreter
   matching the host architecture over an earlier incompatible `PATH` candidate. Ota passes that
   local executable to `uv`, preventing Rosetta/x86 Python selection on Apple Silicon and its
@@ -167,6 +168,13 @@
 - preserved that runner-authored virtualenv provenance across separate workflow setup and runtime
   task transactions, so a later `ensure_virtualenv` observation cannot erase an earlier
   absent-and-materialized boundary before the selected `.venv/bin/*` consumer asserts it.
+- checkpointed frozen native pnpm hydration after its producer completes, then bind the generated
+  `node_modules` layout and frozen lockfile identities to the runner-observed local consumer after
+  readiness. Detached runtime proof no longer depends on service teardown to flush that evidence.
+- made compatible finite ephemeral-container dependency closures share one runner-owned session,
+  so typed hydration survives into build/test consumers and the session is removed after the
+  selected closure terminates. This does not attest container filesystem freshness beyond the
+  prerequisites Ota can identify and verify.
 
 - fixed CI bootstrap drift recovery to distinguish `ota-run/action` reporting steps from Ota
   installers: an Action step with `install: never` no longer emits a false bootstrap-drift warning

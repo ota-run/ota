@@ -439,9 +439,19 @@ fn validate_prerequisite_assertions(
             || edge.identity != assertion.identity
             || edge.evidence_class != assertion.evidence_class
             || edge.sequence != assertion.sequence
+            || edge.boundary_id
+                != edges
+                    .get(assertion.established_by_edge_id.as_str())
+                    .expect("producer edge was validated above")
+                    .boundary_id
+            || edge.scope
+                != edges
+                    .get(assertion.established_by_edge_id.as_str())
+                    .expect("producer edge was validated above")
+                    .scope
         {
             return Err(format!(
-                "prerequisite `{}` assertion does not match its asserted-at edge",
+                "prerequisite `{}` assertion does not match its producer-bound asserted-at edge",
                 prerequisite.id
             ));
         }
@@ -633,6 +643,159 @@ mod tests {
     }
 
     #[test]
+    fn reused_asserted_target_cache_downgrades_only_the_target_freshness() {
+        let mut record = base_record();
+        record
+            .asserted_target_closure
+            .push(String::from("dependency_cache:pnpm-store"));
+        record.prerequisites.push(BoundaryPrerequisite {
+            id: String::from("dependency_cache:pnpm-store"),
+            class: PrerequisiteClass::DependencyCache,
+            declared_artifacts: vec![String::from(".pnpm-store")],
+            declared_producers: Vec::new(),
+            precondition: PreconditionState::Present,
+            precondition_identity: Some(String::from("sha256:pnpm-store")),
+            state: PrerequisiteState::VerifiedReused,
+            materializations: Vec::new(),
+            assertions: Vec::new(),
+            terminal_established_by_edge_id: None,
+            ambient_boundary: Some(String::from("persistent_pnpm_store_reused")),
+        });
+
+        let record = evaluate_execution_boundary(record).expect("mixed graph should evaluate");
+        assert_eq!(
+            record.target_freshness,
+            TargetFreshness::PersistentStateReused
+        );
+        assert_eq!(
+            record.derivation_posture.materialization,
+            MaterializationPosture::CacheAssisted,
+            "the reused asserted target is distinct from an upstream reused derivation input"
+        );
+    }
+
+    #[test]
+    fn preserves_ordered_producer_bindings_for_multiple_assertions() {
+        let mut record = base_record();
+        let prerequisite = &mut record.prerequisites[0];
+        prerequisite.materializations = vec![
+            BoundaryMaterialization {
+                edge_id: String::from("edge:produce:first"),
+                producer_execution: String::from("task:setup:first"),
+                identity: String::from("sha256:first"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 2,
+            },
+            BoundaryMaterialization {
+                edge_id: String::from("edge:produce:second"),
+                producer_execution: String::from("task:setup:second"),
+                identity: String::from("sha256:second"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 4,
+            },
+        ];
+        prerequisite.assertions = vec![
+            BoundaryAssertion {
+                edge_id: String::from("edge:assert:first"),
+                consumer_execution: String::from("task:consumer:first"),
+                identity: String::from("sha256:first"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 3,
+                established_by_edge_id: String::from("edge:produce:first"),
+            },
+            BoundaryAssertion {
+                edge_id: String::from("edge:assert:second"),
+                consumer_execution: String::from("task:consumer:second"),
+                identity: String::from("sha256:second"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 5,
+                established_by_edge_id: String::from("edge:produce:second"),
+            },
+        ];
+        prerequisite.terminal_established_by_edge_id = Some(String::from("edge:produce:second"));
+        record.edges = vec![
+            BoundaryEdge {
+                id: String::from("edge:cleared"),
+                kind: BoundaryEdgeKind::ClearedBefore,
+                prerequisite_id: String::from("filesystem:.venv"),
+                execution_id: String::from("task:setup:first"),
+                boundary_id: String::from("native:host"),
+                scope: String::from("workflow:verify"),
+                identity: String::from("empty"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 1,
+            },
+            BoundaryEdge {
+                id: String::from("edge:produce:first"),
+                kind: BoundaryEdgeKind::Produced,
+                prerequisite_id: String::from("filesystem:.venv"),
+                execution_id: String::from("task:setup:first"),
+                boundary_id: String::from("native:host"),
+                scope: String::from("workflow:verify"),
+                identity: String::from("sha256:first"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 2,
+            },
+            BoundaryEdge {
+                id: String::from("edge:assert:first"),
+                kind: BoundaryEdgeKind::AssertedAt,
+                prerequisite_id: String::from("filesystem:.venv"),
+                execution_id: String::from("task:consumer:first"),
+                boundary_id: String::from("native:host"),
+                scope: String::from("workflow:verify"),
+                identity: String::from("sha256:first"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 3,
+            },
+            BoundaryEdge {
+                id: String::from("edge:produce:second"),
+                kind: BoundaryEdgeKind::Produced,
+                prerequisite_id: String::from("filesystem:.venv"),
+                execution_id: String::from("task:setup:second"),
+                boundary_id: String::from("native:host"),
+                scope: String::from("workflow:verify"),
+                identity: String::from("sha256:second"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 4,
+            },
+            BoundaryEdge {
+                id: String::from("edge:assert:second"),
+                kind: BoundaryEdgeKind::AssertedAt,
+                prerequisite_id: String::from("filesystem:.venv"),
+                execution_id: String::from("task:consumer:second"),
+                boundary_id: String::from("native:host"),
+                scope: String::from("workflow:verify"),
+                identity: String::from("sha256:second"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 5,
+            },
+            BoundaryEdge {
+                id: String::from("edge:cache"),
+                kind: BoundaryEdgeKind::ReusedFrom,
+                prerequisite_id: String::from("dependency_cache:pip"),
+                execution_id: String::from("task:setup:second"),
+                boundary_id: String::from("native:host"),
+                scope: String::from("workflow:verify"),
+                identity: String::from("sha256:cache"),
+                evidence_class: BoundaryEvidenceClass::Attested,
+                sequence: 6,
+            },
+        ];
+
+        let evaluated = evaluate_execution_boundary(record.clone())
+            .expect("each assertion should bind its own producing edge");
+        assert_eq!(evaluated.prerequisites[0].assertions.len(), 2);
+
+        record.prerequisites[0].assertions[1].established_by_edge_id =
+            String::from("edge:produce:first");
+        assert!(
+            evaluate_execution_boundary(record)
+                .expect_err("a later assertion cannot bind an earlier producer identity")
+                .contains("not causally bound")
+        );
+    }
+
+    #[test]
     fn rejects_assertions_that_do_not_match_their_producer_identity() {
         let mut record = base_record();
         record.prerequisites[0].assertions[0].identity = String::from("sha256:other");
@@ -719,6 +882,23 @@ mod tests {
             evaluate_execution_boundary(record)
                 .expect_err("mismatched assertion provenance must fail")
                 .contains("assertion does not match")
+        );
+    }
+
+    #[test]
+    fn rejects_assertions_that_cross_their_producer_boundary_or_scope() {
+        let mut record = base_record();
+        let assertion_edge = record
+            .edges
+            .iter_mut()
+            .find(|edge| edge.id == "edge:assert")
+            .expect("base record has an assertion edge");
+        assertion_edge.boundary_id = String::from("native:other");
+        assertion_edge.scope = String::from("workflow:other");
+        assert!(
+            evaluate_execution_boundary(record)
+                .expect_err("assertion must inherit its matched producer boundary and scope")
+                .contains("producer-bound asserted-at edge")
         );
     }
 }

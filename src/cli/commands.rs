@@ -114971,6 +114971,9 @@ fn run_up_task_detached_until_ready(
     )?;
 
     if proof_ok {
+        crate::runner::attest_pnpm_boundary_after_runtime_readiness(
+            contract, task_name, overrides, repo_root,
+        )?;
         if !keep_running {
             stop_proof_runtime_up_process(&mut run_process).map_err(|error| {
                 format!(

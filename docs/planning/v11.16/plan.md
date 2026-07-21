@@ -27,8 +27,10 @@
 
 # V11.16: Fresh-Boundary Setup Proof
 
-Status: active. The shared semantic evaluator and additive `ota proof runtime --json` carrier are
-implemented. Runner-attested native paths cover `ensure_virtualenv` producers followed by a
+Status: active. The scoped implementation is complete for `1.6.25`, but pressure and full
+acceptance reconciliation remain open. The shared semantic evaluator and additive
+`ota proof runtime --json` carrier are implemented. Runner-attested native paths cover
+`ensure_virtualenv` producers followed by a
 runner-recorded `.venv/bin/*` consumer, plus frozen-lockfile pnpm hydration followed by a
 declared local `pnpm exec` or package-script consumer. Ota records the precondition, typed
 materialization identity, producer edge, and post-success `asserted_at` edge before deriving
@@ -39,6 +41,16 @@ caches, and provider-managed state remain `unknown` until the runner can witness
 Managed GitHub projection is not an architectural prerequisite: V11.16 derives execution-boundary
 truth from the selected runtime and existing canonical producer/admission evidence, whether the
 lane is invoked locally, in CI, or through a future generated workflow.
+
+Before release reconciliation can mark the whole slice complete, Kylrix must emit the expected
+pnpm producer/consumer graph under current Core. Core regression coverage now proves mixed reused
+asserted-target state, multi-producer/two-assertion causal binding, and forged or stale
+transaction-bound trace rejection. The remaining Kylrix evidence gap is not permission to widen
+the product surface during status reconciliation.
+
+Provider-boundary attestation is explicitly deferred. V11.16 does not parse or verify a CI-provider
+attestation, so provider-managed state remains `unknown`; a future provider-adapter slice must own
+issuer verification, run and scope binding, payload identity, and rejection fixtures.
 
 ## Problem
 
@@ -144,10 +156,11 @@ also preventing legitimate immutable inputs from being treated as unexplained am
 
 ## Evidence And Attestation Rules
 
-- `provider_ephemeral_runner` is not automatically cold proof. A provider assertion can support a
-  prerequisite only through a verified boundary attestation containing its issuer kind and immutable
-  issuer identity, current run identity, selected-scope identity, payload digest, verification
-  result, and `evidence_class: attested`.
+- `provider_ephemeral_runner` is not automatically cold proof. V11.16 does not consume provider
+  attestations, so provider-managed state remains `unknown`. A future provider adapter may promote
+  it only through a verified boundary attestation containing issuer kind and immutable issuer
+  identity, current run identity, selected-scope identity, payload digest, verification result, and
+  `evidence_class: attested`.
 - A caller-controlled signal such as `CI=true`, a workflow label, or free-text provider claim never
   promotes a prerequisite beyond `unknown`.
 - Native host execution defaults material host, environment, cache, and service prerequisites to
@@ -252,20 +265,24 @@ terminal proof verdict. A green proof with `unknown` material state must remain 
 4. Add compatible ephemeral-closure session ownership to the runner. Keep session identity and
    cleanup runner-authored, reuse only matching boundaries, and reject any attempt to cross an
    incompatible context or lifecycle implicitly.
-5. Define verified boundary-attestation parsing and rejection, including issuer, run, scope, digest,
-   and verification binding.
+5. Defer provider boundary-attestation parsing and rejection to a provider-adapter slice. Keep
+   provider-managed state `unknown` until that slice owns issuer, run, scope, digest, and
+   verification binding.
 6. Implement the shared semantic evaluator and reject invalid cross-graph relationships before
    JSON serialization or archive.
 7. Emit the graph, readable prerequisite projection, and derived verdicts in runtime-proof JSON,
    archive them with the proof, and render them in human proof output.
 8. Add schema and semantic regression fixtures for ordered multi-producer mutation with two
    assertions, all-created/immutable cold proof, cold cache-assisted reconstruction, mixed
-   persistent reuse, host unknown, forged or stale provider attestation, and rejected premature
-   probing.
+   persistent reuse, host unknown, forged or stale runner transaction traces, and rejected
+   premature probing. Provider-attestation fixtures are deferred with the provider adapter.
 9. Pressure-test Lead Quorum's repo-local virtualenv lane, Kylrix's native frozen pnpm lane,
    OrchardCore's typed .NET restore plus build/test closure in one ephemeral container session, and
-   Athena's ephemeral container app plus host-managed PostgreSQL runtime lane on clean CI. The
-   latter must remain mixed/qualified unless Ota can identify a selected service boundary honestly.
+   Athena's ephemeral container app plus host-managed PostgreSQL runtime lane on clean CI. Keep
+   Athena mixed/qualified because the selected proof does not establish lifecycle or state identity
+   for PostgreSQL. Re-run Airflow against current Core as an independent regression matrix for
+   typed Python fulfillment through `source: uv` and Ubuntu x64 container execution; do not treat
+   that matrix as a new freshness carrier.
 
 ## Non-Goals
 
@@ -291,8 +308,9 @@ V11.16 is complete when:
   derivation-input closure does not degrade target freshness;
 - a cache-assisted reconstruction can remain `cold_start_verified` because its reused cache is in
   the derivation-input closure, while its independent derivation posture remains `cache_assisted`;
-- a forged, stale, scope-mismatched, or caller-controlled provider assertion remains `unknown` and
-  cannot produce `evidence_class: attested`;
+- a forged or stale runner transaction trace is rejected before it can promote runner-owned
+  evidence; provider assertions remain `unknown` because this slice intentionally has no provider
+  attestation parser or verifier;
 - an unordered or stale producer record cannot establish a consumer assertion; a multi-producer,
   two-assertion fixture proves each assertion binds its own matching producer edge by runner-owned
   sequence and causality;
@@ -303,5 +321,34 @@ V11.16 is complete when:
 - proof archives preserve the exact graph, prerequisite, and attestation evidence that supported
   the derived verdicts, and schema conformance covers live JSON and archived proof JSON;
 - human and JSON output keep a green proof from over-reading unresolved ambient state;
-- Lead Quorum and Athena pressure the native producer and container/service boundaries without
-  repo-local shell workarounds.
+- Lead Quorum proves fresh and reused repo-local virtualenv provenance; Kylrix proves frozen pnpm
+  hydration followed by a declared local consumer; OrchardCore proves typed .NET restore, build,
+  and test in one compatible ephemeral container closure with cleanup; Athena proves typed
+  Ruby/Bundler fulfillment and a marker-bound PostgreSQL seam while retaining its explicit
+  output-shaping and service-lifecycle boundaries; Airflow's current-Core matrix proves the
+  existing `source: uv` lane and Ubuntu x64 container execution without widening freshness claims.
+
+## Pressure Evidence
+
+- Lead Quorum run `29742813235` passed on Ubuntu, macOS, Windows, and its container verification
+  lane. Ubuntu and macOS explicitly asserted first-run `cold_start_verified` and second-run
+  `persistent_state_reused` for the repo-local virtualenv prerequisite.
+- Kylrix run `29784560458` passed its bounded native and container runtime jobs plus generated
+  governance lanes, but it does not close V11.16 pressure. It archived `pnpm-lock.yaml` as an
+  evaluated input while emitting empty execution-boundary closures, edges, and prerequisites with
+  `target_freshness: unknown`. The contract now explicitly binds `contributor:web` to the
+  `sqlite-dev` workflow readiness path. Current Core checkpoints completed pnpm producer evidence
+  before the detached runtime starts and re-attests it after runner-observed readiness. A
+  current-Core rerun must carry the generated pnpm layout identity into the declared local consumer
+  before this pressure item is complete.
+- OrchardCore run `29697072972` passed the Ubuntu full lane and macOS/Windows dry lanes. Ubuntu
+  executed typed `.NET` restore, build, and test through the compatible ephemeral container
+  closure. Core regression coverage verifies that the shared session is removed after the closure.
+- Athena run `29786128386` passed native and Ubuntu container lanes. The container fulfilled
+  Bundler `2.5.3` from `ruby:3.3.11-bookworm`, and the Ubuntu full lane proved the transaction-bound
+  `postgres-marker` seam while retaining `dependency_output_shaping_not_proved`. PostgreSQL
+  lifecycle and database state remain outside this proof.
+- Airflow run `29789918248` passed macOS/Windows dry lanes plus Ubuntu native chart and full lanes
+  against current Core. Ubuntu x64 executed the container task and workflow path with typed Python
+  fulfillment through `source: uv` in `python:3.12-bookworm`. This is compatibility evidence, not
+  repo-global or container-filesystem cold-start proof.

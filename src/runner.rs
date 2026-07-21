@@ -6846,7 +6846,9 @@ struct PnpmBoundaryState {
     precondition_identity: Option<String>,
     producer_task: Option<String>,
     identity: Option<String>,
+    lockfile_identity: Option<String>,
     producer_edge_id: Option<String>,
+    derivation_sequence: Option<u64>,
     materialized_sequence: Option<u64>,
     assertions: Vec<(String, String, u64)>,
 }
@@ -6970,6 +6972,17 @@ fn hydrate_pnpm_boundaries_from_trace(state: &mut TaskRunState, working_dir: &Pa
     let Ok(record) = read_execution_boundary_trace(Path::new(&path), &token) else {
         return;
     };
+    let lockfile_derivations = record
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == crate::execution_boundary::BoundaryEdgeKind::DerivedFrom)
+        .map(|edge| {
+            (
+                edge.prerequisite_id.clone(),
+                (edge.identity.clone(), edge.sequence),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     for prerequisite in record.prerequisites {
         if prerequisite.class != crate::execution_boundary::PrerequisiteClass::Filesystem
             || !prerequisite
@@ -6986,6 +6999,9 @@ fn hydrate_pnpm_boundaries_from_trace(state: &mut TaskRunState, working_dir: &Pa
             continue;
         };
         let cwd = normalized_pnpm_cwd(cwd);
+        let lockfile_derivation = lockfile_derivations
+            .get(&pnpm_lockfile_prerequisite_id(&cwd))
+            .cloned();
         if prerequisite.state == crate::execution_boundary::PrerequisiteState::VerifiedReused {
             let Some(identity) = prerequisite.precondition_identity.as_ref() else {
                 continue;
@@ -7001,7 +7017,9 @@ fn hydrate_pnpm_boundaries_from_trace(state: &mut TaskRunState, working_dir: &Pa
                     precondition_identity: Some(identity.clone()),
                     producer_task: None,
                     identity: None,
+                    lockfile_identity: None,
                     producer_edge_id: None,
+                    derivation_sequence: None,
                     materialized_sequence: None,
                     assertions: Vec::new(),
                 },
@@ -7039,6 +7057,12 @@ fn hydrate_pnpm_boundaries_from_trace(state: &mut TaskRunState, working_dir: &Pa
             .execution_boundary_sequence
             .max(materialization.sequence)
             .max(
+                lockfile_derivation
+                    .as_ref()
+                    .map(|(_, sequence)| *sequence)
+                    .unwrap_or(0),
+            )
+            .max(
                 assertions
                     .iter()
                     .map(|(_, _, sequence)| *sequence)
@@ -7053,7 +7077,11 @@ fn hydrate_pnpm_boundaries_from_trace(state: &mut TaskRunState, working_dir: &Pa
                 precondition_identity: None,
                 producer_task: Some(materialization.producer_execution.clone()),
                 identity: Some(materialization.identity.clone()),
+                lockfile_identity: lockfile_derivation
+                    .as_ref()
+                    .map(|(identity, _)| identity.clone()),
                 producer_edge_id: Some(materialization.edge_id.clone()),
+                derivation_sequence: lockfile_derivation.map(|(_, sequence)| sequence),
                 materialized_sequence: Some(materialization.sequence),
                 assertions,
             },
@@ -7081,6 +7109,23 @@ fn pnpm_boundary_identity(working_dir: &Path, cwd: &str) -> Option<String> {
     bytes.extend_from_slice(b"pnpm-lock.yaml\0");
     bytes.extend_from_slice(&lockfile);
     Some(sha256_identity(&bytes))
+}
+
+fn pnpm_lockfile_identity(working_dir: &Path, cwd: &str) -> Option<String> {
+    let cwd = normalized_pnpm_cwd(cwd);
+    let root = if cwd == "." {
+        working_dir.to_path_buf()
+    } else {
+        working_dir.join(cwd)
+    };
+    fs::read(root.join("pnpm-lock.yaml"))
+        .ok()
+        .map(|bytes| sha256_identity(&bytes))
+}
+
+fn pnpm_lockfile_prerequisite_id(cwd: &str) -> String {
+    let cwd = normalized_pnpm_cwd(cwd);
+    format!("filesystem:{cwd}/pnpm-lock.yaml")
 }
 
 fn normalized_pnpm_cwd(cwd: &str) -> String {
@@ -7217,6 +7262,139 @@ pub fn read_execution_boundary_trace(
     crate::execution_boundary::evaluate_execution_boundary(trace.execution_boundary)
 }
 
+/// A detached runtime can prove readiness before its long-running task returns. Preserve the
+/// selected local pnpm resolution at that point instead of relying on teardown to flush the
+/// consumer transaction's trace.
+pub(crate) fn attest_pnpm_boundary_after_runtime_readiness(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    working_dir: &Path,
+) -> Result<bool, String> {
+    let (Some(path), Some(token)) = (
+        env::var_os(EXECUTION_BOUNDARY_TRACE_PATH_ENV),
+        env::var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV).ok(),
+    ) else {
+        return Ok(false);
+    };
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Ok(false);
+    };
+    if effective_task_execution(contract, task_name, overrides).backend != Backend::Native {
+        return Ok(false);
+    }
+    let Some(execution) = task.resolved_execution_for_backend(Backend::Native, current_os()) else {
+        return Ok(false);
+    };
+
+    let path = PathBuf::from(path);
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let mut record = read_execution_boundary_trace(&path, &token)?;
+    let mut next_sequence = record
+        .edges
+        .iter()
+        .map(|edge| edge.sequence)
+        .max()
+        .unwrap_or(0);
+    let producer_edges = record
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == crate::execution_boundary::BoundaryEdgeKind::Produced)
+        .map(|edge| {
+            (
+                edge.id.clone(),
+                (edge.boundary_id.clone(), edge.scope.clone()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut added = false;
+
+    for prerequisite in &mut record.prerequisites {
+        let Some(cwd) = pnpm_boundary_cwd(prerequisite) else {
+            continue;
+        };
+        if !pnpm_local_package_resolution(execution.command(), execution.launch(), &cwd) {
+            continue;
+        }
+        let Some(identity) = pnpm_boundary_identity(working_dir, &cwd) else {
+            continue;
+        };
+        let Some(producer) = prerequisite
+            .materializations
+            .iter()
+            .filter(|materialization| materialization.identity == identity)
+            .max_by_key(|materialization| materialization.sequence)
+        else {
+            continue;
+        };
+        let (boundary_id, scope) = producer_edges
+            .get(&producer.edge_id)
+            .ok_or_else(|| {
+                format!(
+                    "pnpm readiness attestation producer edge `{}` is not present in the execution boundary",
+                    producer.edge_id
+                )
+            })?;
+        if prerequisite.assertions.iter().any(|assertion| {
+            assertion.consumer_execution == task_name
+                && assertion.identity == identity
+                && assertion.established_by_edge_id == producer.edge_id
+        }) {
+            continue;
+        }
+
+        next_sequence = next_sequence.saturating_add(1);
+        let edge_id = format!("{}:asserted_at:runtime:{}", prerequisite.id, next_sequence);
+        prerequisite
+            .assertions
+            .push(crate::execution_boundary::BoundaryAssertion {
+                edge_id: edge_id.clone(),
+                consumer_execution: task_name.to_string(),
+                identity: identity.clone(),
+                evidence_class: crate::execution_boundary::BoundaryEvidenceClass::Attested,
+                sequence: next_sequence,
+                established_by_edge_id: producer.edge_id.clone(),
+            });
+        record.edges.push(crate::execution_boundary::BoundaryEdge {
+            id: edge_id,
+            kind: crate::execution_boundary::BoundaryEdgeKind::AssertedAt,
+            prerequisite_id: prerequisite.id.clone(),
+            execution_id: task_name.to_string(),
+            boundary_id: boundary_id.clone(),
+            scope: scope.clone(),
+            identity,
+            evidence_class: crate::execution_boundary::BoundaryEvidenceClass::Attested,
+            sequence: next_sequence,
+        });
+        added = true;
+    }
+
+    if !added {
+        return Ok(false);
+    }
+    let record = crate::execution_boundary::evaluate_execution_boundary(record)?;
+    write_execution_boundary_trace_if_requested(Some(&record))
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+fn pnpm_boundary_cwd(
+    prerequisite: &crate::execution_boundary::BoundaryPrerequisite,
+) -> Option<String> {
+    if prerequisite.class != crate::execution_boundary::PrerequisiteClass::Filesystem
+        || !prerequisite
+            .declared_artifacts
+            .iter()
+            .any(|artifact| artifact.ends_with("pnpm-lock.yaml"))
+    {
+        return None;
+    }
+    let path = prerequisite.id.strip_prefix("filesystem:")?;
+    Some(normalized_pnpm_cwd(path.strip_suffix("/node_modules")?))
+}
+
 fn remove_execution_boundary_trace_env(command: &mut Command) {
     command.env_remove(EXECUTION_BOUNDARY_TRACE_PATH_ENV);
     command.env_remove(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV);
@@ -7334,7 +7512,9 @@ fn observe_pnpm_boundary_precondition(
                 .flatten(),
             producer_task: Some(task_name.to_string()),
             identity: None,
+            lockfile_identity: None,
             producer_edge_id: None,
+            derivation_sequence: None,
             materialized_sequence: None,
             assertions: Vec::new(),
         }
@@ -7360,11 +7540,17 @@ fn record_pnpm_boundary_materialization(
     {
         return;
     }
-    let sequence = state.execution_boundary_sequence.saturating_add(1);
+    let Some(lockfile_identity) = pnpm_lockfile_identity(working_dir, &cwd) else {
+        return;
+    };
+    let derivation_sequence = state.execution_boundary_sequence.saturating_add(1);
+    let sequence = derivation_sequence.saturating_add(1);
     state.execution_boundary_sequence = sequence;
     boundary.producer_task = Some(task_name.to_string());
     boundary.identity = Some(identity);
+    boundary.lockfile_identity = Some(lockfile_identity);
     boundary.producer_edge_id = Some(format!("{id}:produced:{sequence}"));
+    boundary.derivation_sequence = Some(derivation_sequence);
     boundary.materialized_sequence = Some(sequence);
 }
 
@@ -7453,7 +7639,8 @@ fn execution_boundary_record_from_run_state(
         BoundaryAssertion, BoundaryEdge, BoundaryEdgeKind, BoundaryEvidenceClass,
         BoundaryMaterialization, BoundaryPrerequisite, DerivationPosture,
         EXECUTION_BOUNDARY_SCHEMA_VERSION, ImmutableInputPosture, MaterializationPosture,
-        PrerequisiteClass, PrerequisiteState, TargetFreshness, evaluate_execution_boundary,
+        PreconditionState, PrerequisiteClass, PrerequisiteState, TargetFreshness,
+        evaluate_execution_boundary,
     };
 
     if state.virtualenv_boundaries.is_empty() && state.pnpm_boundaries.is_empty() {
@@ -7462,6 +7649,7 @@ fn execution_boundary_record_from_run_state(
     let mut prerequisites = Vec::new();
     let mut edges = Vec::new();
     let mut asserted_target_closure = Vec::new();
+    let mut derivation_input_closure = Vec::new();
     for (id, boundary) in &state.virtualenv_boundaries {
         asserted_target_closure.push(id.clone());
         let mut materializations = Vec::new();
@@ -7548,6 +7736,39 @@ fn execution_boundary_record_from_run_state(
     }
     for (id, boundary) in &state.pnpm_boundaries {
         asserted_target_closure.push(id.clone());
+        if let Some(lockfile_identity) = boundary.lockfile_identity.as_ref() {
+            let lockfile_id = pnpm_lockfile_prerequisite_id(&boundary.cwd);
+            derivation_input_closure.push(lockfile_id.clone());
+            prerequisites.push(BoundaryPrerequisite {
+                id: lockfile_id.clone(),
+                class: PrerequisiteClass::Filesystem,
+                declared_artifacts: vec![format!("{}/pnpm-lock.yaml", boundary.cwd)],
+                declared_producers: Vec::new(),
+                precondition: PreconditionState::Present,
+                precondition_identity: Some(lockfile_identity.clone()),
+                state: PrerequisiteState::DeclaredImmutableInput,
+                materializations: Vec::new(),
+                assertions: Vec::new(),
+                terminal_established_by_edge_id: None,
+                ambient_boundary: None,
+            });
+            if let (Some(sequence), Some(producer_task)) = (
+                boundary.derivation_sequence,
+                boundary.producer_task.as_ref(),
+            ) {
+                edges.push(BoundaryEdge {
+                    id: format!("{id}:derived_from:{sequence}"),
+                    kind: BoundaryEdgeKind::DerivedFrom,
+                    prerequisite_id: lockfile_id,
+                    execution_id: producer_task.clone(),
+                    boundary_id: state.execution_boundary_id.clone(),
+                    scope: String::from("task_closure"),
+                    identity: lockfile_identity.clone(),
+                    evidence_class: BoundaryEvidenceClass::Attested,
+                    sequence,
+                });
+            }
+        }
         let mut materializations = Vec::new();
         if let (Some(identity), Some(edge_id), Some(sequence), Some(producer_task)) = (
             boundary.identity.as_ref(),
@@ -7637,7 +7858,7 @@ fn execution_boundary_record_from_run_state(
         schema_version: EXECUTION_BOUNDARY_SCHEMA_VERSION,
         identity: String::new(),
         asserted_target_closure,
-        derivation_input_closure: Vec::new(),
+        derivation_input_closure,
         prerequisites,
         edges,
         target_freshness: TargetFreshness::Unknown,
@@ -10078,15 +10299,25 @@ fn execute_task_with_hooks(
         mode.clone(),
         Some(&mut state.ephemeral_closure_sessions),
     )?;
+    let mut boundary_materialized = false;
     if command_output.exit_code == 0
         && let Some(crate::schema::TaskActionSpec::EnsureVirtualenv(spec)) = task.action.as_ref()
     {
         record_virtualenv_boundary_materialization(state, task_name, &spec.path, working_dir);
+        boundary_materialized = true;
     }
     if command_output.exit_code == 0 {
         for cwd in &pnpm_hydration_cwds {
             record_pnpm_boundary_materialization(state, task_name, cwd, working_dir);
         }
+        boundary_materialized |= !pnpm_hydration_cwds.is_empty();
+    }
+    if boundary_materialized {
+        // Long-running runtime tasks do not return before proof owns teardown. Persist completed
+        // producer evidence now so the runner can bind it to the later readiness observation.
+        write_execution_boundary_trace_if_requested(
+            execution_boundary_record_from_run_state(state).as_ref(),
+        )?;
     }
     let virtualenv_consumer_executed = command_output.exit_code == 0
         || (command_output.runtime.is_some() && !command_output.interrupted);
@@ -31889,8 +32120,9 @@ mod tests {
         RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogFile, StreamLogTee,
         TaskExecutionMode, TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
         TaskTargetActivationStatus, TaskTargetResolutionSource, acquire_repo_execution_lock,
-        activation_loader_label, backend_fulfillment_plan, clean_execution, clean_execution_report,
-        container_identity_seed, contract_working_dir, current_os, effective_task_env_for_backend,
+        activation_loader_label, attest_pnpm_boundary_after_runtime_readiness,
+        backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
+        contract_working_dir, current_os, effective_task_env_for_backend,
         effective_task_env_for_selection, effective_task_execution,
         ephemeral_container_stream_command, execute_task_command, execute_task_with_hooks,
         extract_probe_version_token, looks_like_posix_script, looks_like_powershell_script,
@@ -65589,11 +65821,18 @@ tasks:
         let trace = read_execution_boundary_trace(&trace_path, "runner-test-token")
             .expect("runner trace should verify after task completion");
         assert_eq!(trace.identity, boundary.identity);
-        let mut trace_json: serde_json::Value =
-            serde_json::from_slice(&fs::read(&trace_path).unwrap()).unwrap();
+        let signed_trace = fs::read(&trace_path).unwrap();
+        assert!(
+            read_execution_boundary_trace(&trace_path, "runner-stale-transaction-token").is_err(),
+            "a provider-bound trace must not validate in another proof transaction"
+        );
+        let mut trace_json: serde_json::Value = serde_json::from_slice(&signed_trace).unwrap();
         trace_json["signature"] = serde_json::Value::String(String::from("sha256:forged"));
         fs::write(&trace_path, serde_json::to_vec(&trace_json).unwrap()).unwrap();
-        assert!(read_execution_boundary_trace(&trace_path, "runner-test-token").is_err());
+        assert!(
+            read_execution_boundary_trace(&trace_path, "runner-test-token").is_err(),
+            "a forged provider-bound trace must not promote the boundary"
+        );
     }
 
     #[cfg(not(windows))]
@@ -65652,6 +65891,21 @@ tasks:
 
         let setup = run_task(&fixture.contract, fixture.file_path(), "setup")
             .expect("pnpm hydration should materialize the local layout");
+        let staged = read_execution_boundary_trace(&trace_path, "runner-pnpm-test-token").expect(
+            "a completed producer must checkpoint its trace before a long-running consumer",
+        );
+        let staged_prerequisite = staged
+            .prerequisites
+            .iter()
+            .find(|item| item.id == "filesystem:./node_modules")
+            .expect("the pnpm producer checkpoint should carry its target boundary");
+        assert_eq!(staged_prerequisite.materializations.len(), 1);
+        assert!(staged_prerequisite.assertions.is_empty());
+        assert!(
+            staged
+                .derivation_input_closure
+                .contains(&String::from("filesystem:./pnpm-lock.yaml"))
+        );
         let outcome = run_task(&fixture.contract, fixture.file_path(), "runtime")
             .expect("pnpm exec should resolve the materialized local package boundary");
 
@@ -65692,6 +65946,130 @@ tasks:
             prerequisite.assertions[0].established_by_edge_id,
             prerequisite.materializations[0].edge_id
         );
+        assert!(
+            boundary
+                .derivation_input_closure
+                .contains(&String::from("filesystem:./pnpm-lock.yaml"))
+        );
+        assert!(boundary.prerequisites.iter().any(|item| {
+            item.id == "filesystem:./pnpm-lock.yaml"
+                && item.state
+                    == crate::execution_boundary::PrerequisiteState::DeclaredImmutableInput
+        }));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn detached_runtime_readiness_attests_pnpm_boundary_before_teardown() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args: [exec, next, dev]
+    depends_on: [setup]
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "pnpm",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '11.5.1\\n'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ]; then\n  mkdir -p node_modules\n  printf 'layoutVersion: 1\\n' > node_modules/.modules.yaml\nfi\nexit 0\n",
+        );
+
+        let original_path = env::var_os("PATH");
+        let original_trace_path = env::var_os(EXECUTION_BOUNDARY_TRACE_PATH_ENV);
+        let original_trace_token = env::var_os(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV);
+        let trace_path = fixture.dir.path().join("runner-execution-boundary.json");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+            env::set_var(EXECUTION_BOUNDARY_TRACE_PATH_ENV, &trace_path);
+            env::set_var(
+                EXECUTION_BOUNDARY_TRACE_TOKEN_ENV,
+                "runner-pnpm-readiness-token",
+            );
+        }
+
+        let setup = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("setup should materialize the native pnpm boundary");
+        assert_eq!(setup.exit_code, 0, "{setup:?}");
+        assert!(
+            attest_pnpm_boundary_after_runtime_readiness(
+                &fixture.contract,
+                "dev",
+                ExecutionOverrides::default(),
+                fixture.dir.path(),
+            )
+            .expect("runner-owned readiness observation should attest the pnpm boundary")
+        );
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_trace_path {
+            Some(path) => unsafe { env::set_var(EXECUTION_BOUNDARY_TRACE_PATH_ENV, path) },
+            None => unsafe { env::remove_var(EXECUTION_BOUNDARY_TRACE_PATH_ENV) },
+        }
+        match original_trace_token {
+            Some(token) => unsafe { env::set_var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, token) },
+            None => unsafe { env::remove_var(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV) },
+        }
+
+        let boundary = read_execution_boundary_trace(&trace_path, "runner-pnpm-readiness-token")
+            .expect("readiness attestation should remain trace-bound");
+        let prerequisite = boundary
+            .prerequisites
+            .iter()
+            .find(|item| item.id == "filesystem:./node_modules")
+            .expect("pnpm node_modules boundary should be present");
+        assert_eq!(
+            boundary.target_freshness,
+            crate::execution_boundary::TargetFreshness::ColdStartVerified
+        );
+        assert_eq!(prerequisite.assertions.len(), 1);
+        assert_eq!(
+            prerequisite.assertions[0].consumer_execution, "dev",
+            "the runner, not detached teardown, owns the post-readiness assertion"
+        );
+        let producer_edge = boundary
+            .edges
+            .iter()
+            .find(|edge| edge.id == prerequisite.materializations[0].edge_id)
+            .expect("materialization must retain its producer edge");
+        let assertion_edge = boundary
+            .edges
+            .iter()
+            .find(|edge| edge.id == prerequisite.assertions[0].edge_id)
+            .expect("readiness attestation must retain its assertion edge");
+        assert_eq!(assertion_edge.boundary_id, producer_edge.boundary_id);
+        assert_eq!(assertion_edge.scope, producer_edge.scope);
     }
 
     #[cfg(not(windows))]
