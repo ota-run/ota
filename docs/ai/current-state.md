@@ -81,54 +81,21 @@ durable agent workflow belongs in the canonical Ota skill.
   acquire terminal interaction. The task JSON and dry-run JSON expose the resolved posture and
   invocation resolution; the copy-ready Wrangler OAuth example, canonical skill, public site
   contract reference, schemas, changelog, and regressions are aligned.
-- active V11.16 fresh-boundary setup proof: the scoped `1.6.25` implementation is complete, while
-  pressure and full acceptance reconciliation remain open. `ota proof runtime --json` and archived
-  runtime proof records now carry an additive content-addressed `execution_boundary` graph. Native
-  `ensure_virtualenv` followed by a runner-recorded `.venv/bin/*` consumer, and frozen native pnpm
-  hydration followed by a declared local `pnpm exec` or package-script consumer, produce
-  runner-attested precondition, materialization, and `asserted_at` identity edges. The pnpm path
-  binds its generated `node_modules/.modules.yaml` layout marker to the declared lockfile rather
-  than pretending to hash the entire dependency tree. Both paths derive either
-  `cold_start_verified` or `persistent_state_reused`; signed runner trace hydration preserves
-  producer provenance across separate workflow setup and runtime task transactions. Other
-  filesystem targets, containers, Windows virtualenvs, other Node package-manager layouts,
-  services beyond their executable boundary, volumes, caches, and provider state remain `unknown`;
-  do not over-read these narrow paths as repo-global cold-start proof.
-  Native `ensure_virtualenv` now also resolves a version-compatible local Python matching the host
-  architecture before invoking `uv`, preventing an earlier Rosetta/x86 `PATH` candidate from
-  creating the repo environment on Apple Silicon. Lead Quorum pressure proves both the fresh
-  `cold_start_verified` and second-run `persistent_state_reused` paths without an absolute-path
-  contract workaround.
-  Ruby-owned Bundler fulfillment now follows the same selected-path order in container mode:
-  Doctor validates the Ruby provider rather than rejecting a base-image Bundler version that Ota
-  will replace through typed run-path fulfillment. Athena proves `ruby:3.3.11-bookworm` with its
-  ambient Bundler `2.5.22` can fulfill the declared `2.5.3` before Bundler dependency hydration.
-  Its full app-proof remains bounded by the repo-owned host PostgreSQL service; Ota does not start
-  or claim lifecycle proof for that service.
-  The shared evaluator now canonicalizes prerequisite and edge ordering before identity hashing,
-  rejects prerequisites that ambiguously appear in both selected closures, and refuses edges outside
-  those closures or producer/assertion records whose canonical edge, identity, sequence, or evidence
-  class does not match. This closes forged graph-shape paths before runtime-proof JSON or archives
-  are emitted; wider boundary families remain intentionally unimplemented.
-  Four pressure claims are confirmed at their declared boundaries: Lead Quorum run `29742813235`
-  proves fresh and reused native virtualenv provenance; OrchardCore run `29697072972` executes
-  typed restore, build, and test through a compatible ephemeral .NET container closure; Athena run
-  `29786128386` proves Bundler fulfillment and the marker-bound PostgreSQL seam while retaining
-  `dependency_output_shaping_not_proved`; and Airflow current-Core run `29789918248` passes Ubuntu
-  x64 container execution with typed Python fulfillment through `source: uv`. Airflow is regression
-  evidence, not a new
-  freshness carrier. Kylrix run `29784560458` is green but does not establish its intended V11.16
-  claim: its proof carries `pnpm-lock.yaml` as an evaluated input while `execution_boundary` remains
-  empty and `target_freshness` remains `unknown`. None of these runs establish repo-global
-  cold-start proof or general database, service, volume, cache, or container-filesystem identity.
-  Core now checkpoints completed pnpm producer evidence before a detached runtime starts and
-  re-attests it after runner-observed readiness. Regression coverage proves its pnpm producer
-  checkpoint, mixed reused asserted-target state, multi-producer/two-assertion causal binding, and
-  forged or stale transaction-bound trace rejection. Provider-managed state remains `unknown`:
-  V11.16 deliberately does not implement a provider-attestation parser or verifier. Kylrix now explicitly declares
-  `contributor:web` as `sqlite-dev` workflow readiness. The remaining release-evidence gap is one
-  current-Core Kylrix pnpm producer/consumer graph; do not mark V11.16 complete until that pressure
-  proof exists or the plan is explicitly re-scoped. No pressure-repo workaround is appropriate.
+- completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
+  proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
+  runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local
+  consumer, carry runner-attested precondition, producer, and `asserted_at` identities before
+  deriving `cold_start_verified` or `persistent_state_reused`. The pnpm carrier binds its
+  generated `node_modules/.modules.yaml` layout marker to the declared lockfile rather than
+  claiming whole-tree hashing. The evaluator canonicalizes graph identity and rejects ambiguous,
+  forged, stale, cross-scope, or causally mismatched edges before proof JSON or archives emit.
+  Lead Quorum run `29742813235` proves fresh and reused virtualenv evidence; OrchardCore run
+  `29697072972` proves an ephemeral typed .NET container closure; Athena run `29786128386` proves
+  container Bundler fulfillment while retaining PostgreSQL lifecycle/output boundaries; and Kylrix
+  run `29828933200` closes the native pnpm carrier with absent `node_modules`, a `setup` producer,
+  a matching local `dev` assertion, and `cold_start_verified`. Provider state, databases, services,
+  volumes, general container filesystem state, Windows virtualenvs, and uninstrumented package
+  layouts remain `unknown`; V11.16 does not claim repo-global cold-start proof.
 - completed V11.15 managed CI projection: `ota ci projection --workflow <name> --mode <mode> --target-os <linux|macos|windows> --json`
   now emits the provider-neutral governance lane with a semantic identity, merge-check identities,
   proof requirement, and provider-neutral ownership categories. The GitHub adapter consumes that

@@ -27,8 +27,8 @@
 
 # V11.16: Fresh-Boundary Setup Proof
 
-Status: active. The scoped implementation is complete for `1.6.25`, but pressure and full
-acceptance reconciliation remain open. The shared semantic evaluator and additive
+Status: complete pending release reconciliation. The scoped implementation and pressure acceptance
+bar are complete for `1.6.25`. The shared semantic evaluator and additive
 `ota proof runtime --json` carrier are implemented. Runner-attested native paths cover
 `ensure_virtualenv` producers followed by a
 runner-recorded `.venv/bin/*` consumer, plus frozen-lockfile pnpm hydration followed by a
@@ -42,11 +42,12 @@ Managed GitHub projection is not an architectural prerequisite: V11.16 derives e
 truth from the selected runtime and existing canonical producer/admission evidence, whether the
 lane is invoked locally, in CI, or through a future generated workflow.
 
-Before release reconciliation can mark the whole slice complete, Kylrix must emit the expected
-pnpm producer/consumer graph under current Core. Core regression coverage now proves mixed reused
-asserted-target state, multi-producer/two-assertion causal binding, and forged or stale
-transaction-bound trace rejection. The remaining Kylrix evidence gap is not permission to widen
-the product surface during status reconciliation.
+Core regression coverage proves mixed reused asserted-target state, multi-producer/two-assertion
+causal binding, and forged or stale transaction-bound trace rejection. Kylrix current-Core run
+`29828933200` completes the pnpm pressure bar with an absent `node_modules` precondition, a
+runner-attested `setup` materialization, and a matching declared local `dev` assertion. This is
+narrow filesystem-boundary evidence, not a claim about provider, service, volume, database, or
+general container-state freshness.
 
 Provider-boundary attestation is explicitly deferred. V11.16 does not parse or verify a CI-provider
 attestation, so provider-managed state remains `unknown`; a future provider-adapter slice must own
@@ -210,6 +211,11 @@ That identity must use a canonical logical representation rather than a whole-da
 stable ordering, null handling, type representation, and adapter/query identity. This avoids noisy
 changes from irrelevant state while keeping the observed scope reproducible.
 
+Engine or adapter access logs are authoritative corroboration only when Ota attests the active
+instrumentation configuration, its coverage boundary, and its association with the current proof
+transaction. An unattested log, or one whose coverage cannot be verified, is advisory evidence and
+cannot promote the affected obligation beyond `unknown`.
+
 Runner-witnessed reads, tables, queries, and logical results are corroborating evidence, not the
 definition of proof scope. They may support the declared obligations or expose an undeclared
 dependency, but a single execution cannot prove a complete semantic read-set: caches, views,
@@ -333,14 +339,13 @@ V11.16 is complete when:
 - Lead Quorum run `29742813235` passed on Ubuntu, macOS, Windows, and its container verification
   lane. Ubuntu and macOS explicitly asserted first-run `cold_start_verified` and second-run
   `persistent_state_reused` for the repo-local virtualenv prerequisite.
-- Kylrix run `29784560458` passed its bounded native and container runtime jobs plus generated
-  governance lanes, but it does not close V11.16 pressure. It archived `pnpm-lock.yaml` as an
-  evaluated input while emitting empty execution-boundary closures, edges, and prerequisites with
-  `target_freshness: unknown`. The contract now explicitly binds `contributor:web` to the
-  `sqlite-dev` workflow readiness path. Current Core checkpoints completed pnpm producer evidence
-  before the detached runtime starts and re-attests it after runner-observed readiness. A
-  current-Core rerun must carry the generated pnpm layout identity into the declared local consumer
-  before this pressure item is complete.
+- Kylrix run `29784560458` exposed the original gap: it archived `pnpm-lock.yaml` as an evaluated
+  input while emitting an empty execution-boundary graph. Current-Core run
+  [`29828933200`](https://github.com/bobaikato/kylrix/actions/runs/29828933200) closes it on the
+  bounded native `sqlite-dev` proof: `node_modules` was absent, `setup` materialized the
+  lockfile-bound layout marker, and `dev` asserted the identical marker through the same
+  transaction boundary. The derived `target_freshness` is `cold_start_verified`. The separate
+  container lane is green but does not widen this native filesystem carrier to container state.
 - OrchardCore run `29697072972` passed the Ubuntu full lane and macOS/Windows dry lanes. Ubuntu
   executed typed `.NET` restore, build, and test through the compatible ephemeral container
   closure. Core regression coverage verifies that the shared session is removed after the closure.

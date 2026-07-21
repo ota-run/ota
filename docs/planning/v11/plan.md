@@ -151,9 +151,10 @@ The completed provider-adapter slice is:
 - [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md) - implementation and
   real-repo pressure complete; release reconciliation remains active.
 
-The following planned execution-trust slice is:
+The completed execution-trust slice is:
 
-- [V11.16: fresh-boundary setup proof](../v11.16/plan.md)
+- [V11.16: fresh-boundary setup proof](../v11.16/plan.md) - implementation and declared
+  filesystem-boundary pressure complete; release reconciliation remains active.
 
 The following planned replay-governance slice is:
 
