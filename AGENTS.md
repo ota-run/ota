@@ -253,7 +253,7 @@ This means:
 
 V1 is the product contract. Phases are the implementation plan.
 
-Agents must follow the archived V1 plan in [docs/planning/v1/phases.md](docs/planning/v1/phases.md), the archived V2 plan in [docs/planning/v2/plan.md](docs/planning/v2/plan.md), the archived V2.1 plan in [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md) when touching shipped behavior, and the active V9.1 plan in [docs/planning/v9.1/plan.md](docs/planning/v9.1/plan.md) for new feature work. Plans V3 through V9 are complete and archived in `docs/planning/`.
+Agents must follow the archived V1 plan in [docs/planning/v1/phases.md](docs/planning/v1/phases.md), the archived V2 plan in [docs/planning/v2/plan.md](docs/planning/v2/plan.md), the archived V2.1 plan in [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md) when touching shipped behavior, and the active V11.18 plan in [docs/planning/v11.18/plan.md](docs/planning/v11.18/plan.md) for new feature work. Plans V3 through V11.17 are complete and archived in `docs/planning/`.
 
 Version discipline:
 
@@ -393,17 +393,32 @@ Recommended logical boundaries:
 - `parser` → file loading and decoding
 - `validator` → structural and semantic validation
 - `doctor` → readiness diagnosis and prioritization
-- `detect` → deterministic repo inspection and inference
-- `init` → onboarding UX above detect
+- `detector` → deterministic repo inspection and inference
 - `runner` → task execution
+- `execution` → process spawning, env setup, and task execution internals
+- `execution_boundary` → fresh-boundary setup proof tracking (V11.16)
 - `workspace` → multi-repo bootstrap logic
 - `contract_drift` → detect drift between existing contract declarations and current repo state; feeds additional findings into `doctor`
 - `policy_pack` → org-level policy pack loading and provisioning rules evaluation
+- `provisioning` → resource provisioning logic
 - `update` → self-update binary logic for `ota self-update`
 - `test_support` → shared test synchronization primitives (`ENV_MUTEX`, `CWD_MUTEX`) used by integration tests
-- `export` → interop outputs and generated artifacts
 - `output` → human-readable and JSON output formatting
+- `terminal` → terminal interaction, signal handling, and process control
 - `cli` → command definitions and orchestration only
+- `adapter_inputs` → adapter input resolution for bake/compose workflows
+- `agent_boundary_docs` → generates `AGENTS.md` content from `ota.yaml`
+- `capabilities` → agent capability evaluation
+- `ci_projection` → managed CI workflow projection and generation
+- `github_projection` → GitHub Actions workflow generation adapter
+- `claim_assurance` → contract-claim assurance with policy-independent proof (V11.14)
+- `hydration_provenance` → typed dependency hydration tracking
+- `replay_inputs` → replay-input identity hardening
+- `semantic_identity` → content-addressed semantic hashing (SHA-256 based)
+- `toolchains` → toolchain detection and resolution
+- `jsonc` → JSONC (JSON with comments) parsing support
+- `published_contract_schemas` → JSON schema generation and publishing
+- `published_docs_manifest` → documentation manifest generation
 
 The CLI is implemented in Rust 2024 edition (see `Cargo.toml`). Use stable, explicit crates as listed there. All new Rust code should match the edition and crate posture.
 
@@ -528,13 +543,23 @@ Avoid inventing overlapping terms if the above already fit.
 ### Recommended crate posture
 
 Use stable foundations such as:
-- `clap`
+- `clap` (with `derive` feature)
+- `clap_complete` (shell completion generation)
 - `serde`
 - `serde_yaml`
 - `serde_json`
 - `thiserror`
 - `toml`
 - `time` (with `formatting` and `macros` features)
+- `semver` (version parsing and comparison)
+- `dotenvy` (`.env` file loading)
+- `jsonschema` (with `draft202012` feature for JSON Schema validation)
+- `sha2` (SHA-256 hashing for semantic identity)
+- `fs2` (file locking)
+- `quick-xml` (XML parsing)
+- `ctrlc` (Ctrl-C signal handling)
+- `signal-hook` (Unix signal handling)
+- `getrandom` (random number generation)
 - `tempfile` (dev-dependency for tests)
 
 Do not add `anyhow` or `schemars` — they are not used in this codebase. Check `Cargo.toml` before adding a new crate.
