@@ -929,6 +929,9 @@ selected transaction completed and cleanup reached manager-observed inactive sta
 read `proof_verdict` with `not_proved[]` before treating it as application or repo proof.
 
 - `mode` is `lifecycle-proof`, `phase` is `lifecycle`, and `stage_family` is `proof`.
+- A concurrent lifecycle transaction is rejected before a manager observation or cleanup lease;
+  its finalization is `not_run` and its terminal record remains an unsuccessful, lease-free
+  transaction.
 - Each `services[]` record is bound to the same transaction identity and names the observed
   pre-existing state, cleanup lease, ownership, and start/readiness/teardown outcomes.
 - `start` and `teardown` command outcomes are runner-attested. Readiness and manager-state

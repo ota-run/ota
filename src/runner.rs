@@ -1786,6 +1786,7 @@ const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
 const OTA_RUN_EXECUTION_LOCK_FILE: &str = "run-execution.lock";
+const OTA_LIFECYCLE_PROOF_LOCK_FILE: &str = "lifecycle-proof.lock";
 const OTA_ACTIVE_EXECUTIONS_FILE: &str = "active-executions.json";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
@@ -1802,6 +1803,16 @@ struct RepoExecutionLockGuard {
 }
 
 impl Drop for RepoExecutionLockGuard {
+    fn drop(&mut self) {
+        let _ = self.lock_file.unlock();
+    }
+}
+
+struct LifecycleProofLockGuard {
+    lock_file: File,
+}
+
+impl Drop for LifecycleProofLockGuard {
     fn drop(&mut self) {
         let _ = self.lock_file.unlock();
     }
@@ -6004,6 +6015,7 @@ fn repo_state_contains_only_cleanup_metadata(working_dir: &Path) -> Result<bool,
             OTA_OWNERSHIP_ID_FILE
                 | OTA_MANAGED_ENGINES_FILE
                 | OTA_RUN_EXECUTION_LOCK_FILE
+                | OTA_LIFECYCLE_PROOF_LOCK_FILE
                 | OTA_ACTIVE_EXECUTIONS_FILE
         );
         if !is_metadata {
@@ -8873,6 +8885,23 @@ where
             },
         })
         .collect::<Vec<_>>();
+    // Serialize lifecycle ownership for one repository before any manager state observation.
+    // Without this guard, concurrent invocations can both observe an inactive service and each
+    // believe it owns the same destructive cleanup lease.
+    let _lifecycle_lock = match acquire_lifecycle_proof_lock(working_dir) {
+        Ok(lock) => lock,
+        Err(error) => {
+            return LifecycleProofTransaction {
+                records,
+                finalization: LifecycleProofFinalization {
+                    state: String::from("not_run"),
+                    after_interruption: false,
+                    evidence_class: ExecutionEvidenceClass::Attested,
+                },
+                error: Some(error),
+            };
+        }
+    };
     let mut error = None;
     let mut interrupted = false;
 
@@ -31229,6 +31258,38 @@ fn repo_execution_lock_path(working_dir: &Path) -> PathBuf {
     repo_ota_state_file_path(working_dir, OTA_RUN_EXECUTION_LOCK_FILE)
 }
 
+fn lifecycle_proof_lock_path(working_dir: &Path) -> PathBuf {
+    repo_ota_state_file_path(working_dir, OTA_LIFECYCLE_PROOF_LOCK_FILE)
+}
+
+fn acquire_lifecycle_proof_lock(working_dir: &Path) -> Result<LifecycleProofLockGuard, String> {
+    let lock_path = lifecycle_proof_lock_path(working_dir);
+    fs::create_dir_all(repo_ota_state_dir(working_dir)).map_err(|source| {
+        format!(
+            "lifecycle proof could not create transaction lock `{}`: {source}",
+            lock_path.display()
+        )
+    })?;
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|source| {
+            format!(
+                "lifecycle proof could not open transaction lock `{}`: {source}",
+                lock_path.display()
+            )
+        })?;
+    lock_file.try_lock_exclusive().map_err(|_| {
+        format!(
+            "lifecycle proof transaction is already active for this repository; wait for its runner-owned finalizer before retrying (`{}`)",
+            lock_path.display()
+        )
+    })?;
+    Ok(LifecycleProofLockGuard { lock_file })
+}
+
 fn repo_active_executions_path(working_dir: &Path) -> PathBuf {
     repo_ota_state_file_path(working_dir, OTA_ACTIVE_EXECUTIONS_FILE)
 }
@@ -32515,6 +32576,7 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
+    use fs2::FileExt;
     use tempfile::{TempDir, tempdir};
 
     use crate::parser::{load_contract, load_contract_for_member, parse_contract_str};
@@ -68951,6 +69013,56 @@ tasks:
             }
             fs::write(path, contents.trim_start()).unwrap();
         }
+    }
+
+    #[test]
+    fn lifecycle_transaction_refuses_when_another_lifecycle_transaction_holds_the_lock() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-lock
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-lock
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+"#,
+        );
+        let lock_path = super::lifecycle_proof_lock_path(fixture.dir.path());
+        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let lock_file = File::create(&lock_path).unwrap();
+        lock_file.try_lock_exclusive().unwrap();
+
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("database")],
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            fixture.dir.path(),
+            |_| panic!("a locked lifecycle transaction must not observe readiness"),
+            || panic!("a locked lifecycle transaction must not run the assertion"),
+        );
+
+        assert!(
+            transaction
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("transaction is already active"))
+        );
+        assert_eq!(transaction.records[0].preexisting_state, "unknown");
+        assert_eq!(transaction.records[0].cleanup_lease, "not_acquired");
+        assert_eq!(transaction.finalization.state, "not_run");
+        assert!(transaction.records.iter().all(|record| {
+            record.ownership == "unknown"
+                && record.start.state == "not_run"
+                && record.readiness.state == "not_run"
+                && record.teardown.state == "not_run"
+                && record.teardown_assertion.state == "not_run"
+        }));
     }
 
     #[cfg(unix)]

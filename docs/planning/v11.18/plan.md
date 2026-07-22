@@ -237,6 +237,8 @@ functional proof merely because both commands returned zero.
   observer or isolated-boundary absence attestation are therefore ineligible, not weakly admitted.
 - Cleanup ownership is transaction-local. A later CLI invocation, another workflow instance, or an
   unrelated process cannot inherit a right to stop the service.
+- The runner serializes lifecycle transactions for one repository before initial manager-state
+  observation. A competing invocation is refused before it can acquire a cleanup lease.
 - Native host lifecycle proof defaults to qualified evidence. V11.16 boundary evidence may
   strengthen initial-state provenance, but no caller environment signal can promote it.
 

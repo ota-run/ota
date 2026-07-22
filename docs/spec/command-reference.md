@@ -631,6 +631,8 @@ Current behavior:
 - requires the selected workflow to declare `proof.lifecycle.services[]`
 - refuses an explicit `--service` outside that declared lifecycle scope
 - executes the selected workflow's prerequisite closure before acquiring lifecycle ownership
+- refuses a concurrent lifecycle transaction for the same repository before it can observe manager
+  state or acquire a cleanup lease
 - observes manager-owned initial state, refuses a pre-existing active service, and acquires a
   cleanup lease only after a current inactive observation
 - starts dependency services in declared order, checks declared readiness, and runs the optional

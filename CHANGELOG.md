@@ -57,6 +57,10 @@
   Archives now bind the resolved execution scope and target OS and verify their content identity,
   semantic snapshot reference, and transaction/service binding before use as local evidence.
 
+- fixed concurrent lifecycle-proof ownership. `ota proof lifecycle` now acquires a repository-scoped
+  transaction lock before it observes any manager state; a competing invocation is refused before
+  it can acquire a cleanup lease, start a service, or run a post-readiness assertion.
+
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor
   now validates the Ruby provider and admits Ota's typed `gem install bundler --version <version>`

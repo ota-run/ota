@@ -105120,6 +105120,17 @@ fn verify_lifecycle_proof_archive(
         .iter()
         .map(|service| &service.service)
         .collect::<BTreeSet<_>>();
+    let lease_free_refusal = archive.proof.finalization.state == "not_run"
+        && recorded == closure
+        && archive.proof.services.iter().all(|service| {
+            service.preexisting_state == "unknown"
+                && service.cleanup_lease == "not_acquired"
+                && service.ownership == "unknown"
+                && service.start.state == "not_run"
+                && service.readiness.state == "not_run"
+                && service.teardown.state == "not_run"
+                && service.teardown_assertion.state == "not_run"
+        });
     if archive.kind != "lifecycle_proof"
         || archive.version != 1
         || archive.scope.workflow != archive.proof.workflow
@@ -105133,7 +105144,7 @@ fn verify_lifecycle_proof_archive(
         || !selected.is_subset(&closure)
         || closure.len() != archive.scope.service_closure.len()
         || (archive.proof.finalization.state != "not_run" && recorded != closure)
-        || (archive.proof.finalization.state == "not_run" && !recorded.is_empty())
+        || (archive.proof.finalization.state == "not_run" && !lease_free_refusal)
         || archive.scope.transaction_id != archive.proof.transaction_id
         || archive
             .proof
