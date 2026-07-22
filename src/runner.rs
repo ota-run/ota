@@ -8894,6 +8894,14 @@ where
                 working_dir,
                 TaskExecutionMode::Capture,
             ) {
+                Ok(output) if task_command_output_reports_user_interruption(&output) => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("interrupted"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error = Some(format!("service `{service_name}` start was interrupted"));
+                    break;
+                }
                 Ok(output) if output.exit_code == 0 => {
                     records[index].start = LifecycleProofTransition {
                         state: String::from("command_succeeded"),
@@ -8964,6 +8972,15 @@ where
                 working_dir,
                 TaskExecutionMode::Capture,
             ) {
+                Ok(output) if task_command_output_reports_user_interruption(&output) => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("interrupted"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error.get_or_insert_with(|| {
+                        format!("service `{service_name}` teardown was interrupted")
+                    });
+                }
                 Ok(output) if output.exit_code == 0 => {
                     records[index].teardown = LifecycleProofTransition {
                         state: String::from("command_succeeded"),

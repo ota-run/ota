@@ -205,6 +205,41 @@ fn lifecycle_proof_json_schema_accepts_runner_owned_transaction() {
     assert_matches_schema("proof-lifecycle.json", &payload);
 }
 
+#[test]
+fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
+    let payload = serde_json::json!({
+        "kind": "lifecycle_proof",
+        "version": 1,
+        "contract_identity": {},
+        "contract_snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contract_snapshot_ref": ".ota/contracts/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+        "scope": {
+            "workflow": "smoke",
+            "member": "api",
+            "selected_services": ["database"],
+            "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "backend": "container",
+            "provider": "docker",
+            "lifecycle": "ephemeral",
+            "target": "local",
+            "target_os": "linux"
+        },
+        "proof": {
+            "ok": true,
+            "proof_verdict": "passed_with_unproven_boundaries",
+            "path": "ota.yaml",
+            "mode": "lifecycle-proof",
+            "workflow": "smoke",
+            "phase": "lifecycle",
+            "stage_family": "proof",
+            "proof_scope": { "kind": "lifecycle_transition", "proof_class": "slice_proof" },
+            "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "services": []
+        }
+    });
+    assert_matches_schema("proof-lifecycle-archive.json", &payload);
+}
+
 fn write_contract(dir: &TempDir, contents: &str) {
     fs::write(dir.path().join("ota.yaml"), contents).expect("contract should be written");
 }

@@ -89,12 +89,13 @@ durable agent workflow belongs in the canonical Ota skill.
   transaction; a command-only start carries `service_started_state_not_proved`, alongside the
   mandatory application-output and broader-repo boundaries. Focused regressions cover pre-existing
   service preservation and assertion-failure teardown. Runner-owned finalization and a local
-  content-addressed lifecycle archive are now implemented in the working tree: the archive binds
+  content-addressed lifecycle archive landed in `af74ca4a`: the archive binds
   the semantic contract snapshot, selected workflow/service scope, transaction records, and
   terminal verdict. The command now shares selected-workflow agent admission, mode resolution for
   prerequisite/assertion tasks, and monorepo member loading; service-manager controls remain on
-  their declared boundary. Next: local failure/interrupt and multi-service rollback regressions
-  before any CI projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
+  their declared boundary. Archive scope and reader verification landed in `dca9e390`, including
+  an interrupted-start cleanup regression. Next: multi-service rollback and broader local failure
+  regressions before any CI projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
   current-boundary inactive state and cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a

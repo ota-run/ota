@@ -3237,7 +3237,7 @@ pub struct ProofRuntimeStatus<'a> {
 }
 
 /// Runner-owned evidence for one manager-controlled lifecycle transition.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleProofTransition {
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3245,7 +3245,7 @@ pub struct LifecycleProofTransition {
 }
 
 /// One service record in a bounded lifecycle proof transaction.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleProofServiceRecord {
     pub service: String,
     pub transaction_id: String,

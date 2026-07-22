@@ -112,13 +112,14 @@ use crate::output::{
     ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
     HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
     InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofStatus,
-    ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess,
-    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
-    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
-    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved,
-    ProofRuntimeScope, ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofServiceRecord,
+    LifecycleProofStatus, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
+    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArchive, ProofRuntimeArtifacts,
+    ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
+    ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved, ProofRuntimeScope,
+    ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
     ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline, ReceiptDiffComparison,
     ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
     ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind,
@@ -3246,6 +3247,9 @@ pub fn proof_lifecycle(
         match write_lifecycle_proof_archive(
             contract_working_dir(&target.contract_path),
             &contract,
+            &target.contract_path,
+            member,
+            overrides,
             workflow_key,
             &selected_services,
             &status,
@@ -93652,13 +93656,27 @@ workflows:
             .path()
             .join(archived_json["archive"]["path"].as_str().unwrap());
         assert!(archive_path.exists());
-        let archive: serde_json::Value =
-            serde_json::from_slice(&fs::read(archive_path).unwrap()).unwrap();
+        let mut archive: serde_json::Value =
+            serde_json::from_slice(&fs::read(&archive_path).unwrap()).unwrap();
         assert_eq!(archive["kind"], "lifecycle_proof");
         assert_eq!(
             archive["proof"]["transaction_id"],
             archived_json["transaction_id"]
         );
+        assert_eq!(archive["scope"]["backend"], "native");
+        assert_eq!(archive["scope"]["target_os"], super::current_os());
+        assert_eq!(archive["scope"]["workflow"], "smoke");
+        archive["scope"]["transaction_id"] = serde_json::Value::String(String::from(
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ));
+        fs::write(&archive_path, serde_json::to_vec(&archive).unwrap()).unwrap();
+        let error = super::verify_lifecycle_proof_archive(
+            &archive_path,
+            archived_json["archive"]["identity"].as_str().unwrap(),
+            fixture.path(),
+        )
+        .unwrap_err();
+        assert!(error.contains("content-addressed identity"), "{error}");
 
         fs::write(
             &contract_path,
@@ -93733,7 +93751,7 @@ workflows:
         fs::write(
             &docker,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}'; exit 9 ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}'; exit 130 ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
                 log_path.display(),
                 state_path.display(),
                 state_path.display(),
@@ -93766,6 +93784,12 @@ workflows:
             None => unsafe { env::remove_var("PATH") },
         }
         assert_eq!(start_failure.exit_code, 1, "{}", start_failure.stdout);
+        let start_failure_json: serde_json::Value =
+            serde_json::from_str(&start_failure.stdout).unwrap();
+        assert_eq!(
+            start_failure_json["services"][0]["start"]["state"],
+            "interrupted"
+        );
         assert!(!state_path.exists(), "failed start must still finalize");
         let log = fs::read_to_string(&log_path).unwrap();
         assert!(log.contains("stop database"), "{log}");
@@ -104383,11 +104407,20 @@ struct ProofRuntimeArchivedStatus<'a> {
     archive: ProofRuntimeArchive,
 }
 
-#[derive(Serialize)]
-struct LifecycleProofArchiveScope<'a> {
-    workflow: &'a str,
-    selected_services: &'a [String],
-    transaction_id: &'a str,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LifecycleProofArchiveScope {
+    workflow: String,
+    member: Option<String>,
+    selected_services: Vec<String>,
+    transaction_id: String,
+    backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+    target_os: String,
 }
 
 #[derive(Serialize)]
@@ -104399,8 +104432,25 @@ struct LifecycleProofArchiveRecord<'a> {
     contract_snapshot_ref: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_identity: Option<&'a str>,
-    scope: LifecycleProofArchiveScope<'a>,
+    scope: LifecycleProofArchiveScope,
     proof: &'a LifecycleProofStatus,
+}
+
+#[derive(Debug, Deserialize)]
+struct LifecycleProofArchiveReadRecord {
+    kind: String,
+    version: u32,
+    contract_snapshot_hash: String,
+    contract_snapshot_ref: String,
+    scope: LifecycleProofArchiveScope,
+    proof: LifecycleProofArchiveReadProof,
+}
+
+#[derive(Debug, Deserialize)]
+struct LifecycleProofArchiveReadProof {
+    transaction_id: String,
+    services: Vec<LifecycleProofServiceRecord>,
+    proof_verdict: String,
 }
 
 #[derive(Serialize)]
@@ -104523,6 +104573,9 @@ fn load_proof_runtime_archive_candidates(
 fn write_lifecycle_proof_archive(
     root: &Path,
     contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
     workflow: &str,
     selected_services: &[String],
     proof: &LifecycleProofStatus,
@@ -104534,6 +104587,19 @@ fn write_lifecycle_proof_archive(
     let contract_identity = repo_contract_identity(contract);
     let source_identity = git_head_identity(root).ok();
     let snapshot_ref = receipt_storage_path_display(snapshot_path);
+    let execution_scope =
+        proof_runtime_archive_scope(contract, contract_path, Some(workflow), overrides);
+    let scope = LifecycleProofArchiveScope {
+        workflow: workflow.to_string(),
+        member: member.map(str::to_string),
+        selected_services: selected_services.to_vec(),
+        transaction_id: proof.transaction_id.clone(),
+        backend: execution_scope.backend,
+        provider: execution_scope.provider,
+        lifecycle: execution_scope.lifecycle,
+        target: execution_scope.target,
+        target_os: current_os().to_string(),
+    };
     let record = LifecycleProofArchiveRecord {
         kind: "lifecycle_proof",
         version: 1,
@@ -104541,11 +104607,7 @@ fn write_lifecycle_proof_archive(
         contract_snapshot_hash: &snapshot.hash,
         contract_snapshot_ref: &snapshot_ref,
         source_identity: source_identity.as_deref(),
-        scope: LifecycleProofArchiveScope {
-            workflow,
-            selected_services,
-            transaction_id: proof.transaction_id.as_str(),
-        },
+        scope,
         proof,
     };
     let content = serde_json::to_vec_pretty(&record)
@@ -104574,10 +104636,62 @@ fn write_lifecycle_proof_archive(
             )
         })?;
     }
+    verify_lifecycle_proof_archive(&archive_path, &identity, root)?;
     Ok(ProofRuntimeArchive {
         identity,
         path: receipt_storage_path_display(&archive_path),
     })
+}
+
+fn verify_lifecycle_proof_archive(
+    archive_path: &Path,
+    identity: &str,
+    root: &Path,
+) -> Result<(), String> {
+    verify_proof_runtime_archive_identity(archive_path, identity)?;
+    let bytes = fs::read(archive_path).map_err(|error| {
+        format!(
+            "failed to read lifecycle proof archive `{}`: {error}",
+            compact_path(archive_path, ".")
+        )
+    })?;
+    let archive: LifecycleProofArchiveReadRecord =
+        serde_json::from_slice(&bytes).map_err(|error| {
+            format!(
+                "invalid lifecycle proof archive `{}`: {error}",
+                compact_path(archive_path, ".")
+            )
+        })?;
+    let expected_snapshot_path = contract_snapshot_archive_dir(root).join(
+        contract_snapshot_archive_file_name(&archive.contract_snapshot_hash),
+    );
+    if Path::new(&archive.contract_snapshot_ref) != expected_snapshot_path {
+        return Err(String::from(
+            "lifecycle proof archive snapshot reference is not canonical",
+        ));
+    }
+    let snapshot = fs::read(&expected_snapshot_path)
+        .map_err(|error| format!("failed to read lifecycle proof snapshot: {error}"))?;
+    if contract_snapshot_hash(&snapshot) != archive.contract_snapshot_hash {
+        return Err(String::from(
+            "lifecycle proof archive snapshot identity does not match content",
+        ));
+    }
+    if archive.kind != "lifecycle_proof"
+        || archive.version != 1
+        || archive.scope.transaction_id != archive.proof.transaction_id
+        || archive
+            .proof
+            .services
+            .iter()
+            .any(|service| service.transaction_id != archive.scope.transaction_id)
+        || archive.proof.proof_verdict.is_empty()
+    {
+        return Err(String::from(
+            "lifecycle proof archive has an invalid transaction binding",
+        ));
+    }
+    Ok(())
 }
 
 fn write_proof_runtime_archive(

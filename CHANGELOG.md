@@ -50,6 +50,8 @@
   terminal lifecycle verdict; it is local evidence only, not CI projection or broader runtime proof.
   Lifecycle proof now also reuses selected-workflow agent admission, task execution-mode resolution,
   and monorepo member loading; manager commands stay on their declared control boundary.
+  Archives now bind the resolved execution scope and target OS and verify their content identity,
+  semantic snapshot reference, and transaction/service binding before use as local evidence.
 
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor
