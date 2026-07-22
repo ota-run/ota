@@ -101,8 +101,10 @@ durable agent workflow belongs in the canonical Ota skill.
   verifies the full closure, service records, transaction, and finalization binding. A
   runner-observed readiness interruption now emits a typed `interrupted` transition before the
   same finalizer runs. A stop-command failure retains typed transition evidence and does not
-  prevent other leased services from finalizing. Next: re-review this local boundary before any CI
-  projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
+  prevent other leased services from finalizing; an interrupted teardown with unproved manager
+  cleanup is explicitly `incomplete_after_interruption`. The local runner/archive/schema review is
+  complete. Next: decide whether the verified local boundary warrants a narrowly scoped CI
+  projection assessment; Caddy pressure remains excluded. Generic host start/stop remains ineligible until it can prove
   current-boundary inactive state and cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a

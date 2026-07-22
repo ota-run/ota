@@ -99,7 +99,7 @@
       "additionalProperties": false,
       "required": ["state", "after_interruption", "evidence_class"],
       "properties": {
-        "state": { "type": "string", "enum": ["not_run", "completed", "completed_after_interruption", "incomplete"] },
+        "state": { "type": "string", "enum": ["not_run", "completed", "completed_after_interruption", "incomplete", "incomplete_after_interruption"] },
         "after_interruption": { "type": "boolean" },
         "evidence_class": { "const": "attested" }
       }

@@ -955,7 +955,8 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
 - `finalization.state: completed_after_interruption` and `after_interruption: true` record that
   the runner completed its reverse finalizer after an interrupted start, readiness observation, or
   assertion; each service record retains the corresponding typed `interrupted` transition and
-  teardown evidence.
+  teardown evidence. `incomplete_after_interruption` preserves both facts when a teardown
+  interruption also leaves manager-state cleanup unproved.
 
 The command schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json); archived records
 use [proof-lifecycle-archive.json](json-schemas/proof-lifecycle-archive.json).

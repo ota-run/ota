@@ -105147,10 +105147,17 @@ fn verify_lifecycle_proof_archive(
         || archive.proof.ok != (archive.proof.proof_verdict != "failed")
         || !matches!(
             archive.proof.finalization.state.as_str(),
-            "not_run" | "completed" | "completed_after_interruption" | "incomplete"
+            "not_run"
+                | "completed"
+                | "completed_after_interruption"
+                | "incomplete"
+                | "incomplete_after_interruption"
         )
         || archive.proof.finalization.after_interruption
-            != (archive.proof.finalization.state == "completed_after_interruption")
+            != matches!(
+                archive.proof.finalization.state.as_str(),
+                "completed_after_interruption" | "incomplete_after_interruption"
+            )
     {
         return Err(String::from(
             "lifecycle proof archive has an invalid transaction binding",

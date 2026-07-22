@@ -9010,6 +9010,7 @@ where
                         state: String::from("interrupted"),
                         evidence_class: Some(ExecutionEvidenceClass::Attested),
                     };
+                    interrupted = true;
                     error.get_or_insert_with(|| {
                         format!("service `{service_name}` teardown was interrupted")
                     });
@@ -9063,7 +9064,11 @@ where
         .iter()
         .any(|record| record.cleanup_lease == "cleanup_failed")
     {
-        String::from("incomplete")
+        String::from(if interrupted {
+            "incomplete_after_interruption"
+        } else {
+            "incomplete"
+        })
     } else if interrupted {
         String::from("completed_after_interruption")
     } else {
@@ -68962,6 +68967,7 @@ services:
   database:
     manager:
       kind: compose
+      name: lifecycle-teardown-interrupt
       file: compose.yaml
       service: database
     readiness:
@@ -69017,6 +69023,77 @@ services:
         let log = fs::read_to_string(&log_path).unwrap();
         assert_eq!(log.matches("up -d database").count(), 1, "{log}");
         assert_eq!(log.matches("stop database").count(), 1, "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_transaction_records_interrupted_incomplete_teardown() {
+        let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-teardown-interrupt
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-teardown-interrupt
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        let teardown_marker = fixture.dir.path().join("teardown-interrupted");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            &format!(
+                "#!/bin/sh\ncase \"$*\" in\n  *'ps '*database*) [ -f '{}' ] && printf running || true ;;\n  *'stop database'*) touch '{}'; exit 130 ;;\nesac\n",
+                teardown_marker.display(),
+                teardown_marker.display(),
+            ),
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("database")],
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            fixture.dir.path(),
+            |_| true,
+            || Ok(()),
+        );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(
+            transaction.records[0].teardown.state, "interrupted",
+            "{:?}",
+            transaction.error
+        );
+        assert_eq!(
+            transaction.records[0].teardown_assertion.state,
+            "state_not_observed"
+        );
+        assert_eq!(transaction.records[0].cleanup_lease, "cleanup_failed");
+        assert_eq!(
+            transaction.finalization.state,
+            "incomplete_after_interruption"
+        );
+        assert!(transaction.finalization.after_interruption);
     }
 
     // ── command.interaction tests ──────────────────────────────────────────────
