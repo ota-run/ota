@@ -1006,6 +1006,20 @@ enum ProofCommands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Prove a bounded manager-owned service start/readiness/teardown transaction.
+    Lifecycle {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Prove one declared repo workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
+        /// Prove one service already declared by the selected workflow lifecycle proof.
+        #[arg(long)]
+        service: Option<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -4927,6 +4941,22 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Proof {
+            command:
+                ProofCommands::Lifecycle {
+                    json,
+                    workflow,
+                    service,
+                    path,
+                },
+        } => commands::proof_lifecycle(
+            path.as_deref(),
+            file.as_deref(),
+            workflow.as_deref(),
+            service.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
         Commands::Ci {
             command:
                 CiCommands::Projection {
@@ -6386,6 +6416,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Proof {
             command: ProofCommands::Runtime { json, .. },
         }
+        | Commands::Proof {
+            command: ProofCommands::Lifecycle { json, .. },
+        }
         | Commands::Ci {
             command:
                 CiCommands::Github {
@@ -6489,6 +6522,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Env { .. } => "ota env",
         Commands::Proof { command } => match command {
             ProofCommands::Runtime { .. } => "ota proof runtime",
+            ProofCommands::Lifecycle { .. } => "ota proof lifecycle",
         },
         Commands::Ci { command } => match command {
             CiCommands::Projection { .. } => "ota ci projection",

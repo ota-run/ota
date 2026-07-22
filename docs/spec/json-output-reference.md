@@ -20,6 +20,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/execution-topology.json](json-schemas/execution-topology.json)
 - [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
+- [json-schemas/proof-lifecycle.json](json-schemas/proof-lifecycle.json)
 - [json-schemas/refusal-canary.json](json-schemas/refusal-canary.json)
 - [json-schemas/services.json](json-schemas/services.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
@@ -920,6 +921,24 @@ shell/JQ assertions or contract-authored refusal reasons.
 GitHub exposes that mapping in `projection.provider_checks[]`. `merge_check_id` stays canonical and
 scope-free; `provider_check_name` adds the selected target OS and execution mode, preventing the
 same canonical lane from collapsing when a caller runs it across multiple platforms.
+
+## `ota proof lifecycle --json`
+
+Lifecycle proof records one runner-owned service transition transaction. `ok` reports whether the
+selected transaction completed and cleanup reached manager-observed inactive state; consumers must
+read `proof_verdict` with `not_proved[]` before treating it as application or repo proof.
+
+- `mode` is `lifecycle-proof`, `phase` is `lifecycle`, and `stage_family` is `proof`.
+- Each `services[]` record is bound to the same transaction identity and names the observed
+  pre-existing state, cleanup lease, ownership, and start/readiness/teardown outcomes.
+- `start` and `teardown` command outcomes are runner-attested. Readiness and manager-state
+  observations are derived from the declared service manager; an omitted readiness remains
+  `not_declared`, never a positive state claim.
+- A successful lifecycle transition remains a bounded slice proof. Ota emits
+  `application_output_not_proved` and `broader_repo_completion_not_proved` unless a future
+  dedicated output-proof carrier establishes broader truth.
+
+The schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json).
 
 ## `ota proof runtime --json`
 

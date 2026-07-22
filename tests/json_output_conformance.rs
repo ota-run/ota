@@ -168,6 +168,43 @@ fn assert_rejects_schema(schema_name: &str, instance: &Value) {
     );
 }
 
+#[test]
+fn lifecycle_proof_json_schema_accepts_runner_owned_transaction() {
+    let payload = serde_json::json!({
+        "ok": true,
+        "proof_verdict": "passed_with_unproven_boundaries",
+        "path": "ota.yaml",
+        "mode": "lifecycle-proof",
+        "workflow": "smoke",
+        "phase": "lifecycle",
+        "stage_family": "proof",
+        "proof_scope": {
+            "kind": "lifecycle_transition",
+            "proof_class": "slice_proof",
+            "workflow": "smoke",
+            "intent": "manager_owned_service_lifecycle"
+        },
+        "transaction_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "services": [{
+            "service": "database",
+            "transaction_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "preexisting_state": "inactive_observed",
+            "cleanup_lease": "released",
+            "ownership": "started_this_transaction",
+            "start": { "state": "command_succeeded", "evidence_class": "attested" },
+            "readiness": { "state": "not_declared" },
+            "teardown": { "state": "command_succeeded", "evidence_class": "attested" },
+            "teardown_assertion": { "state": "state_observed", "evidence_class": "derived" }
+        }],
+        "not_proved": [{
+            "kind": "application_output_not_proved",
+            "relative_to": "declared_lifecycle_service_transition",
+            "source": "scope"
+        }]
+    });
+    assert_matches_schema("proof-lifecycle.json", &payload);
+}
+
 fn write_contract(dir: &TempDir, contents: &str) {
     fs::write(dir.path().join("ota.yaml"), contents).expect("contract should be written");
 }

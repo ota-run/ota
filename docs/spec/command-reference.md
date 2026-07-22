@@ -614,6 +614,35 @@ JSON output:
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
 
+## `ota proof lifecycle`
+
+Prove one bounded, manager-owned service lifecycle transaction without copying start, readiness,
+or teardown shell commands into the workflow.
+
+```bash
+ota proof lifecycle --workflow smoke [PATH]
+ota proof lifecycle --workflow smoke --service database [PATH]
+ota proof lifecycle --json --workflow smoke [PATH]
+```
+
+Current behavior:
+
+- requires the selected workflow to declare `proof.lifecycle.services[]`
+- refuses an explicit `--service` outside that declared lifecycle scope
+- executes the selected workflow's prerequisite closure before acquiring lifecycle ownership
+- observes manager-owned initial state, refuses a pre-existing active service, and acquires a
+  cleanup lease only after a current inactive observation
+- starts dependency services in declared order, checks declared readiness, and runs the optional
+  finite assertion after readiness; assertion service requirements reuse the transaction-owned
+  services rather than issuing another start command
+- attempts teardown in reverse order and requires a positive manager inactive observation before
+  releasing each lease
+- emits `passed_with_unproven_boundaries` for a successful transaction because lifecycle state
+  transitions do not prove broader application output or repo completion
+
+Use it for a contract-owned contributor smoke that must prove Ota starts and cleans up only the
+service state it owns. It is not a replacement for an application-output or deployment proof.
+
 ## `ota proof runtime`
 
 Prove that one selected runtime path can become ready, capture the canonical execution artifacts,

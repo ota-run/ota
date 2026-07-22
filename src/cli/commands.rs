@@ -112,35 +112,37 @@ use crate::output::{
     ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
     HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
     InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, ListedWorkflowSummary,
-    MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
-    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
-    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
-    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeStatus,
-    ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust, ReceiptDiffArtifactTrustRole,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
-    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffReplayHermeticity,
-    ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind, ReceiptDiffReplayScope,
-    ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
-    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
-    ReceiptPromotedBaseline, ReceiptSnapshotContract, ReceiptSnapshotSuccess,
-    ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass, RunPreviewPlan, RunPreviewSuccess,
-    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpReplayBaseline, UpReplayBaselineStatus,
-    UpReplayExecution, UpReplayFailureKind, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, ValidateWarning, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskHydrationProvenanceSummary, WorkspaceTaskHydrationSourceIdentity,
-    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess, execution_receipt_conflict,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofServiceRecord,
+    LifecycleProofStatus, LifecycleProofTransition, ListedWorkflowSummary, MemberServicesSuccess,
+    MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArchive, ProofRuntimeArtifacts,
+    ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
+    ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved, ProofRuntimeScope,
+    ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
+    ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline, ReceiptDiffComparison,
+    ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
+    ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind,
+    ReceiptDiffReplayScope, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
+    ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, ReplayInputClass,
+    RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
+    ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpReplayBaseline, UpReplayBaselineStatus, UpReplayExecution, UpReplayFailureKind, UpStatus,
+    ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
+    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
+    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
+    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskHydrationProvenanceSummary,
+    WorkspaceTaskHydrationSourceIdentity, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    execution_receipt_conflict,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -3008,6 +3010,390 @@ fn render_execution_topology_output(
             services,
             tasks,
         })),
+    }
+}
+
+pub fn proof_lifecycle(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    workflow_name: Option<&str>,
+    service_name: Option<&str>,
+    format: OutputFormat,
+    _debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => return CommandOutput::failure(error.to_string()),
+    };
+    let target = match load_and_validate_target(&resolved_path, None) {
+        Ok(target) => target,
+        Err(error) => return CommandOutput::failure(render_contract_problem(&error)),
+    };
+    let contract =
+        contract_adjusted_for_selected_workflow_env_profile(&target.contract, workflow_name)
+            .unwrap_or(target.contract);
+    let Some((workflow_key, workflow)) = contract.selected_workflow(workflow_name) else {
+        return CommandOutput::failure_with_code(
+            String::from("lifecycle proof requires a declared selected workflow"),
+            2,
+        );
+    };
+    let Some(lifecycle) = workflow.proof.lifecycle.as_ref() else {
+        return CommandOutput::failure_with_code(
+            format!(
+                "workflow `{workflow_key}` does not declare `proof.lifecycle`; add canonical service references before running lifecycle proof"
+            ),
+            2,
+        );
+    };
+
+    let transaction_id = match proof_runtime_seam_marker() {
+        Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
+        Err(error) => return CommandOutput::failure(error),
+    };
+    let selected_services = match service_name {
+        Some(service_name)
+            if !lifecycle
+                .services
+                .iter()
+                .any(|service| service == service_name) =>
+        {
+            return CommandOutput::failure_with_code(
+                format!(
+                    "service `{service_name}` is outside workflow `{workflow_key}` lifecycle proof scope"
+                ),
+                2,
+            );
+        }
+        Some(service_name) => vec![service_name.to_string()],
+        None => lifecycle.services.clone(),
+    };
+    let mut services = BTreeSet::new();
+    for service_name in &selected_services {
+        collect_service_dependencies(&contract, service_name.as_str(), &mut services);
+    }
+    let order = service_start_order_for(&contract, &services);
+    let working_dir = contract_working_dir(&target.contract_path);
+    let mut records = order
+        .iter()
+        .map(|service| LifecycleProofServiceRecord {
+            service: service.clone(),
+            transaction_id: transaction_id.clone(),
+            preexisting_state: String::from("unknown"),
+            cleanup_lease: String::from("not_acquired"),
+            ownership: String::from("unknown"),
+            start: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+            readiness: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+            teardown: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+            teardown_assertion: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut error = None::<String>;
+
+    // The validator prevents this closure from declaring lifecycle services, so prerequisites
+    // cannot acquire service ownership before this transaction observes initial state.
+    for task_name in contract.selected_workflow_task_closure_names(Some(workflow_key)) {
+        let skip_deps = contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.all_depends_on().is_empty());
+        let outcome = crate::runner::run_task_captured_with_overrides(
+            &contract,
+            &target.contract_path,
+            task_name.as_str(),
+            crate::runner::ExecutionOverrides {
+                skip_deps,
+                ..crate::runner::ExecutionOverrides::default()
+            },
+        );
+        match outcome {
+            Ok(outcome) if outcome.exit_code == 0 => {}
+            Ok(outcome) => {
+                error = Some(format!(
+                    "prerequisite task `{task_name}` exited with code {}",
+                    outcome.exit_code
+                ));
+                break;
+            }
+            Err(run_error) => {
+                error = Some(format!(
+                    "prerequisite task `{task_name}` could not run: {run_error}"
+                ));
+                break;
+            }
+        }
+    }
+
+    if error.is_none() {
+        for (index, service_name) in order.iter().enumerate() {
+            let service = &contract.services[service_name];
+            match crate::runner::observe_managed_service_state(service_name, service, working_dir) {
+                Ok(crate::runner::ManagedServiceState::Inactive) => {
+                    records[index].preexisting_state = String::from("inactive_observed");
+                    records[index].cleanup_lease = String::from("acquired");
+                    records[index].ownership = String::from("started_this_transaction");
+                }
+                Ok(crate::runner::ManagedServiceState::Active) => {
+                    records[index].preexisting_state = String::from("active_observed");
+                    records[index].ownership = String::from("reused_preexisting");
+                    error = Some(format!(
+                        "service `{service_name}` was already active; lifecycle proof will not take destructive ownership"
+                    ));
+                    break;
+                }
+                Err(state_error) => {
+                    error = Some(state_error);
+                    break;
+                }
+            }
+        }
+    }
+
+    if error.is_none() {
+        for (index, service_name) in order.iter().enumerate() {
+            let service = &contract.services[service_name];
+            match crate::runner::run_service_start_command(
+                service_name,
+                service,
+                working_dir,
+                crate::runner::TaskExecutionMode::Capture,
+            ) {
+                Ok(output) if output.exit_code == 0 => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("command_succeeded"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    }
+                }
+                Ok(output) => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error = Some(format!(
+                        "service `{service_name}` start exited with code {}",
+                        output.exit_code
+                    ));
+                    break;
+                }
+                Err(start_error) => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error = Some(start_error);
+                    break;
+                }
+            }
+            if service.readiness.is_some() || service.healthcheck.is_some() {
+                let report = diagnose_service(&contract, &target.contract_path, service_name);
+                if report.ok {
+                    records[index].readiness = LifecycleProofTransition {
+                        state: String::from("state_observed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Derived),
+                    };
+                } else {
+                    records[index].readiness = LifecycleProofTransition {
+                        state: String::from("state_not_observed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Derived),
+                    };
+                    error = Some(format!(
+                        "service `{service_name}` did not satisfy declared readiness"
+                    ));
+                    break;
+                }
+            } else {
+                records[index].readiness = LifecycleProofTransition {
+                    state: String::from("not_declared"),
+                    evidence_class: None,
+                };
+            }
+        }
+    }
+
+    if error.is_none() {
+        if let Some(assertion) = lifecycle.assertion.as_ref() {
+            match crate::runner::run_task_captured_with_started_services(
+                &contract,
+                &target.contract_path,
+                assertion.task.as_str(),
+                &services,
+            ) {
+                Ok(outcome) if outcome.exit_code == 0 => {}
+                Ok(outcome) => {
+                    error = Some(format!(
+                        "lifecycle assertion `{}` exited with code {}",
+                        assertion.task, outcome.exit_code
+                    ))
+                }
+                Err(run_error) => {
+                    error = Some(format!(
+                        "lifecycle assertion `{}` could not run: {run_error}",
+                        assertion.task
+                    ))
+                }
+            }
+        }
+    }
+
+    for (index, service_name) in order.iter().enumerate().rev() {
+        if records[index].cleanup_lease != "acquired" {
+            continue;
+        }
+        let service = &contract.services[service_name];
+        let start_attempted = records[index].start.state != "not_run";
+        if start_attempted {
+            match crate::runner::run_service_stop_command(
+                service_name,
+                service,
+                working_dir,
+                crate::runner::TaskExecutionMode::Capture,
+            ) {
+                Ok(output) if output.exit_code == 0 => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("command_succeeded"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    }
+                }
+                Ok(output) => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error.get_or_insert_with(|| {
+                        format!(
+                            "service `{service_name}` teardown exited with code {}",
+                            output.exit_code
+                        )
+                    });
+                }
+                Err(stop_error) => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error.get_or_insert(stop_error);
+                }
+            }
+        }
+        match crate::runner::observe_managed_service_state(service_name, service, working_dir) {
+            Ok(crate::runner::ManagedServiceState::Inactive) => {
+                records[index].teardown_assertion = LifecycleProofTransition {
+                    state: String::from("state_observed"),
+                    evidence_class: Some(ExecutionEvidenceClass::Derived),
+                };
+                records[index].cleanup_lease = String::from("released");
+            }
+            Ok(crate::runner::ManagedServiceState::Active) | Err(_) => {
+                records[index].teardown_assertion = LifecycleProofTransition {
+                    state: String::from("state_not_observed"),
+                    evidence_class: Some(ExecutionEvidenceClass::Derived),
+                };
+                records[index].cleanup_lease = String::from("cleanup_failed");
+                error.get_or_insert_with(|| format!("service `{service_name}` did not reach manager-observed inactive state after teardown"));
+            }
+        }
+    }
+
+    let ok = error.is_none();
+    let status = LifecycleProofStatus {
+        ok,
+        proof_verdict: String::from(if ok {
+            "passed_with_unproven_boundaries"
+        } else {
+            "failed"
+        }),
+        path: compact_contract_path(&target.contract_path),
+        mode: String::from("lifecycle-proof"),
+        workflow: workflow_key.to_string(),
+        phase: String::from("lifecycle"),
+        stage_family: String::from("proof"),
+        proof_scope: ProofRuntimeScope {
+            kind: String::from("lifecycle_transition"),
+            proof_class: String::from("slice_proof"),
+            workflow: Some(workflow_key.to_string()),
+            task: lifecycle
+                .assertion
+                .as_ref()
+                .map(|assertion| assertion.task.clone()),
+            intent: Some(String::from("manager_owned_service_lifecycle")),
+        },
+        transaction_id: transaction_id.clone(),
+        services: records,
+        not_proved: if ok {
+            vec![
+                ProofRuntimeNotProved {
+                    kind: String::from("application_output_not_proved"),
+                    relative_to: String::from("declared_lifecycle_service_transition"),
+                    source: String::from("scope"),
+                    dependency_id: None,
+                    proof_obligation_id: None,
+                    reason: Some(String::from(
+                        "lifecycle_transitions_do_not_prove_application_output",
+                    )),
+                    declared_by_tasks: Vec::new(),
+                    declared_by_workflows: Vec::new(),
+                },
+                ProofRuntimeNotProved {
+                    kind: String::from("broader_repo_completion_not_proved"),
+                    relative_to: String::from("selected_lifecycle_workflow"),
+                    source: String::from("scope"),
+                    dependency_id: None,
+                    proof_obligation_id: None,
+                    reason: None,
+                    declared_by_tasks: Vec::new(),
+                    declared_by_workflows: Vec::new(),
+                },
+            ]
+        } else {
+            Vec::new()
+        },
+        error,
+    };
+    match format {
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&status),
+            stderr: None,
+            exit_code: if ok { 0 } else { 1 },
+        },
+        OutputFormat::Text => {
+            let mut text = format!(
+                "🦦 LIFECYCLE PROOF {}\n\nWorkflow: {workflow_key}\nTransaction: {transaction_id}\n",
+                if ok {
+                    "PASSED WITH BOUNDARIES"
+                } else {
+                    "FAILED"
+                }
+            );
+            for record in &status.services {
+                text.push_str(&format!(
+                    "\n- {}: start {}, readiness {}, teardown {}\n",
+                    record.service,
+                    record.start.state,
+                    record.readiness.state,
+                    record.teardown.state
+                ));
+            }
+            if let Some(error) = status.error.as_deref() {
+                text.push_str(&format!("\nError: {error}\n"));
+            }
+            CommandOutput {
+                stdout: text,
+                stderr: None,
+                exit_code: if ok { 0 } else { 1 },
+            }
+        }
     }
 }
 
@@ -67175,7 +67561,7 @@ tasks:
             false,
         );
 
-        match original_path {
+        match original_path.as_ref() {
             Some(path) => unsafe {
                 env::set_var("PATH", path);
             },
@@ -78282,7 +78668,7 @@ workflows:
         }
 
         assert_eq!(outcome.exit_code, 0);
-        let log = fs::read_to_string(log_path).unwrap();
+        let log = fs::read_to_string(&log_path).unwrap();
         assert!(log.lines().any(|line| line == "enable"), "{log}");
         assert!(
             log.lines()
@@ -78367,7 +78753,7 @@ tasks:
             false,
         );
 
-        match original_path {
+        match original_path.as_ref() {
             Some(path) => unsafe {
                 env::set_var("PATH", path);
             },
@@ -80450,7 +80836,7 @@ workflows:
             OutputFormat::Json,
             false,
         );
-        match original_path {
+        match original_path.as_ref() {
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
@@ -92383,7 +92769,7 @@ tasks:
         )
         .unwrap();
 
-        match original_path {
+        match original_path.as_ref() {
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
@@ -92516,7 +92902,7 @@ tasks:
         )
         .unwrap();
 
-        match original_path {
+        match original_path.as_ref() {
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
@@ -93006,7 +93392,7 @@ workflows:
             RepoExecutionMode::Capture,
         )
         .unwrap();
-        match original_path {
+        match original_path.as_ref() {
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
@@ -93221,6 +93607,144 @@ workflows:
                 "--skip-deps",
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_lifecycle_leases_inactive_compose_service_and_finalizes_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let bin_dir = fixture.path().join("bin");
+        let state_path = fixture.path().join("database-running");
+        let log_path = fixture.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker = bin_dir.join("docker");
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}' ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
+                log_path.display(),
+                state_path.display(),
+                state_path.display(),
+                state_path.display(),
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker, permissions).unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+  assert-database:
+    run: test -f database-running
+    requires_services: [database]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: assert-database
+"#,
+        )
+        .unwrap();
+
+        let output = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            Some("smoke"),
+            None,
+            OutputFormat::Json,
+            false,
+        );
+
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["proof_verdict"], "passed_with_unproven_boundaries");
+        assert_eq!(
+            json["services"][0]["preexisting_state"],
+            "inactive_observed"
+        );
+        assert_eq!(
+            json["services"][0]["teardown_assertion"]["state"],
+            "state_observed"
+        );
+        assert!(!state_path.exists());
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("up -d database"), "{log}");
+        assert!(log.contains("stop database"), "{log}");
+        assert_eq!(log.matches("up -d database").count(), 1, "{log}");
+
+        fs::write(&state_path, "pre-existing").unwrap();
+        fs::write(&log_path, "").unwrap();
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf running\n",
+                log_path.display(),
+            ),
+        )
+        .unwrap();
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let preexisting = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            Some("smoke"),
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        assert_eq!(preexisting.exit_code, 1, "{}", preexisting.stdout);
+        assert!(state_path.exists());
+        let log = fs::read_to_string(log_path).unwrap();
+        assert!(!log.contains("up -d database"), "{log}");
+        assert!(!log.contains("stop database"), "{log}");
     }
 
     #[cfg(unix)]

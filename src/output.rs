@@ -3236,6 +3236,47 @@ pub struct ProofRuntimeStatus<'a> {
     pub next: Option<&'a str>,
 }
 
+/// Runner-owned evidence for one manager-controlled lifecycle transition.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LifecycleProofTransition {
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_class: Option<ExecutionEvidenceClass>,
+}
+
+/// One service record in a bounded lifecycle proof transaction.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LifecycleProofServiceRecord {
+    pub service: String,
+    pub transaction_id: String,
+    pub preexisting_state: String,
+    pub cleanup_lease: String,
+    pub ownership: String,
+    pub start: LifecycleProofTransition,
+    pub readiness: LifecycleProofTransition,
+    pub teardown: LifecycleProofTransition,
+    pub teardown_assertion: LifecycleProofTransition,
+}
+
+/// Terminal result for one runner-owned lifecycle transaction.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LifecycleProofStatus {
+    pub ok: bool,
+    pub proof_verdict: String,
+    pub path: String,
+    pub mode: String,
+    pub workflow: String,
+    pub phase: String,
+    pub stage_family: String,
+    pub proof_scope: ProofRuntimeScope,
+    pub transaction_id: String,
+    pub services: Vec<LifecycleProofServiceRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_proved: Vec<ProofRuntimeNotProved>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UpPreviewExecution {
     pub backend: String,

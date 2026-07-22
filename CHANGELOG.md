@@ -32,8 +32,14 @@
   the assertion's full dependency closure outside the normal workflow closure, rejects lifecycle
   ownership without typed Compose or systemd state observation, and preserves generic host commands
   as ineligible rather than guessing cleanup authority. Runtime systemd observation also refuses
-  unknown units instead of treating them as inactive. Lifecycle sequencing and proof receipts
-  remain a later V11.18 slice.
+  unknown units instead of treating them as inactive.
+
+- added `ota proof lifecycle` as the first bounded transaction executor for that admitted surface.
+  It runs the selected workflow prerequisite closure, leases only manager-observed inactive
+  services, starts/readies them in dependency order, executes an optional post-readiness assertion
+  without duplicating service ownership, and tears leased services down in reverse order. JSON
+  publishes typed transaction-bound service records and mandatory proof boundaries; archive-backed
+  lifecycle receipts remain the next V11.18 cut.
 
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor

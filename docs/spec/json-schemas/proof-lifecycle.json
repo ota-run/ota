@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/proof-lifecycle.json",
+  "title": "ota proof lifecycle --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "proof_verdict",
+    "path",
+    "mode",
+    "workflow",
+    "phase",
+    "stage_family",
+    "proof_scope",
+    "transaction_id",
+    "services"
+  ],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "proof_verdict": {
+      "type": "string",
+      "enum": ["passed", "passed_with_unproven_boundaries", "failed"]
+    },
+    "path": { "type": "string" },
+    "mode": { "const": "lifecycle-proof" },
+    "workflow": { "type": "string" },
+    "phase": { "const": "lifecycle" },
+    "stage_family": { "const": "proof" },
+    "proof_scope": { "$ref": "#/$defs/proofScope" },
+    "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/serviceRecord" }
+    },
+    "not_proved": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/proofNotProved" }
+    },
+    "error": { "type": "string" }
+  },
+  "$defs": {
+    "proofScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "proof_class"],
+      "properties": {
+        "kind": { "const": "lifecycle_transition" },
+        "proof_class": { "const": "slice_proof" },
+        "workflow": { "type": "string" },
+        "task": { "type": "string" },
+        "intent": { "type": "string" }
+      }
+    },
+    "proofNotProved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "relative_to", "source"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["service_started_state_not_proved", "service_stopped_state_not_proved", "application_output_not_proved", "broader_repo_completion_not_proved"]
+        },
+        "relative_to": { "type": "string" },
+        "source": { "type": "string", "enum": ["contract_lane", "proof_scope", "scope"] },
+        "dependency_id": { "type": "string" },
+        "proof_obligation_id": { "type": "string" },
+        "reason": { "type": "string" },
+        "declared_by_tasks": { "type": "array", "items": { "type": "string" } },
+        "declared_by_workflows": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["not_run", "not_declared", "command_succeeded", "command_failed", "state_observed", "state_not_observed", "interrupted"]
+        },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] }
+      }
+    },
+    "serviceRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "transaction_id", "preexisting_state", "cleanup_lease", "ownership", "start", "readiness", "teardown", "teardown_assertion"],
+      "properties": {
+        "service": { "type": "string" },
+        "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "preexisting_state": { "type": "string", "enum": ["inactive_observed", "active_observed", "unknown"] },
+        "cleanup_lease": { "type": "string", "enum": ["not_acquired", "acquired", "released", "cleanup_failed"] },
+        "ownership": { "type": "string", "enum": ["started_this_transaction", "reused_preexisting", "unknown"] },
+        "start": { "$ref": "#/$defs/transition" },
+        "readiness": { "$ref": "#/$defs/transition" },
+        "teardown": { "$ref": "#/$defs/transition" },
+        "teardown_assertion": { "$ref": "#/$defs/transition" }
+      }
+    }
+  }
+}

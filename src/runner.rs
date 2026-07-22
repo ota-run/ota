@@ -5187,6 +5187,29 @@ pub fn run_task_captured(
     )
 }
 
+/// Execute a finite assertion while preserving service ownership held by an enclosing
+/// runner-managed transaction. The assertion still checks declared readiness; it simply cannot
+/// start or later clean up a service that the enclosing transaction already leased.
+pub fn run_task_captured_with_started_services(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    started_services: &BTreeSet<String>,
+) -> Result<CapturedRunOutcome, RunError> {
+    install_run_interrupt_handler();
+    RUN_INTERRUPT_REQUESTED.store(false, Ordering::Relaxed);
+    run_task_internal_with_started_services(
+        contract,
+        contract_path,
+        task_name,
+        &[],
+        ExecutionOverrides::default(),
+        None,
+        TaskExecutionMode::Capture,
+        started_services.clone(),
+    )
+}
+
 pub fn run_task_captured_with_args(
     contract: &Contract,
     contract_path: &Path,
@@ -8306,6 +8329,28 @@ fn run_task_internal(
     policy_env: Option<&BTreeMap<String, String>>,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
+    run_task_internal_with_started_services(
+        contract,
+        contract_path,
+        task_name,
+        input_args,
+        overrides,
+        policy_env,
+        mode,
+        BTreeSet::new(),
+    )
+}
+
+fn run_task_internal_with_started_services(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    input_args: &[String],
+    overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
+    mode: TaskExecutionMode,
+    started_services: BTreeSet<String>,
+) -> Result<CapturedRunOutcome, RunError> {
     install_run_interrupt_handler();
     RUN_INTERRUPT_REQUESTED.store(false, Ordering::Relaxed);
     if !contract.tasks.contains_key(task_name) {
@@ -8416,6 +8461,7 @@ fn run_task_internal(
     }
     let current_os = current_os();
     let mut state = TaskRunState::default();
+    state.started_services = started_services;
     state.execution_boundary_id = runner_execution_boundary_id();
     hydrate_virtualenv_boundaries_from_trace(&mut state, working_dir);
     hydrate_pnpm_boundaries_from_trace(&mut state, working_dir);
