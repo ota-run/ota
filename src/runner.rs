@@ -8949,6 +8949,16 @@ where
                         state: String::from("state_observed"),
                         evidence_class: Some(ExecutionEvidenceClass::Derived),
                     };
+                } else if RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
+                    records[index].readiness = LifecycleProofTransition {
+                        state: String::from("interrupted"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    interrupted = true;
+                    error = Some(format!(
+                        "service `{service_name}` readiness observation was interrupted"
+                    ));
+                    break;
                 } else {
                     records[index].readiness = LifecycleProofTransition {
                         state: String::from("state_not_observed"),
@@ -68936,6 +68946,77 @@ tasks:
             }
             fs::write(path, contents.trim_start()).unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_transaction_finalizes_after_readiness_interrupt() {
+        let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-readiness-interrupt
+services:
+  database:
+    manager:
+      kind: compose
+      file: compose.yaml
+      service: database
+    readiness:
+      from: host
+      run: "true"
+    lifecycle:
+      teardown_assertion: manager_inactive
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        let log_path = fixture.dir.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n",
+                log_path.display()
+            ),
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("database")],
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            fixture.dir.path(),
+            |_| {
+                super::simulate_run_interrupt_for_test();
+                false
+            },
+            || Ok(()),
+        );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(transaction.records[0].readiness.state, "interrupted");
+        assert_eq!(transaction.records[0].teardown.state, "command_succeeded");
+        assert_eq!(transaction.records[0].cleanup_lease, "released");
+        assert_eq!(
+            transaction.finalization.state,
+            "completed_after_interruption"
+        );
+        assert!(transaction.finalization.after_interruption);
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(log.matches("up -d database").count(), 1, "{log}");
+        assert_eq!(log.matches("stop database").count(), 1, "{log}");
     }
 
     // ── command.interaction tests ──────────────────────────────────────────────

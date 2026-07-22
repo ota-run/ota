@@ -94139,6 +94139,82 @@ workflows:
         let log = fs::read_to_string(&log_path).unwrap();
         assert_eq!(log.matches("stop cache").count(), 1, "{log}");
         assert_eq!(log.matches("stop database").count(), 1, "{log}");
+
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'ps --status running -q'*cache*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}' ;;\n  *'up -d cache'*) touch '{}'; exit 130 ;;\n  *'stop cache'*) rm -f '{}' ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
+                log_path.display(),
+                database_state.display(),
+                cache_state.display(),
+                database_state.display(),
+                cache_state.display(),
+                cache_state.display(),
+                database_state.display(),
+            ),
+        )
+        .unwrap();
+        fs::remove_file(fixture.path().join("cache-observe-fails")).ok();
+        fs::remove_file(&cache_state).ok();
+        fs::write(&log_path, "").unwrap();
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let interrupted = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            true,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(interrupted.exit_code, 1, "{}", interrupted.stdout);
+        let json: serde_json::Value = serde_json::from_str(&interrupted.stdout).unwrap();
+        assert_eq!(json["services"][1]["start"]["state"], "interrupted");
+        assert_eq!(
+            json["finalization"]["state"],
+            "completed_after_interruption"
+        );
+        assert_eq!(json["finalization"]["after_interruption"], true);
+        let archive_path = fixture
+            .path()
+            .join(json["archive"]["path"].as_str().unwrap());
+        super::verify_lifecycle_proof_archive(
+            &archive_path,
+            json["archive"]["identity"].as_str().unwrap(),
+            fixture.path(),
+        )
+        .unwrap();
+        let archive: serde_json::Value =
+            serde_json::from_slice(&fs::read(&archive_path).unwrap()).unwrap();
+        assert_eq!(
+            archive["scope"]["service_closure"],
+            serde_json::json!(["database", "cache"])
+        );
+        assert_eq!(archive["proof"]["services"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            archive["proof"]["finalization"]["state"],
+            "completed_after_interruption"
+        );
+        let log = fs::read_to_string(&log_path).unwrap();
+        let cache_stop = log.find("stop cache").unwrap();
+        let database_stop = log.find("stop database").unwrap();
+        assert!(cache_stop < database_stop, "{log}");
+        assert_eq!(log.matches("stop cache").count(), 1, "{log}");
+        assert_eq!(log.matches("stop database").count(), 1, "{log}");
     }
 
     #[cfg(unix)]

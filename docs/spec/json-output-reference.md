@@ -953,8 +953,9 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
   commands retain their declared manager boundary; the mode applies to workflow prerequisite and
   assertion tasks rather than pretending that a host manager was relocated.
 - `finalization.state: completed_after_interruption` and `after_interruption: true` record that
-  the runner completed its reverse finalizer after an interrupted start or assertion; each service
-  record retains the corresponding typed `interrupted` transition and teardown evidence.
+  the runner completed its reverse finalizer after an interrupted start, readiness observation, or
+  assertion; each service record retains the corresponding typed `interrupted` transition and
+  teardown evidence.
 
 The command schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json); archived records
 use [proof-lifecycle-archive.json](json-schemas/proof-lifecycle-archive.json).

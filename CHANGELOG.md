@@ -45,7 +45,7 @@
 - moved lifecycle finalization into the runner and added opt-in immutable lifecycle archives through
   `ota proof lifecycle --json --archive`. The runner owns reverse teardown and manager-inactive
   verification after every acquired lease, including failed starts, readiness failures, assertion
-  failures, and interrupted child commands. Each archive is content-addressed and binds the
+  failures, and interrupted start, readiness, or assertion paths. Each archive is content-addressed and binds the
   semantic contract snapshot, selected workflow/services, transaction-bound service records, and
   terminal lifecycle verdict; archive verification rejects mismatched content-addressed filenames,
   stale snapshot references, malformed source/contract identity, and incomplete service closures.

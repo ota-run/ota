@@ -97,9 +97,12 @@ durable agent workflow belongs in the canonical Ota skill.
   correction binds the resolved service closure/mode and contract/source identity, verifies archive
   filename plus snapshot staleness, and records typed interruption finalization with exactly-once
   teardown regressions. Multi-service dependency rollback now proves reverse, exactly-once
-  finalization after a later start failure, while a stop-command failure retains typed transition
-  evidence and does not prevent other leased services from finalizing. Next: broader local failure
-  regressions before any CI projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
+  finalization after a later start failure or interrupted later start; the matching local archive
+  verifies the full closure, service records, transaction, and finalization binding. A
+  runner-observed readiness interruption now emits a typed `interrupted` transition before the
+  same finalizer runs. A stop-command failure retains typed transition evidence and does not
+  prevent other leased services from finalizing. Next: re-review this local boundary before any CI
+  projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
   current-boundary inactive state and cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
