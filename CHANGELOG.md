@@ -42,6 +42,15 @@
   lifecycle receipts remain the next V11.18 cut. A service without declared readiness also carries
   `service_started_state_not_proved`; command exit alone does not prove its started state.
 
+- moved lifecycle finalization into the runner and added opt-in immutable lifecycle archives through
+  `ota proof lifecycle --json --archive`. The runner owns reverse teardown and manager-inactive
+  verification after every acquired lease, including failed starts, readiness failures, assertion
+  failures, and interrupted child commands. Each archive is content-addressed and binds the
+  semantic contract snapshot, selected workflow/services, transaction-bound service records, and
+  terminal lifecycle verdict; it is local evidence only, not CI projection or broader runtime proof.
+  Lifecycle proof now also reuses selected-workflow agent admission, task execution-mode resolution,
+  and monorepo member loading; manager commands stay on their declared control boundary.
+
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor
   now validates the Ruby provider and admits Ota's typed `gem install bundler --version <version>`

@@ -37,9 +37,19 @@
       "type": "array",
       "items": { "$ref": "#/$defs/proofNotProved" }
     },
+    "archive": { "$ref": "#/$defs/archive" },
     "error": { "type": "string" }
   },
   "$defs": {
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "path"],
+      "properties": {
+        "identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "path": { "type": "string" }
+      }
+    },
     "proofScope": {
       "type": "object",
       "additionalProperties": false,

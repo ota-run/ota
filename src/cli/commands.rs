@@ -112,14 +112,13 @@ use crate::output::{
     ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
     HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
     InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofServiceRecord,
-    LifecycleProofStatus, LifecycleProofTransition, ListedWorkflowSummary, MemberServicesSuccess,
-    MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArchive, ProofRuntimeArtifacts,
-    ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
-    ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved, ProofRuntimeScope,
-    ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofStatus,
+    ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess,
+    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
+    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
+    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved,
+    ProofRuntimeScope, ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
     ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline, ReceiptDiffComparison,
     ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
     ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind,
@@ -3016,8 +3015,12 @@ fn render_execution_topology_output(
 pub fn proof_lifecycle(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     workflow_name: Option<&str>,
     service_name: Option<&str>,
+    agent: bool,
+    overrides: crate::runner::ExecutionOverrides,
+    archive: bool,
     format: OutputFormat,
     _debug: bool,
 ) -> CommandOutput {
@@ -3025,7 +3028,7 @@ pub fn proof_lifecycle(
         Ok(path) => path,
         Err(error) => return CommandOutput::failure(error.to_string()),
     };
-    let target = match load_and_validate_target(&resolved_path, None) {
+    let target = match load_and_validate_target(&resolved_path, member) {
         Ok(target) => target,
         Err(error) => return CommandOutput::failure(render_contract_problem(&error)),
     };
@@ -3046,6 +3049,23 @@ pub fn proof_lifecycle(
             2,
         );
     };
+    if agent
+        && let Some(refusal) = agent_workflow_execution_refusal_with_policy(
+            &contract,
+            &target.contract_path,
+            Some(workflow_key),
+            overrides,
+            UpRunBehaviorPreference::Auto,
+        )
+    {
+        return CommandOutput::failure_with_code(
+            format!(
+                "lifecycle proof agent admission refused `{}`: {}",
+                refusal.requested_task, refusal.reason
+            ),
+            2,
+        );
+    }
 
     let transaction_id = match proof_runtime_seam_marker() {
         Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
@@ -3074,32 +3094,6 @@ pub fn proof_lifecycle(
     }
     let order = service_start_order_for(&contract, &services);
     let working_dir = contract_working_dir(&target.contract_path);
-    let mut records = order
-        .iter()
-        .map(|service| LifecycleProofServiceRecord {
-            service: service.clone(),
-            transaction_id: transaction_id.clone(),
-            preexisting_state: String::from("unknown"),
-            cleanup_lease: String::from("not_acquired"),
-            ownership: String::from("unknown"),
-            start: LifecycleProofTransition {
-                state: String::from("not_run"),
-                evidence_class: None,
-            },
-            readiness: LifecycleProofTransition {
-                state: String::from("not_run"),
-                evidence_class: None,
-            },
-            teardown: LifecycleProofTransition {
-                state: String::from("not_run"),
-                evidence_class: None,
-            },
-            teardown_assertion: LifecycleProofTransition {
-                state: String::from("not_run"),
-                evidence_class: None,
-            },
-        })
-        .collect::<Vec<_>>();
     let mut error = None::<String>;
 
     // The validator prevents this closure from declaring lifecycle services, so prerequisites
@@ -3115,7 +3109,7 @@ pub fn proof_lifecycle(
             task_name.as_str(),
             crate::runner::ExecutionOverrides {
                 skip_deps,
-                ..crate::runner::ExecutionOverrides::default()
+                ..overrides
             },
         );
         match outcome {
@@ -3136,175 +3130,45 @@ pub fn proof_lifecycle(
         }
     }
 
-    if error.is_none() {
-        for (index, service_name) in order.iter().enumerate() {
-            let service = &contract.services[service_name];
-            match crate::runner::observe_managed_service_state(service_name, service, working_dir) {
-                Ok(crate::runner::ManagedServiceState::Inactive) => {
-                    records[index].preexisting_state = String::from("inactive_observed");
-                    records[index].cleanup_lease = String::from("acquired");
-                    records[index].ownership = String::from("started_this_transaction");
-                }
-                Ok(crate::runner::ManagedServiceState::Active) => {
-                    records[index].preexisting_state = String::from("active_observed");
-                    records[index].ownership = String::from("reused_preexisting");
-                    error = Some(format!(
-                        "service `{service_name}` was already active; lifecycle proof will not take destructive ownership"
-                    ));
-                    break;
-                }
-                Err(state_error) => {
-                    error = Some(state_error);
-                    break;
-                }
-            }
-        }
-    }
-
-    if error.is_none() {
-        for (index, service_name) in order.iter().enumerate() {
-            let service = &contract.services[service_name];
-            match crate::runner::run_service_start_command(
-                service_name,
-                service,
-                working_dir,
-                crate::runner::TaskExecutionMode::Capture,
-            ) {
-                Ok(output) if output.exit_code == 0 => {
-                    records[index].start = LifecycleProofTransition {
-                        state: String::from("command_succeeded"),
-                        evidence_class: Some(ExecutionEvidenceClass::Attested),
-                    }
-                }
-                Ok(output) => {
-                    records[index].start = LifecycleProofTransition {
-                        state: String::from("command_failed"),
-                        evidence_class: Some(ExecutionEvidenceClass::Attested),
-                    };
-                    error = Some(format!(
-                        "service `{service_name}` start exited with code {}",
-                        output.exit_code
-                    ));
-                    break;
-                }
-                Err(start_error) => {
-                    records[index].start = LifecycleProofTransition {
-                        state: String::from("command_failed"),
-                        evidence_class: Some(ExecutionEvidenceClass::Attested),
-                    };
-                    error = Some(start_error);
-                    break;
-                }
-            }
-            if service.readiness.is_some() || service.healthcheck.is_some() {
-                let report = diagnose_service(&contract, &target.contract_path, service_name);
-                if report.ok {
-                    records[index].readiness = LifecycleProofTransition {
-                        state: String::from("state_observed"),
-                        evidence_class: Some(ExecutionEvidenceClass::Derived),
-                    };
-                } else {
-                    records[index].readiness = LifecycleProofTransition {
-                        state: String::from("state_not_observed"),
-                        evidence_class: Some(ExecutionEvidenceClass::Derived),
-                    };
-                    error = Some(format!(
-                        "service `{service_name}` did not satisfy declared readiness"
-                    ));
-                    break;
-                }
-            } else {
-                records[index].readiness = LifecycleProofTransition {
-                    state: String::from("not_declared"),
-                    evidence_class: None,
-                };
-            }
-        }
-    }
-
-    if error.is_none() {
-        if let Some(assertion) = lifecycle.assertion.as_ref() {
-            match crate::runner::run_task_captured_with_started_services(
+    let transaction = error.map_or_else(
+        || {
+            crate::runner::execute_lifecycle_proof_transaction(
                 &contract,
-                &target.contract_path,
-                assertion.task.as_str(),
-                &services,
-            ) {
-                Ok(outcome) if outcome.exit_code == 0 => {}
-                Ok(outcome) => {
-                    error = Some(format!(
-                        "lifecycle assertion `{}` exited with code {}",
-                        assertion.task, outcome.exit_code
-                    ))
-                }
-                Err(run_error) => {
-                    error = Some(format!(
-                        "lifecycle assertion `{}` could not run: {run_error}",
-                        assertion.task
-                    ))
-                }
-            }
-        }
-    }
-
-    for (index, service_name) in order.iter().enumerate().rev() {
-        if records[index].cleanup_lease != "acquired" {
-            continue;
-        }
-        let service = &contract.services[service_name];
-        let start_attempted = records[index].start.state != "not_run";
-        if start_attempted {
-            match crate::runner::run_service_stop_command(
-                service_name,
-                service,
+                &order,
+                transaction_id.as_str(),
                 working_dir,
-                crate::runner::TaskExecutionMode::Capture,
-            ) {
-                Ok(output) if output.exit_code == 0 => {
-                    records[index].teardown = LifecycleProofTransition {
-                        state: String::from("command_succeeded"),
-                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                |service_name| diagnose_service(&contract, &target.contract_path, service_name).ok,
+                || match lifecycle.assertion.as_ref() {
+                    Some(assertion) => {
+                        match crate::runner::run_task_captured_with_started_services_and_overrides(
+                            &contract,
+                            &target.contract_path,
+                            assertion.task.as_str(),
+                            &services,
+                            overrides,
+                        ) {
+                            Ok(outcome) if outcome.exit_code == 0 => Ok(()),
+                            Ok(outcome) => Err(format!(
+                                "lifecycle assertion `{}` exited with code {}",
+                                assertion.task, outcome.exit_code
+                            )),
+                            Err(run_error) => Err(format!(
+                                "lifecycle assertion `{}` could not run: {run_error}",
+                                assertion.task
+                            )),
+                        }
                     }
-                }
-                Ok(output) => {
-                    records[index].teardown = LifecycleProofTransition {
-                        state: String::from("command_failed"),
-                        evidence_class: Some(ExecutionEvidenceClass::Attested),
-                    };
-                    error.get_or_insert_with(|| {
-                        format!(
-                            "service `{service_name}` teardown exited with code {}",
-                            output.exit_code
-                        )
-                    });
-                }
-                Err(stop_error) => {
-                    records[index].teardown = LifecycleProofTransition {
-                        state: String::from("command_failed"),
-                        evidence_class: Some(ExecutionEvidenceClass::Attested),
-                    };
-                    error.get_or_insert(stop_error);
-                }
-            }
-        }
-        match crate::runner::observe_managed_service_state(service_name, service, working_dir) {
-            Ok(crate::runner::ManagedServiceState::Inactive) => {
-                records[index].teardown_assertion = LifecycleProofTransition {
-                    state: String::from("state_observed"),
-                    evidence_class: Some(ExecutionEvidenceClass::Derived),
-                };
-                records[index].cleanup_lease = String::from("released");
-            }
-            Ok(crate::runner::ManagedServiceState::Active) | Err(_) => {
-                records[index].teardown_assertion = LifecycleProofTransition {
-                    state: String::from("state_not_observed"),
-                    evidence_class: Some(ExecutionEvidenceClass::Derived),
-                };
-                records[index].cleanup_lease = String::from("cleanup_failed");
-                error.get_or_insert_with(|| format!("service `{service_name}` did not reach manager-observed inactive state after teardown"));
-            }
-        }
-    }
+                    None => Ok(()),
+                },
+            )
+        },
+        |error| crate::runner::LifecycleProofTransaction {
+            records: Vec::new(),
+            error: Some(error),
+        },
+    );
+    let records = transaction.records;
+    let error = transaction.error;
 
     let ok = error.is_none();
     let status = LifecycleProofStatus {
@@ -3378,9 +3242,31 @@ pub fn proof_lifecycle(
         },
         error,
     };
+    let archive = if archive {
+        match write_lifecycle_proof_archive(
+            contract_working_dir(&target.contract_path),
+            &contract,
+            workflow_key,
+            &selected_services,
+            &status,
+        ) {
+            Ok(archive) => Some(archive),
+            Err(error) => return CommandOutput::failure(error),
+        }
+    } else {
+        None
+    };
     match format {
         OutputFormat::Json => CommandOutput {
-            stdout: to_json(&status),
+            stdout: archive.map_or_else(
+                || to_json(&status),
+                |archive| {
+                    to_json(&LifecycleProofArchivedStatus {
+                        proof: &status,
+                        archive,
+                    })
+                },
+            ),
             stderr: None,
             exit_code: if ok { 0 } else { 1 },
         },
@@ -93700,8 +93586,12 @@ workflows:
         let output = super::proof_lifecycle(
             Some(fixture.path()),
             None,
+            None,
             Some("smoke"),
             None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
             OutputFormat::Json,
             false,
         );
@@ -93732,6 +93622,43 @@ workflows:
         assert!(log.contains("up -d database"), "{log}");
         assert!(log.contains("stop database"), "{log}");
         assert_eq!(log.matches("up -d database").count(), 1, "{log}");
+
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let archived = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            true,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        assert_eq!(archived.exit_code, 0, "{}", archived.stdout);
+        let archived_json: serde_json::Value = serde_json::from_str(&archived.stdout).unwrap();
+        let archive_path = fixture
+            .path()
+            .join(archived_json["archive"]["path"].as_str().unwrap());
+        assert!(archive_path.exists());
+        let archive: serde_json::Value =
+            serde_json::from_slice(&fs::read(archive_path).unwrap()).unwrap();
+        assert_eq!(archive["kind"], "lifecycle_proof");
+        assert_eq!(
+            archive["proof"]["transaction_id"],
+            archived_json["transaction_id"]
+        );
 
         fs::write(
             &contract_path,
@@ -93778,8 +93705,12 @@ workflows:
         let assertion_failure = super::proof_lifecycle(
             Some(fixture.path()),
             None,
+            None,
             Some("smoke"),
             None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
             OutputFormat::Json,
             false,
         );
@@ -93796,6 +93727,46 @@ workflows:
             !state_path.exists(),
             "assertion failure must still tear down service"
         );
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("stop database"), "{log}");
+
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}'; exit 9 ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
+                log_path.display(),
+                state_path.display(),
+                state_path.display(),
+                state_path.display(),
+            ),
+        )
+        .unwrap();
+        fs::write(&log_path, "").unwrap();
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let start_failure = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        assert_eq!(start_failure.exit_code, 1, "{}", start_failure.stdout);
+        assert!(!state_path.exists(), "failed start must still finalize");
         let log = fs::read_to_string(&log_path).unwrap();
         assert!(log.contains("stop database"), "{log}");
 
@@ -93819,8 +93790,12 @@ workflows:
         let preexisting = super::proof_lifecycle(
             Some(fixture.path()),
             None,
+            None,
             Some("smoke"),
             None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
             OutputFormat::Json,
             false,
         );
@@ -104408,6 +104383,33 @@ struct ProofRuntimeArchivedStatus<'a> {
     archive: ProofRuntimeArchive,
 }
 
+#[derive(Serialize)]
+struct LifecycleProofArchiveScope<'a> {
+    workflow: &'a str,
+    selected_services: &'a [String],
+    transaction_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct LifecycleProofArchiveRecord<'a> {
+    kind: &'static str,
+    version: u32,
+    contract_identity: &'a ContractIdentity,
+    contract_snapshot_hash: &'a str,
+    contract_snapshot_ref: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_identity: Option<&'a str>,
+    scope: LifecycleProofArchiveScope<'a>,
+    proof: &'a LifecycleProofStatus,
+}
+
+#[derive(Serialize)]
+struct LifecycleProofArchivedStatus<'a> {
+    #[serde(flatten)]
+    proof: &'a LifecycleProofStatus,
+    archive: ProofRuntimeArchive,
+}
+
 fn build_proof_runtime_archive_context(
     root: &Path,
     contract: &Contract,
@@ -104516,6 +104518,66 @@ fn load_proof_runtime_archive_candidates(
                 })
         })
         .collect()
+}
+
+fn write_lifecycle_proof_archive(
+    root: &Path,
+    contract: &Contract,
+    workflow: &str,
+    selected_services: &[String],
+    proof: &LifecycleProofStatus,
+) -> Result<ProofRuntimeArchive, String> {
+    let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
+    let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
+        String::from("lifecycle proof archive requires an archived semantic contract snapshot")
+    })?;
+    let contract_identity = repo_contract_identity(contract);
+    let source_identity = git_head_identity(root).ok();
+    let snapshot_ref = receipt_storage_path_display(snapshot_path);
+    let record = LifecycleProofArchiveRecord {
+        kind: "lifecycle_proof",
+        version: 1,
+        contract_identity: &contract_identity,
+        contract_snapshot_hash: &snapshot.hash,
+        contract_snapshot_ref: &snapshot_ref,
+        source_identity: source_identity.as_deref(),
+        scope: LifecycleProofArchiveScope {
+            workflow,
+            selected_services,
+            transaction_id: proof.transaction_id.as_str(),
+        },
+        proof,
+    };
+    let content = serde_json::to_vec_pretty(&record)
+        .map_err(|error| format!("failed to serialize lifecycle proof archive: {error}"))?;
+    let identity = contract_snapshot_hash(&content);
+    let archive_dir = proof_runtime_archive_dir(root);
+    fs::create_dir_all(&archive_dir).map_err(|error| {
+        format!(
+            "failed to create proof archive directory `{}`: {error}",
+            compact_path(&archive_dir, ".")
+        )
+    })?;
+    let archive_path = archive_dir.join(format!(
+        "lifecycle-proof-{}.json",
+        identity
+            .strip_prefix("sha256:")
+            .unwrap_or(identity.as_str())
+    ));
+    if archive_path.exists() {
+        verify_proof_runtime_archive_identity(&archive_path, &identity)?;
+    } else {
+        fs::write(&archive_path, content).map_err(|error| {
+            format!(
+                "failed to write lifecycle proof archive `{}`: {error}",
+                compact_path(&archive_path, ".")
+            )
+        })?;
+    }
+    Ok(ProofRuntimeArchive {
+        identity,
+        path: receipt_storage_path_display(&archive_path),
+    })
 }
 
 fn write_proof_runtime_archive(

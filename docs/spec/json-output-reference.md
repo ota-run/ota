@@ -940,6 +940,14 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
 - When a selected service has no declared readiness or manager-owned start-state observation,
   Ota also emits obligation-scoped `service_started_state_not_proved`; a successful start command
   alone is never promoted into an observed started state.
+- `ota proof lifecycle --json --archive` adds `archive.identity` and `archive.path`. The immutable
+  local record binds the semantic contract snapshot, selected workflow/services, transaction,
+  complete service records, and terminal verdict. It does not establish application-output proof,
+  CI eligibility, or broader repo completion.
+- `--agent`, `--mode <native|container|remote>`, and `--member <name>` reuse the selected
+  workflow's agent admission, task-mode resolution, and monorepo target loading. Service-manager
+  commands retain their declared manager boundary; the mode applies to workflow prerequisite and
+  assertion tasks rather than pretending that a host manager was relocated.
 
 The schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json).
 

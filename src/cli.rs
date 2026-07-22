@@ -1011,6 +1011,27 @@ enum ProofCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Enforce the selected workflow's declared agent-safe closure before lifecycle ownership.
+        #[arg(long, action = ArgAction::SetTrue)]
+        agent: bool,
+        /// Archive the terminal machine-readable proof record under `.ota/proof/archives`.
+        #[arg(long, action = ArgAction::SetTrue, requires = "json")]
+        archive: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Override the execution mode for workflow prerequisite and assertion tasks.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
+        container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
         /// Prove one declared repo workflow instead of the default workflow.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
         workflow: Option<String>,
@@ -4945,6 +4966,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             command:
                 ProofCommands::Lifecycle {
                     json,
+                    agent,
+                    archive,
+                    member,
+                    backend,
+                    native,
+                    container,
+                    remote,
                     workflow,
                     service,
                     path,
@@ -4952,8 +4980,18 @@ fn dispatch(cli: Cli) -> CommandOutput {
         } => commands::proof_lifecycle(
             path.as_deref(),
             file.as_deref(),
+            member.as_deref(),
             workflow.as_deref(),
             service.as_deref(),
+            agent,
+            ExecutionOverrides {
+                backend: resolve_run_backend_override(backend, native, container, remote),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+            archive,
             format_from_json(json),
             debug,
         ),

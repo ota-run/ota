@@ -81,10 +81,21 @@ durable agent workflow belongs in the canonical Ota skill.
   acquire terminal interaction. The task JSON and dry-run JSON expose the resolved posture and
   invocation resolution; the copy-ready Wrangler OAuth example, canonical skill, public site
   contract reference, schemas, changelog, and regressions are aligned.
-- active V11.18 managed lifecycle-sequence proof: implement service-reference-only lifecycle
-  admission first, then transaction-owned start/readiness/assertion/teardown execution over
-  existing typed Compose and systemd manager controls. Generic host start/stop remains ineligible
-  until it can prove current-boundary inactive state and cleanup authority.
+- active V11.18 managed lifecycle-sequence proof: committed lifecycle admission (`10a14971`) and
+  the first bounded executor (`d70ca67e`, qualified by `dd3b02cd`). `ota proof lifecycle` selects
+  only workflow-declared manager services, leases manager-observed inactive state before start,
+  starts in dependency order, reuses transaction-owned services for an optional post-readiness
+  assertion, and tears down in reverse order. Typed JSON/schema output binds each record to the
+  transaction; a command-only start carries `service_started_state_not_proved`, alongside the
+  mandatory application-output and broader-repo boundaries. Focused regressions cover pre-existing
+  service preservation and assertion-failure teardown. Runner-owned finalization and a local
+  content-addressed lifecycle archive are now implemented in the working tree: the archive binds
+  the semantic contract snapshot, selected workflow/service scope, transaction records, and
+  terminal verdict. The command now shares selected-workflow agent admission, mode resolution for
+  prerequisite/assertion tasks, and monorepo member loading; service-manager controls remain on
+  their declared boundary. Next: local failure/interrupt and multi-service rollback regressions
+  before any CI projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
+  current-boundary inactive state and cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

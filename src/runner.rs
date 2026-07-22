@@ -63,6 +63,9 @@ use crate::execution::{
     format_lifecycle, matching_execution_context_name, selected_container_engine,
     selected_container_engine_from_backend,
 };
+use crate::output::{
+    ExecutionEvidenceClass, LifecycleProofServiceRecord, LifecycleProofTransition,
+};
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::policy_pack::{
     LoadPolicyPackError, OrgPolicyPack, PolicyPackSource, ProvisioningAction,
@@ -5196,6 +5199,22 @@ pub fn run_task_captured_with_started_services(
     task_name: &str,
     started_services: &BTreeSet<String>,
 ) -> Result<CapturedRunOutcome, RunError> {
+    run_task_captured_with_started_services_and_overrides(
+        contract,
+        contract_path,
+        task_name,
+        started_services,
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn run_task_captured_with_started_services_and_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    started_services: &BTreeSet<String>,
+    overrides: ExecutionOverrides,
+) -> Result<CapturedRunOutcome, RunError> {
     install_run_interrupt_handler();
     RUN_INTERRUPT_REQUESTED.store(false, Ordering::Relaxed);
     run_task_internal_with_started_services(
@@ -5203,7 +5222,7 @@ pub fn run_task_captured_with_started_services(
         contract_path,
         task_name,
         &[],
-        ExecutionOverrides::default(),
+        overrides,
         None,
         TaskExecutionMode::Capture,
         started_services.clone(),
@@ -8792,6 +8811,205 @@ pub(crate) fn run_service_stop_command(
 pub(crate) enum ManagedServiceState {
     Active,
     Inactive,
+}
+
+/// Terminal state of a runner-owned managed lifecycle transaction. The command layer selects
+/// the workflow and renders this record; the runner retains cleanup ownership for every start,
+/// readiness, assertion, and interruption outcome after a lease is acquired.
+#[derive(Debug, Clone)]
+pub(crate) struct LifecycleProofTransaction {
+    pub records: Vec<LifecycleProofServiceRecord>,
+    pub error: Option<String>,
+}
+
+pub(crate) fn execute_lifecycle_proof_transaction<F, A>(
+    contract: &Contract,
+    order: &[String],
+    transaction_id: &str,
+    working_dir: &Path,
+    mut readiness: F,
+    mut assertion: A,
+) -> LifecycleProofTransaction
+where
+    F: FnMut(&str) -> bool,
+    A: FnMut() -> Result<(), String>,
+{
+    let mut records = order
+        .iter()
+        .map(|service| LifecycleProofServiceRecord {
+            service: service.clone(),
+            transaction_id: transaction_id.to_string(),
+            preexisting_state: String::from("unknown"),
+            cleanup_lease: String::from("not_acquired"),
+            ownership: String::from("unknown"),
+            start: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+            readiness: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+            teardown: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+            teardown_assertion: LifecycleProofTransition {
+                state: String::from("not_run"),
+                evidence_class: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut error = None;
+
+    for (index, service_name) in order.iter().enumerate() {
+        let service = &contract.services[service_name];
+        match observe_managed_service_state(service_name, service, working_dir) {
+            Ok(ManagedServiceState::Inactive) => {
+                records[index].preexisting_state = String::from("inactive_observed");
+                records[index].cleanup_lease = String::from("acquired");
+                records[index].ownership = String::from("started_this_transaction");
+            }
+            Ok(ManagedServiceState::Active) => {
+                records[index].preexisting_state = String::from("active_observed");
+                records[index].ownership = String::from("reused_preexisting");
+                error = Some(format!(
+                    "service `{service_name}` was already active; lifecycle proof will not take destructive ownership"
+                ));
+                break;
+            }
+            Err(state_error) => {
+                error = Some(state_error);
+                break;
+            }
+        }
+    }
+
+    if error.is_none() {
+        for (index, service_name) in order.iter().enumerate() {
+            let service = &contract.services[service_name];
+            match run_service_start_command(
+                service_name,
+                service,
+                working_dir,
+                TaskExecutionMode::Capture,
+            ) {
+                Ok(output) if output.exit_code == 0 => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("command_succeeded"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    }
+                }
+                Ok(output) => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error = Some(format!(
+                        "service `{service_name}` start exited with code {}",
+                        output.exit_code
+                    ));
+                    break;
+                }
+                Err(start_error) => {
+                    records[index].start = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error = Some(start_error);
+                    break;
+                }
+            }
+            if service.readiness.is_some() || service.healthcheck.is_some() {
+                if readiness(service_name) {
+                    records[index].readiness = LifecycleProofTransition {
+                        state: String::from("state_observed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Derived),
+                    };
+                } else {
+                    records[index].readiness = LifecycleProofTransition {
+                        state: String::from("state_not_observed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Derived),
+                    };
+                    error = Some(format!(
+                        "service `{service_name}` did not satisfy declared readiness"
+                    ));
+                    break;
+                }
+            } else {
+                records[index].readiness = LifecycleProofTransition {
+                    state: String::from("not_declared"),
+                    evidence_class: None,
+                };
+            }
+        }
+    }
+    if error.is_none() {
+        if let Err(assertion_error) = assertion() {
+            error = Some(assertion_error);
+        }
+    }
+
+    // This is deliberately unconditional after lease acquisition: a failed start, failed
+    // readiness, assertion error, or interrupted child cannot bypass runner-owned finalization.
+    for (index, service_name) in order.iter().enumerate().rev() {
+        if records[index].cleanup_lease != "acquired" {
+            continue;
+        }
+        let service = &contract.services[service_name];
+        if records[index].start.state != "not_run" {
+            match run_service_stop_command(
+                service_name,
+                service,
+                working_dir,
+                TaskExecutionMode::Capture,
+            ) {
+                Ok(output) if output.exit_code == 0 => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("command_succeeded"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    }
+                }
+                Ok(output) => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error.get_or_insert_with(|| {
+                        format!(
+                            "service `{service_name}` teardown exited with code {}",
+                            output.exit_code
+                        )
+                    });
+                }
+                Err(stop_error) => {
+                    records[index].teardown = LifecycleProofTransition {
+                        state: String::from("command_failed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Attested),
+                    };
+                    error.get_or_insert(stop_error);
+                }
+            }
+        }
+        match observe_managed_service_state(service_name, service, working_dir) {
+            Ok(ManagedServiceState::Inactive) => {
+                records[index].teardown_assertion = LifecycleProofTransition {
+                    state: String::from("state_observed"),
+                    evidence_class: Some(ExecutionEvidenceClass::Derived),
+                };
+                records[index].cleanup_lease = String::from("released");
+            }
+            Ok(ManagedServiceState::Active) | Err(_) => {
+                records[index].teardown_assertion = LifecycleProofTransition {
+                    state: String::from("state_not_observed"),
+                    evidence_class: Some(ExecutionEvidenceClass::Derived),
+                };
+                records[index].cleanup_lease = String::from("cleanup_failed");
+                error.get_or_insert_with(|| format!("service `{service_name}` did not reach manager-observed inactive state after teardown"));
+            }
+        }
+    }
+    LifecycleProofTransaction { records, error }
 }
 
 fn parse_systemd_managed_service_state(
