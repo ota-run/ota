@@ -3330,9 +3330,25 @@ pub fn proof_lifecycle(
             intent: Some(String::from("manager_owned_service_lifecycle")),
         },
         transaction_id: transaction_id.clone(),
-        services: records,
+        services: records.clone(),
         not_proved: if ok {
-            vec![
+            let mut boundaries = records
+                .iter()
+                .filter(|record| record.readiness.state != "state_observed")
+                .map(|record| ProofRuntimeNotProved {
+                    kind: String::from("service_started_state_not_proved"),
+                    relative_to: String::from("declared_lifecycle_service_transition"),
+                    source: String::from("contract_lane"),
+                    dependency_id: Some(record.service.clone()),
+                    proof_obligation_id: None,
+                    reason: Some(String::from(
+                        "no_declared_manager_or_readiness_start_state_observation",
+                    )),
+                    declared_by_tasks: Vec::new(),
+                    declared_by_workflows: vec![workflow_key.to_string()],
+                })
+                .collect::<Vec<_>>();
+            boundaries.extend([
                 ProofRuntimeNotProved {
                     kind: String::from("application_output_not_proved"),
                     relative_to: String::from("declared_lifecycle_service_transition"),
@@ -3355,7 +3371,8 @@ pub fn proof_lifecycle(
                     declared_by_tasks: Vec::new(),
                     declared_by_workflows: Vec::new(),
                 },
-            ]
+            ]);
+            boundaries
         } else {
             Vec::new()
         },
@@ -93664,7 +93681,7 @@ tasks:
   build:
     run: echo build
   assert-database:
-    run: test -f database-running
+    run: echo assertion-ran
     requires_services: [database]
 workflows:
   default: smoke
@@ -93698,6 +93715,11 @@ workflows:
         let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["proof_verdict"], "passed_with_unproven_boundaries");
         assert_eq!(
+            json["not_proved"][0]["kind"],
+            "service_started_state_not_proved"
+        );
+        assert_eq!(json["not_proved"][0]["dependency_id"], "database");
+        assert_eq!(
             json["services"][0]["preexisting_state"],
             "inactive_observed"
         );
@@ -93710,6 +93732,72 @@ workflows:
         assert!(log.contains("up -d database"), "{log}");
         assert!(log.contains("stop database"), "{log}");
         assert_eq!(log.matches("up -d database").count(), 1, "{log}");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+  assert-database:
+    run: exit 7
+    requires_services: [database]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: assert-database
+"#,
+        )
+        .unwrap();
+        fs::write(&log_path, "").unwrap();
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let assertion_failure = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            Some("smoke"),
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        assert_eq!(
+            assertion_failure.exit_code, 1,
+            "{}",
+            assertion_failure.stdout
+        );
+        assert!(
+            !state_path.exists(),
+            "assertion failure must still tear down service"
+        );
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("stop database"), "{log}");
 
         fs::write(&state_path, "pre-existing").unwrap();
         fs::write(&log_path, "").unwrap();

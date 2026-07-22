@@ -39,7 +39,8 @@
   services, starts/readies them in dependency order, executes an optional post-readiness assertion
   without duplicating service ownership, and tears leased services down in reverse order. JSON
   publishes typed transaction-bound service records and mandatory proof boundaries; archive-backed
-  lifecycle receipts remain the next V11.18 cut.
+  lifecycle receipts remain the next V11.18 cut. A service without declared readiness also carries
+  `service_started_state_not_proved`; command exit alone does not prove its started state.
 
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor

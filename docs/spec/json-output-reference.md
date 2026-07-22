@@ -937,6 +937,9 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
 - A successful lifecycle transition remains a bounded slice proof. Ota emits
   `application_output_not_proved` and `broader_repo_completion_not_proved` unless a future
   dedicated output-proof carrier establishes broader truth.
+- When a selected service has no declared readiness or manager-owned start-state observation,
+  Ota also emits obligation-scoped `service_started_state_not_proved`; a successful start command
+  alone is never promoted into an observed started state.
 
 The schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json).
 
