@@ -47,7 +47,10 @@
   verification after every acquired lease, including failed starts, readiness failures, assertion
   failures, and interrupted child commands. Each archive is content-addressed and binds the
   semantic contract snapshot, selected workflow/services, transaction-bound service records, and
-  terminal lifecycle verdict; it is local evidence only, not CI projection or broader runtime proof.
+  terminal lifecycle verdict; archive verification rejects mismatched content-addressed filenames,
+  stale snapshot references, malformed source/contract identity, and incomplete service closures.
+  Interrupted starts and assertions now carry typed finalization evidence and stop every leased
+  service exactly once. It is local evidence only, not CI projection or broader runtime proof.
   Lifecycle proof now also reuses selected-workflow agent admission, task execution-mode resolution,
   and monorepo member loading; manager commands stay on their declared control boundary.
   Archives now bind the resolved execution scope and target OS and verify their content identity,

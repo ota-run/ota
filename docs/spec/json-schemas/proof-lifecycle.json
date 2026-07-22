@@ -14,7 +14,8 @@
     "stage_family",
     "proof_scope",
     "transaction_id",
-    "services"
+    "services",
+    "finalization"
   ],
   "properties": {
     "ok": { "type": "boolean" },
@@ -33,6 +34,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/serviceRecord" }
     },
+    "finalization": { "$ref": "#/$defs/finalization" },
     "not_proved": {
       "type": "array",
       "items": { "$ref": "#/$defs/proofNotProved" }
@@ -90,6 +92,16 @@
           "enum": ["not_run", "not_declared", "command_succeeded", "command_failed", "state_observed", "state_not_observed", "interrupted"]
         },
         "evidence_class": { "type": "string", "enum": ["derived", "attested"] }
+      }
+    },
+    "finalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "after_interruption", "evidence_class"],
+      "properties": {
+        "state": { "type": "string", "enum": ["not_run", "completed", "completed_after_interruption", "incomplete"] },
+        "after_interruption": { "type": "boolean" },
+        "evidence_class": { "const": "attested" }
       }
     },
     "serviceRecord": {

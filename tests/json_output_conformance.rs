@@ -196,6 +196,7 @@ fn lifecycle_proof_json_schema_accepts_runner_owned_transaction() {
             "teardown": { "state": "command_succeeded", "evidence_class": "attested" },
             "teardown_assertion": { "state": "state_observed", "evidence_class": "derived" }
         }],
+        "finalization": { "state": "completed", "after_interruption": false, "evidence_class": "attested" },
         "not_proved": [{
             "kind": "application_output_not_proved",
             "relative_to": "declared_lifecycle_service_transition",
@@ -210,15 +211,21 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
     let payload = serde_json::json!({
         "kind": "lifecycle_proof",
         "version": 1,
-        "contract_identity": {},
+        "contract_identity": {
+            "version": 1,
+            "project": { "name": "archive" },
+            "counts": { "runtimes": 0, "tools": 0, "env": 0, "services": 1, "checks": 0, "tasks": 1 }
+        },
         "contract_snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "contract_snapshot_ref": ".ota/contracts/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
         "scope": {
             "workflow": "smoke",
             "member": "api",
             "selected_services": ["database"],
+            "service_closure": ["database"],
             "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "backend": "container",
+            "mode": "container",
             "provider": "docker",
             "lifecycle": "ephemeral",
             "target": "local",
@@ -234,7 +241,8 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
             "stage_family": "proof",
             "proof_scope": { "kind": "lifecycle_transition", "proof_class": "slice_proof" },
             "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "services": []
+            "services": [],
+            "finalization": { "state": "not_run", "after_interruption": false, "evidence_class": "attested" }
         }
     });
     assert_matches_schema("proof-lifecycle-archive.json", &payload);

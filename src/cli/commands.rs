@@ -3149,14 +3149,29 @@ pub fn proof_lifecycle(
                             overrides,
                         ) {
                             Ok(outcome) if outcome.exit_code == 0 => Ok(()),
-                            Ok(outcome) => Err(format!(
-                                "lifecycle assertion `{}` exited with code {}",
-                                assertion.task, outcome.exit_code
-                            )),
-                            Err(run_error) => Err(format!(
-                                "lifecycle assertion `{}` could not run: {run_error}",
-                                assertion.task
-                            )),
+                            Ok(outcome)
+                                if outcome.interrupted
+                                    || matches!(outcome.exit_code, 129 | 130 | 131 | 143) =>
+                            {
+                                Err(crate::runner::LifecycleProofAssertionFailure::Interrupted(
+                                    format!(
+                                        "lifecycle assertion `{}` was interrupted",
+                                        assertion.task
+                                    ),
+                                ))
+                            }
+                            Ok(outcome) => Err(
+                                crate::runner::LifecycleProofAssertionFailure::Failed(format!(
+                                    "lifecycle assertion `{}` exited with code {}",
+                                    assertion.task, outcome.exit_code
+                                )),
+                            ),
+                            Err(run_error) => Err(
+                                crate::runner::LifecycleProofAssertionFailure::Failed(format!(
+                                    "lifecycle assertion `{}` could not run: {run_error}",
+                                    assertion.task
+                                )),
+                            ),
                         }
                     }
                     None => Ok(()),
@@ -3165,10 +3180,16 @@ pub fn proof_lifecycle(
         },
         |error| crate::runner::LifecycleProofTransaction {
             records: Vec::new(),
+            finalization: crate::output::LifecycleProofFinalization {
+                state: String::from("not_run"),
+                after_interruption: false,
+                evidence_class: ExecutionEvidenceClass::Attested,
+            },
             error: Some(error),
         },
     );
     let records = transaction.records;
+    let finalization = transaction.finalization;
     let error = transaction.error;
 
     let ok = error.is_none();
@@ -3196,6 +3217,7 @@ pub fn proof_lifecycle(
         },
         transaction_id: transaction_id.clone(),
         services: records.clone(),
+        finalization,
         not_proved: if ok {
             let mut boundaries = records
                 .iter()
@@ -3252,6 +3274,7 @@ pub fn proof_lifecycle(
             overrides,
             workflow_key,
             &selected_services,
+            &order,
             &status,
         ) {
             Ok(archive) => Some(archive),
@@ -93666,6 +93689,37 @@ workflows:
         assert_eq!(archive["scope"]["backend"], "native");
         assert_eq!(archive["scope"]["target_os"], super::current_os());
         assert_eq!(archive["scope"]["workflow"], "smoke");
+        assert_eq!(archive["scope"]["mode"], "native");
+        assert_eq!(
+            archive["scope"]["service_closure"],
+            serde_json::json!(["database"])
+        );
+        let snapshot_path = fixture
+            .path()
+            .join(archive["contract_snapshot_ref"].as_str().unwrap());
+        let snapshot = fs::read(&snapshot_path).unwrap();
+        fs::write(&snapshot_path, b"stale semantic snapshot").unwrap();
+        let error = super::verify_lifecycle_proof_archive(
+            &archive_path,
+            archived_json["archive"]["identity"].as_str().unwrap(),
+            fixture.path(),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("snapshot identity does not match content"),
+            "{error}"
+        );
+        fs::write(&snapshot_path, snapshot).unwrap();
+        let renamed_archive_path = archive_path.with_file_name("lifecycle-proof-renamed.json");
+        fs::rename(&archive_path, &renamed_archive_path).unwrap();
+        let error = super::verify_lifecycle_proof_archive(
+            &renamed_archive_path,
+            archived_json["archive"]["identity"].as_str().unwrap(),
+            fixture.path(),
+        )
+        .unwrap_err();
+        assert!(error.contains("filename does not match"), "{error}");
+        fs::rename(&renamed_archive_path, &archive_path).unwrap();
         archive["scope"]["transaction_id"] = serde_json::Value::String(String::from(
             "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ));
@@ -93749,6 +93803,86 @@ workflows:
         assert!(log.contains("stop database"), "{log}");
 
         fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: lifecycle
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+  assert-database:
+    run: exit 130
+    requires_services: [database]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: assert-database
+"#,
+        )
+        .unwrap();
+        fs::write(&log_path, "").unwrap();
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let assertion_interrupted = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        assert_eq!(
+            assertion_interrupted.exit_code, 1,
+            "{}",
+            assertion_interrupted.stdout
+        );
+        let assertion_interrupted_json: serde_json::Value =
+            serde_json::from_str(&assertion_interrupted.stdout).unwrap();
+        assert_eq!(
+            assertion_interrupted_json["finalization"]["state"],
+            "completed_after_interruption"
+        );
+        assert_eq!(
+            assertion_interrupted_json["finalization"]["after_interruption"],
+            true
+        );
+        assert!(
+            !state_path.exists(),
+            "interrupted assertion must still finalize"
+        );
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(log.matches("stop database").count(), 1, "{log}");
+
+        fs::write(
             &docker,
             format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}'; exit 130 ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
@@ -93793,6 +93927,11 @@ workflows:
         assert!(!state_path.exists(), "failed start must still finalize");
         let log = fs::read_to_string(&log_path).unwrap();
         assert!(log.contains("stop database"), "{log}");
+        assert_eq!(log.matches("stop database").count(), 1, "{log}");
+        assert_eq!(
+            start_failure_json["finalization"]["state"],
+            "completed_after_interruption"
+        );
 
         fs::write(&state_path, "pre-existing").unwrap();
         fs::write(&log_path, "").unwrap();
@@ -104412,8 +104551,10 @@ struct LifecycleProofArchiveScope {
     workflow: String,
     member: Option<String>,
     selected_services: Vec<String>,
+    service_closure: Vec<String>,
     transaction_id: String,
     backend: String,
+    mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104440,17 +104581,25 @@ struct LifecycleProofArchiveRecord<'a> {
 struct LifecycleProofArchiveReadRecord {
     kind: String,
     version: u32,
+    contract_identity: ContractIdentity,
     contract_snapshot_hash: String,
     contract_snapshot_ref: String,
+    source_identity: Option<String>,
     scope: LifecycleProofArchiveScope,
     proof: LifecycleProofArchiveReadProof,
 }
 
 #[derive(Debug, Deserialize)]
 struct LifecycleProofArchiveReadProof {
+    ok: bool,
     transaction_id: String,
+    workflow: String,
+    mode: String,
+    phase: String,
+    stage_family: String,
     services: Vec<LifecycleProofServiceRecord>,
     proof_verdict: String,
+    finalization: crate::output::LifecycleProofFinalization,
 }
 
 #[derive(Serialize)]
@@ -104578,6 +104727,7 @@ fn write_lifecycle_proof_archive(
     overrides: ExecutionOverrides,
     workflow: &str,
     selected_services: &[String],
+    service_closure: &[String],
     proof: &LifecycleProofStatus,
 ) -> Result<ProofRuntimeArchive, String> {
     let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
@@ -104593,7 +104743,9 @@ fn write_lifecycle_proof_archive(
         workflow: workflow.to_string(),
         member: member.map(str::to_string),
         selected_services: selected_services.to_vec(),
+        service_closure: service_closure.to_vec(),
         transaction_id: proof.transaction_id.clone(),
+        mode: execution_scope.backend.clone(),
         backend: execution_scope.backend,
         provider: execution_scope.provider,
         lifecycle: execution_scope.lifecycle,
@@ -104649,6 +104801,15 @@ fn verify_lifecycle_proof_archive(
     root: &Path,
 ) -> Result<(), String> {
     verify_proof_runtime_archive_identity(archive_path, identity)?;
+    let expected_name = format!(
+        "lifecycle-proof-{}.json",
+        identity.strip_prefix("sha256:").unwrap_or(identity)
+    );
+    if archive_path.file_name().and_then(|name| name.to_str()) != Some(expected_name.as_str()) {
+        return Err(String::from(
+            "lifecycle proof archive filename does not match its content-addressed identity",
+        ));
+    }
     let bytes = fs::read(archive_path).map_err(|error| {
         format!(
             "failed to read lifecycle proof archive `{}`: {error}",
@@ -104677,15 +104838,75 @@ fn verify_lifecycle_proof_archive(
             "lifecycle proof archive snapshot identity does not match content",
         ));
     }
+    let snapshot_contract: Contract = serde_json::from_slice(&snapshot)
+        .map_err(|error| format!("invalid lifecycle proof contract snapshot: {error}"))?;
+    if repo_contract_identity(&snapshot_contract) != archive.contract_identity {
+        return Err(String::from(
+            "lifecycle proof archive contract identity does not match its semantic snapshot",
+        ));
+    }
+    if archive.source_identity.as_deref().is_some_and(|identity| {
+        !identity.starts_with("git:")
+            || identity.strip_prefix("git:").is_none_or(|value| {
+                value.len() != 40
+                    || !value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || byte.is_ascii_lowercase())
+            })
+    }) {
+        return Err(String::from(
+            "lifecycle proof archive source identity is malformed",
+        ));
+    }
+    let valid_execution_plane = |value: &str| matches!(value, "native" | "container" | "remote");
+    let valid_target_os = |value: &str| matches!(value, "linux" | "macos" | "windows");
+    let closure = archive
+        .scope
+        .service_closure
+        .iter()
+        .collect::<BTreeSet<_>>();
+    let selected = archive
+        .scope
+        .selected_services
+        .iter()
+        .collect::<BTreeSet<_>>();
+    let recorded = archive
+        .proof
+        .services
+        .iter()
+        .map(|service| &service.service)
+        .collect::<BTreeSet<_>>();
     if archive.kind != "lifecycle_proof"
         || archive.version != 1
+        || archive.scope.workflow != archive.proof.workflow
+        || archive.proof.mode != "lifecycle-proof"
+        || archive.proof.phase != "lifecycle"
+        || archive.proof.stage_family != "proof"
+        || !valid_execution_plane(&archive.scope.backend)
+        || archive.scope.mode != archive.scope.backend
+        || !valid_target_os(&archive.scope.target_os)
+        || closure.is_empty()
+        || !selected.is_subset(&closure)
+        || closure.len() != archive.scope.service_closure.len()
+        || (archive.proof.finalization.state != "not_run" && recorded != closure)
+        || (archive.proof.finalization.state == "not_run" && !recorded.is_empty())
         || archive.scope.transaction_id != archive.proof.transaction_id
         || archive
             .proof
             .services
             .iter()
             .any(|service| service.transaction_id != archive.scope.transaction_id)
-        || archive.proof.proof_verdict.is_empty()
+        || !matches!(
+            archive.proof.proof_verdict.as_str(),
+            "passed" | "passed_with_unproven_boundaries" | "failed"
+        )
+        || archive.proof.ok != (archive.proof.proof_verdict != "failed")
+        || !matches!(
+            archive.proof.finalization.state.as_str(),
+            "not_run" | "completed" | "completed_after_interruption" | "incomplete"
+        )
+        || archive.proof.finalization.after_interruption
+            != (archive.proof.finalization.state == "completed_after_interruption")
     {
         return Err(String::from(
             "lifecycle proof archive has an invalid transaction binding",

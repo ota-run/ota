@@ -941,15 +941,20 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
   Ota also emits obligation-scoped `service_started_state_not_proved`; a successful start command
   alone is never promoted into an observed started state.
 - `ota proof lifecycle --json --archive` adds `archive.identity` and `archive.path`. The immutable
-  local record binds the semantic contract snapshot, selected workflow/services, transaction,
-  complete service records, terminal verdict, selected member, effective backend/provider/lifecycle/
-  target, and target OS. Its content identity and archived semantic snapshot are verified before
-  Ota accepts the record as locally well-formed. It does not establish application-output proof,
+  local record binds the semantic contract snapshot and source identity when available, selected
+  member/workflow/services plus the resolved dependency closure, transaction, complete service
+  records, terminal verdict and finalization, and effective backend/mode/provider/lifecycle/target/
+  target OS. Its content-addressed filename, content identity, contract identity, and archived
+  semantic snapshot reference are verified before Ota accepts the record as locally well-formed.
+  It does not establish application-output proof,
   CI eligibility, claim assurance, replay, or broader repo completion.
 - `--agent`, `--mode <native|container|remote>`, and `--member <name>` reuse the selected
   workflow's agent admission, task-mode resolution, and monorepo target loading. Service-manager
   commands retain their declared manager boundary; the mode applies to workflow prerequisite and
   assertion tasks rather than pretending that a host manager was relocated.
+- `finalization.state: completed_after_interruption` and `after_interruption: true` record that
+  the runner completed its reverse finalizer after an interrupted start or assertion; each service
+  record retains the corresponding typed `interrupted` transition and teardown evidence.
 
 The command schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json); archived records
 use [proof-lifecycle-archive.json](json-schemas/proof-lifecycle-archive.json).

@@ -64,7 +64,8 @@ use crate::execution::{
     selected_container_engine_from_backend,
 };
 use crate::output::{
-    ExecutionEvidenceClass, LifecycleProofServiceRecord, LifecycleProofTransition,
+    ExecutionEvidenceClass, LifecycleProofFinalization, LifecycleProofServiceRecord,
+    LifecycleProofTransition,
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::policy_pack::{
@@ -5392,7 +5393,9 @@ fn interruption_execution_note(interrupted: bool, _exit_code: i32) -> Option<Str
     interrupted.then(|| String::from("task interrupted by user"))
 }
 
-fn task_command_output_reports_user_interruption(command_output: &TaskCommandOutput) -> bool {
+pub(crate) fn task_command_output_reports_user_interruption(
+    command_output: &TaskCommandOutput,
+) -> bool {
     // A runner-observed interrupt is authoritative even when the application converts Ctrl+C
     // into its own non-zero exit code (for example, Next.js exits 1 after graceful shutdown).
     if command_output.interrupted {
@@ -6834,6 +6837,9 @@ struct TaskRunState {
     completed_by_generation: BTreeMap<(String, usize), i32>,
     next_generation: usize,
     started_services: BTreeSet<String>,
+    /// Services supplied by an enclosing transaction. They satisfy this run's dependency
+    /// admission but remain owned by that transaction's finalizer.
+    borrowed_services: BTreeSet<String>,
     ensured_target_producers:
         BTreeMap<(Option<String>, Option<String>, String, String), TaskTargetActivationStatus>,
     activation_started_producers:
@@ -8480,6 +8486,7 @@ fn run_task_internal_with_started_services(
     }
     let current_os = current_os();
     let mut state = TaskRunState::default();
+    state.borrowed_services = started_services.clone();
     state.started_services = started_services;
     state.execution_boundary_id = runner_execution_boundary_id();
     hydrate_virtualenv_boundaries_from_trace(&mut state, working_dir);
@@ -8819,7 +8826,13 @@ pub(crate) enum ManagedServiceState {
 #[derive(Debug, Clone)]
 pub(crate) struct LifecycleProofTransaction {
     pub records: Vec<LifecycleProofServiceRecord>,
+    pub finalization: LifecycleProofFinalization,
     pub error: Option<String>,
+}
+
+pub(crate) enum LifecycleProofAssertionFailure {
+    Failed(String),
+    Interrupted(String),
 }
 
 pub(crate) fn execute_lifecycle_proof_transaction<F, A>(
@@ -8832,7 +8845,7 @@ pub(crate) fn execute_lifecycle_proof_transaction<F, A>(
 ) -> LifecycleProofTransaction
 where
     F: FnMut(&str) -> bool,
-    A: FnMut() -> Result<(), String>,
+    A: FnMut() -> Result<(), LifecycleProofAssertionFailure>,
 {
     let mut records = order
         .iter()
@@ -8861,6 +8874,7 @@ where
         })
         .collect::<Vec<_>>();
     let mut error = None;
+    let mut interrupted = false;
 
     for (index, service_name) in order.iter().enumerate() {
         let service = &contract.services[service_name];
@@ -8899,6 +8913,7 @@ where
                         state: String::from("interrupted"),
                         evidence_class: Some(ExecutionEvidenceClass::Attested),
                     };
+                    interrupted = true;
                     error = Some(format!("service `{service_name}` start was interrupted"));
                     break;
                 }
@@ -8954,7 +8969,15 @@ where
     }
     if error.is_none() {
         if let Err(assertion_error) = assertion() {
-            error = Some(assertion_error);
+            match assertion_error {
+                LifecycleProofAssertionFailure::Failed(error_message) => {
+                    error = Some(error_message)
+                }
+                LifecycleProofAssertionFailure::Interrupted(error_message) => {
+                    interrupted = true;
+                    error = Some(error_message);
+                }
+            }
         }
     }
 
@@ -9026,7 +9049,25 @@ where
             }
         }
     }
-    LifecycleProofTransaction { records, error }
+    let finalization_state = if records
+        .iter()
+        .any(|record| record.cleanup_lease == "cleanup_failed")
+    {
+        String::from("incomplete")
+    } else if interrupted {
+        String::from("completed_after_interruption")
+    } else {
+        String::from("completed")
+    };
+    LifecycleProofTransaction {
+        records,
+        finalization: LifecycleProofFinalization {
+            state: finalization_state,
+            after_interruption: interrupted,
+            evidence_class: ExecutionEvidenceClass::Attested,
+        },
+        error,
+    }
 }
 
 fn parse_systemd_managed_service_state(
@@ -19121,7 +19162,9 @@ fn cleanup_interrupted_started_services_and_note(
     let mut failures = Vec::new();
     let mut started_services = service_start_order(contract)
         .into_iter()
-        .filter(|name| state.started_services.contains(name))
+        .filter(|name| {
+            state.started_services.contains(name) && !state.borrowed_services.contains(name)
+        })
         .collect::<Vec<_>>();
     started_services.reverse();
 

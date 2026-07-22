@@ -93,8 +93,10 @@ durable agent workflow belongs in the canonical Ota skill.
   the semantic contract snapshot, selected workflow/service scope, transaction records, and
   terminal verdict. The command now shares selected-workflow agent admission, mode resolution for
   prerequisite/assertion tasks, and monorepo member loading; service-manager controls remain on
-  their declared boundary. Archive scope and reader verification landed in `dca9e390`, including
-  an interrupted-start cleanup regression. Next: multi-service rollback and broader local failure
+  their declared boundary. Archive scope and reader verification landed in `3607b6a7`; the current
+  correction binds the resolved service closure/mode and contract/source identity, verifies archive
+  filename plus snapshot staleness, and records typed interruption finalization with exactly-once
+  teardown regressions. Next: multi-service rollback and broader local failure
   regressions before any CI projection or Caddy pressure claim. Generic host start/stop remains ineligible until it can prove
   current-boundary inactive state and cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime

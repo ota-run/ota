@@ -3244,6 +3244,14 @@ pub struct LifecycleProofTransition {
     pub evidence_class: Option<ExecutionEvidenceClass>,
 }
 
+/// Runner-owned terminal evidence for lifecycle transaction finalization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LifecycleProofFinalization {
+    pub state: String,
+    pub after_interruption: bool,
+    pub evidence_class: ExecutionEvidenceClass,
+}
+
 /// One service record in a bounded lifecycle proof transaction.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleProofServiceRecord {
@@ -3271,6 +3279,7 @@ pub struct LifecycleProofStatus {
     pub proof_scope: ProofRuntimeScope,
     pub transaction_id: String,
     pub services: Vec<LifecycleProofServiceRecord>,
+    pub finalization: LifecycleProofFinalization,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_proved: Vec<ProofRuntimeNotProved>,
     #[serde(skip_serializing_if = "Option::is_none")]

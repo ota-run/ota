@@ -623,6 +623,7 @@ or teardown shell commands into the workflow.
 ota proof lifecycle --workflow smoke [PATH]
 ota proof lifecycle --workflow smoke --service database [PATH]
 ota proof lifecycle --json --workflow smoke [PATH]
+ota proof lifecycle --json --archive --workflow smoke [PATH]
 ```
 
 Current behavior:
@@ -639,6 +640,10 @@ Current behavior:
   releasing each lease
 - emits `passed_with_unproven_boundaries` for a successful transaction because lifecycle state
   transitions do not prove broader application output or repo completion
+- `--archive` writes local content-addressed transaction evidence. Its filename, semantic snapshot
+  reference, contract identity, complete resolved service closure, terminal finalization, and
+  effective execution scope are verified before Ota reports the archive; it remains outside claim
+  assurance, replay, and CI projection
 
 Use it for a contract-owned contributor smoke that must prove Ota starts and cleans up only the
 service state it owns. It is not a replacement for an application-output or deployment proof.
