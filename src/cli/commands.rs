@@ -93975,6 +93975,174 @@ workflows:
 
     #[cfg(unix)]
     #[test]
+    fn proof_lifecycle_rolls_back_multi_service_closure_in_reverse_order() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let bin_dir = fixture.path().join("bin");
+        let database_state = fixture.path().join("database-running");
+        let cache_state = fixture.path().join("cache-running");
+        let log_path = fixture.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker = bin_dir.join("docker");
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'ps --status running -q'*cache*) [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}' ;;\n  *'up -d cache'*) touch '{}'; exit 7 ;;\n  *'stop cache'*) rm -f '{}' ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
+                log_path.display(),
+                database_state.display(),
+                cache_state.display(),
+                database_state.display(),
+                cache_state.display(),
+                cache_state.display(),
+                database_state.display(),
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker, permissions).unwrap();
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: lifecycle-rollback
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-rollback
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+  cache:
+    depends_on: [database]
+    manager:
+      kind: compose
+      name: lifecycle-rollback
+      file: compose.yaml
+      service: cache
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [cache]
+"#,
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let output = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["services"][0]["service"], "database");
+        assert_eq!(json["services"][1]["service"], "cache");
+        assert_eq!(json["services"][1]["start"]["state"], "command_failed");
+        assert_eq!(json["finalization"]["state"], "completed");
+        assert!(!database_state.exists());
+        assert!(!cache_state.exists());
+        let log = fs::read_to_string(&log_path).unwrap();
+        let cache_stop = log.find("stop cache").unwrap();
+        let database_stop = log.find("stop database").unwrap();
+        assert!(cache_stop < database_stop, "{log}");
+        assert_eq!(log.matches("stop cache").count(), 1, "{log}");
+        assert_eq!(log.matches("stop database").count(), 1, "{log}");
+
+        fs::write(
+            &docker,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *'ps --status running -q'*database*) [ -f '{}' ] && printf running ;;\n  *'ps --status running -q'*cache*) if [ -f '{}' ]; then exit 9; fi; [ -f '{}' ] && printf running ;;\n  *'up -d database'*) touch '{}' ;;\n  *'up -d cache'*) touch '{}'; touch '{}'; exit 7 ;;\n  *'stop cache'*) exit 9 ;;\n  *'stop database'*) rm -f '{}' ;;\nesac\n",
+                log_path.display(),
+                database_state.display(),
+                fixture.path().join("cache-observe-fails").display(),
+                cache_state.display(),
+                database_state.display(),
+                cache_state.display(),
+                fixture.path().join("cache-observe-fails").display(),
+                database_state.display(),
+            ),
+        )
+        .unwrap();
+        fs::write(&log_path, "").unwrap();
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let teardown_failure = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        match original_path.as_ref() {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(teardown_failure.exit_code, 1, "{}", teardown_failure.stdout);
+        let json: serde_json::Value = serde_json::from_str(&teardown_failure.stdout).unwrap();
+        assert_eq!(json["services"][1]["teardown"]["state"], "command_failed");
+        assert_eq!(
+            json["services"][1]["teardown_assertion"]["state"],
+            "state_observed"
+        );
+        assert_eq!(json["services"][1]["cleanup_lease"], "released");
+        assert_eq!(json["finalization"]["state"], "completed");
+        assert!(
+            !database_state.exists(),
+            "other leased services must still finalize"
+        );
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(log.matches("stop cache").count(), 1, "{log}");
+        assert_eq!(log.matches("stop database").count(), 1, "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proof_runtime_activates_mise_paths_before_parent_re_diagnosis() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
