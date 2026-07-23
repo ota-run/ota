@@ -112,14 +112,14 @@ use crate::output::{
     ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
     HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
     InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofServiceRecord,
-    LifecycleProofStatus, ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess,
-    MemberWorkflowsSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ProofRuntimeArchive, ProofRuntimeArtifacts,
-    ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
-    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
-    ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved, ProofRuntimeScope,
-    ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofAssertion,
+    LifecycleProofServiceRecord, LifecycleProofStatus, ListedWorkflowSummary,
+    MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
+    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
+    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
+    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved,
+    ProofRuntimeScope, ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
     ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline, ReceiptDiffComparison,
     ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
     ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind,
@@ -3013,6 +3013,72 @@ fn render_execution_topology_output(
     }
 }
 
+const LIFECYCLE_ASSERTION_OUTPUT_TAIL_LIMIT: usize = 8 * 1024;
+
+fn lifecycle_assertion_secret_values(
+    contract: &Contract,
+    contract_path: &Path,
+    task: &str,
+) -> Vec<String> {
+    resolve_task_env_details_for_task(contract, contract_path, task, None)
+        .map(|resolved| {
+            let mut values = resolved
+                .into_values()
+                .filter(|value| value.secret && !value.value.is_empty())
+                .map(|value| value.value)
+                .collect::<Vec<_>>();
+            // Redact longer values first so a short secret cannot leave a suffix exposed.
+            values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+            values.dedup();
+            values
+        })
+        .unwrap_or_default()
+}
+
+fn lifecycle_assertion_output_tail(
+    mut output: String,
+    secret_values: &[String],
+) -> (Option<String>, bool) {
+    if output.is_empty() {
+        return (None, false);
+    }
+    for secret in secret_values {
+        output = output.replace(secret, "<redacted>");
+    }
+    let truncated = output.len() > LIFECYCLE_ASSERTION_OUTPUT_TAIL_LIMIT;
+    let tail = if truncated {
+        let mut start = output.len() - LIFECYCLE_ASSERTION_OUTPUT_TAIL_LIMIT;
+        while !output.is_char_boundary(start) {
+            start += 1;
+        }
+        output[start..].to_string()
+    } else {
+        output
+    };
+    (Some(tail), truncated)
+}
+
+fn lifecycle_assertion_evidence(
+    task: &str,
+    state: &str,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    secret_values: &[String],
+) -> LifecycleProofAssertion {
+    let (stdout_tail, stdout_truncated) = lifecycle_assertion_output_tail(stdout, secret_values);
+    let (stderr_tail, stderr_truncated) = lifecycle_assertion_output_tail(stderr, secret_values);
+    LifecycleProofAssertion {
+        task: task.to_string(),
+        state: state.to_string(),
+        exit_code,
+        stdout_tail,
+        stderr_tail,
+        output_truncated: stdout_truncated || stderr_truncated,
+        evidence_class: ExecutionEvidenceClass::Attested,
+    }
+}
+
 pub fn proof_lifecycle(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -3141,6 +3207,11 @@ pub fn proof_lifecycle(
                 |service_name| diagnose_service(&contract, &target.contract_path, service_name).ok,
                 || match lifecycle.assertion.as_ref() {
                     Some(assertion) => {
+                        let secret_values = lifecycle_assertion_secret_values(
+                            &contract,
+                            &target.contract_path,
+                            assertion.task.as_str(),
+                        );
                         match crate::runner::run_task_captured_with_started_services_and_overrides(
                             &contract,
                             &target.contract_path,
@@ -3148,33 +3219,70 @@ pub fn proof_lifecycle(
                             &services,
                             overrides,
                         ) {
-                            Ok(outcome) if outcome.exit_code == 0 => Ok(()),
+                            Ok(outcome) if outcome.exit_code == 0 => {
+                                Ok(Some(lifecycle_assertion_evidence(
+                                    assertion.task.as_str(),
+                                    "passed",
+                                    Some(outcome.exit_code),
+                                    String::new(),
+                                    String::new(),
+                                    &secret_values,
+                                )))
+                            }
                             Ok(outcome)
                                 if outcome.interrupted
                                     || matches!(outcome.exit_code, 129 | 130 | 131 | 143) =>
                             {
-                                Err(crate::runner::LifecycleProofAssertionFailure::Interrupted(
-                                    format!(
+                                Err(crate::runner::LifecycleProofAssertionFailure::Interrupted {
+                                    error: format!(
                                         "lifecycle assertion `{}` was interrupted",
                                         assertion.task
                                     ),
-                                ))
+                                    evidence: lifecycle_assertion_evidence(
+                                        assertion.task.as_str(),
+                                        "interrupted",
+                                        Some(outcome.exit_code),
+                                        outcome.stdout,
+                                        outcome.stderr,
+                                        &secret_values,
+                                    ),
+                                })
                             }
-                            Ok(outcome) => Err(
-                                crate::runner::LifecycleProofAssertionFailure::Failed(format!(
-                                    "lifecycle assertion `{}` exited with code {}",
-                                    assertion.task, outcome.exit_code
-                                )),
-                            ),
-                            Err(run_error) => Err(
-                                crate::runner::LifecycleProofAssertionFailure::Failed(format!(
-                                    "lifecycle assertion `{}` could not run: {run_error}",
-                                    assertion.task
-                                )),
-                            ),
+                            Ok(outcome) => {
+                                Err(crate::runner::LifecycleProofAssertionFailure::Failed {
+                                    error: format!(
+                                        "lifecycle assertion `{}` exited with code {}",
+                                        assertion.task, outcome.exit_code
+                                    ),
+                                    evidence: lifecycle_assertion_evidence(
+                                        assertion.task.as_str(),
+                                        "failed",
+                                        Some(outcome.exit_code),
+                                        outcome.stdout,
+                                        outcome.stderr,
+                                        &secret_values,
+                                    ),
+                                })
+                            }
+                            Err(run_error) => {
+                                Err(crate::runner::LifecycleProofAssertionFailure::Failed {
+                                    error: format!(
+                                        "lifecycle assertion `{}` could not run: {run_error}",
+                                        assertion.task
+                                    ),
+                                    evidence: lifecycle_assertion_evidence(
+                                        assertion.task.as_str(),
+                                        "failed",
+                                        None,
+                                        String::new(),
+                                        String::new(),
+                                        &secret_values,
+                                    ),
+                                })
+                            }
                         }
                     }
-                    None => Ok(()),
+                    None => Ok(None),
                 },
             )
         },
@@ -3185,11 +3293,13 @@ pub fn proof_lifecycle(
                 after_interruption: false,
                 evidence_class: ExecutionEvidenceClass::Attested,
             },
+            assertion: None,
             error: Some(error),
         },
     );
     let records = transaction.records;
     let finalization = transaction.finalization;
+    let assertion = transaction.assertion;
     let error = transaction.error;
 
     let ok = error.is_none();
@@ -3218,6 +3328,7 @@ pub fn proof_lifecycle(
         transaction_id: transaction_id.clone(),
         services: records.clone(),
         finalization,
+        assertion,
         not_proved: if ok {
             let mut boundaries = records
                 .iter()
@@ -55798,6 +55909,19 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    #[test]
+    fn lifecycle_assertion_diagnostics_redact_and_limit_utf8_bytes() {
+        let secret = String::from("lifecycle-secret");
+        let output = format!("{}{}", "🦦".repeat(3_000), secret);
+        let (tail, truncated) = super::lifecycle_assertion_output_tail(output, &[secret]);
+        let tail = tail.expect("non-empty diagnostic output");
+
+        assert!(truncated);
+        assert!(tail.len() <= super::LIFECYCLE_ASSERTION_OUTPUT_TAIL_LIMIT);
+        assert!(tail.ends_with("<redacted>"));
+        assert!(!tail.contains("lifecycle-secret"));
+    }
+
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -93694,6 +93818,32 @@ workflows:
             archive["scope"]["service_closure"],
             serde_json::json!(["database"])
         );
+        let mut mismatched_assertion_archive = archive.clone();
+        mismatched_assertion_archive["proof"]["assertion"] = serde_json::json!({
+            "task": "undeclared-assertion",
+            "state": "failed",
+            "exit_code": 1,
+            "output_truncated": false,
+            "evidence_class": "attested"
+        });
+        let mismatched_assertion_content =
+            serde_json::to_vec(&mismatched_assertion_archive).unwrap();
+        let mismatched_assertion_identity =
+            super::contract_snapshot_hash(&mismatched_assertion_content);
+        let mismatched_assertion_path = archive_path.with_file_name(format!(
+            "lifecycle-proof-{}.json",
+            mismatched_assertion_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(mismatched_assertion_identity.as_str())
+        ));
+        fs::write(&mismatched_assertion_path, mismatched_assertion_content).unwrap();
+        let error = super::verify_lifecycle_proof_archive(
+            &mismatched_assertion_path,
+            mismatched_assertion_identity.as_str(),
+            fixture.path(),
+        )
+        .unwrap_err();
+        assert!(error.contains("invalid transaction binding"), "{error}");
         let snapshot_path = fixture
             .path()
             .join(archive["contract_snapshot_ref"].as_str().unwrap());
@@ -93747,11 +93897,16 @@ services:
       service: database
     lifecycle:
       teardown_assertion: manager_inactive
+env:
+  vars:
+    OTA_LIFECYCLE_ASSERTION_SECRET:
+      required: true
+      secret: true
 tasks:
   build:
     run: echo build
   assert-database:
-    run: exit 7
+    run: printf 'assertion-stdout:%s' "$OTA_LIFECYCLE_ASSERTION_SECRET"; printf 'assertion-stderr:%s' "$OTA_LIFECYCLE_ASSERTION_SECRET" >&2; exit 7
     requires_services: [database]
 workflows:
   default: smoke
@@ -93767,6 +93922,8 @@ workflows:
         )
         .unwrap();
         fs::write(&log_path, "").unwrap();
+        let original_assertion_secret = env::var_os("OTA_LIFECYCLE_ASSERTION_SECRET");
+        unsafe { env::set_var("OTA_LIFECYCLE_ASSERTION_SECRET", "assertion-secret") };
         unsafe {
             env::set_var(
                 "PATH",
@@ -93790,10 +93947,35 @@ workflows:
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
+        match original_assertion_secret {
+            Some(value) => unsafe { env::set_var("OTA_LIFECYCLE_ASSERTION_SECRET", value) },
+            None => unsafe { env::remove_var("OTA_LIFECYCLE_ASSERTION_SECRET") },
+        }
         assert_eq!(
             assertion_failure.exit_code, 1,
             "{}",
             assertion_failure.stdout
+        );
+        let assertion_failure_json: serde_json::Value =
+            serde_json::from_str(&assertion_failure.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "lifecycle assertion failure must emit JSON: {error}; stderr={:?}",
+                    assertion_failure.stderr
+                )
+            });
+        assert_eq!(
+            assertion_failure_json["assertion"]["task"],
+            "assert-database"
+        );
+        assert_eq!(assertion_failure_json["assertion"]["state"], "failed");
+        assert_eq!(assertion_failure_json["assertion"]["exit_code"], 7);
+        assert_eq!(
+            assertion_failure_json["assertion"]["stdout_tail"],
+            "assertion-stdout:<redacted>"
+        );
+        assert_eq!(
+            assertion_failure_json["assertion"]["stderr_tail"],
+            "assertion-stderr:<redacted>"
         );
         assert!(
             !state_path.exists(),
@@ -104844,6 +105026,7 @@ struct LifecycleProofArchiveReadProof {
     services: Vec<LifecycleProofServiceRecord>,
     proof_verdict: String,
     finalization: crate::output::LifecycleProofFinalization,
+    assertion: Option<LifecycleProofAssertion>,
 }
 
 #[derive(Serialize)]
@@ -105131,6 +105314,27 @@ fn verify_lifecycle_proof_archive(
                 && service.teardown.state == "not_run"
                 && service.teardown_assertion.state == "not_run"
         });
+    let declared_assertion_task = snapshot_contract
+        .workflows
+        .as_ref()
+        .and_then(|workflows| workflows.items.get(&archive.scope.workflow))
+        .and_then(|workflow| workflow.proof.lifecycle.as_ref())
+        .and_then(|lifecycle| lifecycle.assertion.as_ref())
+        .map(|assertion| assertion.task.as_str());
+    let valid_assertion = archive.proof.assertion.as_ref().is_none_or(|assertion| {
+        matches!(
+            assertion.state.as_str(),
+            "passed" | "failed" | "interrupted"
+        ) && assertion.evidence_class == ExecutionEvidenceClass::Attested
+            && declared_assertion_task == Some(assertion.task.as_str())
+            && archive.proof.finalization.state != "not_run"
+            && (assertion.state != "passed" || assertion.exit_code == Some(0))
+            && (assertion.state == "passed" || assertion.exit_code != Some(0))
+            && (assertion.state != "passed"
+                || (assertion.stdout_tail.is_none()
+                    && assertion.stderr_tail.is_none()
+                    && !assertion.output_truncated))
+    });
     if archive.kind != "lifecycle_proof"
         || archive.version != 1
         || archive.scope.workflow != archive.proof.workflow
@@ -105169,6 +105373,7 @@ fn verify_lifecycle_proof_archive(
                 archive.proof.finalization.state.as_str(),
                 "completed_after_interruption" | "incomplete_after_interruption"
             )
+        || !valid_assertion
     {
         return Err(String::from(
             "lifecycle proof archive has an invalid transaction binding",

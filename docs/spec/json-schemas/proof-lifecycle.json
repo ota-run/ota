@@ -35,6 +35,7 @@
       "items": { "$ref": "#/$defs/serviceRecord" }
     },
     "finalization": { "$ref": "#/$defs/finalization" },
+    "assertion": { "$ref": "#/$defs/assertion" },
     "not_proved": {
       "type": "array",
       "items": { "$ref": "#/$defs/proofNotProved" }
@@ -101,6 +102,20 @@
       "properties": {
         "state": { "type": "string", "enum": ["not_run", "completed", "completed_after_interruption", "incomplete", "incomplete_after_interruption"] },
         "after_interruption": { "type": "boolean" },
+        "evidence_class": { "const": "attested" }
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "state", "output_truncated", "evidence_class"],
+      "properties": {
+        "task": { "type": "string" },
+        "state": { "type": "string", "enum": ["passed", "failed", "interrupted"] },
+        "exit_code": { "type": "integer" },
+        "stdout_tail": { "type": "string" },
+        "stderr_tail": { "type": "string" },
+        "output_truncated": { "type": "boolean" },
         "evidence_class": { "const": "attested" }
       }
     },

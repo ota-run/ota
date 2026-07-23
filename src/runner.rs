@@ -64,8 +64,8 @@ use crate::execution::{
     selected_container_engine_from_backend,
 };
 use crate::output::{
-    ExecutionEvidenceClass, LifecycleProofFinalization, LifecycleProofServiceRecord,
-    LifecycleProofTransition,
+    ExecutionEvidenceClass, LifecycleProofAssertion, LifecycleProofFinalization,
+    LifecycleProofServiceRecord, LifecycleProofTransition,
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::policy_pack::{
@@ -8839,12 +8839,19 @@ pub(crate) enum ManagedServiceState {
 pub(crate) struct LifecycleProofTransaction {
     pub records: Vec<LifecycleProofServiceRecord>,
     pub finalization: LifecycleProofFinalization,
+    pub assertion: Option<LifecycleProofAssertion>,
     pub error: Option<String>,
 }
 
 pub(crate) enum LifecycleProofAssertionFailure {
-    Failed(String),
-    Interrupted(String),
+    Failed {
+        error: String,
+        evidence: LifecycleProofAssertion,
+    },
+    Interrupted {
+        error: String,
+        evidence: LifecycleProofAssertion,
+    },
 }
 
 pub(crate) fn execute_lifecycle_proof_transaction<F, A>(
@@ -8857,7 +8864,7 @@ pub(crate) fn execute_lifecycle_proof_transaction<F, A>(
 ) -> LifecycleProofTransaction
 where
     F: FnMut(&str) -> bool,
-    A: FnMut() -> Result<(), LifecycleProofAssertionFailure>,
+    A: FnMut() -> Result<Option<LifecycleProofAssertion>, LifecycleProofAssertionFailure>,
 {
     let mut records = order
         .iter()
@@ -8898,12 +8905,14 @@ where
                     after_interruption: false,
                     evidence_class: ExecutionEvidenceClass::Attested,
                 },
+                assertion: None,
                 error: Some(error),
             };
         }
     };
     let mut error = None;
     let mut interrupted = false;
+    let mut assertion_evidence = None;
 
     for (index, service_name) in order.iter().enumerate() {
         let service = &contract.services[service_name];
@@ -9007,15 +9016,22 @@ where
         }
     }
     if error.is_none() {
-        if let Err(assertion_error) = assertion() {
-            match assertion_error {
-                LifecycleProofAssertionFailure::Failed(error_message) => {
-                    error = Some(error_message)
-                }
-                LifecycleProofAssertionFailure::Interrupted(error_message) => {
-                    interrupted = true;
-                    error = Some(error_message);
-                }
+        match assertion() {
+            Ok(evidence) => assertion_evidence = evidence,
+            Err(LifecycleProofAssertionFailure::Failed {
+                error: error_message,
+                evidence,
+            }) => {
+                assertion_evidence = Some(evidence);
+                error = Some(error_message);
+            }
+            Err(LifecycleProofAssertionFailure::Interrupted {
+                error: error_message,
+                evidence,
+            }) => {
+                assertion_evidence = Some(evidence);
+                interrupted = true;
+                error = Some(error_message);
             }
         }
     }
@@ -9110,6 +9126,7 @@ where
             after_interruption: interrupted,
             evidence_class: ExecutionEvidenceClass::Attested,
         },
+        assertion: assertion_evidence,
         error,
     }
 }
@@ -69117,7 +69134,7 @@ services:
                 super::simulate_run_interrupt_for_test();
                 false
             },
-            || Ok(()),
+            || Ok(None),
         );
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -69184,7 +69201,7 @@ services:
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             fixture.dir.path(),
             |_| true,
-            || Ok(()),
+            || Ok(None),
         );
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },

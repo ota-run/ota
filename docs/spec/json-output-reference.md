@@ -937,6 +937,11 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
 - `start` and `teardown` command outcomes are runner-attested. Readiness and manager-state
   observations are derived from the declared service manager; an omitted readiness remains
   `not_declared`, never a positive state claim.
+- When a workflow declares an assertion, `assertion` carries its task, terminal state, and exit
+  code when available. Failed or interrupted assertions also carry bounded runner-captured
+  stdout/stderr tails with declared secret values redacted. `output_truncated: true` means one or
+  both tails were limited to 8 KiB; these diagnostics explain the transaction result but do not widen lifecycle proof into
+  application-output proof.
 - A successful lifecycle transition remains a bounded slice proof. Ota emits
   `application_output_not_proved` and `broader_repo_completion_not_proved` unless a future
   dedicated output-proof carrier establishes broader truth.

@@ -61,6 +61,11 @@
   transaction lock before it observes any manager state; a competing invocation is refused before
   it can acquire a cleanup lease, start a service, or run a post-readiness assertion.
 
+- lifecycle proof JSON and its local archive now retain typed, bounded diagnostics for a declared
+  assertion task: terminal state, exit code, and stdout/stderr tails (8 KiB per stream). These
+  runner-attested diagnostics redact declared secret values and explain assertion failures without
+  promoting lifecycle proof into application-output proof, replay, claim assurance, or CI evidence.
+
 - fixed selected container readiness for Ruby-owned Bundler fulfillment. When the base image has a
   different Bundler version but the selected Ruby toolchain declares `fulfillment: run`, Doctor
   now validates the Ruby provider and admits Ota's typed `gem install bundler --version <version>`

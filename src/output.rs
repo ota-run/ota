@@ -3266,6 +3266,21 @@ pub struct LifecycleProofServiceRecord {
     pub teardown_assertion: LifecycleProofTransition,
 }
 
+/// Bounded diagnostic evidence from an optional lifecycle assertion task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LifecycleProofAssertion {
+    pub task: String,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+    pub output_truncated: bool,
+    pub evidence_class: ExecutionEvidenceClass,
+}
+
 /// Terminal result for one runner-owned lifecycle transaction.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LifecycleProofStatus {
@@ -3280,6 +3295,8 @@ pub struct LifecycleProofStatus {
     pub transaction_id: String,
     pub services: Vec<LifecycleProofServiceRecord>,
     pub finalization: LifecycleProofFinalization,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assertion: Option<LifecycleProofAssertion>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_proved: Vec<ProofRuntimeNotProved>,
     #[serde(skip_serializing_if = "Option::is_none")]

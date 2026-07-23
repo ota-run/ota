@@ -105,20 +105,15 @@ durable agent workflow belongs in the canonical Ota skill.
   cleanup is explicitly `incomplete_after_interruption`. Focused local runner/archive/schema
   validation is complete; the lifecycle-lock correction is committed in `b3a018a7`. The scoped projection assessment is a no-go: V11.18 requires lifecycle proof to be
   pressure-proven before provider-neutral or GitHub projection, and the current archive is
-  intentionally local-only. The selected non-Caddy pressure target is Flagr's existing six-service
-  Compose integration topology on `bobai/flagr-v11.15-deployment-pressure`: its normal lifecycle
-  prerequisite closure builds the documented image and prepares the Docker network, and its finite
-  assertion is the existing integration suite. Initial pressure execution exposed a concurrent
-  lifecycle-transaction ownership race; the runner now refuses competing repository-scoped
-  lifecycle transactions before any manager observation. It also exposed four implicit Compose
-  database side effects, now declared as lifecycle dependencies of their Flagr instances instead
-  of relying on the workflow-wide `compose up`/`down` shape. The first controlled archived run
-  (`lifecycle-proof-28978902ab353710a3af6254935778eb8463a632d0d4d84eb4c22965c787f7c6.json`)
-  bound the full ten-service closure and correctly released every lease with manager-observed
-  inactive teardown, but the finite `integration:test` assertion exited 1. Treat that archive as
-  valid failed-proof/cleanup evidence; diagnose the assertion separately before a passing pressure
-  claim. Caddy pressure remains excluded. Generic host start/stop remains ineligible until it can prove
-  current-boundary inactive state and cleanup authority.
+  intentionally local-only. **Pressure provenance correction:** the remote Flagr branch
+  `bobai/flagr-v11.15-deployment-pressure` at `8881fbe` does not yet declare
+  `workflows.integration.proof.lifecycle`; it cannot substantiate the recorded lifecycle archives.
+  Treat those local records as implementation evidence only, not Flagr pressure proof. Next: RFC
+  the current Core batch, create or recover a Flagr pressure branch that declares the lifecycle
+  contract and pins that exact Core revision, then retain one successful and one controlled
+  assertion-failure archived proof with all teardown records. Caddy pressure remains excluded.
+  Generic host start/stop remains ineligible until it can prove current-boundary inactive state and
+  cleanup authority.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

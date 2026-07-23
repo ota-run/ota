@@ -638,6 +638,10 @@ Current behavior:
 - starts dependency services in declared order, checks declared readiness, and runs the optional
   finite assertion after readiness; assertion service requirements reuse the transaction-owned
   services rather than issuing another start command
+- JSON emits a typed assertion result with its terminal state and exit code when available; failed
+  or interrupted assertions include runner-captured stdout/stderr tails bounded to 8 KiB per
+  stream after declared secret values are redacted. Diagnostic output does not widen lifecycle
+  proof into application-output proof
 - attempts teardown in reverse order and requires a positive manager inactive observation before
   releasing each lease
 - emits `passed_with_unproven_boundaries` for a successful transaction because lifecycle state
