@@ -127,10 +127,13 @@ durable agent workflow belongs in the canonical Ota skill.
   hardened rerun [30124528078](https://github.com/bobaikato/caddy/actions/runs/30124528078) is
   green against Core `53ff07eb`, emits qualified proof, and archives
   `sha256:8985f57cd191e4d1db370122a6adb33a5f3a3fc649a289b2855dd2b48894de39` with exact session
-  `container:docker:ota-ephemeral-43c71044194b0e05`. A later isolated setup-failure correction
-  derives `incomplete` even when provisional cleanup succeeds; it must be committed and rerun on
-  Caddy before V11.18 can return to final review. Open WebUI supplies the independent Compose
-  readiness/teardown family.
+  `container:docker:ota-ephemeral-43c71044194b0e05`. The final setup-failure correction passed
+  [30125996749](https://github.com/bobaikato/caddy/actions/runs/30125996749) against Core
+  `fc88d215`, emitting archive
+  `sha256:c2dab2e7535589819f416159ca06b5384d599093e87546cc1aab1b242d8e3235` with exact session
+  `container:docker:ota-ephemeral-3890811a19b2944d`. Open WebUI supplies the independent Compose
+  readiness/teardown family. V11.18 is complete: implementation, pressure evidence, and final
+  independent review passed with no release blockers.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

@@ -24,11 +24,10 @@
 
 # V11.18: Managed Lifecycle-Sequence Proof
 
-Status: active. Isolated setup-failure finalization must derive `incomplete` even when provisional
-boundary cleanup succeeds; this correction must be committed and pressure-proven before final
-review. This follows V11.16 and V11.17 under version discipline. It reuses V11.11 proof boundaries
-and V11.16 boundary provenance; it does not reopen V11.15's generated build/test projection or
-silently claim upstream CI equivalence.
+Status: complete. Implementation, two-manager-family pressure evidence, and final independent
+review are complete. This follows V11.16 and V11.17 under version discipline. It reuses V11.11
+proof boundaries and V11.16 boundary provenance; it does not reopen V11.15's generated build/test
+projection or silently claim upstream CI equivalence.
 
 ## Problem
 
@@ -363,8 +362,11 @@ V11.18 is complete when:
   workflow in [30124528078](https://github.com/bobaikato/caddy/actions/runs/30124528078) against
   Core `53ff07eb`: it emitted `passed_with_unproven_boundaries`, archive
   `sha256:8985f57cd191e4d1db370122a6adb33a5f3a3fc649a289b2855dd2b48894de39`, and exact session
-  `container:docker:ota-ephemeral-43c71044194b0e05`. A later setup-failure finalization correction
-  remains unproven and requires a new hosted run.
+  `container:docker:ota-ephemeral-43c71044194b0e05`. The final setup-failure correction passed
+  [30125996749](https://github.com/bobaikato/caddy/actions/runs/30125996749) against Core
+  `fc88d215`: it emitted `passed_with_unproven_boundaries`, archive
+  `sha256:c2dab2e7535589819f416159ca06b5384d599093e87546cc1aab1b242d8e3235`, and exact session
+  `container:docker:ota-ephemeral-3890811a19b2944d`.
 
-Do not mark the slice complete or request final re-review until the setup-failure correction and
-its hosted Caddy proof are green.
+Do not mark the slice complete until final independent review confirms the cleanup, snapshot, and
+phase-transition invariants.
