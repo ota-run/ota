@@ -2003,7 +2003,8 @@ Fields:
 - `network`: optional boolean; set `true` when the task requires network access or reaches out to
   remote services during execution
 - `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`,
-  `container_image_hydration`, `integration_test`, or `tool_bootstrap`) for networked task paths
+  `container_image_hydration`, `service_readiness`, `integration_test`, or `tool_bootstrap`) for
+  networked task paths
 - `adapter_state`: optional list of lowercase `<adapter_family>:<state_name>` tokens naming
   durable adapter-owned state the task mutates, such as `compose_volume:bundle_data`
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
@@ -2022,11 +2023,14 @@ Task-effect rules:
   including `prepare.medium: container_images` and Compose startup paths that may pull declared
   images; keep image identity and runtime receipt evidence explicit rather than collapsing it into
   package dependency hydration
+- use `effects.network_kind: service_readiness` for finite health or protocol assertions against
+  an endpoint of a declared repo-managed service; pair it with `requires_services` and keep it
+  distinct from external integration truth
 - use `effects.network_kind: integration_test` for live, staging, or remote-backed verification
   lanes that depend on real services, credentials, or seeded environments beyond the local repo
-- test tasks that declare `requires_services` or `effects.external_state` should normally classify
-  that lane as `integration_test`; validate/doctor surface an advisory when that real-service test
-  truth is left broad or omitted
+- test tasks that declare `requires_services` should classify a repo-managed endpoint probe as
+  `service_readiness` and a live, staging, or remote-backed lane as `integration_test`;
+  validate/doctor surface an advisory when that service-verification truth is left broad or omitted
 - use `effects.network_kind: tool_bootstrap` for finite contract-owned tool installation lanes
   such as bootstrapping `uv` through `pip`; keep
   `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call execution

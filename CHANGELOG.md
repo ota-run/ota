@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added `effects.network_kind: service_readiness` for finite probes of declared repo-managed
+  service endpoints. Contract schemas, task and dry-run JSON, Doctor findings, effect overrides,
+  and policy packs now keep local/runtime readiness distinct from live or staging-backed
+  `integration_test` lanes.
+
 - added the first V11.18 managed lifecycle-proof admission surface. Workflows can reference
   manager-owned service closures under `proof.lifecycle`, optionally name a finite post-readiness
   assertion task, and require positive `manager_inactive` teardown observation. Validation keeps

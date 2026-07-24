@@ -1401,7 +1401,8 @@ Current behavior:
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:container_image_hydration`,
-  `network:integration_test`, `network:tool_bootstrap`, and `external_state:<token>`
+  `network:service_readiness`, `network:integration_test`, `network:tool_bootstrap`, and
+  `external_state:<token>`
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - when a task input overlaps an ota command flag name such as `mode` or `jobs`, put the ota command flag before the task and the task input after the task
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables

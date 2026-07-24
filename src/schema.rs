@@ -4953,6 +4953,7 @@ pub enum TaskNetworkEffectKind {
     Broad,
     DependencyHydration,
     ContainerImageHydration,
+    ServiceReadiness,
     IntegrationTest,
     ToolBootstrap,
 }
@@ -4963,6 +4964,7 @@ impl TaskNetworkEffectKind {
             Self::Broad => "broad",
             Self::DependencyHydration => "dependency_hydration",
             Self::ContainerImageHydration => "container_image_hydration",
+            Self::ServiceReadiness => "service_readiness",
             Self::IntegrationTest => "integration_test",
             Self::ToolBootstrap => "tool_bootstrap",
         }

@@ -578,7 +578,7 @@
         },
         "network": { "type": "boolean" },
         "network_kind": {
-          "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"]
+          "enum": ["broad", "dependency_hydration", "container_image_hydration", "service_readiness", "integration_test", "tool_bootstrap"]
         },
         "adapter_state": {
           "type": "array",

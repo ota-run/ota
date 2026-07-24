@@ -3748,6 +3748,11 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST"
             }
+            s if s.starts_with("Agent-safe task `")
+                && s.contains(" performs service readiness checks") =>
+            {
+                "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_SERVICE_READINESS"
+            }
             s if s.starts_with("Agent-safe task `") && s.contains(" requires network access") => {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK"
             }
@@ -5259,6 +5264,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
                 "Agent-safe task `{}` performs container image hydration",
                 advisory.task_name
             ),
+            TaskNetworkEffectKind::ServiceReadiness => format!(
+                "Agent-safe task `{}` performs service readiness checks",
+                advisory.task_name
+            ),
             TaskNetworkEffectKind::IntegrationTest => format!(
                 "Agent-safe task `{}` performs network integration testing",
                 advisory.task_name
@@ -5280,7 +5289,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
             advisory.systems.join(", ")
         ),
         ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
-            "Test task `{}` uses real service verification without `effects.network_kind: integration_test`",
+            "Test task `{}` uses service verification without a specific network effect kind",
             advisory.task_name
         ),
         ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
@@ -5311,6 +5320,7 @@ fn diagnose_selected_task_effects(
     let mut broad_network_tasks = Vec::new();
     let mut hydration_network_tasks = Vec::new();
     let mut container_image_hydration_tasks = Vec::new();
+    let mut service_readiness_tasks = Vec::new();
     let mut integration_test_network_tasks = Vec::new();
     let mut tool_bootstrap_tasks = Vec::new();
     let mut workspace_write_tasks = Vec::new();
@@ -5330,6 +5340,9 @@ fn diagnose_selected_task_effects(
                 }
                 TaskNetworkEffectKind::ContainerImageHydration => {
                     container_image_hydration_tasks.push(task_name.clone())
+                }
+                TaskNetworkEffectKind::ServiceReadiness => {
+                    service_readiness_tasks.push(task_name.clone())
                 }
                 TaskNetworkEffectKind::IntegrationTest => {
                     integration_test_network_tasks.push(task_name.clone())
@@ -5410,6 +5423,21 @@ fn diagnose_selected_task_effects(
             ),
             "the selected task path includes tasks with `effects.network_kind: integration_test`; this is a narrower network lane for staging, live, or remote-backed verification, but still depends on real service reachability and non-local test credentials or fixtures",
             "keep the live or staging dependency surface explicit through `requirements.env`, `effects.external_state`, and `effects.network_kind: integration_test`, and avoid treating these lanes as routine safe-task execution",
+        ));
+    }
+
+    if !service_readiness_tasks.is_empty() {
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_SERVICE_READINESS",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!(
+                "Selected task path performs declared service readiness checks: {}",
+                service_readiness_tasks.join(", ")
+            ),
+            "the selected task path includes tasks with `effects.network_kind: service_readiness`; these checks exercise declared repo-managed service endpoints and remain distinct from live, staging, or remote-backed integration testing",
+            "keep `requires_services` and `effects.network_kind: service_readiness` explicit, and use `integration_test` instead when the lane depends on non-local credentials, seeded remote state, or external services",
         ));
     }
 
@@ -14842,6 +14870,47 @@ workflows:
             finding.severity == FindingSeverity::Info
                 && finding.summary
                     == "Selected task path performs network integration testing: test:live"
+        }));
+    }
+
+    #[test]
+    fn doctor_surfaces_selected_task_path_service_readiness_effects() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+tasks:
+  test:health:
+    category: test
+    run: curl --fail http://127.0.0.1:3000/health
+    requires_services: [postgres]
+    effects:
+      network: true
+      network_kind: service_readiness
+workflows:
+  default: verify
+  verify:
+    run:
+      task: test:health
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Info
+                && finding.summary
+                    == "Selected task path performs declared service readiness checks: test:health"
         }));
     }
 
@@ -24525,6 +24594,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_SERVICE_READINESS",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",

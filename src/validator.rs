@@ -10016,6 +10016,9 @@ impl ContractAdvisory {
                 TaskNetworkEffectKind::ContainerImageHydration => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_CONTAINER_IMAGE_HYDRATION"
                 }
+                TaskNetworkEffectKind::ServiceReadiness => {
+                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_SERVICE_READINESS"
+                }
                 TaskNetworkEffectKind::IntegrationTest => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST"
                 }
@@ -10218,7 +10221,7 @@ impl ContractAdvisory {
                 advisory.systems.join(", ")
             ),
             ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
-                "test task `{}` uses real service verification without `effects.network_kind: integration_test`",
+                "test task `{}` uses service verification without a specific network effect kind",
                 advisory.task_name
             ),
             ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
@@ -10407,7 +10410,7 @@ impl ContractAdvisory {
                 advisory.systems.join(", ")
             ),
             ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
-                "task `{}` is a test lane that depends on declared services or external state, but its effects do not classify that path as `integration_test`; this weakens Ota's ability to distinguish real service-backed verification from generic network usage",
+                "task `{}` is a test lane that depends on declared services or external state, but its effects do not classify that path as `service_readiness` or `integration_test`; this weakens Ota's ability to distinguish a repo-managed service probe from remote-backed verification and generic network usage",
                 advisory.task_name
             ),
             ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
@@ -10734,7 +10737,7 @@ impl ContractAdvisory {
                 advisory.systems.join(", ")
             ),
             ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
-                "declare `effects.network: true` with `effects.network_kind: integration_test` for `{}`, and keep `requires_services`, `requirements.env`, and `effects.external_state` explicit on that verification lane",
+                "declare `effects.network: true` with `effects.network_kind: service_readiness` for a declared repo-managed endpoint, or `integration_test` for live/staging/remote state, on `{}`; keep `requires_services`, `requirements.env`, and `effects.external_state` explicit on that verification lane",
                 advisory.task_name
             ),
             ContractAdvisory::PublishedReadinessListenerNotSurface(advisory) => format!(
@@ -10753,6 +10756,10 @@ fn agent_safe_network_summary(advisory: &AgentSafeTaskNetworkAdvisory) -> String
         ),
         TaskNetworkEffectKind::ContainerImageHydration => format!(
             "agent-safe task `{}` performs container image hydration",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::ServiceReadiness => format!(
+            "agent-safe task `{}` performs service readiness checks",
             advisory.task_name
         ),
         TaskNetworkEffectKind::IntegrationTest => format!(
@@ -10780,6 +10787,10 @@ fn agent_safe_network_why(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
             "task `{}` is declared agent-safe and may pull container images from a registry; this is narrower than arbitrary remote mutation but still depends on registry reachability and the declared image identity outside repo write boundaries",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::ServiceReadiness => format!(
+            "task `{}` is declared agent-safe and probes a declared service endpoint; this is narrower than live or staging integration testing but still depends on the selected runtime boundary and service readiness",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::IntegrationTest => format!(
             "task `{}` is declared agent-safe and performs live, staging, or remote-backed verification over the network; this is narrower than arbitrary remote mutation but still depends on real service reachability plus non-local credentials or seeded fixtures",
             advisory.task_name
@@ -10803,6 +10814,10 @@ fn agent_safe_network_next(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
         ),
         TaskNetworkEffectKind::ContainerImageHydration => format!(
             "keep `effects.network: true` with `effects.network_kind: container_image_hydration` explicit for `{}`, prefer immutable image digests where the runtime identity is known, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended image acquisition is not acceptable",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::ServiceReadiness => format!(
+            "keep `requires_services` with `effects.network_kind: service_readiness` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended runtime probing is not acceptable",
             advisory.task_name
         ),
         TaskNetworkEffectKind::IntegrationTest => format!(
@@ -14013,6 +14028,10 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
                     | (_, TaskNetworkEffectKind::IntegrationTest) => {
                         TaskNetworkEffectKind::IntegrationTest
                     }
+                    (Some(TaskNetworkEffectKind::ServiceReadiness), _)
+                    | (_, TaskNetworkEffectKind::ServiceReadiness) => {
+                        TaskNetworkEffectKind::ServiceReadiness
+                    }
                     _ => TaskNetworkEffectKind::DependencyHydration,
                 });
             }
@@ -14055,7 +14074,10 @@ fn collect_missing_integration_test_network_kind_advisories(
         if task.category.as_deref() != Some("test") {
             continue;
         }
-        if task.effects.network_kind == Some(TaskNetworkEffectKind::IntegrationTest) {
+        if matches!(
+            task.effects.network_kind,
+            Some(TaskNetworkEffectKind::IntegrationTest | TaskNetworkEffectKind::ServiceReadiness)
+        ) {
             continue;
         }
         if task.requires_services.is_empty() && task.effects.external_state.is_empty() {
@@ -38951,6 +38973,37 @@ tasks:
             advisory,
             ContractAdvisory::MissingIntegrationTestNetworkKind(value)
                 if value.task_name == "test"
+        )));
+    }
+
+    #[test]
+    fn skips_missing_integration_test_network_kind_advisory_when_task_is_service_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:health:
+    category: test
+    run: curl --fail http://127.0.0.1:3000/health
+    requires_services:
+      - postgres
+    effects:
+      network: true
+      network_kind: service_readiness
+      external_state:
+        - postgres
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::MissingIntegrationTestNetworkKind(value)
+                if value.task_name == "test:health"
         )));
     }
 

@@ -2373,6 +2373,58 @@ tasks:
 }
 
 #[test]
+fn task_and_run_preview_json_preserve_service_readiness_network_kind() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: service-readiness-preview
+services:
+  api:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: api
+tasks:
+  api:health:
+    category: test
+    run: curl --fail http://127.0.0.1:3000/health
+    requires_services: [api]
+    effects:
+      network: true
+      network_kind: service_readiness
+"#,
+    );
+
+    let tasks = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &tasks);
+    assert_eq!(
+        tasks["tasks"][0]["effects"]["network_kind"],
+        "service_readiness"
+    );
+
+    let preview = run_ota(
+        &[
+            "run",
+            "api:health",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &preview);
+    assert_eq!(preview["governance"]["network_kind"], "service_readiness");
+}
+
+#[test]
 fn run_dry_run_json_output_reports_compose_volume_reset_action() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

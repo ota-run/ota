@@ -1807,6 +1807,9 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 crate::schema::TaskNetworkEffectKind::ContainerImageHydration => {
                     "container image hydration"
                 }
+                crate::schema::TaskNetworkEffectKind::ServiceReadiness => {
+                    "service readiness checks"
+                }
                 crate::schema::TaskNetworkEffectKind::IntegrationTest => {
                     "network integration testing"
                 }
@@ -15042,6 +15045,10 @@ fn merge_network_kind(
         | (_, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
             crate::schema::TaskNetworkEffectKind::IntegrationTest
         }
+        (Some(crate::schema::TaskNetworkEffectKind::ServiceReadiness), _)
+        | (_, crate::schema::TaskNetworkEffectKind::ServiceReadiness) => {
+            crate::schema::TaskNetworkEffectKind::ServiceReadiness
+        }
         _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
     })
 }
@@ -17544,6 +17551,9 @@ fn parse_effect_override_selector(value: &str) -> Option<String> {
     if selector.eq_ignore_ascii_case("network:container_image_hydration") {
         return Some(String::from("network:container_image_hydration"));
     }
+    if selector.eq_ignore_ascii_case("network:service_readiness") {
+        return Some(String::from("network:service_readiness"));
+    }
     if selector.eq_ignore_ascii_case("network:integration_test") {
         return Some(String::from("network:integration_test"));
     }
@@ -17620,7 +17630,7 @@ fn parse_effect_governance_overrides(
         };
         let Some(selector) = parse_effect_override_selector(selector_raw) else {
             return Err(format!(
-                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`"
+                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:container_image_hydration`, `network:service_readiness`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`"
             ));
         };
         let Some(decision) = parse_effect_override_decision(decision_raw) else {
@@ -19259,6 +19269,10 @@ fn collect_task_closure_effects(
                 (Some(crate::schema::TaskNetworkEffectKind::IntegrationTest), _)
                 | (_, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
                     crate::schema::TaskNetworkEffectKind::IntegrationTest
+                }
+                (Some(crate::schema::TaskNetworkEffectKind::ServiceReadiness), _)
+                | (_, crate::schema::TaskNetworkEffectKind::ServiceReadiness) => {
+                    crate::schema::TaskNetworkEffectKind::ServiceReadiness
                 }
                 _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
             });
@@ -46489,6 +46503,9 @@ fn render_task_safety_posture_text(task: &TaskSummary<'_>) -> String {
             }
             Some(crate::schema::TaskNetworkEffectKind::ContainerImageHydration) => {
                 String::from("container image hydration")
+            }
+            Some(crate::schema::TaskNetworkEffectKind::ServiceReadiness) => {
+                String::from("declared service readiness")
             }
             Some(crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
                 String::from("live or staging integration test")
@@ -97031,6 +97048,7 @@ fn effect_override_parser_accepts_supported_selectors() {
         String::from("network=deny"),
         String::from("network:dependency_hydration=allow"),
         String::from("network:container_image_hydration=deny"),
+        String::from("network:service_readiness=allow"),
         String::from("network:integration_test=warn"),
         String::from("network:tool_bootstrap=allow"),
         String::from("adapter_state:compose_volume:bundle_data=deny"),
@@ -97049,6 +97067,10 @@ fn effect_override_parser_accepts_supported_selectors() {
     assert_eq!(
         overrides.decisions.get("network:container_image_hydration"),
         Some(&PolicyEffectDecision::Deny)
+    );
+    assert_eq!(
+        overrides.decisions.get("network:service_readiness"),
+        Some(&PolicyEffectDecision::Allow)
     );
     assert_eq!(
         overrides.decisions.get("network:integration_test"),

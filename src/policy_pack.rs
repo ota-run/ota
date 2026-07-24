@@ -185,6 +185,8 @@ pub struct PolicyTaskEffectsRules {
     #[serde(default)]
     pub container_image_hydration: Option<PolicyEffectDecision>,
     #[serde(default)]
+    pub service_readiness: Option<PolicyEffectDecision>,
+    #[serde(default)]
     pub integration_test: Option<PolicyEffectDecision>,
     #[serde(default)]
     pub adapter_state_default: Option<PolicyEffectDecision>,
@@ -2158,6 +2160,32 @@ fn resolve_network_effect_governance_decision(
                 return (decision, String::from("policies.effects.tasks.network"));
             }
         }
+        (
+            EffectGovernanceScope::SafeTask,
+            crate::schema::TaskNetworkEffectKind::ServiceReadiness,
+        ) => {
+            if let Some(decision) = safe.service_readiness {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.service_readiness"),
+                );
+            }
+            if let Some(decision) = safe.network {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.network"),
+                );
+            }
+            if let Some(decision) = task.service_readiness {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.service_readiness"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
         (EffectGovernanceScope::SafeTask, crate::schema::TaskNetworkEffectKind::Broad) => {
             if let Some(decision) = safe.network {
                 return (
@@ -2213,6 +2241,17 @@ fn resolve_network_effect_governance_decision(
                 return (
                     decision,
                     String::from("policies.effects.tasks.integration_test"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (EffectGovernanceScope::Task, crate::schema::TaskNetworkEffectKind::ServiceReadiness) => {
+            if let Some(decision) = task.service_readiness {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.service_readiness"),
                 );
             }
             if let Some(decision) = task.network {
@@ -4421,6 +4460,53 @@ policies:
                 decision.effect == "network:integration_test"
                     && decision.decision == PolicyEffectDecision::Warn
                     && decision.source == "policies.effects.tasks.integration_test"
+            }),
+            "{task_decisions:?}"
+        );
+    }
+
+    #[test]
+    fn service_readiness_effect_policy_decisions_use_narrower_rules_before_network() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+      service_readiness: warn
+    safe_tasks:
+      network: deny
+      service_readiness: allow
+"#,
+        )
+        .unwrap();
+
+        let safe_task_decisions = policy.safe_task_effect_governance_decisions(
+            Some(crate::schema::TaskNetworkEffectKind::ServiceReadiness),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
+        let task_decisions = policy.effect_governance_decisions(
+            EffectGovernanceScope::Task,
+            Some(crate::schema::TaskNetworkEffectKind::ServiceReadiness),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            None,
+        );
+
+        assert!(
+            safe_task_decisions.iter().any(|decision| {
+                decision.effect == "network:service_readiness"
+                    && decision.decision == PolicyEffectDecision::Allow
+                    && decision.source == "policies.effects.safe_tasks.service_readiness"
+            }),
+            "{safe_task_decisions:?}"
+        );
+        assert!(
+            task_decisions.iter().any(|decision| {
+                decision.effect == "network:service_readiness"
+                    && decision.decision == PolicyEffectDecision::Warn
+                    && decision.source == "policies.effects.tasks.service_readiness"
             }),
             "{task_decisions:?}"
         );

@@ -247,7 +247,7 @@ enum Commands {
         /// Skip declared task dependencies for this local invocation only.
         #[arg(long, action = ArgAction::SetTrue)]
         skip_deps: bool,
-        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:container_image_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
+        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:container_image_hydration`, `network:service_readiness`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
         /// Attach operator intent when crossing a heavier audited execution boundary.
@@ -581,7 +581,7 @@ enum Commands {
         /// Execute the selected workflow against an archived baseline witness and publish replay posture.
         #[arg(long, value_name = "SELECTION", conflicts_with_all = ["dry_run", "stream", "member"])]
         replay_baseline: Option<String>,
-        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:container_image_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
+        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:container_image_hydration`, `network:service_readiness`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
         /// Attach operator intent when crossing a heavier audited execution boundary.

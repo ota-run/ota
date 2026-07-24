@@ -231,6 +231,8 @@ That makes the value visible immediately:
   (`effects.network_kind: dependency_hydration`) for selected task paths.
 - `effects.tasks.container_image_hydration` controls registry-backed Compose image-pull lanes
   (`effects.network_kind: container_image_hydration`) for selected task paths.
+- `effects.tasks.service_readiness` controls finite endpoint assertions against declared
+  repo-managed services (`effects.network_kind: service_readiness`) for selected task paths.
 - `effects.tasks.integration_test` controls live, staging, or remote-backed verification lanes
   (`effects.network_kind: integration_test`) for selected task paths.
 - `effects.tasks.external_state_default` sets the default decision for selected-task
@@ -246,6 +248,8 @@ That makes the value visible immediately:
   (`effects.network_kind: dependency_hydration`) for safe-task paths.
 - `effects.safe_tasks.container_image_hydration` controls registry-backed Compose image-pull lanes
   (`effects.network_kind: container_image_hydration`) for safe-task paths.
+- `effects.safe_tasks.service_readiness` controls finite endpoint assertions against declared
+  repo-managed services (`effects.network_kind: service_readiness`) for safe-task paths.
 - `effects.safe_tasks.integration_test` controls live, staging, or remote-backed verification
   lanes (`effects.network_kind: integration_test`) for safe-task paths.
 - `effects.safe_tasks.external_state_default` sets the default decision for safe-task external
