@@ -15,13 +15,14 @@
     "proof_scope",
     "transaction_id",
     "services",
-    "finalization"
+    "finalization",
+    "not_proved"
   ],
   "properties": {
     "ok": { "type": "boolean" },
     "proof_verdict": {
       "type": "string",
-      "enum": ["passed", "passed_with_unproven_boundaries", "failed"]
+      "enum": ["passed_with_unproven_boundaries", "failed"]
     },
     "path": { "type": "string" },
     "mode": { "const": "lifecycle-proof" },
@@ -38,11 +39,33 @@
     "assertion": { "$ref": "#/$defs/assertion" },
     "not_proved": {
       "type": "array",
+      "minItems": 2,
       "items": { "$ref": "#/$defs/proofNotProved" }
     },
     "archive": { "$ref": "#/$defs/archive" },
     "error": { "type": "string" }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "proof_verdict": { "const": "passed_with_unproven_boundaries" } }, "required": ["proof_verdict"] },
+      "then": {
+        "properties": {
+          "ok": { "const": true },
+          "services": { "minItems": 1 },
+          "finalization": { "properties": { "state": { "enum": ["completed", "completed_after_interruption"] } }, "required": ["state"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "proof_verdict": { "const": "failed" } }, "required": ["proof_verdict"] },
+      "then": {
+        "required": ["error"],
+        "properties": { "ok": { "const": false } }
+      }
+    },
+    { "properties": { "not_proved": { "contains": { "properties": { "kind": { "const": "application_output_not_proved" } }, "required": ["kind"] } } } },
+    { "properties": { "not_proved": { "contains": { "properties": { "kind": { "const": "broader_repo_completion_not_proved" } }, "required": ["kind"] } } } }
+  ],
   "$defs": {
     "archive": {
       "type": "object",
@@ -126,6 +149,7 @@
       "properties": {
         "service": { "type": "string" },
         "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "boundary_identity": { "type": "string", "minLength": 1 },
         "preexisting_state": { "type": "string", "enum": ["inactive_observed", "active_observed", "boundary_absent_attested", "unknown"] },
         "cleanup_lease": { "type": "string", "enum": ["not_acquired", "acquired", "released", "cleanup_failed"] },
         "ownership": { "type": "string", "enum": ["started_this_transaction", "reused_preexisting", "unknown"] },
@@ -133,7 +157,20 @@
         "readiness": { "$ref": "#/$defs/transition" },
         "teardown": { "$ref": "#/$defs/transition" },
         "teardown_assertion": { "$ref": "#/$defs/transition" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "teardown_assertion": { "properties": { "state": { "const": "boundary_terminated" } }, "required": ["state"] } }, "required": ["teardown_assertion"] },
+          "then": {
+            "required": ["boundary_identity"],
+            "properties": {
+              "preexisting_state": { "const": "boundary_absent_attested" },
+              "cleanup_lease": { "const": "released" },
+              "ownership": { "const": "started_this_transaction" }
+            }
+          }
+        }
+      ]
     }
   }
 }

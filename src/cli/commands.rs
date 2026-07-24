@@ -3373,7 +3373,7 @@ pub fn proof_lifecycle(
         services: records.clone(),
         finalization,
         assertion,
-        not_proved: if ok {
+        not_proved: {
             let mut boundaries = records
                 .iter()
                 .filter(|record| record.readiness.state != "state_observed")
@@ -3415,8 +3415,6 @@ pub fn proof_lifecycle(
                 },
             ]);
             boundaries
-        } else {
-            Vec::new()
         },
         error,
     };
@@ -93855,7 +93853,7 @@ workflows:
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
-        assert_eq!(archived.exit_code, 0, "{}", archived.stdout);
+        assert_eq!(archived.exit_code, 0, "{archived:?}");
         let archived_json: serde_json::Value = serde_json::from_str(&archived.stdout).unwrap();
         let archive_path = fixture
             .path()
@@ -93898,6 +93896,57 @@ workflows:
         let error = super::verify_lifecycle_proof_archive(
             &mismatched_assertion_path,
             mismatched_assertion_identity.as_str(),
+            fixture.path(),
+        )
+        .unwrap_err();
+        assert!(error.contains("invalid transaction binding"), "{error}");
+        let mut unbounded_success_archive = archive.clone();
+        unbounded_success_archive["proof"]["proof_verdict"] =
+            serde_json::Value::String(String::from("passed"));
+        unbounded_success_archive["proof"]["not_proved"] = serde_json::json!([]);
+        let unbounded_success_content = serde_json::to_vec(&unbounded_success_archive).unwrap();
+        let unbounded_success_identity = super::contract_snapshot_hash(&unbounded_success_content);
+        let unbounded_success_path = archive_path.with_file_name(format!(
+            "lifecycle-proof-{}.json",
+            unbounded_success_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(unbounded_success_identity.as_str())
+        ));
+        fs::write(&unbounded_success_path, unbounded_success_content).unwrap();
+        let error = super::verify_lifecycle_proof_archive(
+            &unbounded_success_path,
+            unbounded_success_identity.as_str(),
+            fixture.path(),
+        )
+        .unwrap_err();
+        assert!(error.contains("invalid transaction binding"), "{error}");
+        let mut mismatched_boundary_archive = archive.clone();
+        mismatched_boundary_archive["scope"]["boundary_identity"] =
+            serde_json::Value::String(String::from("container:docker:ota-lifecycle-a"));
+        let service = &mut mismatched_boundary_archive["proof"]["services"][0];
+        service["boundary_identity"] =
+            serde_json::Value::String(String::from("container:docker:ota-lifecycle-b"));
+        service["preexisting_state"] =
+            serde_json::Value::String(String::from("boundary_absent_attested"));
+        service["cleanup_lease"] = serde_json::Value::String(String::from("released"));
+        service["ownership"] = serde_json::Value::String(String::from("started_this_transaction"));
+        service["teardown_assertion"] = serde_json::json!({
+            "state": "boundary_terminated",
+            "evidence_class": "attested"
+        });
+        let mismatched_boundary_content = serde_json::to_vec(&mismatched_boundary_archive).unwrap();
+        let mismatched_boundary_identity =
+            super::contract_snapshot_hash(&mismatched_boundary_content);
+        let mismatched_boundary_path = archive_path.with_file_name(format!(
+            "lifecycle-proof-{}.json",
+            mismatched_boundary_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(mismatched_boundary_identity.as_str())
+        ));
+        fs::write(&mismatched_boundary_path, mismatched_boundary_content).unwrap();
+        let error = super::verify_lifecycle_proof_archive(
+            &mismatched_boundary_path,
+            mismatched_boundary_identity.as_str(),
             fixture.path(),
         )
         .unwrap_err();
@@ -105042,6 +105091,8 @@ struct LifecycleProofArchiveScope {
     selected_services: Vec<String>,
     service_closure: Vec<String>,
     transaction_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boundary_identity: Option<String>,
     backend: String,
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105086,10 +105137,14 @@ struct LifecycleProofArchiveReadProof {
     mode: String,
     phase: String,
     stage_family: String,
+    proof_scope: ProofRuntimeScope,
     services: Vec<LifecycleProofServiceRecord>,
     proof_verdict: String,
     finalization: crate::output::LifecycleProofFinalization,
     assertion: Option<LifecycleProofAssertion>,
+    not_proved: Vec<ProofRuntimeNotProved>,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -105235,6 +105290,14 @@ fn write_lifecycle_proof_archive(
         selected_services: selected_services.to_vec(),
         service_closure: service_closure.to_vec(),
         transaction_id: proof.transaction_id.clone(),
+        boundary_identity: proof
+            .services
+            .iter()
+            .filter_map(|service| service.boundary_identity.as_deref())
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .reduce(|first, _| first),
         mode: execution_scope.backend.clone(),
         backend: execution_scope.backend,
         provider: execution_scope.provider,
@@ -105244,7 +105307,7 @@ fn write_lifecycle_proof_archive(
     };
     let record = LifecycleProofArchiveRecord {
         kind: "lifecycle_proof",
-        version: 1,
+        version: 2,
         contract_identity: &contract_identity,
         contract_snapshot_hash: &snapshot.hash,
         contract_snapshot_ref: &snapshot_ref,
@@ -105398,12 +105461,44 @@ fn verify_lifecycle_proof_archive(
                     && assertion.stderr_tail.is_none()
                     && !assertion.output_truncated))
     });
+    let mandatory_boundaries = [
+        "application_output_not_proved",
+        "broader_repo_completion_not_proved",
+    ]
+    .into_iter()
+    .all(|kind| {
+        archive
+            .proof
+            .not_proved
+            .iter()
+            .any(|boundary| boundary.kind == kind)
+    });
+    let valid_boundary_identity = archive.proof.services.iter().all(|service| {
+        match service.teardown_assertion.state.as_str() {
+            "boundary_terminated" => {
+                service.preexisting_state == "boundary_absent_attested"
+                    && service.cleanup_lease == "released"
+                    && service.ownership == "started_this_transaction"
+                    && service.boundary_identity.is_some()
+                    && service.boundary_identity == archive.scope.boundary_identity
+            }
+            _ => service.boundary_identity.is_none(),
+        }
+    });
+    let valid_proof_scope = archive.proof.proof_scope.kind == "lifecycle_transition"
+        && archive.proof.proof_scope.proof_class == "slice_proof"
+        && archive.proof.proof_scope.workflow.as_deref() == Some(archive.scope.workflow.as_str());
+    let success_finalization = matches!(
+        archive.proof.finalization.state.as_str(),
+        "completed" | "completed_after_interruption"
+    );
     if archive.kind != "lifecycle_proof"
-        || archive.version != 1
+        || archive.version != 2
         || archive.scope.workflow != archive.proof.workflow
         || archive.proof.mode != "lifecycle-proof"
         || archive.proof.phase != "lifecycle"
         || archive.proof.stage_family != "proof"
+        || !valid_proof_scope
         || !valid_execution_plane(&archive.scope.backend)
         || archive.scope.mode != archive.scope.backend
         || !valid_target_os(&archive.scope.target_os)
@@ -105420,9 +105515,12 @@ fn verify_lifecycle_proof_archive(
             .any(|service| service.transaction_id != archive.scope.transaction_id)
         || !matches!(
             archive.proof.proof_verdict.as_str(),
-            "passed" | "passed_with_unproven_boundaries" | "failed"
+            "passed_with_unproven_boundaries" | "failed"
         )
-        || archive.proof.ok != (archive.proof.proof_verdict != "failed")
+        || archive.proof.ok != (archive.proof.proof_verdict == "passed_with_unproven_boundaries")
+        || !mandatory_boundaries
+        || (archive.proof.ok && !success_finalization)
+        || (!archive.proof.ok && archive.proof.error.is_none())
         || !matches!(
             archive.proof.finalization.state.as_str(),
             "not_run"
@@ -105437,6 +105535,7 @@ fn verify_lifecycle_proof_archive(
                 "completed_after_interruption" | "incomplete_after_interruption"
             )
         || !valid_assertion
+        || !valid_boundary_identity
     {
         return Err(String::from(
             "lifecycle proof archive has an invalid transaction binding",

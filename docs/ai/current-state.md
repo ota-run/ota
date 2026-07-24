@@ -103,9 +103,10 @@ durable agent workflow belongs in the canonical Ota skill.
   same finalizer runs. A stop-command failure retains typed transition evidence and does not
   prevent other leased services from finalizing; an interrupted teardown with unproved manager
   cleanup is explicitly `incomplete_after_interruption`. Focused local runner/archive/schema
-  validation is complete; the lifecycle-lock correction is committed in `b3a018a7`. The scoped projection assessment is a no-go: V11.18 requires lifecycle proof to be
-  pressure-proven before provider-neutral or GitHub projection, and the current archive is
-  intentionally local-only. **Pressure provenance correction:** the remote Flagr branch
+  validation is complete; the lifecycle-lock correction is committed in `b3a018a7`. V11.18 does
+  not reopen V11.15 provider-neutral or GitHub projection: lifecycle proof stays a local command
+  with dedicated provider-owned pressure workflows until a later slice defines lifecycle-specific
+  adapter semantics. **Pressure provenance correction:** the remote Flagr branch
   `bobai/flagr-v11.15-deployment-pressure` at `8881fbe` does not yet declare
   `workflows.integration.proof.lifecycle`; it cannot substantiate the recorded lifecycle archives.
   Treat those local records as implementation evidence only, not Flagr pressure proof. Open WebUI
@@ -119,10 +120,11 @@ durable agent workflow belongs in the canonical Ota skill.
   `service_started_state_not_proved`, `application_output_not_proved`, and
   `broader_repo_completion_not_proved`; it never claims `manager_inactive` or host process absence.
   Caddy matrix [30102633474](https://github.com/bobaikato/caddy/actions/runs/30102633474) is green
-  for regenerated native and container governance lanes against committed Core `6025187b`. Open
-  WebUI supplies the independent Compose readiness/teardown family. V11.18 implementation and
-  pressure evidence are complete; the slice is ready for independent review, not yet marked
-  complete.
+  for regenerated native and container governance lanes against committed Core `6025187b`, but it
+  does not invoke `ota proof lifecycle`; it is not isolated-boundary pressure proof. Open WebUI
+  supplies the independent Compose readiness/teardown family. V11.18 remains active until the
+  hardened Core branch passes Caddy's dedicated hosted lifecycle workflow and its archive binds the
+  exact runner-owned boundary identity.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

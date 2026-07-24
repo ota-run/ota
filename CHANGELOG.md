@@ -72,6 +72,13 @@
   transaction lock before it observes any manager state; a competing invocation is refused before
   it can acquire a cleanup lease, start a service, or run a post-readiness assertion.
 
+- hardened isolated lifecycle-boundary ownership and evidence. Ota now treats an ephemeral
+  container session as owned immediately after engine creation and removes it after network or
+  start setup failures as well as normal finalization. Lifecycle JSON and archives require
+  qualified proof boundaries, reject bare `passed` success, bind `boundary_terminated` to the exact
+  runner-owned engine/session identity, and verify that scope identity against every emitted
+  boundary record.
+
 - lifecycle proof JSON and its local archive now retain typed, bounded diagnostics for a declared
   assertion task: terminal state, exit code, and stdout/stderr tails (8 KiB per stream). These
   runner-attested diagnostics redact declared secret values and explain assertion failures without

@@ -8884,6 +8884,16 @@ impl LifecycleProofExecutionBoundary {
         matches!(self, Self::IsolatedContainer(_))
     }
 
+    fn identity(&self) -> Option<String> {
+        match self {
+            Self::Manager => None,
+            Self::IsolatedContainer(boundary) => Some(format!(
+                "container:{}:{}",
+                boundary.engine, boundary.container_name
+            )),
+        }
+    }
+
     fn run_service_command(
         &mut self,
         service_name: &str,
@@ -8954,11 +8964,13 @@ where
     F: FnMut(&str) -> bool,
     A: FnMut() -> Result<Option<LifecycleProofAssertion>, LifecycleProofAssertionFailure>,
 {
+    let boundary_identity = boundary.identity();
     let mut records = order
         .iter()
         .map(|service| LifecycleProofServiceRecord {
             service: service.clone(),
             transaction_id: transaction_id.to_string(),
+            boundary_identity: boundary_identity.clone(),
             preexisting_state: String::from("unknown"),
             cleanup_lease: String::from("not_acquired"),
             ownership: String::from("unknown"),
@@ -25338,14 +25350,25 @@ impl LifecycleProofIsolatedContainer {
                 &create,
             ));
         }
-        if let Some(failure) = ensure_container_networks(
+        // From this point Ota owns a real engine object. Every later setup failure must remove it.
+        self.started = true;
+        let networks = ensure_container_networks(
             self.engine.as_str(),
             self.container_name.as_str(),
             self.compose_networks.as_slice(),
             self.task_name.as_str(),
         )
-        .map_err(|error| error.to_string())?
-        {
+        .map_err(|error| error.to_string());
+        let networks = match networks {
+            Ok(networks) => networks,
+            Err(error) => {
+                return match self.cleanup_failed_begin() {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(format!("{error}; {cleanup_error}")),
+                };
+            }
+        };
+        if let Some(failure) = networks {
             let failure_details =
                 container_command_failure_details(self.engine.as_str(), &[], &failure);
             return match self.cleanup_failed_begin() {
@@ -25359,7 +25382,16 @@ impl LifecycleProofIsolatedContainer {
             None,
             self.task_name.as_str(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string());
+        let start = match start {
+            Ok(start) => start,
+            Err(error) => {
+                return match self.cleanup_failed_begin() {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(format!("{error}; {cleanup_error}")),
+                };
+            }
+        };
         if start.exit_code != 0 {
             let failure_details =
                 container_command_failure_details(self.engine.as_str(), &[], &start);
@@ -25368,11 +25400,10 @@ impl LifecycleProofIsolatedContainer {
                 Err(cleanup_error) => Err(format!("{failure_details}; {cleanup_error}")),
             };
         }
-        self.started = true;
         Ok(())
     }
 
-    fn cleanup_failed_begin(&self) -> Result<(), String> {
+    fn cleanup_failed_begin(&mut self) -> Result<(), String> {
         let remove = remove_persistent_container(
             self.engine.as_str(),
             self.container_name.as_str(),
@@ -25380,6 +25411,7 @@ impl LifecycleProofIsolatedContainer {
         )
         .map_err(|error| error.to_string())?;
         if remove.exit_code == 0 {
+            self.started = false;
             return Ok(());
         }
         Err(format!(
@@ -69756,6 +69788,72 @@ project:
         );
         assert_eq!(
             log.matches("rm -f ota-lifecycle-partial-start-test")
+                .count(),
+            1,
+            "{log}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_lifecycle_boundary_removes_session_when_network_attachment_fails() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-network-failure
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        let log_path = fixture.dir.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  'inspect -f '*) printf '{{}}\\n' ;;\n  'network connect proof-net ota-lifecycle-network-failure-test') exit 1 ;;\nesac\n",
+                log_path.display()
+            ),
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-network-failure-test"),
+                memory_bytes: None,
+                compose_networks: vec![String::from("proof-net")],
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        boundary
+            .begin()
+            .expect_err("failed network attachment should reject the boundary");
+
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(log.matches("create ").count(), 1, "{log}");
+        assert_eq!(
+            log.matches("network connect proof-net ota-lifecycle-network-failure-test")
+                .count(),
+            1,
+            "{log}"
+        );
+        assert_eq!(
+            log.matches("rm -f ota-lifecycle-network-failure-test")
                 .count(),
             1,
             "{log}"

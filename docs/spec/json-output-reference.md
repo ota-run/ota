@@ -925,8 +925,8 @@ same canonical lane from collapsing when a caller runs it across multiple platfo
 ## `ota proof lifecycle --json`
 
 Lifecycle proof records one runner-owned service transition transaction. `ok` reports whether the
-selected transaction completed and cleanup reached manager-observed inactive state; consumers must
-read `proof_verdict` with `not_proved[]` before treating it as application or repo proof.
+selected transaction completed and cleanup reached its declared terminal boundary; consumers must
+read `proof_verdict` with required `not_proved[]` before treating it as application or repo proof.
 
 - `mode` is `lifecycle-proof`, `phase` is `lifecycle`, and `stage_family` is `proof`.
 - A concurrent lifecycle transaction is rejected before a manager observation or cleanup lease;
@@ -934,6 +934,9 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
   transaction.
 - Each `services[]` record is bound to the same transaction identity and names the observed
   pre-existing state, cleanup lease, ownership, and start/readiness/teardown outcomes.
+- An isolated-boundary record additionally carries runner-owned `boundary_identity`. The archive
+  scope carries the same identity; `boundary_terminated` is invalid unless both point to the exact
+  container session Ota created and later removed.
 - `start` and `teardown` command outcomes are runner-attested. Readiness and manager-state
   observations are derived from the declared service manager; an omitted readiness remains
   `not_declared`, never a positive state claim.
@@ -942,17 +945,19 @@ read `proof_verdict` with `not_proved[]` before treating it as application or re
   stdout/stderr tails with declared secret values redacted. `output_truncated: true` means one or
   both tails were limited to 8 KiB; these diagnostics explain the transaction result but do not widen lifecycle proof into
   application-output proof.
-- A successful lifecycle transition remains a bounded slice proof. Ota emits
-  `application_output_not_proved` and `broader_repo_completion_not_proved` unless a future
-  dedicated output-proof carrier establishes broader truth.
+- A successful lifecycle transition is always `passed_with_unproven_boundaries`, never bare
+  `passed`. Ota always emits `application_output_not_proved` and
+  `broader_repo_completion_not_proved` unless a future dedicated output-proof carrier establishes
+  broader truth.
 - When a selected service has no declared readiness or manager-owned start-state observation,
   Ota also emits obligation-scoped `service_started_state_not_proved`; a successful start command
   alone is never promoted into an observed started state.
 - `ota proof lifecycle --json --archive` adds `archive.identity` and `archive.path`. The immutable
   local record binds the semantic contract snapshot and source identity when available, selected
   member/workflow/services plus the resolved dependency closure, transaction, complete service
-  records, terminal verdict and finalization, and effective backend/mode/provider/lifecycle/target/
-  target OS. Its content-addressed filename, content identity, contract identity, and archived
+  records, terminal verdict and finalization, exact isolated-boundary identity when used, and
+  effective backend/mode/provider/lifecycle/target/target OS. Its content-addressed filename,
+  content identity, contract identity, and archived
   semantic snapshot reference are verified before Ota accepts the record as locally well-formed.
   It does not establish application-output proof,
   CI eligibility, claim assurance, replay, or broader repo completion.

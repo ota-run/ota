@@ -201,6 +201,10 @@ fn lifecycle_proof_json_schema_accepts_runner_owned_transaction() {
             "kind": "application_output_not_proved",
             "relative_to": "declared_lifecycle_service_transition",
             "source": "scope"
+        }, {
+            "kind": "broader_repo_completion_not_proved",
+            "relative_to": "selected_lifecycle_workflow",
+            "source": "scope"
         }]
     });
     assert_matches_schema("proof-lifecycle.json", &payload);
@@ -226,6 +230,7 @@ fn lifecycle_proof_json_schema_accepts_isolated_boundary_termination() {
         "services": [{
             "service": "caddy",
             "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary_identity": "container:docker:ota-lifecycle-test",
             "preexisting_state": "boundary_absent_attested",
             "cleanup_lease": "released",
             "ownership": "started_this_transaction",
@@ -243,6 +248,10 @@ fn lifecycle_proof_json_schema_accepts_isolated_boundary_termination() {
             "kind": "application_output_not_proved",
             "relative_to": "declared_lifecycle_service_transition",
             "source": "scope"
+        }, {
+            "kind": "broader_repo_completion_not_proved",
+            "relative_to": "selected_lifecycle_workflow",
+            "source": "scope"
         }]
     });
     assert_matches_schema("proof-lifecycle.json", &payload);
@@ -252,7 +261,7 @@ fn lifecycle_proof_json_schema_accepts_isolated_boundary_termination() {
 fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
     let payload = serde_json::json!({
         "kind": "lifecycle_proof",
-        "version": 1,
+        "version": 2,
         "contract_identity": {
             "version": 1,
             "project": { "name": "archive" },
@@ -266,6 +275,7 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
             "selected_services": ["database"],
             "service_closure": ["database"],
             "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "boundary_identity": "container:docker:ota-lifecycle-test",
             "backend": "container",
             "mode": "container",
             "provider": "docker",
@@ -281,13 +291,44 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
             "workflow": "smoke",
             "phase": "lifecycle",
             "stage_family": "proof",
-            "proof_scope": { "kind": "lifecycle_transition", "proof_class": "slice_proof" },
+            "proof_scope": { "kind": "lifecycle_transition", "proof_class": "slice_proof", "workflow": "smoke" },
             "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "services": [],
-            "finalization": { "state": "not_run", "after_interruption": false, "evidence_class": "attested" }
+            "services": [{
+                "service": "database",
+                "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "boundary_identity": "container:docker:ota-lifecycle-test",
+                "preexisting_state": "boundary_absent_attested",
+                "cleanup_lease": "released",
+                "ownership": "started_this_transaction",
+                "start": { "state": "command_succeeded", "evidence_class": "attested" },
+                "readiness": { "state": "not_declared" },
+                "teardown": { "state": "command_succeeded", "evidence_class": "attested" },
+                "teardown_assertion": { "state": "boundary_terminated", "evidence_class": "attested" }
+            }],
+            "finalization": { "state": "completed", "after_interruption": false, "evidence_class": "attested" },
+            "not_proved": [{ "kind": "application_output_not_proved", "relative_to": "declared_lifecycle_service_transition", "source": "scope" }, { "kind": "broader_repo_completion_not_proved", "relative_to": "selected_lifecycle_workflow", "source": "scope" }]
         }
     });
     assert_matches_schema("proof-lifecycle-archive.json", &payload);
+}
+
+#[test]
+fn lifecycle_proof_json_schema_rejects_unbounded_success() {
+    let payload = serde_json::json!({
+        "ok": true,
+        "proof_verdict": "passed",
+        "path": "ota.yaml",
+        "mode": "lifecycle-proof",
+        "workflow": "smoke",
+        "phase": "lifecycle",
+        "stage_family": "proof",
+        "proof_scope": { "kind": "lifecycle_transition", "proof_class": "slice_proof" },
+        "transaction_id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "services": [],
+        "finalization": { "state": "not_run", "after_interruption": false, "evidence_class": "attested" },
+        "not_proved": []
+    });
+    assert_rejects_schema("proof-lifecycle.json", &payload);
 }
 
 fn write_contract(dir: &TempDir, contents: &str) {

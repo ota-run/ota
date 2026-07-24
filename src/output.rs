@@ -3164,7 +3164,7 @@ pub struct ProofRuntimeLikelyCauseEvidence {
     pub observed_target: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeScope {
     pub kind: String,
     pub proof_class: String,
@@ -3176,7 +3176,7 @@ pub struct ProofRuntimeScope {
     pub intent: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeNotProved {
     pub kind: String,
     pub relative_to: String,
@@ -3188,9 +3188,9 @@ pub struct ProofRuntimeNotProved {
     pub proof_obligation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declared_by_tasks: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declared_by_workflows: Vec<String>,
 }
 
@@ -3257,6 +3257,9 @@ pub struct LifecycleProofFinalization {
 pub struct LifecycleProofServiceRecord {
     pub service: String,
     pub transaction_id: String,
+    /// Runner-owned execution boundary identity for an isolated lifecycle session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundary_identity: Option<String>,
     pub preexisting_state: String,
     pub cleanup_lease: String,
     pub ownership: String,
@@ -3297,7 +3300,6 @@ pub struct LifecycleProofStatus {
     pub finalization: LifecycleProofFinalization,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assertion: Option<LifecycleProofAssertion>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_proved: Vec<ProofRuntimeNotProved>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
