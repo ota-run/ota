@@ -121,10 +121,12 @@ durable agent workflow belongs in the canonical Ota skill.
   `broader_repo_completion_not_proved`; it never claims `manager_inactive` or host process absence.
   Caddy matrix [30102633474](https://github.com/bobaikato/caddy/actions/runs/30102633474) is green
   for regenerated native and container governance lanes against committed Core `6025187b`, but it
-  does not invoke `ota proof lifecycle`; it is not isolated-boundary pressure proof. Open WebUI
-  supplies the independent Compose readiness/teardown family. V11.18 remains active until the
-  hardened Core branch passes Caddy's dedicated hosted lifecycle workflow and its archive binds the
-  exact runner-owned boundary identity.
+  does not invoke `ota proof lifecycle`; it is not isolated-boundary pressure proof. The dedicated
+  hosted lifecycle run [30111427705](https://github.com/bobaikato/caddy/actions/runs/30111427705)
+  is green against Core `3ffaf362` and binds the exact runner-owned boundary identity. Open WebUI
+  supplies the independent Compose readiness/teardown family. V11.18 remains active while the
+  boundary-cleanup and snapshot-authoritative archive correction is committed and that dedicated
+  Caddy workflow is rerun against it.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

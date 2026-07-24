@@ -939,7 +939,9 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
   container session Ota created and later removed.
 - `start` and `teardown` command outcomes are runner-attested. Readiness and manager-state
   observations are derived from the declared service manager; an omitted readiness remains
-  `not_declared`, never a positive state claim.
+  `not_declared`, never a positive state claim. Phase-specific transition states are enforced:
+  command phases cannot emit a readiness or boundary state, and `boundary_terminated` is always
+  an attested teardown assertion.
 - When a workflow declares an assertion, `assertion` carries its task, terminal state, and exit
   code when available. Failed or interrupted assertions also carry bounded runner-captured
   stdout/stderr tails with declared secret values redacted. `output_truncated: true` means one or
@@ -954,8 +956,8 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
   alone is never promoted into an observed started state.
 - `ota proof lifecycle --json --archive` adds `archive.identity` and `archive.path`. The immutable
   local record binds the semantic contract snapshot and source identity when available, selected
-  member/workflow/services plus the resolved dependency closure, transaction, complete service
-  records, terminal verdict and finalization, exact isolated-boundary identity when used, and
+  member/workflow/services plus the snapshot-derived dependency closure and teardown authority,
+  transaction, complete service records, terminal verdict and finalization, exact isolated-boundary identity when used, and
   effective backend/mode/provider/lifecycle/target/target OS. Its content-addressed filename,
   content identity, contract identity, and archived
   semantic snapshot reference are verified before Ota accepts the record as locally well-formed.

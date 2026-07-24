@@ -9015,6 +9015,9 @@ where
         .err()
         .map(|details| format!("runner-owned lifecycle boundary could not start: {details}"));
     let mut interrupted = false;
+    // A boundary can exist before any service lease is acquired. Track its cleanup separately so
+    // a failed begin cannot be relabeled as a completed lifecycle transaction.
+    let mut boundary_cleanup_failed = false;
     let mut assertion_evidence = None;
 
     if error.is_none() {
@@ -9222,6 +9225,7 @@ where
                 }
             }
             Err(details) => {
+                boundary_cleanup_failed = true;
                 for record in &mut records {
                     if record.cleanup_lease == "acquired" {
                         record.teardown_assertion = LifecycleProofTransition {
@@ -9240,6 +9244,7 @@ where
     let finalization_state = if records
         .iter()
         .any(|record| record.cleanup_lease == "cleanup_failed")
+        || boundary_cleanup_failed
     {
         String::from(if interrupted {
             "incomplete_after_interruption"
@@ -69792,6 +69797,75 @@ project:
             1,
             "{log}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_lifecycle_transaction_is_incomplete_when_begin_and_final_cleanup_fail() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-begin-cleanup-failure
+services:
+  caddy:
+    manager:
+      kind: host
+      start:
+        exe: sh
+        args: [-c, "true"]
+      stop:
+        exe: sh
+        args: [-c, "true"]
+    lifecycle:
+      teardown_assertion: boundary_terminated
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            "#!/bin/sh\ncase \"$*\" in\n  'start ota-lifecycle-begin-cleanup-failure-test') exit 1 ;;\n  'rm -f ota-lifecycle-begin-cleanup-failure-test') printf 'engine removal failed\\n' >&2; exit 1 ;;\nesac\n",
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-begin-cleanup-failure-test"),
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("caddy")],
+            "sha256:abababababababababababababababababababababababababababababababab",
+            fixture.dir.path(),
+            &mut boundary,
+            |_| true,
+            || Ok(None),
+        );
+
+        assert!(transaction.error.is_some(), "{transaction:?}");
+        assert_eq!(transaction.finalization.state, "incomplete");
+        assert_ne!(transaction.finalization.state, "completed");
     }
 
     #[cfg(unix)]

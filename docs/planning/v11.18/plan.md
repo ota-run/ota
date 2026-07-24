@@ -340,7 +340,8 @@ V11.18 is complete when:
   removal of its exact runner-owned ephemeral session; it cannot claim `manager_inactive`, host
   process absence, or broader application output;
 - JSON schema, receipt/archive schema, human output, and regression fixtures enforce the same
-  lifecycle and proof-boundary invariants;
+  lifecycle and proof-boundary invariants, including phase-valid transition states and archive
+  re-derivation of the selected service closure and teardown authority from the semantic snapshot;
 - Caddy proves its start/stop intent through an eligible typed surface without copied shell glue,
   while a second manager family proves readiness and teardown state without copied shell glue;
 - first-party examples, skill guidance, command/spec references, changelog, and site documentation
@@ -354,9 +355,12 @@ V11.18 is complete when:
   assertion.
 - Caddy's green native/container governance matrix
   [30102633474](https://github.com/bobaikato/caddy/actions/runs/30102633474) validates its normal
-  contributor lane only. It is not lifecycle proof. A dedicated hosted lifecycle-pressure workflow
-  must invoke `ota proof lifecycle --workflow verify --mode container --json --archive` against the
-  hardened Core branch before Caddy can satisfy the isolated-boundary family.
+  contributor lane only. Its dedicated hosted lifecycle workflow then passed in
+  [30111427705](https://github.com/bobaikato/caddy/actions/runs/30111427705) against Core
+  `3ffaf362`, invoking `ota proof lifecycle --workflow verify --mode container --json --archive`
+  and carrying its exact isolated-boundary identity. The current follow-up hardening adds
+  boundary-cleanup failure derivation and snapshot-authoritative archive validation; rerun this
+  workflow after that Core commit before marking the slice complete.
 
-Do not mark the slice complete or request re-review until that hosted Caddy archive, its exact
+Do not mark the slice complete or request final re-review until the rerun archive, its exact
 boundary identity, and the hardened archive/schema regressions are green.

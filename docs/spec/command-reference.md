@@ -653,10 +653,11 @@ Current behavior:
   transitions do not prove broader application output or repo completion; lifecycle proof never
   emits a bare `passed`
 - `--archive` writes local content-addressed transaction evidence. Its filename, semantic snapshot
-  reference, contract identity, complete resolved service closure, terminal finalization, and
-  effective execution scope are verified before Ota reports the archive. An isolated-boundary
-  record and archive scope also carry Ota's exact engine/session identity, which must match before
-  `boundary_terminated` is accepted. It remains outside claim assurance, replay, and CI projection
+  reference, contract identity, complete resolved service closure, declared teardown authority,
+  terminal finalization, and effective execution scope are verified before Ota reports the archive.
+  An isolated-boundary record and archive scope also carry Ota's exact engine/session identity,
+  which must match before `boundary_terminated` is accepted. It remains outside claim assurance,
+  replay, and CI projection
 
 Use it for a contract-owned contributor smoke that must prove Ota starts and cleans up only the
 service state it owns. It is not a replacement for an application-output or deployment proof.

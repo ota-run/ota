@@ -106,17 +106,49 @@
         "declared_by_workflows": { "type": "array", "items": { "type": "string" } }
       }
     },
-    "transition": {
+    "startTransition": {
       "type": "object",
       "additionalProperties": false,
       "required": ["state"],
       "properties": {
         "state": {
           "type": "string",
-          "enum": ["not_run", "not_declared", "command_succeeded", "command_failed", "state_observed", "state_not_observed", "boundary_terminated", "interrupted"]
+          "enum": ["not_run", "command_succeeded", "command_failed", "interrupted"]
         },
         "evidence_class": { "type": "string", "enum": ["derived", "attested"] }
-      }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "not_run" } }, "required": ["state"] }, "then": { "not": { "required": ["evidence_class"] } } },
+        { "if": { "properties": { "state": { "enum": ["command_succeeded", "command_failed", "interrupted"] } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "attested" } }, "required": ["evidence_class"] } }
+      ]
+    },
+    "readinessTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": { "type": "string", "enum": ["not_run", "not_declared", "state_observed", "state_not_observed", "interrupted"] },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "enum": ["not_run", "not_declared"] } }, "required": ["state"] }, "then": { "not": { "required": ["evidence_class"] } } },
+        { "if": { "properties": { "state": { "enum": ["state_observed", "state_not_observed"] } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "derived" } }, "required": ["evidence_class"] } },
+        { "if": { "properties": { "state": { "const": "interrupted" } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "attested" } }, "required": ["evidence_class"] } }
+      ]
+    },
+    "teardownAssertionTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": { "type": "string", "enum": ["not_run", "state_observed", "state_not_observed", "boundary_terminated", "interrupted"] },
+        "evidence_class": { "type": "string", "enum": ["derived", "attested"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "not_run" } }, "required": ["state"] }, "then": { "not": { "required": ["evidence_class"] } } },
+        { "if": { "properties": { "state": { "enum": ["state_observed", "state_not_observed"] } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "derived" } }, "required": ["evidence_class"] } },
+        { "if": { "properties": { "state": { "enum": ["boundary_terminated", "interrupted"] } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "attested" } }, "required": ["evidence_class"] } }
+      ]
     },
     "finalization": {
       "type": "object",
@@ -153,10 +185,10 @@
         "preexisting_state": { "type": "string", "enum": ["inactive_observed", "active_observed", "boundary_absent_attested", "unknown"] },
         "cleanup_lease": { "type": "string", "enum": ["not_acquired", "acquired", "released", "cleanup_failed"] },
         "ownership": { "type": "string", "enum": ["started_this_transaction", "reused_preexisting", "unknown"] },
-        "start": { "$ref": "#/$defs/transition" },
-        "readiness": { "$ref": "#/$defs/transition" },
-        "teardown": { "$ref": "#/$defs/transition" },
-        "teardown_assertion": { "$ref": "#/$defs/transition" }
+        "start": { "$ref": "#/$defs/startTransition" },
+        "readiness": { "$ref": "#/$defs/readinessTransition" },
+        "teardown": { "$ref": "#/$defs/startTransition" },
+        "teardown_assertion": { "$ref": "#/$defs/teardownAssertionTransition" }
       },
       "allOf": [
         {

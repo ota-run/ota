@@ -77,7 +77,9 @@
   start setup failures as well as normal finalization. Lifecycle JSON and archives require
   qualified proof boundaries, reject bare `passed` success, bind `boundary_terminated` to the exact
   runner-owned engine/session identity, and verify that scope identity against every emitted
-  boundary record.
+  boundary record. Boundary cleanup failure independently produces incomplete finalization, while
+  archive verification re-derives the selected service closure and teardown authority from the
+  archived contract snapshot.
 
 - lifecycle proof JSON and its local archive now retain typed, bounded diagnostics for a declared
   assertion task: terminal state, exit code, and stdout/stderr tails (8 KiB per stream). These
