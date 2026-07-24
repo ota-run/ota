@@ -24,10 +24,11 @@
 
 # V11.18: Managed Lifecycle-Sequence Proof
 
-Status: active. Isolated-boundary evidence hardening and hosted Caddy lifecycle pressure remain
-open. This follows V11.16 and V11.17 under version discipline. It reuses V11.11 proof boundaries
-and V11.16 boundary provenance; it does not reopen V11.15's generated build/test projection or
-silently claim upstream CI equivalence.
+Status: active. The first hosted Caddy lifecycle proof is green; the final isolated-boundary
+hardening must be committed and re-proved against that exact Core revision before completion. This
+follows V11.16 and V11.17 under version discipline. It reuses V11.11 proof boundaries and V11.16
+boundary provenance; it does not reopen V11.15's generated build/test projection or silently claim
+upstream CI equivalence.
 
 ## Problem
 
@@ -359,8 +360,9 @@ V11.18 is complete when:
   [30111427705](https://github.com/bobaikato/caddy/actions/runs/30111427705) against Core
   `3ffaf362`, invoking `ota proof lifecycle --workflow verify --mode container --json --archive`
   and carrying its exact isolated-boundary identity. The current follow-up hardening adds
-  boundary-cleanup failure derivation and snapshot-authoritative archive validation; rerun this
-  workflow after that Core commit before marking the slice complete.
+  engine-confirmed absence after failed-start cleanup, context-correct cleanup-failure evidence,
+  and snapshot-authoritative archive validation; rerun this workflow after that Core commit before
+  marking the slice complete.
 
 Do not mark the slice complete or request final re-review until the rerun archive, its exact
 boundary identity, and the hardened archive/schema regressions are green.

@@ -125,8 +125,8 @@ durable agent workflow belongs in the canonical Ota skill.
   hosted lifecycle run [30111427705](https://github.com/bobaikato/caddy/actions/runs/30111427705)
   is green against Core `3ffaf362` and binds the exact runner-owned boundary identity. Open WebUI
   supplies the independent Compose readiness/teardown family. V11.18 remains active while the
-  boundary-cleanup and snapshot-authoritative archive correction is committed and that dedicated
-  Caddy workflow is rerun against it.
+  exact-absence cleanup, context-correct failed-cleanup evidence, and snapshot-authoritative
+  archive correction is committed and that dedicated Caddy workflow is rerun against it.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

@@ -647,8 +647,10 @@ Current behavior:
   proof into application-output proof
 - attempts teardown in reverse order and requires a positive manager inactive observation before
   releasing each lease. For an isolated boundary, it removes the exact session in the finalizer
-  and emits only `boundary_terminated`; this proves the runner-owned session cannot retain a
-  process, not that a host manager or broader application output is stopped
+  and re-observes its absence before emitting `boundary_terminated`; a successful remove command
+  alone is insufficient. Failed isolated cleanup is runner-attested incomplete finalization, not
+  manager-derived inactivity. Exact session removal proves the runner-owned session cannot retain
+  a process, not that a host manager or broader application output is stopped
 - emits `passed_with_unproven_boundaries` for a successful transaction because lifecycle state
   transitions do not prove broader application output or repo completion; lifecycle proof never
   emits a bare `passed`

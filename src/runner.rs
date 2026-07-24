@@ -25409,25 +25409,7 @@ impl LifecycleProofIsolatedContainer {
     }
 
     fn cleanup_failed_begin(&mut self) -> Result<(), String> {
-        let remove = remove_persistent_container(
-            self.engine.as_str(),
-            self.container_name.as_str(),
-            self.task_name.as_str(),
-        )
-        .map_err(|error| error.to_string())?;
-        if remove.exit_code == 0 {
-            self.started = false;
-            return Ok(());
-        }
-        Err(format!(
-            "runner-owned lifecycle boundary cleanup after failed start could not remove session `{}`: {}",
-            self.container_name,
-            container_command_failure_details(
-                self.engine.as_str(),
-                &["rm", "-f", self.container_name.as_str()],
-                &remove,
-            )
-        ))
+        self.remove_and_confirm_absent("cleanup after failed start")
     }
 
     fn run_structured_command(
@@ -25468,6 +25450,10 @@ impl LifecycleProofIsolatedContainer {
         if !self.started {
             return Ok(());
         }
+        self.remove_and_confirm_absent("finalization")
+    }
+
+    fn remove_and_confirm_absent(&mut self, phase: &str) -> Result<(), String> {
         let remove = remove_persistent_container(
             self.engine.as_str(),
             self.container_name.as_str(),
@@ -25475,10 +25461,14 @@ impl LifecycleProofIsolatedContainer {
         )
         .map_err(|error| error.to_string())?;
         if remove.exit_code != 0 {
-            return Err(container_command_failure_details(
-                self.engine.as_str(),
-                &["rm", "-f", self.container_name.as_str()],
-                &remove,
+            return Err(format!(
+                "runner-owned lifecycle boundary {phase} could not remove session `{}`: {}",
+                self.container_name,
+                container_command_failure_details(
+                    self.engine.as_str(),
+                    &["rm", "-f", self.container_name.as_str()],
+                    &remove,
+                )
             ));
         }
         if persistent_container_exists(
@@ -25489,8 +25479,8 @@ impl LifecycleProofIsolatedContainer {
         .map_err(|error| error.to_string())?
         {
             return Err(format!(
-                "container engine still reports lifecycle session `{}` after removal",
-                self.container_name
+                "runner-owned lifecycle boundary {phase} still observes session `{}` after removal",
+                self.container_name,
             ));
         }
         self.started = false;
@@ -69801,6 +69791,55 @@ project:
 
     #[cfg(unix)]
     #[test]
+    fn isolated_lifecycle_boundary_requires_absence_after_failed_start_cleanup() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-partial-start-still-present
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            "#!/bin/sh\ncase \"$*\" in\n  'start ota-lifecycle-partial-start-still-present-test') exit 1 ;;\n  'inspect ota-lifecycle-partial-start-still-present-test') exit 0 ;;\nesac\n",
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-partial-start-still-present-test"),
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        let error = boundary
+            .begin()
+            .expect_err("cleanup must reject a session the engine still reports");
+
+        assert!(error.contains("still observes session"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn isolated_lifecycle_transaction_is_incomplete_when_begin_and_final_cleanup_fail() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -69886,7 +69925,7 @@ project:
             &bin_dir,
             "docker",
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  'inspect -f '*) printf '{{}}\\n' ;;\n  'network connect proof-net ota-lifecycle-network-failure-test') exit 1 ;;\nesac\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  'inspect -f '*) printf '{{}}\\n' ;;\n  'network connect proof-net ota-lifecycle-network-failure-test') exit 1 ;;\n  'inspect ota-lifecycle-network-failure-test') exit 1 ;;\nesac\n",
                 log_path.display()
             ),
         );
@@ -69928,6 +69967,12 @@ project:
         );
         assert_eq!(
             log.matches("rm -f ota-lifecycle-network-failure-test")
+                .count(),
+            1,
+            "{log}"
+        );
+        assert_eq!(
+            log.matches("inspect ota-lifecycle-network-failure-test")
                 .count(),
             1,
             "{log}"

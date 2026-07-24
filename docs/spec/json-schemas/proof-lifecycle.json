@@ -141,13 +141,14 @@
       "additionalProperties": false,
       "required": ["state"],
       "properties": {
-        "state": { "type": "string", "enum": ["not_run", "state_observed", "state_not_observed", "boundary_terminated", "interrupted"] },
+        "state": { "type": "string", "enum": ["not_run", "state_observed", "state_not_observed", "boundary_terminated"] },
         "evidence_class": { "type": "string", "enum": ["derived", "attested"] }
       },
       "allOf": [
         { "if": { "properties": { "state": { "const": "not_run" } }, "required": ["state"] }, "then": { "not": { "required": ["evidence_class"] } } },
-        { "if": { "properties": { "state": { "enum": ["state_observed", "state_not_observed"] } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "derived" } }, "required": ["evidence_class"] } },
-        { "if": { "properties": { "state": { "enum": ["boundary_terminated", "interrupted"] } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "attested" } }, "required": ["evidence_class"] } }
+        { "if": { "properties": { "state": { "const": "state_observed" } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "derived" } }, "required": ["evidence_class"] } },
+        { "if": { "properties": { "state": { "const": "state_not_observed" } }, "required": ["state"] }, "then": { "required": ["evidence_class"] } },
+        { "if": { "properties": { "state": { "const": "boundary_terminated" } }, "required": ["state"] }, "then": { "properties": { "evidence_class": { "const": "attested" } }, "required": ["evidence_class"] } }
       ]
     },
     "finalization": {
@@ -191,6 +192,48 @@
         "teardown_assertion": { "$ref": "#/$defs/teardownAssertionTransition" }
       },
       "allOf": [
+        {
+          "if": { "required": ["boundary_identity"] },
+          "then": {
+            "properties": {
+              "teardown_assertion": {
+                "properties": {
+                  "state": { "enum": ["not_run", "state_not_observed", "boundary_terminated"] }
+                },
+                "allOf": [
+                  {
+                    "if": { "properties": { "state": { "const": "state_not_observed" } }, "required": ["state"] },
+                    "then": { "properties": { "evidence_class": { "const": "attested" } } }
+                  }
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "teardown_assertion": {
+                "allOf": [
+                  {
+                    "if": { "properties": { "state": { "const": "state_not_observed" } }, "required": ["state"] },
+                    "then": { "properties": { "evidence_class": { "const": "derived" } } }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "teardown_assertion": { "properties": { "state": { "const": "state_observed" } }, "required": ["state"] } }, "required": ["teardown_assertion"] },
+          "then": { "properties": { "cleanup_lease": { "const": "released" } } }
+        },
+        {
+          "if": { "properties": { "teardown_assertion": { "properties": { "state": { "const": "state_not_observed" } }, "required": ["state"] } }, "required": ["teardown_assertion"] },
+          "then": { "properties": { "cleanup_lease": { "const": "cleanup_failed" } } }
+        },
+        {
+          "if": { "properties": { "teardown_assertion": { "properties": { "state": { "const": "not_run" } }, "required": ["state"] } }, "required": ["teardown_assertion"] },
+          "then": { "properties": { "cleanup_lease": { "const": "not_acquired" } } }
+        },
         {
           "if": { "properties": { "teardown_assertion": { "properties": { "state": { "const": "boundary_terminated" } }, "required": ["state"] } }, "required": ["teardown_assertion"] },
           "then": {

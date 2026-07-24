@@ -105348,20 +105348,23 @@ fn write_lifecycle_proof_archive(
     let snapshot_ref = receipt_storage_path_display(snapshot_path);
     let execution_scope =
         proof_runtime_archive_scope(contract, contract_path, Some(workflow), overrides);
+    let boundary_identities = proof
+        .services
+        .iter()
+        .filter_map(|service| service.boundary_identity.as_deref())
+        .collect::<BTreeSet<_>>();
+    if boundary_identities.len() > 1 {
+        return Err(String::from(
+            "lifecycle proof services do not share one runner-owned boundary identity",
+        ));
+    }
     let scope = LifecycleProofArchiveScope {
         workflow: workflow.to_string(),
         member: member.map(str::to_string),
         selected_services: selected_services.to_vec(),
         service_closure: service_closure.to_vec(),
         transaction_id: proof.transaction_id.clone(),
-        boundary_identity: proof
-            .services
-            .iter()
-            .filter_map(|service| service.boundary_identity.as_deref())
-            .map(str::to_string)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .reduce(|first, _| first),
+        boundary_identity: boundary_identities.into_iter().next().map(str::to_string),
         mode: execution_scope.backend.clone(),
         backend: execution_scope.backend,
         provider: execution_scope.provider,
@@ -105601,28 +105604,38 @@ fn verify_lifecycle_proof_archive(
         };
         let valid_teardown_assertion = match service.teardown_assertion.state.as_str() {
             "not_run" => service.teardown_assertion.evidence_class.is_none(),
-            "state_observed" | "state_not_observed" => {
-                is_derived(&service.teardown_assertion.evidence_class)
+            "state_observed" => is_derived(&service.teardown_assertion.evidence_class),
+            "state_not_observed" => {
+                if service.boundary_identity.is_some() {
+                    is_attested(&service.teardown_assertion.evidence_class)
+                } else {
+                    is_derived(&service.teardown_assertion.evidence_class)
+                }
             }
-            "boundary_terminated" | "interrupted" => {
-                is_attested(&service.teardown_assertion.evidence_class)
-            }
+            "boundary_terminated" => is_attested(&service.teardown_assertion.evidence_class),
             _ => false,
         };
         valid_start && valid_readiness && valid_teardown && valid_teardown_assertion
     });
-    let valid_boundary_identity = archive.proof.services.iter().all(|service| {
-        match service.teardown_assertion.state.as_str() {
-            "boundary_terminated" => {
-                service.preexisting_state == "boundary_absent_attested"
-                    && service.cleanup_lease == "released"
-                    && service.ownership == "started_this_transaction"
-                    && service.boundary_identity.is_some()
-                    && service.boundary_identity == archive.scope.boundary_identity
-            }
-            _ => service.boundary_identity.is_none(),
-        }
-    });
+    let valid_boundary_identity = match archive.scope.boundary_identity.as_ref() {
+        Some(boundary_identity) => archive.proof.services.iter().all(|service| {
+            service.boundary_identity.as_ref() == Some(boundary_identity)
+                && match service.teardown_assertion.state.as_str() {
+                    "boundary_terminated" => {
+                        service.preexisting_state == "boundary_absent_attested"
+                            && service.cleanup_lease == "released"
+                            && service.ownership == "started_this_transaction"
+                    }
+                    "state_not_observed" => service.cleanup_lease == "cleanup_failed",
+                    "not_run" => service.cleanup_lease == "not_acquired",
+                    _ => false,
+                }
+        }),
+        None => archive.proof.services.iter().all(|service| {
+            service.boundary_identity.is_none()
+                && service.teardown_assertion.state != "boundary_terminated"
+        }),
+    };
     let valid_contract_teardown = archive.proof.services.iter().all(|record| {
         let declared_assertion = snapshot_contract
             .services
@@ -105632,12 +105645,20 @@ fn verify_lifecycle_proof_archive(
         match (declared_assertion, record.teardown_assertion.state.as_str()) {
             (
                 Some(crate::schema::ServiceLifecycleTeardownAssertionKind::BoundaryTerminated),
-                "boundary_terminated" | "state_not_observed" | "interrupted" | "not_run",
+                "boundary_terminated" | "state_not_observed" | "not_run",
             ) => true,
             (
                 Some(crate::schema::ServiceLifecycleTeardownAssertionKind::ManagerInactive),
-                "state_observed" | "state_not_observed" | "interrupted" | "not_run",
+                "state_observed" | "state_not_observed" | "not_run",
             ) => true,
+            _ => false,
+        }
+    });
+    let valid_cleanup_transition = archive.proof.services.iter().all(|record| {
+        match record.teardown_assertion.state.as_str() {
+            "state_observed" | "boundary_terminated" => record.cleanup_lease == "released",
+            "state_not_observed" => record.cleanup_lease == "cleanup_failed",
+            "not_run" => record.cleanup_lease == "not_acquired",
             _ => false,
         }
     });
@@ -105700,6 +105721,7 @@ fn verify_lifecycle_proof_archive(
         || !valid_phase_transitions
         || !valid_boundary_identity
         || !valid_contract_teardown
+        || !valid_cleanup_transition
     {
         return Err(String::from(
             "lifecycle proof archive has an invalid transaction binding",

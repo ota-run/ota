@@ -941,7 +941,8 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
   observations are derived from the declared service manager; an omitted readiness remains
   `not_declared`, never a positive state claim. Phase-specific transition states are enforced:
   command phases cannot emit a readiness or boundary state, and `boundary_terminated` is always
-  an attested teardown assertion.
+  an attested teardown assertion. An isolated removal failure is also attested against its exact
+  boundary identity and leaves finalization incomplete; a manager-state failure remains derived.
 - When a workflow declares an assertion, `assertion` carries its task, terminal state, and exit
   code when available. Failed or interrupted assertions also carry bounded runner-captured
   stdout/stderr tails with declared secret values redacted. `output_truncated: true` means one or

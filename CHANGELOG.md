@@ -43,8 +43,8 @@
   It runs the selected workflow prerequisite closure, leases only manager-observed inactive
   services, starts/readies them in dependency order, executes an optional post-readiness assertion
   without duplicating service ownership, and tears leased services down in reverse order. JSON
-  publishes typed transaction-bound service records and mandatory proof boundaries; archive-backed
-  lifecycle receipts remain the next V11.18 cut. A service without declared readiness also carries
+  publishes typed transaction-bound service records and mandatory proof boundaries. A service
+  without declared readiness also carries
   `service_started_state_not_proved`; command exit alone does not prove its started state.
   Structured host-manager lifecycle commands can additionally use
   `lifecycle.teardown_assertion: boundary_terminated` when the selected workflow resolves to an
@@ -79,7 +79,9 @@
   runner-owned engine/session identity, and verify that scope identity against every emitted
   boundary record. Boundary cleanup failure independently produces incomplete finalization, while
   archive verification re-derives the selected service closure and teardown authority from the
-  archived contract snapshot.
+  archived contract snapshot. Failed-start cleanup now also re-observes exact session absence
+  instead of treating a successful remove command as sufficient, and failed isolated cleanup
+  remains runner-attested evidence rather than manager-derived state.
 
 - lifecycle proof JSON and its local archive now retain typed, bounded diagnostics for a declared
   assertion task: terminal state, exit code, and stdout/stderr tails (8 KiB per stream). These
