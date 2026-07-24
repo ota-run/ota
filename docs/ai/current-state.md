@@ -123,10 +123,14 @@ durable agent workflow belongs in the canonical Ota skill.
   for regenerated native and container governance lanes against committed Core `6025187b`, but it
   does not invoke `ota proof lifecycle`; it is not isolated-boundary pressure proof. The dedicated
   hosted lifecycle run [30111427705](https://github.com/bobaikato/caddy/actions/runs/30111427705)
-  is green against Core `3ffaf362` and binds the exact runner-owned boundary identity. Open WebUI
-  supplies the independent Compose readiness/teardown family. V11.18 remains active while the
-  exact-absence cleanup, context-correct failed-cleanup evidence, and snapshot-authoritative
-  archive correction is committed and that dedicated Caddy workflow is rerun against it.
+  is green against Core `3ffaf362` and binds the exact runner-owned boundary identity. The final
+  hardened rerun [30124528078](https://github.com/bobaikato/caddy/actions/runs/30124528078) is
+  green against Core `53ff07eb`, emits qualified proof, and archives
+  `sha256:8985f57cd191e4d1db370122a6adb33a5f3a3fc649a289b2855dd2b48894de39` with exact session
+  `container:docker:ota-ephemeral-43c71044194b0e05`. A later isolated setup-failure correction
+  derives `incomplete` even when provisional cleanup succeeds; it must be committed and rerun on
+  Caddy before V11.18 can return to final review. Open WebUI supplies the independent Compose
+  readiness/teardown family.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local
