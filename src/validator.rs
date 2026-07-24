@@ -19630,7 +19630,7 @@ workflows:
     }
 
     #[test]
-    fn rejects_lifecycle_proof_without_manager_inactive_assertion() {
+    fn rejects_lifecycle_proof_without_teardown_assertion() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -19663,7 +19663,7 @@ workflows:
         assert!(
             errors
                 .to_string()
-                .contains("lifecycle.teardown_assertion: manager_inactive")
+                .contains("must declare a typed `lifecycle.teardown_assertion`")
         );
     }
 

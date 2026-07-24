@@ -118,8 +118,11 @@ durable agent workflow belongs in the canonical Ota skill.
   and attests only engine-confirmed session removal as `boundary_terminated`. It explicitly retains
   `service_started_state_not_proved`, `application_output_not_proved`, and
   `broader_repo_completion_not_proved`; it never claims `manager_inactive` or host process absence.
-  The Caddy GitHub native/container matrix must be regenerated against and prove the committed Core
-  branch before V11.18 can be marked pressure-complete.
+  Caddy matrix [30102633474](https://github.com/bobaikato/caddy/actions/runs/30102633474) is green
+  for regenerated native and container governance lanes against committed Core `6025187b`. Open
+  WebUI supplies the independent Compose readiness/teardown family. V11.18 implementation and
+  pressure evidence are complete; the slice is ready for independent review, not yet marked
+  complete.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

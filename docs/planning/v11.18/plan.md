@@ -24,9 +24,10 @@
 
 # V11.18: Managed Lifecycle-Sequence Proof
 
-Status: active. This follows V11.16 and V11.17 under version discipline. It reuses V11.11 proof
-boundaries and V11.16 boundary provenance; it does not reopen V11.15's generated build/test
-projection or silently claim upstream CI equivalence.
+Status: implementation and pressure evidence complete; independent review pending. This follows
+V11.16 and V11.17 under version discipline. It reuses V11.11 proof boundaries and V11.16 boundary
+provenance; it does not reopen V11.15's generated build/test projection or silently claim upstream
+CI equivalence.
 
 ## Problem
 
@@ -342,3 +343,22 @@ V11.18 is complete when:
   while a second manager family proves readiness and teardown state without copied shell glue;
 - first-party examples, skill guidance, command/spec references, changelog, and site documentation
   explain lifecycle proof as a bounded state-transition claim rather than full application proof.
+
+## Verified Pressure Evidence
+
+- Open WebUI provides the Compose manager family: the green lifecycle-control matrix proves
+  declared Docker health readiness, runner-owned finalization, and assertion-failure teardown
+  without copied shell cleanup. It does not claim application output beyond the selected
+  assertion.
+- Caddy provides the isolated-boundary family: the green native/container governance matrix
+  [30102633474](https://github.com/bobaikato/caddy/actions/runs/30102633474), together with the
+  archived container proof
+  `sha256:8cb602aa552d653c3a5d3e465e934b7ed773b8305235aa7bf1775c274c65a27e`, proves that structured
+  `caddy start` / `caddy stop` execute in one runner-owned ephemeral session and that Ota confirms
+  removal of that exact session. The record remains qualified with
+  `service_started_state_not_proved`, `application_output_not_proved`, and
+  `broader_repo_completion_not_proved`.
+
+The implementation, focused regression suite, schemas, first-party reference example, canonical
+skill, command/spec references, changelog, public lifecycle-proof reference, and the two manager
+families are ready for independent review. Do not mark the slice complete until that review closes.
