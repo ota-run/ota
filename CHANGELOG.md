@@ -46,6 +46,12 @@
   publishes typed transaction-bound service records and mandatory proof boundaries; archive-backed
   lifecycle receipts remain the next V11.18 cut. A service without declared readiness also carries
   `service_started_state_not_proved`; command exit alone does not prove its started state.
+  Structured host-manager lifecycle commands can additionally use
+  `lifecycle.teardown_assertion: boundary_terminated` when the selected workflow resolves to an
+  Ota-owned ephemeral container boundary. The runner executes both commands in one
+  transaction-bound session and publishes the terminal observation only after the engine confirms
+  removal of that exact session; it never upgrades this to host-manager inactivity or application
+  output proof.
 
 - moved lifecycle finalization into the runner and added opt-in immutable lifecycle archives through
   `ota proof lifecycle --json --archive`. The runner owns reverse teardown and manager-inactive

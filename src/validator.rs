@@ -15493,9 +15493,17 @@ fn validate_services(
                 manager.compose_service_ids_command(name).is_some()
                     || manager.systemd_state_command().is_some()
             });
-            if !has_state_observer {
+            let has_isolated_boundary_commands =
+                service.lifecycle.as_ref().is_some_and(|lifecycle| {
+                    matches!(
+                        lifecycle.teardown_assertion,
+                        crate::schema::ServiceLifecycleTeardownAssertionKind::BoundaryTerminated
+                    )
+                }) && service.start_command_spec().is_some()
+                    && service.stop_command_spec().is_some();
+            if !has_state_observer && !has_isolated_boundary_commands {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` lifecycle requires a typed Compose or systemd active/inactive state observer"
+                    "service `{name}` lifecycle requires a typed Compose/systemd active-inactive observer or structured isolated-boundary manager commands"
                 )));
             }
         }
@@ -17106,6 +17114,27 @@ fn validate_workflow_lifecycle_proof(
     }
 
     let lifecycle_services = lifecycle_service_closure_names(contract, &selected);
+    let boundary_terminated_services = lifecycle_services
+        .iter()
+        .filter(|service_name| {
+            contract
+                .services
+                .get(service_name.as_str())
+                .and_then(|service| service.lifecycle.as_ref())
+                .is_some_and(|lifecycle| {
+                    matches!(
+                        lifecycle.teardown_assertion,
+                        crate::schema::ServiceLifecycleTeardownAssertionKind::BoundaryTerminated
+                    )
+                })
+        })
+        .count();
+    if boundary_terminated_services != 0 && boundary_terminated_services != lifecycle_services.len()
+    {
+        errors.push(ValidationError::new(format!(
+            "`{prefix}.services` cannot mix `boundary_terminated` and manager-observed teardown assertions in one lifecycle transaction"
+        )));
+    }
     let normal_closure = contract
         .selected_workflow_task_closure_names(Some(workflow_name))
         .into_iter()
@@ -17210,14 +17239,21 @@ fn validate_lifecycle_service_closure(
             "service `{service_name}` manager must provide both start and stop commands for lifecycle proof"
         )));
     }
-    if !service.lifecycle.as_ref().is_some_and(|lifecycle| {
-        matches!(
-            lifecycle.teardown_assertion,
-            crate::schema::ServiceLifecycleTeardownAssertionKind::ManagerInactive
-        )
-    }) {
+    let teardown_assertion = service
+        .lifecycle
+        .as_ref()
+        .map(|lifecycle| lifecycle.teardown_assertion);
+    if teardown_assertion.is_none() {
         errors.push(ValidationError::new(format!(
-            "service `{service_name}` must declare `lifecycle.teardown_assertion: manager_inactive` for lifecycle proof"
+            "service `{service_name}` must declare a typed `lifecycle.teardown_assertion` for lifecycle proof"
+        )));
+    } else if matches!(
+        teardown_assertion,
+        Some(crate::schema::ServiceLifecycleTeardownAssertionKind::BoundaryTerminated)
+    ) && (service.start_command_spec().is_none() || service.stop_command_spec().is_none())
+    {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` with `lifecycle.teardown_assertion: boundary_terminated` requires structured `manager.start` and `manager.stop` commands"
         )));
     }
     for dependency in &service.depends_on {
@@ -19494,6 +19530,103 @@ workflows:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_isolated_boundary_lifecycle_proof_with_structured_host_commands() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: alpine:3.21
+services:
+  caddy:
+    manager:
+      kind: host
+      start:
+        exe: ./caddy
+        args: [start]
+      stop:
+        exe: ./caddy
+        args: [stop]
+    lifecycle:
+      teardown_assertion: boundary_terminated
+tasks:
+  build:
+    command:
+      exe: sh
+      args: ["-lc", "true"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [caddy]
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_lifecycle_proof_that_mixes_boundary_and_manager_teardown_authority() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: lifecycle-mixed-authority
+services:
+  caddy:
+    manager:
+      kind: host
+      start:
+        exe: ./caddy
+        args: [start]
+      stop:
+        exe: ./caddy
+        args: [stop]
+    lifecycle:
+      teardown_assertion: boundary_terminated
+  postgres:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: postgresql.service
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: verify
+  verify:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [caddy, postgres]
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("mixed lifecycle authority rejects");
+        assert!(
+            errors.to_string().contains(
+                "cannot mix `boundary_terminated` and manager-observed teardown assertions"
+            )
+        );
     }
 
     #[test]

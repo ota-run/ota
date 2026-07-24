@@ -56,15 +56,18 @@ The runner owns the lifecycle transaction. Its exact phase order is fixed:
 
 1. execute the selected workflow's existing `prepare`, `setup`, and `run` closure as the
    prerequisite/build phase;
-2. resolve the selected service dependency closure in topological order, observe its pre-state,
-   and acquire one transaction-local cleanup lease for each service proven inactive;
+2. resolve the selected service dependency closure in topological order and acquire the
+   transaction lock; manager-observed services then receive a cleanup lease only after a current
+   inactive-state observation, while an isolated-boundary closure first creates its unique session
+   and then leases that runner-owned boundary;
 3. start leased services in dependency order;
 4. evaluate their declared readiness in dependency order;
 5. execute the optional finite lifecycle assertion task after all required services are ready;
 6. teardown every leased service in reverse dependency order from a runner-owned finalizer,
    including after start, readiness, assertion, or interruption failure;
-7. verify stopped state only through a positive manager-state observation, then archive the ordered
-   evidence and derive the qualified proof verdict.
+7. verify terminal state only through a positive manager-state observation or engine-confirmed
+   removal of the exact runner-owned isolated session, then archive the ordered evidence and derive
+   the qualified proof verdict.
 
 Ota must never stop a pre-existing service simply because it shares a declared name or endpoint.
 
@@ -133,20 +136,38 @@ manager, endpoint/readiness, and runner-owned output truth. Unknown, duplicate, 
 service references are contract errors.
 
 Existing `services.<name>.readiness` remains the canonical start-state assertion. V11.18 adds a
-typed teardown observation only where the manager can positively observe inactive state:
+typed teardown observation only where the runner can positively establish the declared terminal
+boundary:
 
 ```yaml
 services:
   caddy:
     lifecycle:
-      teardown_assertion: manager_inactive
+      teardown_assertion: boundary_terminated
 ```
 
 `manager_inactive` requires an authoritative typed manager state observation after Ota-owned
-teardown. A failed HTTP or TCP readiness probe may support diagnosis, but it can never independently
-prove stopped state: it might be DNS, routing, credentials, or probe failure. Managers without a
-positive inactive-state observer may emit command outcomes only and must carry an explicit
-`service_stopped_state_not_proved` boundary.
+teardown. `boundary_terminated` is narrower: it is valid only when Ota created the selected
+ephemeral container session for this lifecycle transaction, ran the manager's structured `start`
+and `stop` commands inside that exact session, and removed that exact session from the container
+engine in the finalizer. It proves no process can remain in that runner-owned boundary after the
+transaction; it does not claim that a generic host manager became inactive outside the boundary.
+
+A boundary-terminated lifecycle service is admissible only when all of the following are true:
+
+- the selected workflow execution resolves to a container backend with `lifecycle: ephemeral`;
+- Ota creates one transaction-scoped closure session from that resolved context before any service
+  start command, with fresh runner-authored identity and no reusable container state;
+- the service uses structured manager `start` and `stop` commands executed through that session;
+- the runner destroys the session after every start, readiness, assertion, or interruption outcome
+  and attests the engine-confirmed removal; and
+- no service record emits `manager_inactive` or a host-wide stopped-state claim from this path.
+
+The session is not a persistent execution backend and cannot be reused by a later task or CLI
+invocation. A failed HTTP or TCP readiness probe may support diagnosis, but it can never
+independently prove stopped state: it might be DNS, routing, credentials, or probe failure.
+Managers without a positive inactive-state observer or this runner-owned boundary may emit command
+outcomes only and must carry an explicit `service_stopped_state_not_proved` boundary.
 
 ## Execution And Evidence
 
@@ -167,36 +188,39 @@ The runner emits one canonical `lifecycle_proof` transaction with stable service
 {
   "service": "caddy",
   "transaction_id": "...",
-  "preexisting_state": "inactive_observed",
+  "preexisting_state": "boundary_absent_attested",
   "cleanup_lease": "acquired",
   "ownership": "started_this_transaction",
   "start": { "state": "command_succeeded", "evidence_class": "attested" },
   "readiness": { "state": "not_declared" },
   "teardown": { "state": "command_succeeded", "evidence_class": "attested" },
-  "teardown_assertion": { "state": "not_declared" }
+  "teardown_assertion": { "state": "boundary_terminated", "evidence_class": "attested" }
 }
 ```
 
 Allowed runner-derived state categories are deliberately narrow:
 
-- `preexisting_state`: `inactive_observed`, `active_observed`, or `unknown`;
+- `preexisting_state`: `inactive_observed`, `active_observed`, `boundary_absent_attested`, or
+  `unknown`;
 - `cleanup_lease`: `not_acquired`, `acquired`, `released`, or `cleanup_failed`;
 - `ownership`: `started_this_transaction`, `reused_preexisting`, or `unknown`;
 - transition states: `not_run`, `command_succeeded`, `command_failed`, `state_observed`,
-  `state_not_observed`, or `interrupted`.
+  `state_not_observed`, `boundary_terminated`, or `interrupted`.
 
 The emitted lifecycle record binds every observation and command outcome to the lifecycle
 transaction ID, selected service identity, manager identity, contract snapshot, execution scope,
 and ordered runner sequence. A stale status observation, previous PID, or matching service name
 from an earlier run cannot satisfy the current transaction.
 
-Ota acquires the cleanup lease before it invokes `start`, after a current-transaction inactive-state
-observation succeeds. The runner finalizer attempts teardown after every start attempt while that
-lease remains acquired, even if start returns an error or the process is interrupted. It may release
-the lease without teardown only when the same manager proves that no transition occurred. If
-teardown cannot be attempted, fails, or cannot release the lease through a positive inactive-state
-observation, the proof fails with a typed cleanup failure and the archive remains available. It
-must not report lifecycle success merely because start or a later assertion succeeded.
+Ota acquires the cleanup lease before it invokes `start`, after either a current-transaction
+inactive-state observation succeeds or its runner-owned closure session is created and attested
+absent. The runner finalizer attempts teardown after every start attempt while that lease remains
+acquired, even if start returns an error or the process is interrupted. It may release the lease
+without teardown only when the same manager proves that no transition occurred, or after the
+runner proves that it removed the exact owned closure session. If teardown cannot be attempted,
+fails, or cannot release the lease through one of those typed terminal observations, the proof fails
+with a typed cleanup failure and the archive remains available. It must not report lifecycle success
+merely because start or a later assertion succeeded.
 
 ## Honest Proof Breadth
 
@@ -269,9 +293,16 @@ claim that Ota owns the upstream release workflow.
    teardown, start error after lease acquisition, teardown failure, pre-existing service
    preservation, stale observation rejection, unknown state refusal, command-only qualified proof,
    and multi-service dependency rollback.
-6. Extend the provider-neutral projection and GitHub renderer only after local lifecycle proof has
+6. Reuse the existing ephemeral closure-session container primitive for the isolated-boundary path:
+   acquire the lifecycle transaction lock before creating one session, then acquire its lease and
+   execute structured service manager commands in it,
+   bind every record to its transaction/session identity, and remove it in the unconditional
+   finalizer. Add regressions for failed start, interrupted assertion, stale session identity, and
+   failed engine removal. Do not make a persistent container backend or a generic host-command
+   exception.
+7. Extend the provider-neutral projection and GitHub renderer only after local lifecycle proof has
    passed its acceptance bar.
-7. Pressure-test Caddy's start/stop intent in an eligible Ota-owned isolated boundary, then a
+8. Pressure-test Caddy's start/stop intent in an eligible Ota-owned isolated boundary, then a
    Compose-managed service with both ready and stopped observations. Keep any native generic-host
    Caddy path explicitly ungoverned until it gains a truthful state capability. Publish the exact
    bounded claim each run proves.
@@ -302,6 +333,9 @@ V11.18 is complete when:
 - ready observations and stopped observations can be claimed only through declared,
   manager-supported state evidence bound to the current lifecycle transaction; inverse readiness
   alone never proves stopped state;
+- an isolated-boundary lifecycle record can claim only `boundary_terminated` after engine-confirmed
+  removal of its exact runner-owned ephemeral session; it cannot claim `manager_inactive`, host
+  process absence, or broader application output;
 - JSON schema, receipt/archive schema, human output, and regression fixtures enforce the same
   lifecycle and proof-boundary invariants;
 - Caddy proves its start/stop intent through an eligible typed surface without copied shell glue,

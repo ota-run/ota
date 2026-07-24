@@ -799,7 +799,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "required": ["teardown_assertion"],
       "properties": {
-        "teardown_assertion": { "enum": ["manager_inactive"] }
+        "teardown_assertion": { "enum": ["manager_inactive", "boundary_terminated"] }
       }
     },
     "serviceSpec": {

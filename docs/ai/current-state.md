@@ -108,12 +108,18 @@ durable agent workflow belongs in the canonical Ota skill.
   intentionally local-only. **Pressure provenance correction:** the remote Flagr branch
   `bobai/flagr-v11.15-deployment-pressure` at `8881fbe` does not yet declare
   `workflows.integration.proof.lifecycle`; it cannot substantiate the recorded lifecycle archives.
-  Treat those local records as implementation evidence only, not Flagr pressure proof. Next: RFC
-  the current Core batch, create or recover a Flagr pressure branch that declares the lifecycle
-  contract and pins that exact Core revision, then retain one successful and one controlled
-  assertion-failure archived proof with all teardown records. Caddy pressure remains excluded.
-  Generic host start/stop remains ineligible until it can prove current-boundary inactive state and
-  cleanup authority.
+  Treat those local records as implementation evidence only, not Flagr pressure proof. Open WebUI
+  now provides the Compose pressure side: its pinned `5ac1388784` matrix and lifecycle-control run
+  prove declared Docker health probes as `service_readiness`, successful lifecycle finalization,
+  and a controlled assertion failure without copied shell cleanup. Caddy closes the isolated
+  lifecycle boundary locally: its current-Core archived container proof
+  `sha256:8cb602aa552d653c3a5d3e465e934b7ed773b8305235aa7bf1775c274c65a27e` runs the upstream
+  structured `caddy start` / `caddy stop` commands inside one transaction-bound ephemeral session
+  and attests only engine-confirmed session removal as `boundary_terminated`. It explicitly retains
+  `service_started_state_not_proved`, `application_output_not_proved`, and
+  `broader_repo_completion_not_proved`; it never claims `manager_inactive` or host process absence.
+  The Caddy GitHub native/container matrix must be regenerated against and prove the committed Core
+  branch before V11.18 can be marked pressure-complete.
 - completed V11.16 fresh-boundary setup proof: `ota proof runtime --json` and archived runtime
   proofs carry a content-addressed `execution_boundary` graph. Native `ensure_virtualenv` plus a
   runner-recorded `.venv/bin/*` consumer, and frozen native pnpm hydration plus a declared local

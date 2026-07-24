@@ -844,6 +844,8 @@ pub enum RunError {
     MissingContainerImage { task: String },
     #[error("task `{task}` requires an explicit `execution.lifecycle` for container execution")]
     MissingContainerLifecycle { task: String },
+    #[error("task `{task}` cannot create an isolated lifecycle proof boundary: {details}")]
+    LifecycleIsolatedBoundaryUnavailable { task: String, details: String },
     #[error(
         "task `{task}` requires one of the supported container execution backend CLIs to be available on PATH: {engines}"
     )]
@@ -8854,11 +8856,97 @@ pub(crate) enum LifecycleProofAssertionFailure {
     },
 }
 
+/// The runner-owned execution authority used by a lifecycle proof transaction.
+///
+/// Manager state remains the default. An isolated container session is deliberately narrower: it
+/// can prove that Ota removed the session it created, not that a host-wide manager is inactive.
+pub(crate) enum LifecycleProofExecutionBoundary {
+    Manager,
+    IsolatedContainer(LifecycleProofIsolatedContainer),
+}
+
+pub(crate) struct LifecycleProofIsolatedContainer {
+    task_name: String,
+    working_dir: PathBuf,
+    context_name: Option<String>,
+    repo_ownership_token: String,
+    image: String,
+    engine: String,
+    container_name: String,
+    memory_bytes: Option<u64>,
+    compose_networks: Vec<String>,
+    dependency_isolation_paths: Vec<String>,
+    started: bool,
+}
+
+impl LifecycleProofExecutionBoundary {
+    fn uses_isolated_container(&self) -> bool {
+        matches!(self, Self::IsolatedContainer(_))
+    }
+
+    fn run_service_command(
+        &mut self,
+        service_name: &str,
+        service: &crate::schema::ServiceSpec,
+        start: bool,
+        working_dir: &Path,
+    ) -> Result<TaskCommandOutput, String> {
+        match self {
+            Self::Manager => {
+                if start {
+                    run_service_start_command(
+                        service_name,
+                        service,
+                        working_dir,
+                        TaskExecutionMode::Capture,
+                    )
+                } else {
+                    run_service_stop_command(
+                        service_name,
+                        service,
+                        working_dir,
+                        TaskExecutionMode::Capture,
+                    )
+                }
+            }
+            Self::IsolatedContainer(boundary) => {
+                let command = if start {
+                    service.start_command_spec()
+                } else {
+                    service.stop_command_spec()
+                }
+                .ok_or_else(|| {
+                    format!(
+                        "service `{service_name}` requires a structured manager {} command for isolated lifecycle proof",
+                        if start { "start" } else { "stop" }
+                    )
+                })?;
+                boundary.run_structured_command(command, working_dir)
+            }
+        }
+    }
+
+    fn terminate(&mut self) -> Result<(), String> {
+        match self {
+            Self::Manager => Ok(()),
+            Self::IsolatedContainer(boundary) => boundary.terminate(),
+        }
+    }
+
+    fn begin(&mut self) -> Result<(), String> {
+        match self {
+            Self::Manager => Ok(()),
+            Self::IsolatedContainer(boundary) => boundary.begin(),
+        }
+    }
+}
+
 pub(crate) fn execute_lifecycle_proof_transaction<F, A>(
     contract: &Contract,
     order: &[String],
     transaction_id: &str,
     working_dir: &Path,
+    boundary: &mut LifecycleProofExecutionBoundary,
     mut readiness: F,
     mut assertion: A,
 ) -> LifecycleProofTransaction
@@ -8910,29 +8998,40 @@ where
             };
         }
     };
-    let mut error = None;
+    let mut error = boundary
+        .begin()
+        .err()
+        .map(|details| format!("runner-owned lifecycle boundary could not start: {details}"));
     let mut interrupted = false;
     let mut assertion_evidence = None;
 
-    for (index, service_name) in order.iter().enumerate() {
-        let service = &contract.services[service_name];
-        match observe_managed_service_state(service_name, service, working_dir) {
-            Ok(ManagedServiceState::Inactive) => {
-                records[index].preexisting_state = String::from("inactive_observed");
+    if error.is_none() {
+        for (index, service_name) in order.iter().enumerate() {
+            if boundary.uses_isolated_container() {
+                records[index].preexisting_state = String::from("boundary_absent_attested");
                 records[index].cleanup_lease = String::from("acquired");
                 records[index].ownership = String::from("started_this_transaction");
+                continue;
             }
-            Ok(ManagedServiceState::Active) => {
-                records[index].preexisting_state = String::from("active_observed");
-                records[index].ownership = String::from("reused_preexisting");
-                error = Some(format!(
-                    "service `{service_name}` was already active; lifecycle proof will not take destructive ownership"
-                ));
-                break;
-            }
-            Err(state_error) => {
-                error = Some(state_error);
-                break;
+            let service = &contract.services[service_name];
+            match observe_managed_service_state(service_name, service, working_dir) {
+                Ok(ManagedServiceState::Inactive) => {
+                    records[index].preexisting_state = String::from("inactive_observed");
+                    records[index].cleanup_lease = String::from("acquired");
+                    records[index].ownership = String::from("started_this_transaction");
+                }
+                Ok(ManagedServiceState::Active) => {
+                    records[index].preexisting_state = String::from("active_observed");
+                    records[index].ownership = String::from("reused_preexisting");
+                    error = Some(format!(
+                        "service `{service_name}` was already active; lifecycle proof will not take destructive ownership"
+                    ));
+                    break;
+                }
+                Err(state_error) => {
+                    error = Some(state_error);
+                    break;
+                }
             }
         }
     }
@@ -8940,12 +9039,7 @@ where
     if error.is_none() {
         for (index, service_name) in order.iter().enumerate() {
             let service = &contract.services[service_name];
-            match run_service_start_command(
-                service_name,
-                service,
-                working_dir,
-                TaskExecutionMode::Capture,
-            ) {
+            match boundary.run_service_command(service_name, service, true, working_dir) {
                 Ok(output) if task_command_output_reports_user_interruption(&output) => {
                     records[index].start = LifecycleProofTransition {
                         state: String::from("interrupted"),
@@ -9044,12 +9138,7 @@ where
         }
         let service = &contract.services[service_name];
         if records[index].start.state != "not_run" {
-            match run_service_stop_command(
-                service_name,
-                service,
-                working_dir,
-                TaskExecutionMode::Capture,
-            ) {
+            match boundary.run_service_command(service_name, service, false, working_dir) {
                 Ok(output) if task_command_output_reports_user_interruption(&output) => {
                     records[index].teardown = LifecycleProofTransition {
                         state: String::from("interrupted"),
@@ -9087,21 +9176,52 @@ where
                 }
             }
         }
-        match observe_managed_service_state(service_name, service, working_dir) {
-            Ok(ManagedServiceState::Inactive) => {
-                records[index].teardown_assertion = LifecycleProofTransition {
-                    state: String::from("state_observed"),
-                    evidence_class: Some(ExecutionEvidenceClass::Derived),
-                };
-                records[index].cleanup_lease = String::from("released");
+        if !boundary.uses_isolated_container() {
+            match observe_managed_service_state(service_name, service, working_dir) {
+                Ok(ManagedServiceState::Inactive) => {
+                    records[index].teardown_assertion = LifecycleProofTransition {
+                        state: String::from("state_observed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Derived),
+                    };
+                    records[index].cleanup_lease = String::from("released");
+                }
+                Ok(ManagedServiceState::Active) | Err(_) => {
+                    records[index].teardown_assertion = LifecycleProofTransition {
+                        state: String::from("state_not_observed"),
+                        evidence_class: Some(ExecutionEvidenceClass::Derived),
+                    };
+                    records[index].cleanup_lease = String::from("cleanup_failed");
+                    error.get_or_insert_with(|| format!("service `{service_name}` did not reach manager-observed inactive state after teardown"));
+                }
             }
-            Ok(ManagedServiceState::Active) | Err(_) => {
-                records[index].teardown_assertion = LifecycleProofTransition {
-                    state: String::from("state_not_observed"),
-                    evidence_class: Some(ExecutionEvidenceClass::Derived),
-                };
-                records[index].cleanup_lease = String::from("cleanup_failed");
-                error.get_or_insert_with(|| format!("service `{service_name}` did not reach manager-observed inactive state after teardown"));
+        }
+    }
+    if boundary.uses_isolated_container() {
+        match boundary.terminate() {
+            Ok(()) => {
+                for record in &mut records {
+                    if record.cleanup_lease == "acquired" {
+                        record.teardown_assertion = LifecycleProofTransition {
+                            state: String::from("boundary_terminated"),
+                            evidence_class: Some(ExecutionEvidenceClass::Attested),
+                        };
+                        record.cleanup_lease = String::from("released");
+                    }
+                }
+            }
+            Err(details) => {
+                for record in &mut records {
+                    if record.cleanup_lease == "acquired" {
+                        record.teardown_assertion = LifecycleProofTransition {
+                            state: String::from("state_not_observed"),
+                            evidence_class: Some(ExecutionEvidenceClass::Attested),
+                        };
+                        record.cleanup_lease = String::from("cleanup_failed");
+                    }
+                }
+                error.get_or_insert_with(|| {
+                    format!("runner-owned lifecycle boundary could not be terminated: {details}")
+                });
             }
         }
     }
@@ -25114,6 +25234,231 @@ fn cleanup_ephemeral_closure_sessions(state: &mut TaskRunState) -> Option<String
         }
     }
     (!notes.is_empty()).then(|| notes.join("; "))
+}
+
+/// Create a fresh, transaction-bound execution session for a lifecycle proof whose declared
+/// terminal state is boundary termination. This intentionally reuses the ephemeral closure
+/// container machinery but never inserts the session into reusable task state.
+pub(crate) fn prepare_lifecycle_proof_isolated_container(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_task: &str,
+    transaction_id: &str,
+    overrides: ExecutionOverrides,
+) -> Result<LifecycleProofExecutionBoundary, RunError> {
+    let backend = resolve_execution_backend_with_contract_path(
+        contract,
+        workflow_task,
+        overrides,
+        Some(contract_path),
+    )?;
+    let ResolvedExecutionBackend::Container {
+        context_name,
+        shared_local_backend,
+        image,
+        engine,
+        lifecycle,
+        memory_bytes,
+        compose_networks,
+        dependency_isolation_paths,
+        ..
+    } = backend
+    else {
+        return Err(RunError::LifecycleIsolatedBoundaryUnavailable {
+            task: workflow_task.to_string(),
+            details: String::from("selected execution is not a container backend"),
+        });
+    };
+    if lifecycle != Lifecycle::Ephemeral {
+        return Err(RunError::LifecycleIsolatedBoundaryUnavailable {
+            task: workflow_task.to_string(),
+            details: format!(
+                "selected container lifecycle is `{}` rather than `ephemeral`",
+                format_lifecycle(lifecycle)
+            ),
+        });
+    }
+
+    let task_name = format!("lifecycle:{workflow_task}");
+    let working_dir = contract_working_dir(contract_path);
+    let repo_ownership_token = repo_ownership_token(task_name.as_str(), contract_path)?;
+    let session_seed = format!("lifecycle:{transaction_id}");
+    let container_name = ephemeral_container_name_for_seed(
+        working_dir,
+        image.as_str(),
+        engine.as_str(),
+        Some(session_seed.as_str()),
+    );
+    let context_name = context_name.or_else(|| {
+        shared_local_backend
+            .as_ref()
+            .and_then(|shared| shared.context_name.clone())
+    });
+    Ok(LifecycleProofExecutionBoundary::IsolatedContainer(
+        LifecycleProofIsolatedContainer {
+            task_name,
+            working_dir: working_dir.to_path_buf(),
+            context_name,
+            repo_ownership_token,
+            image,
+            engine,
+            container_name,
+            memory_bytes,
+            compose_networks,
+            dependency_isolation_paths,
+            started: false,
+        },
+    ))
+}
+
+impl LifecycleProofIsolatedContainer {
+    fn begin(&mut self) -> Result<(), String> {
+        let env = BTreeMap::new();
+        let secrets = BTreeSet::new();
+        let create = create_idle_ephemeral_container(
+            self.task_name.as_str(),
+            self.working_dir.as_path(),
+            self.context_name.as_deref(),
+            self.repo_ownership_token.as_str(),
+            self.image.as_str(),
+            self.engine.as_str(),
+            self.container_name.as_str(),
+            self.memory_bytes,
+            self.compose_networks.as_slice(),
+            &[],
+            self.dependency_isolation_paths.as_slice(),
+            &env,
+            &secrets,
+        )
+        .map_err(|error| error.to_string())?;
+        if create.exit_code != 0 {
+            return Err(container_command_failure_details(
+                self.engine.as_str(),
+                &[],
+                &create,
+            ));
+        }
+        if let Some(failure) = ensure_container_networks(
+            self.engine.as_str(),
+            self.container_name.as_str(),
+            self.compose_networks.as_slice(),
+            self.task_name.as_str(),
+        )
+        .map_err(|error| error.to_string())?
+        {
+            let failure_details =
+                container_command_failure_details(self.engine.as_str(), &[], &failure);
+            return match self.cleanup_failed_begin() {
+                Ok(()) => Err(failure_details),
+                Err(cleanup_error) => Err(format!("{failure_details}; {cleanup_error}")),
+            };
+        }
+        let start = container_command_output(
+            self.engine.as_str(),
+            &["start", self.container_name.as_str()],
+            None,
+            self.task_name.as_str(),
+        )
+        .map_err(|error| error.to_string())?;
+        if start.exit_code != 0 {
+            let failure_details =
+                container_command_failure_details(self.engine.as_str(), &[], &start);
+            return match self.cleanup_failed_begin() {
+                Ok(()) => Err(failure_details),
+                Err(cleanup_error) => Err(format!("{failure_details}; {cleanup_error}")),
+            };
+        }
+        self.started = true;
+        Ok(())
+    }
+
+    fn cleanup_failed_begin(&self) -> Result<(), String> {
+        let remove = remove_persistent_container(
+            self.engine.as_str(),
+            self.container_name.as_str(),
+            self.task_name.as_str(),
+        )
+        .map_err(|error| error.to_string())?;
+        if remove.exit_code == 0 {
+            return Ok(());
+        }
+        Err(format!(
+            "runner-owned lifecycle boundary cleanup after failed start could not remove session `{}`: {}",
+            self.container_name,
+            container_command_failure_details(
+                self.engine.as_str(),
+                &["rm", "-f", self.container_name.as_str()],
+                &remove,
+            )
+        ))
+    }
+
+    fn run_structured_command(
+        &self,
+        command: &crate::schema::TaskCommandSpec,
+        _working_dir: &Path,
+    ) -> Result<TaskCommandOutput, String> {
+        if !self.started {
+            return Err(String::from(
+                "runner-owned lifecycle boundary was not created before manager command execution",
+            ));
+        }
+        if command.interaction == Some(CommandInteractionPosture::Required) {
+            return Err(String::from(
+                "isolated lifecycle proof cannot execute a terminal-required manager command",
+            ));
+        }
+        let mut parts = Vec::with_capacity(command.args.len() + 1);
+        parts.push(shell_quote(command.exe.as_str()));
+        parts.extend(command.args.iter().map(|arg| shell_quote(arg)));
+        let command = container_command_with_cwd(parts.join(" ").as_str(), command.cwd.as_deref());
+        exec_persistent_container_task_command(
+            self.task_name.as_str(),
+            None,
+            command.as_str(),
+            &BTreeMap::new(),
+            None,
+            &BTreeSet::new(),
+            self.engine.as_str(),
+            TaskExecutionMode::Capture,
+            self.container_name.as_str(),
+            None,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn terminate(&mut self) -> Result<(), String> {
+        if !self.started {
+            return Ok(());
+        }
+        let remove = remove_persistent_container(
+            self.engine.as_str(),
+            self.container_name.as_str(),
+            self.task_name.as_str(),
+        )
+        .map_err(|error| error.to_string())?;
+        if remove.exit_code != 0 {
+            return Err(container_command_failure_details(
+                self.engine.as_str(),
+                &["rm", "-f", self.container_name.as_str()],
+                &remove,
+            ));
+        }
+        if persistent_container_exists(
+            self.engine.as_str(),
+            self.container_name.as_str(),
+            self.task_name.as_str(),
+        )
+        .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "container engine still reports lifecycle session `{}` after removal",
+                self.container_name
+            ));
+        }
+        self.started = false;
+        Ok(())
+    }
 }
 
 fn execute_container_task_command(
@@ -69055,11 +69400,13 @@ services:
         let lock_file = File::create(&lock_path).unwrap();
         lock_file.try_lock_exclusive().unwrap();
 
+        let mut boundary = super::LifecycleProofExecutionBoundary::Manager;
         let transaction = super::execute_lifecycle_proof_transaction(
             &fixture.contract,
             &[String::from("database")],
             "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             fixture.dir.path(),
+            &mut boundary,
             |_| panic!("a locked lifecycle transaction must not observe readiness"),
             || panic!("a locked lifecycle transaction must not run the assertion"),
         );
@@ -69080,6 +69427,339 @@ services:
                 && record.teardown.state == "not_run"
                 && record.teardown_assertion.state == "not_run"
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_lifecycle_boundary_does_not_start_before_transaction_lock() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-lock
+services:
+  caddy:
+    manager:
+      kind: host
+      start:
+        exe: sh
+        args: [-c, "true"]
+      stop:
+        exe: sh
+        args: [-c, "true"]
+    lifecycle:
+      teardown_assertion: boundary_terminated
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        let log_path = fixture.dir.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n",
+                log_path.display()
+            ),
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let lock_path = super::lifecycle_proof_lock_path(fixture.dir.path());
+        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let lock_file = File::create(&lock_path).unwrap();
+        lock_file.try_lock_exclusive().unwrap();
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-lock-test"),
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("caddy")],
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            fixture.dir.path(),
+            &mut boundary,
+            |_| panic!("a locked lifecycle transaction must not observe readiness"),
+            || panic!("a locked lifecycle transaction must not run the assertion"),
+        );
+
+        assert!(
+            transaction
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("transaction is already active"))
+        );
+        assert!(
+            !log_path.exists(),
+            "locked transaction must not create a boundary session"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_lifecycle_boundary_attests_exact_session_termination() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-success
+services:
+  caddy:
+    manager:
+      kind: host
+      start:
+        exe: sh
+        args: [-c, "true"]
+      stop:
+        exe: sh
+        args: [-c, "true"]
+    lifecycle:
+      teardown_assertion: boundary_terminated
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        let log_path = fixture.dir.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  'inspect -f '*) printf '{{}}\\n' ;;\n  'inspect ota-lifecycle-success-test') exit 1 ;;\nesac\n",
+                log_path.display()
+            ),
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-success-test"),
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("caddy")],
+            "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            fixture.dir.path(),
+            &mut boundary,
+            |_| true,
+            || Ok(None),
+        );
+
+        assert!(transaction.error.is_none(), "{:?}", transaction.error);
+        assert_eq!(
+            transaction.records[0].preexisting_state,
+            "boundary_absent_attested"
+        );
+        assert_eq!(
+            transaction.records[0].teardown_assertion.state,
+            "boundary_terminated"
+        );
+        assert_eq!(transaction.records[0].cleanup_lease, "released");
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(log.matches("create ").count(), 1, "{log}");
+        assert_eq!(
+            log.matches("start ota-lifecycle-success-test").count(),
+            1,
+            "{log}"
+        );
+        assert_eq!(
+            log.lines().filter(|line| line.starts_with("exec ")).count(),
+            2,
+            "{log}"
+        );
+        assert_eq!(
+            log.matches("rm -f ota-lifecycle-success-test").count(),
+            1,
+            "{log}"
+        );
+        assert_eq!(
+            log.matches("inspect ota-lifecycle-success-test").count(),
+            1,
+            "{log}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_lifecycle_boundary_does_not_attest_when_engine_removal_fails() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-removal-failure
+services:
+  caddy:
+    manager:
+      kind: host
+      start:
+        exe: sh
+        args: [-c, "true"]
+      stop:
+        exe: sh
+        args: [-c, "true"]
+    lifecycle:
+      teardown_assertion: boundary_terminated
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            "#!/bin/sh\ncase \"$*\" in\n  'inspect -f '*) printf '{}\\n' ;;\n  'rm -f ota-lifecycle-removal-failure-test') printf 'engine removal failed\\n' >&2; exit 1 ;;\nesac\n",
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-removal-failure-test"),
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        let transaction = super::execute_lifecycle_proof_transaction(
+            &fixture.contract,
+            &[String::from("caddy")],
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            fixture.dir.path(),
+            &mut boundary,
+            |_| true,
+            || Ok(None),
+        );
+
+        assert!(
+            transaction
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("could not be terminated")),
+            "{:?}",
+            transaction.error
+        );
+        assert_eq!(
+            transaction.records[0].teardown_assertion.state,
+            "state_not_observed"
+        );
+        assert_eq!(transaction.records[0].cleanup_lease, "cleanup_failed");
+        assert_eq!(transaction.finalization.state, "incomplete");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_lifecycle_boundary_reports_cleanup_failure_after_partial_start() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-isolated-partial-start
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        let log_path = fixture.dir.path().join("docker.log");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  'start ota-lifecycle-partial-start-test') exit 1 ;;\n  'rm -f ota-lifecycle-partial-start-test') printf 'engine removal failed\\n' >&2; exit 1 ;;\nesac\n",
+                log_path.display()
+            ),
+        );
+        let _path_guard = PathEnvGuard(env::var_os("PATH"));
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            )
+        };
+        let mut boundary = super::LifecycleProofExecutionBoundary::IsolatedContainer(
+            super::LifecycleProofIsolatedContainer {
+                task_name: String::from("lifecycle:verify"),
+                working_dir: fixture.dir.path().to_path_buf(),
+                context_name: None,
+                repo_ownership_token: String::from("ota-test"),
+                image: String::from("alpine:3.21"),
+                engine: String::from("docker"),
+                container_name: String::from("ota-lifecycle-partial-start-test"),
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+                started: false,
+            },
+        );
+
+        let error = boundary
+            .begin()
+            .expect_err("failed container start should reject the boundary");
+
+        assert!(error.contains("engine removal failed"), "{error}");
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(log.matches("create ").count(), 1, "{log}");
+        assert_eq!(
+            log.matches("start ota-lifecycle-partial-start-test")
+                .count(),
+            1,
+            "{log}"
+        );
+        assert_eq!(
+            log.matches("rm -f ota-lifecycle-partial-start-test")
+                .count(),
+            1,
+            "{log}"
+        );
     }
 
     #[cfg(unix)]
@@ -69125,11 +69805,13 @@ services:
                     .unwrap(),
             )
         };
+        let mut boundary = super::LifecycleProofExecutionBoundary::Manager;
         let transaction = super::execute_lifecycle_proof_transaction(
             &fixture.contract,
             &[String::from("database")],
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             fixture.dir.path(),
+            &mut boundary,
             |_| {
                 super::simulate_run_interrupt_for_test();
                 false
@@ -69195,11 +69877,13 @@ services:
                     .unwrap(),
             )
         };
+        let mut boundary = super::LifecycleProofExecutionBoundary::Manager;
         let transaction = super::execute_lifecycle_proof_transaction(
             &fixture.contract,
             &[String::from("database")],
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             fixture.dir.path(),
+            &mut boundary,
             |_| true,
             || Ok(None),
         );

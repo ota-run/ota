@@ -207,6 +207,48 @@ fn lifecycle_proof_json_schema_accepts_runner_owned_transaction() {
 }
 
 #[test]
+fn lifecycle_proof_json_schema_accepts_isolated_boundary_termination() {
+    let payload = serde_json::json!({
+        "ok": true,
+        "proof_verdict": "passed_with_unproven_boundaries",
+        "path": "ota.yaml",
+        "mode": "lifecycle-proof",
+        "workflow": "smoke",
+        "phase": "lifecycle",
+        "stage_family": "proof",
+        "proof_scope": {
+            "kind": "lifecycle_transition",
+            "proof_class": "slice_proof",
+            "workflow": "smoke",
+            "intent": "runner_owned_isolated_lifecycle_boundary"
+        },
+        "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "services": [{
+            "service": "caddy",
+            "transaction_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "preexisting_state": "boundary_absent_attested",
+            "cleanup_lease": "released",
+            "ownership": "started_this_transaction",
+            "start": { "state": "command_succeeded", "evidence_class": "attested" },
+            "readiness": { "state": "not_declared" },
+            "teardown": { "state": "command_succeeded", "evidence_class": "attested" },
+            "teardown_assertion": { "state": "boundary_terminated", "evidence_class": "attested" }
+        }],
+        "finalization": { "state": "completed", "after_interruption": false, "evidence_class": "attested" },
+        "not_proved": [{
+            "kind": "service_started_state_not_proved",
+            "relative_to": "declared_lifecycle_service_transition",
+            "source": "contract_lane"
+        }, {
+            "kind": "application_output_not_proved",
+            "relative_to": "declared_lifecycle_service_transition",
+            "source": "scope"
+        }]
+    });
+    assert_matches_schema("proof-lifecycle.json", &payload);
+}
+
+#[test]
 fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
     let payload = serde_json::json!({
         "kind": "lifecycle_proof",

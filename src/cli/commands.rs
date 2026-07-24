@@ -3119,6 +3119,14 @@ pub fn proof_lifecycle(
             2,
         );
     };
+    let Some(workflow_run) = workflow.run.as_ref() else {
+        return CommandOutput::failure_with_code(
+            format!(
+                "workflow `{workflow_key}` must declare `run.task` before lifecycle proof can select its execution boundary"
+            ),
+            2,
+        );
+    };
     if agent
         && let Some(refusal) = agent_workflow_execution_refusal_with_policy(
             &contract,
@@ -3200,6 +3208,38 @@ pub fn proof_lifecycle(
         }
     }
 
+    let requires_isolated_boundary = order.iter().any(|service_name| {
+        contract
+            .services
+            .get(service_name)
+            .and_then(|service| service.lifecycle.as_ref())
+            .is_some_and(|lifecycle| {
+                matches!(
+                    lifecycle.teardown_assertion,
+                    crate::schema::ServiceLifecycleTeardownAssertionKind::BoundaryTerminated
+                )
+            })
+    });
+    let mut lifecycle_boundary = if requires_isolated_boundary {
+        match crate::runner::prepare_lifecycle_proof_isolated_container(
+            &contract,
+            &target.contract_path,
+            workflow_run.task.as_str(),
+            transaction_id.as_str(),
+            overrides,
+        ) {
+            Ok(boundary) => boundary,
+            Err(boundary_error) => {
+                error.get_or_insert_with(|| {
+                    format!("lifecycle isolated boundary could not start: {boundary_error}")
+                });
+                crate::runner::LifecycleProofExecutionBoundary::Manager
+            }
+        }
+    } else {
+        crate::runner::LifecycleProofExecutionBoundary::Manager
+    };
+
     let transaction = error.map_or_else(
         || {
             crate::runner::execute_lifecycle_proof_transaction(
@@ -3207,6 +3247,7 @@ pub fn proof_lifecycle(
                 &order,
                 transaction_id.as_str(),
                 working_dir,
+                &mut lifecycle_boundary,
                 |service_name| diagnose_service(&contract, &target.contract_path, service_name).ok,
                 || match lifecycle.assertion.as_ref() {
                     Some(assertion) => {

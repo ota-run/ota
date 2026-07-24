@@ -622,6 +622,7 @@ or teardown shell commands into the workflow.
 ```bash
 ota proof lifecycle --workflow smoke [PATH]
 ota proof lifecycle --workflow smoke --service database [PATH]
+ota proof lifecycle --workflow smoke --mode container [PATH]
 ota proof lifecycle --json --workflow smoke [PATH]
 ota proof lifecycle --json --archive --workflow smoke [PATH]
 ```
@@ -634,7 +635,9 @@ Current behavior:
 - refuses a concurrent lifecycle transaction for the same repository before it can observe manager
   state or acquire a cleanup lease
 - observes manager-owned initial state, refuses a pre-existing active service, and acquires a
-  cleanup lease only after a current inactive observation
+  cleanup lease only after a current inactive observation. A service declaring
+  `boundary_terminated` instead runs inside a fresh runner-owned ephemeral container session;
+  Ota attests that boundary absent before start and does not claim a host-wide manager state
 - starts dependency services in declared order, checks declared readiness, and runs the optional
   finite assertion after readiness; assertion service requirements reuse the transaction-owned
   services rather than issuing another start command
@@ -643,7 +646,9 @@ Current behavior:
   stream after declared secret values are redacted. Diagnostic output does not widen lifecycle
   proof into application-output proof
 - attempts teardown in reverse order and requires a positive manager inactive observation before
-  releasing each lease
+  releasing each lease. For an isolated boundary, it removes the exact session in the finalizer
+  and emits only `boundary_terminated`; this proves the runner-owned session cannot retain a
+  process, not that a host manager or broader application output is stopped
 - emits `passed_with_unproven_boundaries` for a successful transaction because lifecycle state
   transitions do not prove broader application output or repo completion
 - `--archive` writes local content-addressed transaction evidence. Its filename, semantic snapshot

@@ -4319,6 +4319,7 @@ pub struct ServiceLifecycleSpec {
 #[serde(rename_all = "snake_case")]
 pub enum ServiceLifecycleTeardownAssertionKind {
     ManagerInactive,
+    BoundaryTerminated,
 }
 
 impl ServiceSpec {

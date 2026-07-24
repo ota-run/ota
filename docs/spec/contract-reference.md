@@ -680,6 +680,12 @@ Current behavior:
   transaction-owned teardown; it is valid only with a typed manager, never an inverse readiness
   probe. Systemd observation also requires the declared unit to resolve as loaded; an unknown unit
   is not treated as inactive
+- `services.<name>.lifecycle.teardown_assertion: boundary_terminated` is a narrower lifecycle
+  proof capability for structured host-manager commands. It is admitted only when the selected
+  lifecycle workflow resolves to an Ota-owned ephemeral container session; Ota runs the declared
+  `manager.start` and `manager.stop` commands inside that session and must confirm removal of the
+  exact session before publishing the terminal observation. It does not claim the host manager is
+  inactive or that application output was proved
 - for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
 - legacy `services.<name>.readiness.run` still parses for compatibility, but new authoring should keep service readiness on structured `readiness.kind` or reusable `readiness.probe`
 - `services.<name>.readiness.from` selects the execution context for service readiness
