@@ -168,8 +168,9 @@ The following planned lifecycle-proof slice is:
 The active typed-hydration slice is:
 
 - [V11.19: typed uv local-project hydration](../v11.19/plan.md) - Dograh pressure now proves the
-  first typed editable-project, extras, and ordered dependency-group lane; one independent
-  repository remains before the slice closes.
+  nested editable-project, extras, and ordered dependency-group lane; Marimo independently
+  proves the root-project test-group shape on Linux and macOS. Independent review remains before
+  the slice closes.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 

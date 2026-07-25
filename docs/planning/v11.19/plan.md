@@ -25,9 +25,9 @@
 
 # V11.19: Typed uv Local-Project Hydration
 
-Status: active. The implementation and first Dograh pressure proof are complete; one independent
-local-project pressure target remains before this slice can close. It narrows one real
-package-hydration gap before any Dev Container adapter work begins.
+Status: active. Implementation and both independent pressure proofs are complete; independent
+review remains before this slice can close. It narrows one real package-hydration gap before any
+Dev Container adapter work begins.
 
 ## Problem
 
@@ -192,6 +192,14 @@ group hydration, proves the agent boundary, and executes the API lifecycle proof
 PostgreSQL and Redis services. The receipt/proof remains bounded: Dograh advertises native Linux
 and macOS execution only; its Dev Container, unpinned Node validator install, and GitHub-service
 versus local-Compose topology are not promoted into this proof.
+
+Marimo [run 30164165503](https://github.com/bobaikato/marimo/actions/runs/30164165503) proves the
+independent root-project shape against the same exact Core commit on Linux and macOS. Its contract
+uses one editable `path: .` source with the ordered `test` group, and the retained per-platform
+artifacts prove matching manifest and Git source identities. Marimo does not commit `uv.lock`, so
+the emitted local-project record deliberately has no lockfile identity and its dependency
+resolution replay class remains unavailable. The selected proof does not claim its frontend/pnpm,
+Playwright, Docker, release, documentation, or Windows surfaces.
 
 ## Acceptance Bar
 

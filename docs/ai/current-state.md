@@ -35,16 +35,18 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
-- active implementation slice: V11.19 typed uv local-project hydration. Dograh pressure
-  [run 30163022205](https://github.com/bobaikato/dograh/actions/runs/30163022205) proves the
-  released implementation commit `f5343ab9`: its native API lane resolves Pipecat as one typed
-  editable local-project hydration with ordered `dev` group installation and observed manifest,
-  lockfile, and Git source identities, then completes the bounded PostgreSQL/Redis lifecycle
-  proof. Dograh does not advertise a container execution mode; its Dev Container remains a
-  separate ungoverned contributor boundary, not a hydration substitute. The unpinned Node
-  validator `npm install` and GitHub-service versus local-Compose topology divergence remain
-  explicit replay/proof boundaries. V11.19 still requires one independent repository with a
-  different local-project shape before completion.
+- active implementation slice: V11.19 typed uv local-project hydration. Its implementation and
+  two independent pressure targets are complete; independent review is the remaining completion
+  gate. Dograh [run 30163022205](https://github.com/bobaikato/dograh/actions/runs/30163022205)
+  proves nested editable Pipecat hydration with extras, an ordered `dev` group, manifest,
+  lockfile, and Git source identities, plus bounded PostgreSQL/Redis lifecycle execution.
+  Marimo [run 30164165503](https://github.com/bobaikato/marimo/actions/runs/30164165503) proves
+  the different editable root-project plus `test`-group shape on Linux and macOS; it has no
+  `uv.lock`, so Ota records manifest and Git source identities while correctly leaving lockfile
+  replay identity unavailable. Both matrices bootstrap exact Core `f5343ab9` and retain
+  platform-specific evidence artifacts. Dograh's Dev Container, unpinned Node validator install,
+  and GitHub-service versus local-Compose divergence remain bounded. Marimo's frontend/pnpm,
+  Playwright, Docker, release, and Windows lanes remain repo-owned outside its selected proof.
 - active finite-command interaction slice: omitted `tasks.<name>.command.interaction` resolves to
   `auto`, allowing terminal passthrough only for human native terminal execution. Explicit
   `forbidden` keeps every prepared closure step noninteractive, while `required` refuses before
