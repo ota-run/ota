@@ -25,9 +25,9 @@
 
 # V11.19: Typed uv Local-Project Hydration
 
-Status: active. Implementation and both independent pressure proofs are complete; independent
-review remains before this slice can close. It narrows one real package-hydration gap before any
-Dev Container adapter work begins.
+Status: complete. The replay-trust classifier, `source.cwd`-relative containment rule, and both
+independent pressure proofs are complete. It narrows one real package-hydration gap before any Dev
+Container adapter work begins.
 
 ## Problem
 
@@ -186,22 +186,23 @@ it is not a `pip_local_project` mode or a generic `--container` switch.
 
 ## Pressure Evidence
 
-Dograh [run 30163022205](https://github.com/bobaikato/dograh/actions/runs/30163022205) proves the
-first target against exact Core commit `f5343ab9`. Its matrix validates and diagnoses the contract,
+Dograh [run 30165303012](https://github.com/bobaikato/dograh/actions/runs/30165303012) proves the
+first target against exact Core commit `19509754`. Its matrix validates and diagnoses the contract,
 lists public and agent-safe task surfaces, dry-runs the API workflow, asserts the single typed
-`setup:pipecat` source renders `pip_local_project` with editable installation and ordered `dev`
-group hydration, proves the agent boundary, and executes the API lifecycle proof through declared
-PostgreSQL and Redis services. The receipt/proof remains bounded: Dograh advertises native Linux
-and macOS execution only; its Dev Container, unpinned Node validator install, and GitHub-service
-versus local-Compose topology are not promoted into this proof.
+`setup:pipecat` source renders editable `pip_local_project` hydration with its full declared extras
+and ordered `dev` group, retains evidence on success, proves the agent boundary, and executes the
+API lifecycle proof through declared PostgreSQL and Redis services. The receipt/proof remains
+bounded: Dograh advertises native Linux and macOS execution only; its Dev Container, unpinned Node
+validator install, and GitHub-service versus local-Compose topology are not promoted into this
+proof.
 
-Marimo [run 30164165503](https://github.com/bobaikato/marimo/actions/runs/30164165503) proves the
+Marimo [run 30165304206](https://github.com/bobaikato/marimo/actions/runs/30165304206) proves the
 independent root-project shape against the same exact Core commit on Linux and macOS. Its contract
 uses one editable `path: .` source with the ordered `test` group, and the retained per-platform
 artifacts prove matching manifest and Git source identities. Marimo does not commit `uv.lock`, so
-the emitted local-project record deliberately has no lockfile identity and its dependency
-resolution replay class remains unavailable. The selected proof does not claim its frontend/pnpm,
-Playwright, Docker, release, documentation, or Windows surfaces.
+the emitted local-project record deliberately has no lockfile identity and its matching dependency
+resolution evidence remains narrowing rather than replay-acquitting. The selected proof does not
+claim its frontend/pnpm, Playwright, Docker, release, documentation, or Windows surfaces.
 
 ## Acceptance Bar
 

@@ -35,18 +35,19 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
-- active implementation slice: V11.19 typed uv local-project hydration. Its implementation and
-  two independent pressure targets are complete; independent review is the remaining completion
-  gate. Dograh [run 30163022205](https://github.com/bobaikato/dograh/actions/runs/30163022205)
-  proves nested editable Pipecat hydration with extras, an ordered `dev` group, manifest,
-  lockfile, and Git source identities, plus bounded PostgreSQL/Redis lifecycle execution.
-  Marimo [run 30164165503](https://github.com/bobaikato/marimo/actions/runs/30164165503) proves
-  the different editable root-project plus `test`-group shape on Linux and macOS; it has no
-  `uv.lock`, so Ota records manifest and Git source identities while correctly leaving lockfile
-  replay identity unavailable. Both matrices bootstrap exact Core `f5343ab9` and retain
-  platform-specific evidence artifacts. Dograh's Dev Container, unpinned Node validator install,
-  and GitHub-service versus local-Compose divergence remain bounded. Marimo's frontend/pnpm,
-  Playwright, Docker, release, and Windows lanes remain repo-owned outside its selected proof.
+- completed implementation slice: V11.19 typed uv local-project hydration. The replay classifier
+  now requires resolved source posture, declared lockfile identity, and clean local-project source
+  identity before editable hydration can be acquitting; missing lockfile or source identity remains
+  narrowing evidence. Dograh [run 30165303012](https://github.com/bobaikato/dograh/actions/runs/30165303012)
+  proves nested editable Pipecat hydration with its full declared extras, ordered `dev` group,
+  manifest, lockfile, and Git source identities, plus bounded PostgreSQL/Redis lifecycle execution.
+  Marimo [run 30165304206](https://github.com/bobaikato/marimo/actions/runs/30165304206) proves the
+  different editable root-project plus `test`-group shape on Linux and macOS; it has no `uv.lock`,
+  so Ota records manifest and Git source identities while correctly retaining narrowing replay
+  evidence. Both matrices bootstrap exact Core `19509754` and retain platform-specific evidence
+  artifacts. Dograh's Dev Container, unpinned Node validator install, and GitHub-service versus
+  local-Compose divergence remain bounded. Marimo's frontend/pnpm, Playwright, Docker, release,
+  and Windows lanes remain repo-owned outside its selected proof.
 - active finite-command interaction slice: omitted `tasks.<name>.command.interaction` resolves to
   `auto`, allowing terminal passthrough only for human native terminal execution. Explicit
   `forbidden` keeps every prepared closure step noninteractive, while `required` refuses before
