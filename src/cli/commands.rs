@@ -98471,10 +98471,9 @@ pub(crate) fn replay_baseline_record(
         let root = contract_path.parent().ok_or_else(|| {
             String::from("cannot resolve contract root for replay baseline recording")
         })?;
-        // Capture source identity before the producer changes the baseline outputs. Requiring a
-        // clean source here binds what reviewers approved, without treating the generated diff as
-        // ambient source drift after the recording run.
-        let source_identity = git_head_identity(root).map_err(|reason| {
+        // Baseline outputs are the one permitted producer mutation. Every other source path must
+        // remain clean before and after execution, and promotion rechecks this same identity.
+        let source_identity = git_head_identity_excluding(root, &artifact.paths).map_err(|reason| {
             format!(
                 "replay baseline producer `{producer}` requires a clean Git source identity before recording: {reason}"
             )
@@ -98489,6 +98488,12 @@ pub(crate) fn replay_baseline_record(
             return Err(failure.message);
         }
         let details_footer = task_use_details_footer(Some(&target.contract_path), None);
+        // Recording must use the exact validated contract snapshot selected before producer
+        // execution. A producer is not allowed to rewrite ota.yaml and retrospectively redefine
+        // the attestation it just earned.
+        let recorded_contract_identity =
+            contract_snapshot_hash(&normalized_contract_snapshot_json(&target.contract)?);
+        let recorded_paths = artifact.paths.clone();
         let mut success = run_single_contract_target_captured(
             producer.as_str(),
             ExecutionOverrides::default(),
@@ -98502,12 +98507,18 @@ pub(crate) fn replay_baseline_record(
             true,
         )
         .map_err(|failure| failure.message)?;
-        let (contract, _) =
-            load_contract_auto(&contract_path).map_err(|error| error.to_string())?;
-        let artifact = contract.artifacts.get(artifact_name).ok_or_else(|| {
-            format!("contract does not declare replay baseline artifact `{artifact_name}`")
-        })?;
-        let outputs = capture_replay_baseline_output_manifest(root, &artifact.paths)?;
+        let completed_source_identity =
+            git_head_identity_excluding(root, &recorded_paths).map_err(|reason| {
+                format!(
+                    "replay baseline producer `{producer}` changed source outside declared replay baseline outputs: {reason}"
+                )
+            })?;
+        if completed_source_identity != source_identity {
+            return Err(format!(
+                "replay baseline producer `{producer}` changed Git source identity during recording; record from one unchanged source snapshot"
+            ));
+        }
+        let outputs = capture_replay_baseline_output_manifest(root, &recorded_paths)?;
         let receipt_identity = semantic_contract_identity(&success.receipt)?;
         let receipt_path = next_receipt_archive_path(root, "replay-baseline-receipt")?;
         let created_at = format_receipt_metadata_timestamp(OffsetDateTime::now_utc())?;
@@ -98528,9 +98539,7 @@ pub(crate) fn replay_baseline_record(
             execution_mode,
             execution_lifecycle: success.receipt.lifecycle.clone(),
             outputs,
-            contract_identity: contract_snapshot_hash(&normalized_contract_snapshot_json(
-                &contract,
-            )?),
+            contract_identity: recorded_contract_identity,
             source_identity,
             execution_receipt_identity: receipt_identity,
             execution_receipt_archive: repo_relative_log_path(root, &receipt_path),
@@ -98587,8 +98596,9 @@ pub(crate) fn replay_baseline_record(
     replay_baseline_command_output(result, format)
 }
 
-/// Promotes an explicitly selected Ota-authored attestation. The authority manifest is portable
-/// contract-adjacent state, while the local record archive remains audit evidence only.
+/// Promotes an explicitly selected Ota-recorded attestation. The authority manifest is portable
+/// contract-adjacent state selected through SCM review, while the local record archive remains
+/// audit evidence only.
 pub(crate) fn replay_baseline_promote(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -98679,6 +98689,20 @@ pub(crate) fn replay_baseline_promote(
             return Err(format!(
                 "attestation `{}` was recorded for a different contract identity; record a new baseline before promotion",
                 attestation_path.display()
+            ));
+        }
+        let current_source_identity =
+            git_head_identity_excluding(root, &artifact.paths).map_err(|reason| {
+                format!(
+                    "attestation `{}` cannot be promoted without its recorded clean Git source identity: {reason}",
+                    attestation_path.display()
+                )
+            })?;
+        if attestation.source_identity != current_source_identity {
+            return Err(format!(
+                "attestation `{}` was recorded for source identity `{}` but the current source identity is `{current_source_identity}`; record a new baseline before promotion",
+                attestation_path.display(),
+                attestation.source_identity,
             ));
         }
         let current_outputs = capture_replay_baseline_output_manifest(root, &artifact.paths)?;
@@ -98773,7 +98797,10 @@ pub(crate) fn replay_baseline_promote(
             format_receipt_metadata_timestamp(OffsetDateTime::now_utc())?,
         )?;
         validate_replay_baseline_authority_manifest(&manifest, artifact_name)?;
-        let manifest_path = root.join(&replay.authority_manifest);
+        let manifest_path = crate::replay_baseline::replay_baseline_authority_manifest_path(
+            root,
+            &replay.authority_manifest,
+        )?;
         if let Some(parent) = manifest_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 format!(
@@ -98782,6 +98809,12 @@ pub(crate) fn replay_baseline_promote(
                 )
             })?;
         }
+        // Re-resolve after creation so a pre-existing or newly encountered symlinked parent can
+        // never redirect the contract-owned authority write outside the repository.
+        let manifest_path = crate::replay_baseline::replay_baseline_authority_manifest_path(
+            root,
+            &replay.authority_manifest,
+        )?;
         write_replay_baseline_json_atomically(&manifest_path, &manifest)?;
         Ok(json!({
             "ok": true,
@@ -98841,12 +98874,35 @@ artifacts:
     replay:
       authority_manifest: replay/recorded.ota.json
       consumption: read_only
+  recorded-mutating:
+    kind: replay_baseline
+    producer: record-mutating
+    paths: [data/mutated-baseline.txt]
+    replay:
+      authority_manifest: replay/recorded-mutating.ota.json
+      consumption: read_only
 tasks:
   record:
     action:
       kind: ensure_file
       path: data/baseline.txt
       value: recorded
+  record-mutating:
+    after_success: [mutate-source]
+    action:
+      kind: ensure_file
+      path: data/mutated-baseline.txt
+      value: recorded
+  mutate-source:
+    action:
+      kind: ensure_env_file
+      path: tracked.env
+      template: replacement.env
+      template_mode: replace
+      vars:
+        SOURCE:
+          value: after
+          mode: replace
   replay:
     action:
       kind: ensure_directory
@@ -98857,11 +98913,13 @@ agent:
 "#,
     )
     .expect("contract");
+    fs::write(root.path().join("tracked.env"), "SOURCE=before\n").expect("tracked source");
+    fs::write(root.path().join("replacement.env"), "SOURCE=after\n").expect("replacement source");
     for args in [
         vec!["init"],
         vec!["config", "user.email", "ota@example.com"],
         vec!["config", "user.name", "Ota Tests"],
-        vec!["add", "ota.yaml"],
+        vec!["add", "ota.yaml", "tracked.env", "replacement.env"],
         vec!["commit", "-m", "baseline contract"],
     ] {
         Command::new("git")
@@ -99005,6 +99063,26 @@ agent:
     );
     fs::write(root.path().join("data/baseline.txt"), "recorded").expect("restore recorded output");
 
+    fs::write(root.path().join("tracked.env"), "SOURCE=changed\n").expect("mutate tracked source");
+    let source_changed = replay_baseline_promote(
+        Some(root.path()),
+        None,
+        "recorded",
+        &attestation_path,
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(source_changed.exit_code, 1, "{:?}", source_changed.stderr);
+    assert!(
+        source_changed
+            .stderr
+            .as_deref()
+            .is_some_and(|message| message.contains("recorded clean Git source identity")),
+        "{:?}",
+        source_changed.stderr
+    );
+    fs::write(root.path().join("tracked.env"), "SOURCE=before\n").expect("restore tracked source");
+
     let promoted = replay_baseline_promote(
         Some(root.path()),
         None,
@@ -99024,6 +99102,51 @@ agent:
         recorded["attestation_identity"]
             .as_str()
             .expect("attestation identity")
+    );
+
+    for args in [
+        vec!["add", "data/baseline.txt", "replay/recorded.ota.json"],
+        vec!["commit", "-m", "promoted baseline"],
+    ] {
+        Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .status()
+            .expect("git command")
+            .success()
+            .then_some(())
+            .expect("git command succeeds");
+    }
+
+    let mutated = replay_baseline_record(
+        Some(root.path()),
+        None,
+        "recorded-mutating",
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(mutated.exit_code, 1, "{:?}", mutated.stderr);
+    assert!(
+        mutated
+            .stderr
+            .as_deref()
+            .is_some_and(|message| message
+                .contains("changed source outside declared replay baseline outputs")),
+        "{:?}",
+        mutated.stderr
+    );
+    assert!(
+        fs::read_to_string(root.path().join("tracked.env"))
+            .expect("mutated source")
+            .contains("SOURCE=after"),
+        "the test must prove that the producer changed a tracked non-output source file"
+    );
+    assert!(
+        !root
+            .path()
+            .join(".ota/replay-baselines/recorded-mutating")
+            .exists(),
+        "a source-mutating producer must not issue a promotable attestation"
     );
 }
 
@@ -102617,17 +102740,29 @@ fn collect_receipt_source_identity_input(
 }
 
 fn git_head_identity(root: &Path) -> Result<String, String> {
+    git_head_identity_excluding(root, &[])
+}
+
+/// Computes one clean Git identity while excluding the generated baseline outputs that an
+/// authorized producer is expected to update. It never excludes ordinary source changes.
+fn git_head_identity_excluding(root: &Path, excluded_paths: &[String]) -> Result<String, String> {
+    let exclusion_patterns = excluded_paths
+        .iter()
+        .map(|path| format!(":(exclude,literal){path}"))
+        .collect::<Vec<_>>();
+    let mut status_args = vec![
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        ".",
+        ":(exclude,literal).ota",
+    ];
+    status_args.extend(exclusion_patterns.iter().map(String::as_str));
     let status = run_git_command(
-        // `.ota` is Ota-owned runtime state. A fresh archive must not make its own proof
-        // unverifiable, while unrelated untracked source files still make the tree dirty.
-        &[
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-            "--",
-            ".",
-            ":(exclude).ota",
-        ],
+        // `.ota` is Ota-owned runtime state. Declared baseline outputs are the only producer
+        // mutations that do not invalidate source identity; all other source changes stay dirty.
+        &status_args,
         Some(root),
         RepoExecutionMode::Capture,
     )
@@ -103477,6 +103612,7 @@ fn collect_receipt_generated_artifact_inputs(
                     .map(|manifest| {
                         crate::output::ExecutionReceiptReplayBaselineAuthority {
                             authority_manifest: replay.authority_manifest.clone(),
+                            trust_root: String::from("scm_review"),
                             selected_attestation_identity: manifest.selected_attestation_identity,
                             promotion_identity: manifest.promotion_identity,
                             consumption: match replay.consumption {

@@ -2002,12 +2002,13 @@ replay task starts. A missing, revoked, malformed, or identity-mismatched author
 `OTA_REPLAY_BASELINE_UNAVAILABLE`; record and explicitly promote a reviewed replacement instead
 of editing a digest or letting replay regenerate the baseline.
 
-`consumption: read_only` requires an ephemeral runner-owned container boundary. Use
+`consumption: read_only` requires an ephemeral runner-owned container boundary across the selected
+closure. Ota mounts a run-scoped snapshot stored outside the writable workspace; it does not treat
+`verify_unchanged` as read-only enforcement. Use
 `consumption: verify_unchanged` when native execution must remain available: Ota verifies the
 authority before the task and re-checks it afterward. A changed output fails with
 `replay_artifact_mutation_detected`; this detects a write after it occurred and does not claim it
-was prevented. On an ephemeral container path, Ota upgrades `verify_unchanged` to the same
-runner-owned read-only overlay.
+was prevented.
 
 Use this when a fixture, generated store, or model baseline must change through an intentional
 recording lane. Review the producer output and selected attestation; never hand-edit a digest to

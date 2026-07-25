@@ -990,16 +990,17 @@ portable recorded attestation and committed authority-manifest schema is
   resolved backend/lifecycle. It does not select that record for replay.
 - `state: promoted` means an explicit caller selected one previously recorded attestation and Ota
   atomically wrote the declared portable authority manifest. The manifest embeds that immutable
-  attestation, so a fresh clone can re-derive selected producer provenance without local `.ota`
-  archive retention.
-- `attestation_identity` always identifies the selected Ota-authored attestation. `promotion_identity`
+  attestation, so a fresh clone can inspect the selected record without local `.ota` archive
+  retention. Its `trust_root: scm_review` declares repository review as the external authority
+  boundary; Ota does not verify reviewer inclusion or signer provenance.
+- `attestation_identity` always identifies the selected Ota-recorded attestation. `promotion_identity`
   is present only after promotion.
 - `ok: false` has `code: replay_baseline_operation_failed`; no partial producer output, newest
   record, or handwritten digest is implicitly promoted.
 
 Consumers validate the portable promoted authority and its complete output identity set before
-execution. The record and promotion JSON do not claim that a human reviewed or approved the
-change.
+execution. The record and promotion JSON do not claim that a human reviewed the change; the
+manifest's explicit SCM-review trust root identifies the external authority boundary only.
 
 ## `ota proof runtime --json`
 
@@ -2295,7 +2296,7 @@ path, source SHA-256 identity, and per-subject/per-run identity records, and sum
 identities are observed behavior, not current-run decision inputs; a divergence identifies a
 changed query shape without claiming model causality or a negative-control result.
 
-A baseline producer receipt carries its own Ota-authored attestation reference in
+A baseline producer receipt carries its own Ota-recorded attestation reference in
 `witnessed_observations.replay_baseline_recordings[]`. Each record is `evidence_class: attested`
 and binds the artifact, producer task, actual scope/backend/lifecycle, attestation identity, and
 local archive path. Promotion verifies this reference and the receipt evidence identity before it
@@ -2307,11 +2308,11 @@ the producer had no material prerequisites.
 When a selected task consumes `kind: replay_baseline`, receipt `evaluated_inputs[]` emits
 `kind: promoted_replay_baseline` and `input_class: promoted_replay_baseline` only after Ota has
 verified the current declared outputs against the portable promoted authority manifest. Its
-`artifact_lineage.replay_authority` binds the receipt to the manifest path, selected attestation
-identity, promotion identity, and declared consumption posture. `read_only` means the selected backend
-enforced a runner-owned overlay. `verify_unchanged` means Ota verified the complete output set
-before and after execution and upgrades to that overlay when the selected ephemeral container can
-enforce it; `replay_artifact_mutation_detected` reports a changed baseline rather than claiming
+`artifact_lineage.replay_authority` binds the receipt to the manifest path, explicit SCM-review
+trust root, selected attestation identity, promotion identity, and declared consumption posture.
+`read_only` means the selected closure ran with a runner-owned snapshot outside the writable
+workspace. `verify_unchanged` means Ota verified the complete output set before and after
+execution; `replay_artifact_mutation_detected` reports a changed baseline rather than claiming
 the write was refused. This is selected replay authority, not a claim that the regeneration
 producer ran in the replay lane.
 

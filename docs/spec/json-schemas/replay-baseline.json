@@ -32,7 +32,10 @@
       }
     },
     {
-      "if": { "properties": { "state": { "const": "recorded" } } },
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "const": "recorded" } }
+      },
       "then": {
         "properties": { "ok": { "const": true } },
         "required": [
@@ -46,7 +49,10 @@
       }
     },
     {
-      "if": { "properties": { "state": { "const": "promoted" } } },
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "const": "promoted" } }
+      },
       "then": {
         "properties": { "ok": { "const": true } },
         "required": [

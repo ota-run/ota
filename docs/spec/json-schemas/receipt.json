@@ -240,12 +240,14 @@
                         "additionalProperties": false,
                         "required": [
                           "authority_manifest",
+                          "trust_root",
                           "selected_attestation_identity",
                           "promotion_identity",
                           "consumption"
                         ],
                         "properties": {
                           "authority_manifest": { "type": "string" },
+                          "trust_root": { "const": "scm_review" },
                           "selected_attestation_identity": {
                             "type": "string",
                             "pattern": "^sha256:[0-9a-f]{64}$"

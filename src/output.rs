@@ -627,7 +627,7 @@ pub struct ExecutionReceiptEvaluatedInput {
 pub struct ExecutionReceiptWitnessedObservations {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub query_traces: Vec<ExecutionReceiptQueryTraceObservation>,
-    /// Ota-authored references from a producer receipt to recorded replay-baseline evidence.
+    /// Ota-recorded references from a producer receipt to replay-baseline evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replay_baseline_recordings: Vec<ExecutionReceiptReplayBaselineRecording>,
 }
@@ -906,6 +906,7 @@ pub struct ExecutionReceiptArtifactLineage {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptReplayBaselineAuthority {
     pub authority_manifest: String,
+    pub trust_root: String,
     pub selected_attestation_identity: String,
     pub promotion_identity: String,
     pub consumption: String,

@@ -31,10 +31,12 @@ The authority chain is explicit:
 baseline:record -> recorded attestation -> explicit promotion -> read-only replay
 ```
 
-This example uses `consumption: read_only`, so its replay task requires an ephemeral container
-boundary. If a repo must retain native replay, use `consumption: verify_unchanged`: Ota rechecks
+This example uses `consumption: read_only`, so its replay task requires an ephemeral-container
+boundary for the full selected closure. Ota mounts a run-scoped snapshot outside the writable
+workspace at the declared baseline paths. If a repo must retain native replay, use
+`consumption: verify_unchanged`: Ota rechecks
 the promoted output manifest after the task and reports `replay_artifact_mutation_detected` if it
-changed. An ephemeral container upgrades that posture to the stronger read-only overlay.
+changed. It never upgrades that posture into a read-only enforcement claim.
 
 Record a candidate only when you intentionally want to change the baseline:
 

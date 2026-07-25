@@ -52,6 +52,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use sha2::{Digest, Sha256};
+use tempfile::TempDir;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
@@ -6903,6 +6904,7 @@ struct TaskRunState {
     fulfilled_toolchain_keys: BTreeSet<String>,
     fulfilled_toolchains: BTreeMap<String, Vec<String>>,
     ephemeral_closure_sessions: EphemeralClosureSessions,
+    replay_baseline_read_only_boundary: Option<ReplayBaselineReadOnlyBoundary>,
 }
 
 #[derive(Debug, Clone)]
@@ -8525,6 +8527,8 @@ fn run_task_internal_with_started_services(
     hydrate_virtualenv_boundaries_from_trace(&mut state, working_dir);
     hydrate_pnpm_boundaries_from_trace(&mut state, working_dir);
     state.execution_note = preflight_execution_note;
+    state.replay_baseline_read_only_boundary =
+        prepare_selected_read_only_replay_baseline_boundary(contract, task_name, working_dir)?;
     let execution_interrupt_epoch = current_run_interrupt_epoch();
     let execute_result = execute_task_with_hooks(
         contract,
@@ -10900,17 +10904,7 @@ fn execute_task_with_hooks(
     for cwd in &pnpm_hydration_cwds {
         observe_pnpm_boundary_precondition(state, task_name, cwd, working_dir);
     }
-    let requires_read_only_replay_baseline = task.requires_artifacts.iter().any(|artifact_name| {
-        contract
-            .artifacts
-            .get(artifact_name)
-            .is_some_and(|artifact| {
-                artifact.kind == GeneratedArtifactKind::ReplayBaseline
-                    && artifact.replay.as_ref().is_some_and(|replay| {
-                        replay.consumption == ReplayBaselineConsumption::ReadOnly
-                    })
-            })
-    });
+    let requires_read_only_replay_baseline = state.replay_baseline_read_only_boundary.is_some();
     let read_only_replay_boundary_available = matches!(
         backend,
         ResolvedExecutionBackend::Container {
@@ -10928,15 +10922,26 @@ fn execute_task_with_hooks(
             ),
         });
     }
+    if requires_read_only_replay_baseline
+        && !matches!(
+            prepared_execution,
+            PreparedTaskExecution::Shell { .. } | PreparedTaskExecution::NativeCommand { .. }
+        )
+    {
+        return Err(RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+            task: task_name.to_string(),
+            reason: String::from(
+                "strict replay closure steps must execute as commands inside the runner-owned ephemeral container boundary",
+            ),
+        });
+    }
     let replay_baseline_mutation_guards =
         prepare_replay_baseline_mutation_guards(contract, task_name, task, working_dir)?;
-    let replay_baseline_mounts = prepare_replay_baseline_read_only_mounts(
-        contract,
-        task_name,
-        task,
-        working_dir,
-        read_only_replay_boundary_available,
-    )?;
+    let replay_baseline_mounts = state
+        .replay_baseline_read_only_boundary
+        .as_ref()
+        .map(|boundary| boundary.mounts.clone())
+        .unwrap_or_default();
     let command_output = execute_task_command_with_replay_baseline_mounts(
         Some(contract),
         Some(task),
@@ -11591,6 +11596,145 @@ struct ReplayBaselineReadOnlyMount {
     target: String,
 }
 
+/// A run-owned snapshot lives outside the writable workspace mount. Keeping TempDir in run state
+/// retains it for every dependency and hook, then removes it after the selected closure ends.
+#[derive(Debug)]
+struct ReplayBaselineReadOnlyBoundary {
+    _snapshot: TempDir,
+    mounts: Vec<ReplayBaselineReadOnlyMount>,
+}
+
+fn prepare_selected_read_only_replay_baseline_boundary(
+    contract: &Contract,
+    root_task_name: &str,
+    working_dir: &Path,
+) -> Result<Option<ReplayBaselineReadOnlyBoundary>, RunError> {
+    fn collect(
+        contract: &Contract,
+        task_name: &str,
+        visited: &mut BTreeSet<String>,
+        artifacts: &mut BTreeSet<String>,
+    ) {
+        if !visited.insert(task_name.to_string()) {
+            return;
+        }
+        let Some(task) = contract.tasks.get(task_name) else {
+            return;
+        };
+        artifacts.extend(task.requires_artifacts.iter().cloned());
+        if let Some(aggregate) = task.aggregate.as_ref() {
+            for dependency in &aggregate.tasks {
+                collect(contract, dependency, visited, artifacts);
+            }
+        }
+        for dependency in task.all_depends_on() {
+            collect(contract, dependency, visited, artifacts);
+        }
+        for hook in task
+            .after_success
+            .iter()
+            .chain(task.after_failure.iter())
+            .chain(task.after_always.iter())
+        {
+            collect(contract, hook, visited, artifacts);
+        }
+    }
+
+    let mut artifacts = BTreeSet::new();
+    collect(
+        contract,
+        root_task_name,
+        &mut BTreeSet::new(),
+        &mut artifacts,
+    );
+    let strict_artifacts = artifacts
+        .into_iter()
+        .filter_map(|name| {
+            let artifact = contract.artifacts.get(&name)?;
+            (artifact.kind == GeneratedArtifactKind::ReplayBaseline
+                && artifact.replay.as_ref().is_some_and(|replay| {
+                    replay.consumption == ReplayBaselineConsumption::ReadOnly
+                }))
+            .then_some((name, artifact))
+        })
+        .collect::<Vec<_>>();
+    if strict_artifacts.is_empty() {
+        return Ok(None);
+    }
+
+    let snapshot = tempfile::Builder::new()
+        .prefix("ota-replay-baseline-")
+        .tempdir()
+        .map_err(
+            |error| RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+                task: root_task_name.to_string(),
+                reason: format!("cannot create runner-owned replay snapshot: {error}"),
+            },
+        )?;
+    let canonical_workspace = working_dir.canonicalize().map_err(|error| {
+        RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+            task: root_task_name.to_string(),
+            reason: format!(
+                "cannot resolve the writable workspace before creating the strict replay boundary: {error}"
+            ),
+        }
+    })?;
+    let canonical_snapshot = snapshot.path().canonicalize().map_err(|error| {
+        RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+            task: root_task_name.to_string(),
+            reason: format!("cannot resolve runner-owned replay snapshot: {error}"),
+        }
+    })?;
+    if canonical_snapshot.starts_with(&canonical_workspace) {
+        return Err(RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+            task: root_task_name.to_string(),
+            reason: String::from(
+                "runner-owned replay snapshot resolved inside the writable workspace",
+            ),
+        });
+    }
+    let mut mounts = Vec::new();
+    for (artifact_name, artifact) in strict_artifacts {
+        let replay = artifact
+            .replay
+            .as_ref()
+            .expect("validated replay baseline artifacts declare replay authority");
+        let manifest = verify_promoted_replay_baseline(
+            working_dir,
+            artifact_name.as_str(),
+            &artifact.paths,
+            &replay.authority_manifest,
+        )
+        .map_err(|reason| RunError::ReplayBaselineUnavailable {
+            task: root_task_name.to_string(),
+            artifact: artifact_name.clone(),
+            reason,
+        })?;
+        let snapshot_root = snapshot
+            .path()
+            .join(manifest.promotion_identity.trim_start_matches("sha256:"));
+        for declared_path in &artifact.paths {
+            let relative = Path::new(declared_path);
+            let source = working_dir.join(relative);
+            let snapshot_path = snapshot_root.join(relative);
+            copy_replay_baseline_path(&source, &snapshot_path).map_err(|reason| {
+                RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+                    task: root_task_name.to_string(),
+                    reason,
+                }
+            })?;
+            mounts.push(ReplayBaselineReadOnlyMount {
+                source: snapshot_path,
+                target: format!("/workspace/{}", declared_path.replace('\\', "/")),
+            });
+        }
+    }
+    Ok(Some(ReplayBaselineReadOnlyBoundary {
+        _snapshot: snapshot,
+        mounts,
+    }))
+}
+
 #[derive(Debug)]
 struct ReplayBaselineMutationGuard {
     artifact: String,
@@ -11652,64 +11796,6 @@ fn verify_replay_baseline_mutation_guards(
         }
     }
     Ok(())
-}
-
-fn prepare_replay_baseline_read_only_mounts(
-    contract: &Contract,
-    task_name: &str,
-    task: &TaskSpec,
-    working_dir: &Path,
-    mount_verify_unchanged: bool,
-) -> Result<Vec<ReplayBaselineReadOnlyMount>, RunError> {
-    let mut mounts = Vec::new();
-    for artifact_name in &task.requires_artifacts {
-        let artifact = contract
-            .artifacts
-            .get(artifact_name)
-            .expect("validated task artifact references should exist");
-        if artifact.kind != GeneratedArtifactKind::ReplayBaseline {
-            continue;
-        }
-        let replay = artifact
-            .replay
-            .as_ref()
-            .expect("validated replay baseline artifacts declare replay authority");
-        if replay.consumption != ReplayBaselineConsumption::ReadOnly && !mount_verify_unchanged {
-            continue;
-        }
-        let manifest = verify_promoted_replay_baseline(
-            working_dir,
-            artifact_name,
-            &artifact.paths,
-            &replay.authority_manifest,
-        )
-        .map_err(|reason| RunError::ReplayBaselineUnavailable {
-            task: task_name.to_string(),
-            artifact: artifact_name.to_string(),
-            reason,
-        })?;
-        let snapshot_root = working_dir
-            .join(".ota")
-            .join("state")
-            .join("replay-baselines")
-            .join(manifest.promotion_identity.trim_start_matches("sha256:"));
-        for declared_path in &artifact.paths {
-            let relative = Path::new(declared_path);
-            let source = working_dir.join(relative);
-            let snapshot = snapshot_root.join(relative);
-            copy_replay_baseline_path(&source, &snapshot).map_err(|reason| {
-                RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
-                    task: task_name.to_string(),
-                    reason,
-                }
-            })?;
-            mounts.push(ReplayBaselineReadOnlyMount {
-                source: snapshot,
-                target: format!("/workspace/{}", declared_path.replace('\\', "/")),
-            });
-        }
-    }
-    Ok(mounts)
 }
 
 fn copy_replay_baseline_path(source: &Path, destination: &Path) -> Result<(), String> {
@@ -61674,7 +61760,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn verify_unchanged_replay_upgrades_to_a_runner_owned_read_only_container_overlay() {
+    fn verify_unchanged_replay_does_not_claim_read_only_container_enforcement() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -61743,16 +61829,106 @@ tasks:
             .expect("container replay should execute");
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
 
-        let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt"))
-            .expect("fake docker mount log");
+        let mounts = fs::read_to_string(fixture.dir.path().join("docker-all-mounts.txt"))
+            .expect("fake docker mount history");
         assert!(
-            mounts.contains(":/workspace/data/baseline.json:ro"),
-            "an enforceable replay boundary must upgrade verify_unchanged to a read-only runner snapshot: {mounts}"
+            !mounts.contains(":/workspace/data/baseline.json:ro"),
+            "verify_unchanged detects mutation after execution and must not imply strict read-only enforcement: {mounts}"
         );
-        assert!(
-            mounts.contains(".ota/state/replay-baselines/"),
-            "replay output must mount the runner-owned snapshot, not the mutable worktree: {mounts}"
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_replay_mounts_external_snapshot_across_selected_dependency_closure() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: replay-baseline
+execution:
+  contexts:
+    replay:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: alpine:3.21
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    run: true
+  prepare:
+    context: replay
+    run: printf prep
+  replay:
+    context: replay
+    run: test -f data/baseline.json
+    depends_on: [prepare]
+    requires_artifacts: [recorded-baseline]
+"#,
         );
+        fixture.write("data/baseline.json", "recorded");
+        let outputs = crate::replay_baseline::capture_replay_baseline_output_manifest(
+            fixture.dir.path(),
+            &[String::from("data/baseline.json")],
+        )
+        .expect("capture baseline output");
+        let attestation = crate::replay_baseline::ReplayBaselineAttestation {
+            schema_version: 1,
+            artifact: String::from("recorded-baseline"),
+            producer: String::from("record:live"),
+            execution_scope: String::from("task:record:live"),
+            execution_mode: String::from("container"),
+            execution_lifecycle: Some(String::from("ephemeral")),
+            outputs,
+            contract_identity: String::from("sha256:contract"),
+            source_identity: String::from("git:source"),
+            execution_receipt_identity: String::from("sha256:receipt"),
+            execution_receipt_archive: String::from(".ota/receipts/record.json"),
+            execution_boundary_graph_identity: String::from("sha256:boundary"),
+            asserted_target_closure_identity: String::from("sha256:target"),
+            derivation_input_closure_identity: String::from("sha256:derivation"),
+            created_at: String::from("2026-07-25T00:00:00Z"),
+        };
+        let authority = crate::replay_baseline::promote_replay_baseline_attestation(
+            &attestation,
+            String::from("2026-07-25T00:01:00Z"),
+        )
+        .expect("promote baseline");
+        fixture.write(
+            "replay/recorded-baseline.ota.json",
+            &serde_json::to_string_pretty(&authority).expect("authority json"),
+        );
+
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "replay")
+            .expect("strict replay closure should execute");
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+
+        let mounts = fs::read_to_string(fixture.dir.path().join("bin/docker-state/all-mounts.txt"))
+            .expect("fake docker mount history");
+        let baseline_mounts = mounts
+            .lines()
+            .filter(|mount| mount.ends_with(":/workspace/data/baseline.json:ro"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            baseline_mounts.len(),
+            2,
+            "dependency and consumer must both receive the strict baseline mount: {mounts}"
+        );
+        for mount in baseline_mounts {
+            assert!(
+                !mount.starts_with(fixture.dir.path().to_string_lossy().as_ref()),
+                "strict snapshot must not remain reachable through the writable workspace: {mount}"
+            );
+        }
     }
 
     #[test]
@@ -62305,6 +62481,8 @@ case "$command" in
       host_dir="$PWD"
     fi
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
+    printf "%s" "$mounts" >> "$host_dir/docker-all-mounts.txt"
+    printf "%s" "$mounts" >> "$state_dir/all-mounts.txt"
     printf "%s" "$host_dir" > "$state_dir/$name.path"
     printf "%s" "$mounts" > "$state_dir/$name.mounts"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
@@ -62422,6 +62600,8 @@ case "$command" in
       host_dir="$PWD"
     fi
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
+    printf "%s" "$mounts" >> "$host_dir/docker-all-mounts.txt"
+    printf "%s" "$mounts" >> "$state_dir/all-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ -n "$memory" ]; then
       printf "%s" "$memory" > "$state_dir/$name.memory"

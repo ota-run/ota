@@ -2268,6 +2268,7 @@ fn receipt_json_schema_accepts_promoted_replay_baseline_authority() {
                     "paths": ["data/baseline.json"],
                     "replay_authority": {
                         "authority_manifest": "replay/recorded-baseline.ota.json",
+                        "trust_root": "scm_review",
                         "selected_attestation_identity": identity,
                         "promotion_identity": identity,
                         "consumption": "verify_unchanged"
@@ -3447,4 +3448,11 @@ agent:
         .expect("authority manifest object")
         .remove("attestation");
     assert_rejects_schema("replay-baseline-authority.json", &missing_attestation);
+
+    let failure = serde_json::json!({
+        "ok": false,
+        "code": "replay_baseline_operation_failed",
+        "error": "recording refused before execution"
+    });
+    assert_matches_schema("replay-baseline.json", &failure);
 }

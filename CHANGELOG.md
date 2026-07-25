@@ -30,13 +30,14 @@
   receipt-bound, content-addressed recording through `ota baseline record --artifact <name>`;
   only `ota baseline promote --artifact <name> --attestation <path>` may atomically select it in
   the contract-declared portable authority manifest. Consumers verify the selected complete output
-  identity set before execution. Ephemeral container consumers receive runner-owned read-only
-  output overlays. Native or other non-strict consumers may instead declare
-  `consumption: verify_unchanged`; Ota rechecks the canonical output manifest after execution and
-  upgrades to the read-only overlay when an ephemeral container can enforce it. Otherwise it fails
-  with `replay_artifact_mutation_detected` when the output changed rather than claiming an
-  unenforceable write was refused. Portable authority manifests embed the selected attestation so
-  its producer provenance remains inspectable without local archive history, and replay-baseline
+  identity set before execution. Strict `read_only` consumers receive run-scoped snapshots outside
+  the writable workspace mounted across their full ephemeral-container closure. Native or other
+  non-strict consumers may instead declare `consumption: verify_unchanged`; Ota rechecks the
+  canonical output manifest after execution and fails with `replay_artifact_mutation_detected`
+  when it changed rather than claiming an unenforceable write was refused. Portable authority
+  manifests embed the selected attestation and explicitly use `scm_review` as their external
+  trust root; they rely on repository delivery review rather than signer-backed provenance.
+  Replay-baseline
   symlinks that escape declared output boundaries are rejected. Successful consumer receipts retain the selected attestation and
   promotion identities so later comparison does not reconstruct baseline authority from paths.
   Recorded attestations always carry V11.16 graph and closure identities; a producer with no

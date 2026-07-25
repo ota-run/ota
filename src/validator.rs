@@ -351,16 +351,6 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                 continue;
             };
             if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
-                if artifact.replay.as_ref().is_some_and(|replay| {
-                    replay.consumption == crate::schema::ReplayBaselineConsumption::ReadOnly
-                }) && (!task.after_success.is_empty()
-                    || !task.after_failure.is_empty()
-                    || !task.after_always.is_empty())
-                {
-                    errors.push(ValidationError::new(format!(
-                        "task `{task_name}` consumes read-only replay baseline artifact `{artifact_name}` but declares post hooks; strict replay must keep every selected execution inside the runner-owned read-only boundary"
-                    )));
-                }
                 let closure = replay_baseline_consumer_execution_closure(contract, task_name);
                 if closure
                     .iter()
@@ -43563,7 +43553,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_read_only_replay_baseline_consumer_post_hooks() {
+    fn accepts_read_only_replay_baseline_consumer_post_hooks_inside_selected_closure() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -43591,10 +43581,8 @@ tasks:
         )
         .expect("contract should parse");
 
-        let rendered = validate_contract(&contract)
-            .expect_err("strict replay must not run a hook outside its mounted boundary")
-            .to_string();
-        assert!(rendered.contains("declares post hooks"), "{rendered}");
+        validate_contract(&contract)
+            .expect("strict replay hooks execute inside the same selected runner boundary");
     }
 
     #[test]

@@ -74,6 +74,7 @@
         "schema_version",
         "artifact",
         "selected_attestation_identity",
+        "trust_root",
         "attestation",
         "outputs",
         "promoted_at",
@@ -84,6 +85,7 @@
         "schema_version": { "const": 1 },
         "artifact": { "type": "string", "minLength": 1 },
         "selected_attestation_identity": { "$ref": "#/$defs/identity" },
+        "trust_root": { "const": "scm_review" },
         "attestation": { "$ref": "#/$defs/regenerationAttestation" },
         "outputs": {
           "type": "array",

@@ -52,7 +52,7 @@ hand-edited digest merely makes changed output look declared; it cannot establis
 provenance or whether the run was allowed to update the replay corpus.
 
 The trustworthy unit of review is therefore not a typed hash. It is an explicit regeneration run,
-the generated artifact diff, and an Ota-authored attestation binding those outputs to that run.
+the generated artifact diff, and an Ota-recorded attestation binding those outputs to that run.
 
 ## Product Principle
 
@@ -144,7 +144,9 @@ security-sensitive baselines without changing the producer or replay semantics.
 
 ## First Carrier
 
-The portable authority is the contract-declared, committed authority manifest. It contains the
+The portable authority is the contract-declared, committed authority manifest. Its current trust
+root declares external SCM review in the delivery path; Ota does not verify review inclusion or
+signer provenance. It contains the
 selected promoted attestation identity, complete canonical output manifest, promotion identity,
 and revocation state, so a fresh clone or CI runner can verify replay without local receipt history.
 An enterprise Evidence Service may later provide an immutable remote equivalent, but local receipt
@@ -160,7 +162,7 @@ includes:
 - the immutable V11.16 execution-boundary graph identity plus asserted-target and derivation-input
   closure identities for the producer run;
 - attestation digest and creation time;
-- `evidence_class: attested` for the Ota-authored record;
+- `evidence_class: attested` for the Ota-recorded record;
 - current replay comparison: `matched`, `drifted`, or `unavailable`, with the promoted selected
   attestation identity.
 
@@ -178,7 +180,7 @@ Doctor and policy surfaces derive from it rather than calculating a second basel
 1. Extend V11.13 artifact lineage with `kind: replay_baseline`, one task producer, declared
    outputs, portable authority-manifest location, explicit consumer ownership, and no ordinary
    execution path to regeneration.
-2. Add explicit regeneration admission and atomic Ota-authored recorded-attestation capture at the
+2. Add explicit regeneration admission and atomic Ota-recorded attestation capture at the
    producer decision site, binding the producer run's V11.16 graph identity plus asserted-target
    and derivation-input closure identities.
 3. Add an explicit promotion operation that validates recorded scope and complete identity before
@@ -209,7 +211,7 @@ V11.17 is complete when:
 - contract validation rejects ambiguous baseline producer/consumer lineage, workflow-only producer
   ownership, missing portable authority-manifest location, and an ordinary replay path that can
   select a regeneration lane;
-- a successful explicit regeneration produces one Ota-authored, content-addressed `recorded`
+- a successful explicit regeneration produces one Ota-recorded, content-addressed `recorded`
   attestation bound to the canonical output manifest, source, contract snapshot, scope, and
   archived receipt/proof, including the producer run's immutable V11.16 graph and selected
   asserted-target and derivation-input closure identities;

@@ -300,16 +300,20 @@ artifacts:
   declare writes overlapping the baseline outputs, so replay cannot regenerate or mutate its own
   authority through a normal verification path.
   The committed authority manifest, not local `.ota` history and not a hand-authored digest, is
-  the portable replay authority. Consumers verify its complete output identities before execution;
-  `consumption: read_only` is strict and requires an enforceable runner-owned read-only boundary.
-  Strict consumers cannot declare `after_success`, `after_failure`, or `after_always` hooks because
-  those are separate task launches outside the mounted command boundary.
+  the portable replay authority. Its `trust_root: scm_review` relies on the repository delivery
+  path to review that committed selection; Ota does not verify reviewer or signer provenance.
+  Consumers verify its complete output identities before execution;
+  `consumption: read_only` is strict and requires an enforceable runner-owned ephemeral-container
+  boundary for the entire selected closure. Ota snapshots the promoted outputs outside the writable
+  workspace mount and mounts those snapshots read-only at their declared paths. `verify_unchanged`
+  is not a weaker read-only mount: it detects a changed output after execution.
+  Dependency and post-hook steps are part of the selected strict closure and receive the same
+  runner-owned read-only mounts. A step that cannot execute through that ephemeral container
+  boundary is refused before it runs.
   `consumption: verify_unchanged` is the non-strict fallback for a backend such as native execution:
   Ota verifies the selected authority before launch, re-captures the complete output manifest after
   the consumer ends, and fails with `replay_artifact_mutation_detected` if the baseline changed.
-  When an ephemeral container can enforce the stronger boundary, Ota upgrades this posture to its
-  runner-owned read-only overlay. Otherwise it reports a detected write and never claims that it
-  refused one.
+  It reports a detected write and never claims that it refused one.
   Replay-baseline symlinks must resolve within the declared artifact output boundary; Ota rejects
   escaping targets instead of mounting a link that can resolve into the mutable worktree.
 - `producer`: required task name that materializes the artifact

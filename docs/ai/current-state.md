@@ -40,9 +40,11 @@ durable agent workflow belongs in the canonical Ota skill.
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
   binds the canonical recursive output set, producer receipt, source/contract identities, and the
   producer's V11.16 execution-boundary graph plus asserted-target and derivation-input closures.
-  `read_only` refuses outside a runner-owned ephemeral container boundary; `verify_unchanged`
-  detects mutation after native replay and automatically gains the stronger read-only overlay in
-  that boundary. Bedrock now has an additive unsafe `record:baseline` producer and separate
+  `read_only` refuses outside a runner-owned ephemeral container boundary and mounts a run-scoped
+  snapshot outside the writable workspace for the full selected closure; `verify_unchanged`
+  detects mutation after native or container replay and never claims prevention. Portable authority
+  declares SCM review as its external selection trust root, not signer-backed provenance or
+  Ota-verified reviewer approval. Bedrock now has an additive unsafe `record:baseline` producer and separate
   promoted offline consumers. Its promoted lane correctly fails closed with
   `OTA_REPLAY_BASELINE_UNAVAILABLE` until an intentional live recording is reviewed and explicitly
   promoted. No authority manifest or live-model recording has been manufactured. Core focused

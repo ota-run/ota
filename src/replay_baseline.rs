@@ -43,7 +43,7 @@ pub(crate) enum ReplayBaselineOutputKind {
     Symlink,
 }
 
-/// Ota-authored historical evidence from one successful explicit regeneration run.
+/// Ota-recorded historical evidence from one successful explicit regeneration run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ReplayBaselineAttestation {
     pub schema_version: u32,
@@ -80,6 +80,9 @@ pub(crate) struct ReplayBaselineAuthorityManifest {
     pub schema_version: u32,
     pub artifact: String,
     pub selected_attestation_identity: String,
+    /// Portable replay authority declares the repository's SCM review boundary as its external
+    /// trust root. Ota does not verify reviewer inclusion or signer provenance.
+    pub trust_root: ReplayBaselineAuthorityTrustRoot,
     /// Portable producer provenance. Fresh clones can re-derive the selected identity without
     /// relying on local `.ota` archive retention.
     pub attestation: ReplayBaselineAttestation,
@@ -96,6 +99,12 @@ pub(crate) enum ReplayBaselinePromotionState {
     Revoked,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReplayBaselineAuthorityTrustRoot {
+    ScmReview,
+}
+
 pub(crate) fn promote_replay_baseline_attestation(
     attestation: &ReplayBaselineAttestation,
     promoted_at: String,
@@ -105,6 +114,7 @@ pub(crate) fn promote_replay_baseline_attestation(
         schema_version: 1,
         artifact: attestation.artifact.clone(),
         selected_attestation_identity,
+        trust_root: ReplayBaselineAuthorityTrustRoot::ScmReview,
         attestation: attestation.clone(),
         outputs: attestation.outputs.clone(),
         promoted_at,
@@ -135,6 +145,11 @@ pub(crate) fn validate_replay_baseline_authority_manifest(
         return Err(format!(
             "replay baseline authority manifest for `{artifact}` is `{}`",
             promotion_state_label(manifest.state)
+        ));
+    }
+    if manifest.trust_root != ReplayBaselineAuthorityTrustRoot::ScmReview {
+        return Err(format!(
+            "replay baseline authority manifest for `{artifact}` has an unsupported trust root"
         ));
     }
     if manifest.attestation.schema_version != 1 || manifest.attestation.artifact != artifact {
@@ -180,7 +195,7 @@ pub(crate) fn verify_promoted_replay_baseline(
     declared_paths: &[String],
     authority_manifest: &str,
 ) -> Result<ReplayBaselineAuthorityManifest, String> {
-    let manifest_path = root.join(authority_manifest);
+    let manifest_path = replay_baseline_authority_manifest_path(root, authority_manifest)?;
     let metadata = fs::symlink_metadata(&manifest_path).map_err(|error| {
         format!(
             "replay baseline authority manifest `{}` is unavailable: {error}",
@@ -215,6 +230,44 @@ pub(crate) fn verify_promoted_replay_baseline(
         ));
     }
     Ok(manifest)
+}
+
+/// Resolves a contract-declared authority path without following a symlinked parent outside the
+/// repository. Call again after creating a previously absent parent before writing.
+pub(crate) fn replay_baseline_authority_manifest_path(
+    root: &Path,
+    authority_manifest: &str,
+) -> Result<std::path::PathBuf, String> {
+    let relative = safe_relative_path(Path::new(authority_manifest))?;
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve replay baseline contract root `{}`: {error}",
+            root.display()
+        )
+    })?;
+    let candidate = canonical_root.join(&relative);
+    let mut existing_parent = candidate.parent().ok_or_else(|| {
+        format!("replay baseline authority manifest `{authority_manifest}` has no parent directory")
+    })?;
+    while !existing_parent.exists() {
+        existing_parent = existing_parent.parent().ok_or_else(|| {
+            format!(
+                "replay baseline authority manifest `{authority_manifest}` has no existing repository parent"
+            )
+        })?;
+    }
+    let canonical_parent = existing_parent.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve replay baseline authority parent `{}`: {error}",
+            existing_parent.display()
+        )
+    })?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err(format!(
+            "replay baseline authority manifest `{authority_manifest}` has a symlinked parent outside the repository"
+        ));
+    }
+    Ok(candidate)
 }
 
 fn replay_baseline_outputs_are_canonical(entries: &[ReplayBaselineOutputEntry]) -> bool {
@@ -628,5 +681,29 @@ mod tests {
         )
         .expect_err("mutated artifact must not be admitted");
         assert!(error.contains("does not match"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_authority_manifest_with_symlinked_parent_outside_repository() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let outside = tempfile::tempdir().expect("outside directory");
+        fs::create_dir_all(root.path().join("data")).expect("baseline directory");
+        fs::write(root.path().join("data/baseline.json"), "recorded").expect("baseline");
+        std::os::unix::fs::symlink(outside.path(), root.path().join("replay"))
+            .expect("symlinked authority parent");
+
+        let error = verify_promoted_replay_baseline(
+            root.path(),
+            "recorded-baseline",
+            &[String::from("data/baseline.json")],
+            "replay/baseline.ota.json",
+        )
+        .expect_err("authority path must not traverse a symlinked parent outside the repository");
+
+        assert!(
+            error.contains("symlinked parent outside the repository"),
+            "{error}"
+        );
     }
 }
