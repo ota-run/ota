@@ -54,7 +54,14 @@ durable agent workflow belongs in the canonical Ota skill.
   `generated_source` retains an ordinary producer-dependent SDK check while a second task can
   consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
   receipt, mutation guard, and strict runner boundary all derive that consumer distinction from the
-  producer dependency; Dagger's hosted record/promote/replay proof awaits the current Core commit.
+  producer dependency. Its hosted pressure run [30179771523](https://github.com/bobaikato/dagger/actions/runs/30179771523)
+  bootstrapped Core `b5b55e0e` and passed contract/discovery/dry-run admission, but the ordinary
+  producer failed before record/promotion because Dagger's module-owned runtime resolves
+  `protobuf-dev~32` against a mutable Alpine package index that no longer satisfies it. This is not
+  an Ota replay defect or a reason to weaken the generator; it is an explicitly bounded external
+  Dagger engine/module-runtime provenance gap. Dagger therefore remains unsuitable as V11.17's
+  independent green generated-baseline proof until its upstream runtime is made reproducible or Ota
+  gains a Dagger adapter that can attest that tool-managed container state.
 - completed implementation slice: V11.19 typed uv local-project hydration. The replay classifier
   now requires resolved source posture, declared lockfile identity, and clean local-project source
   identity before editable hydration can be acquitting; missing lockfile or source identity remains
