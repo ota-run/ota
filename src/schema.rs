@@ -195,12 +195,30 @@ pub struct GeneratedArtifactSpec {
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<ReplayBaselineArtifactSpec>,
+}
+
+/// Portable authority for one explicitly promoted generated replay baseline.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayBaselineArtifactSpec {
+    pub authority_manifest: String,
+    pub consumption: ReplayBaselineConsumption,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayBaselineConsumption {
+    ReadOnly,
+    VerifyUnchanged,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedArtifactKind {
     GeneratedSource,
+    ReplayBaseline,
 }
 
 impl Contract {

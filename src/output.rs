@@ -627,12 +627,29 @@ pub struct ExecutionReceiptEvaluatedInput {
 pub struct ExecutionReceiptWitnessedObservations {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub query_traces: Vec<ExecutionReceiptQueryTraceObservation>,
+    /// Ota-authored references from a producer receipt to recorded replay-baseline evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replay_baseline_recordings: Vec<ExecutionReceiptReplayBaselineRecording>,
 }
 
 impl ExecutionReceiptWitnessedObservations {
     pub fn is_empty(&self) -> bool {
-        self.query_traces.is_empty()
+        self.query_traces.is_empty() && self.replay_baseline_recordings.is_empty()
     }
+}
+
+/// A producer receipt's attested reference to one recorded replay baseline.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptReplayBaselineRecording {
+    pub artifact: String,
+    pub producer: String,
+    pub execution_scope: String,
+    pub execution_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_lifecycle: Option<String>,
+    pub attestation_identity: String,
+    pub attestation_path: String,
+    pub evidence_class: ExecutionEvidenceClass,
 }
 
 /// Runner-derived source posture for a selected structured hydration lane.
@@ -880,6 +897,18 @@ pub struct ExecutionReceiptArtifactLineage {
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
+    /// Present only when a replay consumer verified a portable promoted authority manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_authority: Option<ExecutionReceiptReplayBaselineAuthority>,
+}
+
+/// Selected immutable authority for a replay-baseline artifact consumed by this execution.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptReplayBaselineAuthority {
+    pub authority_manifest: String,
+    pub selected_attestation_identity: String,
+    pub promotion_identity: String,
+    pub consumption: String,
 }
 
 /// Canonical replay input families shared by receipt capture and comparison evidence.
@@ -896,6 +925,7 @@ pub enum ReplayInputClass {
     ExecutionPresentationProfile,
     ComparatorSemantics,
     GeneratedArtifactLineage,
+    PromotedReplayBaseline,
     DeclaredReplayInput,
 }
 

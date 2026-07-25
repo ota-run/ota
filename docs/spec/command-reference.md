@@ -1973,6 +1973,46 @@ JSON output:
   diagnosis or fulfillment
 - monorepo root summaries include grouped per-member results in `members`
 
+## `ota baseline record` and `ota baseline promote`
+
+Use these commands only for a declared `artifacts.<name>.kind: replay_baseline` lane.
+
+```bash
+ota baseline record --artifact recorded-baseline --json
+ota baseline promote --artifact recorded-baseline \
+  --attestation .ota/replay-baselines/recorded-baseline/attestation-<sha>.json --json
+```
+
+`record` executes the declared producer, archives its execution receipt, and writes a
+content-addressed attestation of the complete generated output set, exact task scope, resolved
+backend, lifecycle when one applies, and the clean Git source identity captured before the
+producer changes its outputs. It refuses an untracked or dirty source tree instead of recording
+ambiguous provenance. `record` does not update a baseline or select the newest recording.
+Every attestation also carries the producer's V11.16 execution-boundary graph and its asserted
+target and derivation-input closure identities. When no material prerequisite adapter observed a
+graph, Ota records the canonical empty graph with `unknown` posture rather than omitting that
+provenance.
+`promote` verifies the selected attestation against its successful archived receipt and current
+contract identity, then atomically writes only the contract-declared portable authority manifest.
+That manifest embeds the selected attestation, retaining reviewable source, scope, receipt, and
+boundary provenance without requiring local archive retention.
+
+`ota doctor` evaluates the selected consumer closure against that portable authority before a
+replay task starts. A missing, revoked, malformed, or identity-mismatched authority emits
+`OTA_REPLAY_BASELINE_UNAVAILABLE`; record and explicitly promote a reviewed replacement instead
+of editing a digest or letting replay regenerate the baseline.
+
+`consumption: read_only` requires an ephemeral runner-owned container boundary. Use
+`consumption: verify_unchanged` when native execution must remain available: Ota verifies the
+authority before the task and re-checks it afterward. A changed output fails with
+`replay_artifact_mutation_detected`; this detects a write after it occurred and does not claim it
+was prevented. On an ephemeral container path, Ota upgrades `verify_unchanged` to the same
+runner-owned read-only overlay.
+
+Use this when a fixture, generated store, or model baseline must change through an intentional
+recording lane. Review the producer output and selected attestation; never hand-edit a digest to
+make replay pass.
+
 ## `ota receipt`
 
 Capture the current repo readiness scan as a read-only receipt artifact for CI, archival use, or

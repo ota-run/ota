@@ -40,6 +40,7 @@ pub mod policy_pack;
 pub mod provisioning;
 pub mod published_contract_schemas;
 pub mod published_docs_manifest;
+pub(crate) mod replay_baseline;
 pub(crate) mod replay_inputs;
 pub mod runner;
 pub mod schema;

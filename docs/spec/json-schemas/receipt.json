@@ -103,6 +103,96 @@
             "contract_snapshot_hash": { "type": "string" },
             "contract_snapshot_ref": { "type": "string" },
             "assumption_set_hash": { "type": "string" },
+            "witnessed_observations": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "query_traces": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "source_path",
+                      "source_identity",
+                      "evidence_class",
+                      "records",
+                      "summary"
+                    ],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "source_path": { "type": "string" },
+                      "source_identity": { "type": "string" },
+                      "evidence_class": { "const": "attested" },
+                      "records": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["subject", "run", "identity"],
+                          "properties": {
+                            "subject": { "type": "string" },
+                            "run": { "type": "integer", "minimum": 0 },
+                            "identity": { "type": "string" }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["subjects", "records"],
+                        "properties": {
+                          "subjects": { "type": "integer", "minimum": 0 },
+                          "records": { "type": "integer", "minimum": 0 },
+                          "divergent_subjects": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": ["subject", "distinct_identities"],
+                              "properties": {
+                                "subject": { "type": "string" },
+                                "distinct_identities": { "type": "integer", "minimum": 1 }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "replay_baseline_recordings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "artifact",
+                      "producer",
+                      "execution_scope",
+                      "execution_mode",
+                      "attestation_identity",
+                      "attestation_path",
+                      "evidence_class"
+                    ],
+                    "properties": {
+                      "artifact": { "type": "string" },
+                      "producer": { "type": "string" },
+                      "execution_scope": { "type": "string" },
+                      "execution_mode": { "enum": ["native", "container", "remote"] },
+                      "execution_lifecycle": { "enum": ["ephemeral", "persistent"] },
+                      "attestation_identity": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      "attestation_path": { "type": "string" },
+                      "evidence_class": { "const": "attested" }
+                    }
+                  }
+                }
+              }
+            },
             "evaluated_inputs": {
               "type": "array",
               "items": {
@@ -124,6 +214,7 @@
                       "execution_presentation_profile",
                       "comparator_semantics",
                       "generated_artifact_lineage",
+                      "promoted_replay_baseline",
                       "declared_replay_input"
                     ]
                   },
@@ -143,6 +234,28 @@
                       "inputs": {
                         "type": "array",
                         "items": { "type": "string" }
+                      },
+                      "replay_authority": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "authority_manifest",
+                          "selected_attestation_identity",
+                          "promotion_identity",
+                          "consumption"
+                        ],
+                        "properties": {
+                          "authority_manifest": { "type": "string" },
+                          "selected_attestation_identity": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$"
+                          },
+                          "promotion_identity": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$"
+                          },
+                          "consumption": { "enum": ["read_only", "verify_unchanged"] }
+                        }
                       }
                     }
                   },

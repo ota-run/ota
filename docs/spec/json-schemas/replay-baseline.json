@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/replay-baseline.json",
+  "title": "ota baseline record/promote --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "code": { "const": "replay_baseline_operation_failed" },
+    "error": { "type": "string" },
+    "artifact": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["recorded", "promoted"] },
+    "attestation_identity": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "attestation": { "type": "string", "minLength": 1 },
+    "execution_receipt": { "type": "string", "minLength": 1 },
+    "promotion_identity": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "authority_manifest": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": false } } },
+      "then": {
+        "required": ["code", "error"],
+        "properties": { "state": false }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "recorded" } } },
+      "then": {
+        "properties": { "ok": { "const": true } },
+        "required": [
+          "artifact",
+          "state",
+          "attestation_identity",
+          "attestation",
+          "execution_receipt",
+          "authority_manifest"
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "promoted" } } },
+      "then": {
+        "properties": { "ok": { "const": true } },
+        "required": [
+          "artifact",
+          "state",
+          "attestation_identity",
+          "promotion_identity",
+          "authority_manifest"
+        ]
+      }
+    }
+  ]
+}

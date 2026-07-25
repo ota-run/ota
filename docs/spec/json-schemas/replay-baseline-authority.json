@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/replay-baseline-authority.json",
+  "title": "Ota replay baseline attestation or authority manifest",
+  "oneOf": [
+    { "$ref": "#/$defs/regenerationAttestation" },
+    { "$ref": "#/$defs/authorityManifest" }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "outputEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "identity"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["file", "symlink"] },
+        "identity": { "$ref": "#/$defs/identity" },
+        "executable": { "type": "boolean" },
+        "symlink_target": { "type": "string" }
+      }
+    },
+    "regenerationAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact",
+        "producer",
+        "execution_scope",
+        "execution_mode",
+        "outputs",
+        "contract_identity",
+        "source_identity",
+        "execution_receipt_identity",
+        "execution_receipt_archive",
+        "execution_boundary_graph_identity",
+        "asserted_target_closure_identity",
+        "derivation_input_closure_identity",
+        "created_at"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "artifact": { "type": "string", "minLength": 1 },
+        "producer": { "type": "string", "minLength": 1 },
+        "execution_scope": { "type": "string", "minLength": 1 },
+        "execution_mode": { "enum": ["native", "container", "remote"] },
+        "execution_lifecycle": { "enum": ["ephemeral", "persistent"] },
+        "outputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/outputEntry" }
+        },
+        "contract_identity": { "$ref": "#/$defs/identity" },
+        "source_identity": {
+          "type": "string",
+          "pattern": "^git:[0-9a-f]{40,64}$"
+        },
+        "execution_receipt_identity": { "$ref": "#/$defs/identity" },
+        "execution_receipt_archive": { "type": "string", "minLength": 1 },
+        "execution_boundary_graph_identity": { "$ref": "#/$defs/identity" },
+        "asserted_target_closure_identity": { "$ref": "#/$defs/identity" },
+        "derivation_input_closure_identity": { "$ref": "#/$defs/identity" },
+        "created_at": { "type": "string", "minLength": 1 }
+      }
+    },
+    "authorityManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact",
+        "selected_attestation_identity",
+        "attestation",
+        "outputs",
+        "promoted_at",
+        "promotion_identity",
+        "state"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "artifact": { "type": "string", "minLength": 1 },
+        "selected_attestation_identity": { "$ref": "#/$defs/identity" },
+        "attestation": { "$ref": "#/$defs/regenerationAttestation" },
+        "outputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/outputEntry" }
+        },
+        "promoted_at": { "type": "string", "minLength": 1 },
+        "promotion_identity": { "$ref": "#/$defs/identity" },
+        "state": { "enum": ["promoted", "revoked"] }
+      }
+    }
+  }
+}

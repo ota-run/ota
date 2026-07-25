@@ -235,6 +235,7 @@ fn validate_task_replay_inputs(contract: &Contract, errors: &mut Vec<ValidationE
 
 fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<ValidationError>) {
     let mut owned_paths = BTreeMap::new();
+    let mut authority_manifests = BTreeMap::new();
     for (artifact_name, artifact) in &contract.artifacts {
         if artifact_name.trim().is_empty() {
             errors.push(ValidationError::new(
@@ -251,6 +252,62 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
             errors.push(ValidationError::new(format!(
                 "artifact `{artifact_name}` must declare at least one output path"
             )));
+        }
+        if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
+            for (index, path) in artifact.paths.iter().enumerate() {
+                let path = path.trim();
+                if artifact.paths.iter().skip(index + 1).any(|other| {
+                    let other = other.trim();
+                    replay_baseline_paths_overlap(path, other)
+                }) {
+                    errors.push(ValidationError::new(format!(
+                        "replay baseline artifact `{artifact_name}` paths must not overlap because each declared output is mounted independently: `{path}`"
+                    )));
+                }
+            }
+        }
+        match (artifact.kind, artifact.replay.as_ref()) {
+            (crate::schema::GeneratedArtifactKind::ReplayBaseline, None) => {
+                errors.push(ValidationError::new(format!(
+                    "replay baseline artifact `{artifact_name}` must declare `replay.authority_manifest` and a replay consumption posture"
+                )));
+            }
+            (crate::schema::GeneratedArtifactKind::GeneratedSource, Some(_)) => {
+                errors.push(ValidationError::new(format!(
+                    "generated source artifact `{artifact_name}` must not declare `replay`; use `kind: replay_baseline`"
+                )));
+            }
+            _ => {}
+        }
+        if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline
+            && contract.agent.as_ref().is_some_and(|agent| {
+                agent
+                    .safe_tasks
+                    .iter()
+                    .any(|task| task == &artifact.producer)
+            })
+        {
+            errors.push(ValidationError::new(format!(
+                "replay baseline artifact `{artifact_name}` producer `{}` must not be agent-safe",
+                artifact.producer
+            )));
+        }
+        if let Some(replay) = artifact.replay.as_ref() {
+            let manifest = replay.authority_manifest.trim();
+            if !is_safe_repo_relative_file_path(manifest) {
+                errors.push(ValidationError::new(format!(
+                    "replay baseline artifact `{artifact_name}` `replay.authority_manifest` must be a repo-relative path that does not escape the repo"
+                )));
+            } else if let Some(owner) = authority_manifests.insert(manifest, artifact_name) {
+                errors.push(ValidationError::new(format!(
+                    "replay baseline artifact `{artifact_name}` authority manifest `{manifest}` is already owned by artifact `{owner}`"
+                )));
+            }
+            if artifact.paths.iter().any(|path| path.trim() == manifest) {
+                errors.push(ValidationError::new(format!(
+                    "replay baseline artifact `{artifact_name}` authority manifest `{manifest}` must not be one of its produced paths"
+                )));
+            }
         }
         for (field, paths) in [("paths", &artifact.paths), ("inputs", &artifact.inputs)] {
             let mut seen = BTreeSet::new();
@@ -293,7 +350,44 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                 )));
                 continue;
             };
-            if !task
+            if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
+                if artifact.replay.as_ref().is_some_and(|replay| {
+                    replay.consumption == crate::schema::ReplayBaselineConsumption::ReadOnly
+                }) && (!task.after_success.is_empty()
+                    || !task.after_failure.is_empty()
+                    || !task.after_always.is_empty())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` consumes read-only replay baseline artifact `{artifact_name}` but declares post hooks; strict replay must keep every selected execution inside the runner-owned read-only boundary"
+                    )));
+                }
+                let closure = replay_baseline_consumer_execution_closure(contract, task_name);
+                if closure
+                    .iter()
+                    .any(|dependency| dependency == &artifact.producer)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` consumes replay baseline artifact `{artifact_name}` but its dependency closure must not include regeneration producer `{}`",
+                        artifact.producer
+                    )));
+                }
+                for closure_task_name in &closure {
+                    let Some(closure_task) = contract.tasks.get(closure_task_name) else {
+                        continue;
+                    };
+                    for write in &closure_task.effects.writes {
+                        if artifact
+                            .paths
+                            .iter()
+                            .any(|path| replay_baseline_paths_overlap(path.trim(), write.trim()))
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` consumes replay baseline artifact `{artifact_name}` but its dependency closure task `{closure_task_name}` declares a write overlapping baseline output `{write}`"
+                            )));
+                        }
+                    }
+                }
+            } else if !task
                 .depends_on
                 .iter()
                 .any(|dependency| dependency == &artifact.producer)
@@ -305,6 +399,79 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
             }
         }
     }
+
+    if let Some(workflows) = contract.workflows.as_ref() {
+        for (artifact_name, artifact) in &contract.artifacts {
+            if artifact.kind != crate::schema::GeneratedArtifactKind::ReplayBaseline {
+                continue;
+            }
+            for workflow_name in workflows.items.keys() {
+                if contract
+                    .selected_workflow_task_closure_names(Some(workflow_name))
+                    .iter()
+                    .any(|task_name| task_name == &artifact.producer)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "workflow `{workflow_name}` includes replay baseline regeneration producer `{}` for artifact `{artifact_name}`; use `ota baseline record --artifact {artifact_name}` instead",
+                        artifact.producer
+                    )));
+                }
+            }
+        }
+    }
+}
+
+fn replay_baseline_paths_overlap(left: &str, right: &str) -> bool {
+    let left = left.trim_end_matches(['/', '\\']);
+    let right = right.trim_end_matches(['/', '\\']);
+    left == right
+        || left
+            .strip_prefix(right)
+            .is_some_and(|suffix| suffix.starts_with('/') || suffix.starts_with('\\'))
+        || right
+            .strip_prefix(left)
+            .is_some_and(|suffix| suffix.starts_with('/') || suffix.starts_with('\\'))
+}
+
+/// Replay consumers cannot regenerate or mutate their selected authority through dependencies or
+/// lifecycle hooks. Hooks execute in the same selected run even though they are not dependency
+/// prerequisites, so they belong to the admission closure for this boundary.
+fn replay_baseline_consumer_execution_closure(contract: &Contract, root: &str) -> Vec<String> {
+    fn collect(
+        contract: &Contract,
+        task_name: &str,
+        visited: &mut BTreeSet<String>,
+        ordered: &mut Vec<String>,
+    ) {
+        if !visited.insert(task_name.to_string()) {
+            return;
+        }
+        let Some(task) = contract.tasks.get(task_name) else {
+            return;
+        };
+        if let Some(aggregate) = task.aggregate.as_ref() {
+            for dependency in &aggregate.tasks {
+                collect(contract, dependency, visited, ordered);
+            }
+        }
+        for dependency in task.all_depends_on() {
+            collect(contract, dependency, visited, ordered);
+        }
+        for hook in task
+            .after_success
+            .iter()
+            .chain(task.after_failure.iter())
+            .chain(task.after_always.iter())
+        {
+            collect(contract, hook, visited, ordered);
+        }
+        ordered.push(task_name.to_string());
+    }
+
+    let mut visited = BTreeSet::new();
+    let mut ordered = Vec::new();
+    collect(contract, root, &mut visited, &mut ordered);
+    ordered
 }
 
 fn validate_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -43196,6 +43363,287 @@ tasks:
         assert!(
             rendered
                 .contains("requires artifact `client` but must declare `depends_on: [generate]`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn accepts_replay_baseline_with_explicit_portable_authority() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/fixture.jsonl, data/store.db, data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    command:
+      exe: python
+      args: [record.py]
+    effects:
+      network: true
+      network_kind: integration_test
+  replay:
+    command:
+      exe: python
+      args: [replay.py]
+    requires_artifacts: [recorded-baseline]
+agent:
+  safe_tasks: [replay]
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("a replay consumer must not execute its regeneration producer");
+    }
+
+    #[test]
+    fn accepts_verify_unchanged_replay_baseline_consumption() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: verify_unchanged
+tasks:
+  record:live:
+    run: true
+  replay:
+    run: cat data/baseline.json
+    requires_artifacts: [recorded-baseline]
+"#,
+        )
+        .expect("contract should parse");
+
+        validate_contract(&contract).expect("non-strict replay consumption should validate");
+    }
+
+    #[test]
+    fn rejects_replay_baseline_without_authority_or_with_producer_dependency() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/fixture.jsonl]
+tasks:
+  record:live:
+    command:
+      exe: python
+      args: [record.py]
+  setup:
+    command:
+      exe: true
+    depends_on: [record:live]
+  replay:
+    command:
+      exe: python
+      args: [replay.py]
+    depends_on: [setup]
+    requires_artifacts: [recorded-baseline]
+agent:
+  safe_tasks: [record:live, replay]
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("a replay baseline needs portable authority and isolated regeneration")
+            .to_string();
+        assert!(
+            rendered.contains("must declare `replay.authority_manifest`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("must not be agent-safe"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "dependency closure must not include regeneration producer `record:live`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_overlapping_replay_baseline_outputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data, data/fixture.jsonl]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    command:
+      exe: python
+      args: [record.py]
+  replay:
+    command:
+      exe: python
+      args: [replay.py]
+    requires_artifacts: [recorded-baseline]
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("overlapping baseline mounts must be rejected")
+            .to_string();
+        assert!(rendered.contains("paths must not overlap"), "{rendered}");
+    }
+
+    #[test]
+    fn rejects_replay_baseline_consumer_hook_write() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    run: true
+  replay:
+    run: true
+    requires_artifacts: [recorded-baseline]
+    after_success: [mutate-baseline]
+  mutate-baseline:
+    run: true
+    effects:
+      writes: [data/baseline.json]
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = validate_contract(&contract)
+            .expect_err("a replay consumer hook cannot write the baseline")
+            .to_string();
+        assert!(rendered.contains("mutate-baseline"), "{rendered}");
+        assert!(
+            rendered.contains("overlapping baseline output"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_read_only_replay_baseline_consumer_post_hooks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    run: true
+  replay:
+    run: true
+    requires_artifacts: [recorded-baseline]
+    after_success: [report]
+  report:
+    run: true
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = validate_contract(&contract)
+            .expect_err("strict replay must not run a hook outside its mounted boundary")
+            .to_string();
+        assert!(rendered.contains("declares post hooks"), "{rendered}");
+    }
+
+    #[test]
+    fn rejects_workflow_or_dependency_writes_that_can_regenerate_a_replay_baseline() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    command:
+      exe: python
+      args: [record.py]
+  prepare-replay:
+    command:
+      exe: true
+    effects:
+      writes: [data]
+  replay:
+    command:
+      exe: python
+      args: [replay.py]
+    depends_on: [prepare-replay]
+    requires_artifacts: [recorded-baseline]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: record:live
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("ordinary workflow and closure writes must not reach regeneration")
+            .to_string();
+        assert!(rendered.contains("declares a write overlapping baseline output `data`"));
+        assert!(
+            rendered.contains("workflow `verify` includes replay baseline regeneration producer"),
             "{rendered}"
         );
     }

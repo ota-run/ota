@@ -81,6 +81,7 @@ use crate::execution_boundary::{
     BoundaryPrerequisite, DerivationPosture, EXECUTION_BOUNDARY_SCHEMA_VERSION,
     ExecutionBoundaryRecord, ImmutableInputPosture, MaterializationPosture, PreconditionState,
     PrerequisiteClass, PrerequisiteState, TargetFreshness, evaluate_execution_boundary,
+    unknown_execution_boundary_record,
 };
 use crate::github_projection::{
     CallerProjectionBinding, GitHubProjection, OWNERSHIP_MARKER, caller_projection_binding,
@@ -101,21 +102,21 @@ use crate::output::{
     ExecutionReceiptHydrationSourceIdentity, ExecutionReceiptHydrationSourcePosture,
     ExecutionReceiptLogs, ExecutionReceiptQueryTraceDivergence,
     ExecutionReceiptQueryTraceObservation, ExecutionReceiptQueryTraceRecord,
-    ExecutionReceiptQueryTraceSummary, ExecutionReceiptStep, ExecutionReceiptSummary,
-    ExecutionReceiptWitnessedObservations, ExecutionSummary, ExecutionTopologyFailure,
-    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
-    ExecutionTopologyProbeObserverSummary, ExecutionTopologyProbeSummary,
-    ExecutionTopologyProbeTargetSummary, ExecutionTopologyReadinessSummary,
-    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
-    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
-    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
-    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
-    HarnessCapabilityProfile, HarnessEnvironmentBoundary, HarnessLaneCapability, InitFailure,
-    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, LifecycleProofAssertion,
-    LifecycleProofServiceRecord, LifecycleProofStatus, ListedWorkflowSummary,
-    MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess, OutputFormat,
-    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ExecutionReceiptQueryTraceSummary, ExecutionReceiptReplayBaselineRecording,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionReceiptWitnessedObservations,
+    ExecutionSummary, ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
+    ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
+    ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
+    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
+    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
+    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
+    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, HarnessCapabilityProfile, HarnessEnvironmentBoundary,
+    HarnessLaneCapability, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
+    InitSuccess, LifecycleProofAssertion, LifecycleProofServiceRecord, LifecycleProofStatus,
+    ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess,
+    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
     ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
     ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
     ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved,
@@ -158,6 +159,11 @@ use crate::provisioning::{
     ProvisioningOutputMode, activate_mise_paths_for_current_process,
     apply_provisioning_request_with_target,
 };
+use crate::replay_baseline::{
+    ReplayBaselineAttestation, ReplayBaselineAuthorityManifest,
+    capture_replay_baseline_output_manifest, promote_replay_baseline_attestation,
+    validate_replay_baseline_authority_manifest,
+};
 use crate::replay_inputs::{
     ReplayInputIdentityEvaluation, evaluate_replay_input_identity, sha256_identity,
 };
@@ -195,20 +201,22 @@ use crate::runner::{
 };
 use crate::schema::{
     AgentConfig, Backend, CommandInteractionPosture, ContainerBackend, Contract, EnvRequirement,
-    EnvSource, EnvSourceKind, ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface,
-    ServiceReadinessKind, ServiceReadinessSpec, TaskDependencyHydrationSourceSpec,
-    TaskNetworkEffectKind, TaskNodePackageManagerKind, TaskPrepareSpec, TaskRuntimeBindSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec,
-    TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
-    TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
-    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
-    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
-    parse_memory_size_bytes, parse_readiness_duration_spec, split_workflow_selector,
+    EnvSource, EnvSourceKind, ExecutionSharedBackend, ExtensionSpec, GeneratedArtifactKind,
+    Lifecycle, RequirementSurface, ServiceReadinessKind, ServiceReadinessSpec,
+    TaskDependencyHydrationSourceSpec, TaskNetworkEffectKind, TaskNodePackageManagerKind,
+    TaskPrepareSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
+    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
+    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
+    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec, split_workflow_selector,
 };
 use crate::semantic_identity::{
     contract_snapshot_hash, normalize_semantic_json, normalized_contract_snapshot_json,
+    semantic_contract_identity,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -40258,6 +40266,95 @@ tasks:
     }
 
     #[test]
+    fn receipt_binds_a_consumed_replay_baseline_to_its_promoted_authority() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir_all(repo.path().join("data")).expect("data directory");
+        fs::write(repo.path().join("data/baseline.json"), "recorded").expect("baseline output");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:live:
+    command:
+      exe: true
+  replay:
+    command:
+      exe: true
+    requires_artifacts: [recorded-baseline]
+"#,
+        )
+        .expect("parse contract");
+        let outputs = crate::replay_baseline::capture_replay_baseline_output_manifest(
+            repo.path(),
+            &[String::from("data/baseline.json")],
+        )
+        .expect("capture output identity");
+        let attestation = crate::replay_baseline::ReplayBaselineAttestation {
+            schema_version: 1,
+            artifact: String::from("recorded-baseline"),
+            producer: String::from("record:live"),
+            execution_scope: String::from("task:record:live"),
+            execution_mode: String::from("container"),
+            execution_lifecycle: Some(String::from("ephemeral")),
+            outputs,
+            contract_identity: String::from("sha256:contract"),
+            source_identity: String::from("git:source"),
+            execution_receipt_identity: String::from("sha256:receipt"),
+            execution_receipt_archive: String::from(".ota/receipts/record.json"),
+            execution_boundary_graph_identity: String::from("sha256:boundary"),
+            asserted_target_closure_identity: String::from("sha256:target"),
+            derivation_input_closure_identity: String::from("sha256:derivation"),
+            created_at: String::from("2026-07-25T00:00:00Z"),
+        };
+        let authority = crate::replay_baseline::promote_replay_baseline_attestation(
+            &attestation,
+            String::from("2026-07-25T00:01:00Z"),
+        )
+        .expect("promote authority");
+        fs::create_dir_all(repo.path().join("replay")).expect("authority directory");
+        fs::write(
+            repo.path().join("replay/recorded-baseline.ota.json"),
+            serde_json::to_vec_pretty(&authority).expect("authority json"),
+        )
+        .expect("write authority");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("replay")],
+            ExecutionOverrides::default(),
+        );
+        let input = inputs
+            .iter()
+            .find(|input| input.id == "generated_artifact:recorded-baseline")
+            .expect("captured replay baseline authority");
+        assert_eq!(input.kind, "promoted_replay_baseline");
+        assert_eq!(input.input_class, ReplayInputClass::PromotedReplayBaseline);
+        assert_eq!(input.identity, authority.promotion_identity);
+        let replay_authority = input
+            .artifact_lineage
+            .as_ref()
+            .and_then(|lineage| lineage.replay_authority.as_ref())
+            .expect("receipt must identify selected authority");
+        assert_eq!(
+            replay_authority.selected_attestation_identity,
+            authority.selected_attestation_identity
+        );
+    }
+
+    #[test]
     fn receipt_captures_clean_git_head_source_identity() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         std::process::Command::new("git")
@@ -41067,6 +41164,7 @@ tasks:
                 producer: String::from("org_policy_pack"),
                 paths: vec![String::from(".ota/org-policy.yaml")],
                 inputs: Vec::new(),
+                replay_authority: None,
             }),
         };
         let trust =
@@ -41605,6 +41703,9 @@ fn receipt_diff_artifact_trust(
             ReplayInputClass::DeclaredReplayInput => ReceiptDiffArtifactTrustRole::Narrowing,
             // Declared lineage points to the producer and paths; it never proves artifact freshness.
             ReplayInputClass::GeneratedArtifactLineage => ReceiptDiffArtifactTrustRole::PointerOnly,
+            // A selected promotion binds this replay to a specific reviewed attestation and the
+            // runner verified every declared output against that authority before execution.
+            ReplayInputClass::PromotedReplayBaseline => ReceiptDiffArtifactTrustRole::Acquitting,
             _ => continue,
         };
         artifacts.push(ReceiptDiffArtifactTrust {
@@ -97167,6 +97268,7 @@ fn run_single_contract_target(
         &details_footer,
         persist_logs,
     )
+    .map(|result| result.output)
 }
 
 fn should_use_command_terminal_passthrough(closure_allows_terminal_passthrough: bool) -> bool {
@@ -97977,6 +98079,12 @@ fn run_single_contract_target_streaming(
     }
 }
 
+struct CapturedTaskRunSuccess {
+    output: String,
+    receipt: ExecutionReceipt,
+    execution_boundary: Option<crate::execution_boundary::ExecutionBoundaryRecord>,
+}
+
 fn run_single_contract_target_captured(
     task_name: &str,
     overrides: ExecutionOverrides,
@@ -97988,7 +98096,7 @@ fn run_single_contract_target_captured(
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
-) -> Result<String, RunCommandFailure> {
+) -> Result<CapturedTaskRunSuccess, RunCommandFailure> {
     if let Err(error) =
         materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
     {
@@ -98117,7 +98225,11 @@ fn run_single_contract_target_captured(
                 "RUN SUMMARY",
             ));
             append_receipt_next_block(&mut output, &receipt);
-            Ok(output)
+            Ok(CapturedTaskRunSuccess {
+                output,
+                receipt,
+                execution_boundary: outcome.execution_boundary,
+            })
         }
         Ok(outcome) => {
             let log_capture = capture_durable_run_logs(
@@ -98313,6 +98425,646 @@ fn run_single_contract_target_captured(
             })
         }
     }
+}
+
+/// Runs the one contract-declared producer for a replay baseline and records immutable
+/// execution evidence. This command never promotes a new baseline: promotion is a separate,
+/// explicit reviewable operation.
+pub(crate) fn replay_baseline_record(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    artifact_name: &str,
+    format: OutputFormat,
+    _debug: bool,
+) -> CommandOutput {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let resolved_path =
+            resolve_contract_path(path, file_override).map_err(|error| error.to_string())?;
+        let target = load_and_validate_target(&resolved_path, None)
+            .map_err(|error| render_contract_problem(&error))?;
+        let artifact = target
+            .contract
+            .artifacts
+            .get(artifact_name)
+            .ok_or_else(|| {
+                format!("contract does not declare replay baseline artifact `{artifact_name}`")
+            })?;
+        if artifact.kind != GeneratedArtifactKind::ReplayBaseline {
+            return Err(format!(
+                "artifact `{artifact_name}` is not `kind: replay_baseline`"
+            ));
+        }
+        let authority_manifest = artifact
+            .replay
+            .as_ref()
+            .ok_or_else(|| {
+                format!(
+                    "replay baseline artifact `{artifact_name}` does not declare replay authority"
+                )
+            })?
+            .authority_manifest
+            .clone();
+        let producer = artifact.producer.clone();
+        let contract_path = resolved_path
+            .canonicalize()
+            .unwrap_or_else(|_| resolved_path.clone());
+        let root = contract_path.parent().ok_or_else(|| {
+            String::from("cannot resolve contract root for replay baseline recording")
+        })?;
+        // Capture source identity before the producer changes the baseline outputs. Requiring a
+        // clean source here binds what reviewers approved, without treating the generated diff as
+        // ambient source drift after the recording run.
+        let source_identity = git_head_identity(root).map_err(|reason| {
+            format!(
+                "replay baseline producer `{producer}` requires a clean Git source identity before recording: {reason}"
+            )
+        })?;
+        if let Some(failure) = run_selected_precondition_failure(
+            producer.as_str(),
+            ExecutionOverrides::default(),
+            None,
+            &target.contract,
+            &target.contract_path,
+        ) {
+            return Err(failure.message);
+        }
+        let details_footer = task_use_details_footer(Some(&target.contract_path), None);
+        let mut success = run_single_contract_target_captured(
+            producer.as_str(),
+            ExecutionOverrides::default(),
+            None,
+            target,
+            &[],
+            false,
+            None,
+            false,
+            details_footer.as_str(),
+            true,
+        )
+        .map_err(|failure| failure.message)?;
+        let (contract, _) =
+            load_contract_auto(&contract_path).map_err(|error| error.to_string())?;
+        let artifact = contract.artifacts.get(artifact_name).ok_or_else(|| {
+            format!("contract does not declare replay baseline artifact `{artifact_name}`")
+        })?;
+        let outputs = capture_replay_baseline_output_manifest(root, &artifact.paths)?;
+        let receipt_identity = semantic_contract_identity(&success.receipt)?;
+        let receipt_path = next_receipt_archive_path(root, "replay-baseline-receipt")?;
+        let created_at = format_receipt_metadata_timestamp(OffsetDateTime::now_utc())?;
+        let execution_boundary = success
+            .execution_boundary
+            .clone()
+            .unwrap_or_else(unknown_execution_boundary_record);
+        let execution_mode = success.receipt.backend.clone().ok_or_else(|| {
+                format!(
+                    "replay baseline producer `{producer}` completed without a resolved execution backend"
+                )
+            })?;
+        let attestation = ReplayBaselineAttestation {
+            schema_version: 1,
+            artifact: artifact_name.to_string(),
+            execution_scope: format!("task:{producer}"),
+            producer,
+            execution_mode,
+            execution_lifecycle: success.receipt.lifecycle.clone(),
+            outputs,
+            contract_identity: contract_snapshot_hash(&normalized_contract_snapshot_json(
+                &contract,
+            )?),
+            source_identity,
+            execution_receipt_identity: receipt_identity,
+            execution_receipt_archive: repo_relative_log_path(root, &receipt_path),
+            execution_boundary_graph_identity: execution_boundary.identity.clone(),
+            asserted_target_closure_identity: semantic_contract_identity(
+                &execution_boundary.asserted_target_closure,
+            )?,
+            derivation_input_closure_identity: semantic_contract_identity(
+                &execution_boundary.derivation_input_closure,
+            )?,
+            created_at,
+        };
+        let attestation_identity = attestation.identity()?;
+        let archive_dir = root
+            .join(".ota")
+            .join("replay-baselines")
+            .join(artifact_name);
+        fs::create_dir_all(&archive_dir).map_err(|error| {
+            format!(
+                "failed to create replay baseline archive directory `{}`: {error}",
+                archive_dir.display()
+            )
+        })?;
+        let attestation_path = archive_dir.join(format!(
+            "attestation-{}.json",
+            attestation_identity.trim_start_matches("sha256:")
+        ));
+        success
+            .receipt
+            .witnessed_observations
+            .replay_baseline_recordings
+            .push(ExecutionReceiptReplayBaselineRecording {
+                artifact: artifact_name.to_string(),
+                producer: attestation.producer.clone(),
+                execution_scope: attestation.execution_scope.clone(),
+                execution_mode: attestation.execution_mode.clone(),
+                execution_lifecycle: attestation.execution_lifecycle.clone(),
+                attestation_identity: attestation_identity.clone(),
+                attestation_path: repo_relative_log_path(root, &attestation_path),
+                evidence_class: ExecutionEvidenceClass::Attested,
+            });
+        write_receipt_archive(&receipt_path, &success.receipt)?;
+        write_replay_baseline_json_atomically(&attestation_path, &attestation)?;
+        Ok(json!({
+            "ok": true,
+            "artifact": artifact_name,
+            "state": "recorded",
+            "attestation_identity": attestation_identity,
+            "attestation": repo_relative_log_path(root, &attestation_path),
+            "execution_receipt": repo_relative_log_path(root, &receipt_path),
+            "authority_manifest": authority_manifest,
+        }))
+    })();
+    replay_baseline_command_output(result, format)
+}
+
+/// Promotes an explicitly selected Ota-authored attestation. The authority manifest is portable
+/// contract-adjacent state, while the local record archive remains audit evidence only.
+pub(crate) fn replay_baseline_promote(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    artifact_name: &str,
+    attestation_path: &Path,
+    format: OutputFormat,
+    _debug: bool,
+) -> CommandOutput {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let resolved_path =
+            resolve_contract_path(path, file_override).map_err(|error| error.to_string())?;
+        let target = load_and_validate_target(&resolved_path, None)
+            .map_err(|error| render_contract_problem(&error))?;
+        let artifact = target
+            .contract
+            .artifacts
+            .get(artifact_name)
+            .ok_or_else(|| {
+                format!("contract does not declare replay baseline artifact `{artifact_name}`")
+            })?;
+        if artifact.kind != GeneratedArtifactKind::ReplayBaseline {
+            return Err(format!(
+                "artifact `{artifact_name}` is not `kind: replay_baseline`"
+            ));
+        }
+        let replay = artifact.replay.as_ref().ok_or_else(|| {
+            format!("replay baseline artifact `{artifact_name}` does not declare replay authority")
+        })?;
+        let current_contract_identity =
+            contract_snapshot_hash(&normalized_contract_snapshot_json(&target.contract)?);
+        let contract_path = resolved_path.canonicalize().unwrap_or(resolved_path);
+        let root = contract_path.parent().ok_or_else(|| {
+            String::from("cannot resolve contract root for replay baseline promotion")
+        })?;
+        let attestation_candidate_path = if attestation_path.is_absolute() {
+            attestation_path.to_path_buf()
+        } else {
+            root.join(attestation_path)
+        };
+        let attestation_archive_path =
+            attestation_candidate_path.canonicalize().map_err(|error| {
+                format!(
+                    "failed to resolve replay baseline attestation `{}`: {error}",
+                    attestation_path.display()
+                )
+            })?;
+        let attestation_relative = attestation_archive_path.strip_prefix(root).map_err(|_| {
+            format!(
+                "attestation `{}` must be stored under this contract root",
+                attestation_path.display()
+            )
+        })?;
+        if !attestation_relative.starts_with(Path::new(".ota/replay-baselines")) {
+            return Err(format!(
+                "attestation `{}` is not an Ota replay-baseline archive",
+                attestation_path.display()
+            ));
+        }
+        let encoded = fs::read_to_string(&attestation_archive_path).map_err(|error| {
+            format!(
+                "failed to read replay baseline attestation `{}`: {error}",
+                attestation_path.display()
+            )
+        })?;
+        let attestation: ReplayBaselineAttestation =
+            serde_json::from_str(&encoded).map_err(|error| {
+                format!(
+                    "failed to parse replay baseline attestation `{}`: {error}",
+                    attestation_path.display()
+                )
+            })?;
+        if attestation.schema_version != 1
+            || attestation.artifact != artifact_name
+            || attestation.producer != artifact.producer
+        {
+            return Err(format!(
+                "attestation `{}` does not match replay baseline artifact `{artifact_name}`",
+                attestation_path.display()
+            ));
+        }
+        if attestation.outputs.is_empty() {
+            return Err(format!(
+                "attestation `{}` has no captured outputs",
+                attestation_path.display()
+            ));
+        }
+        if attestation.contract_identity != current_contract_identity {
+            return Err(format!(
+                "attestation `{}` was recorded for a different contract identity; record a new baseline before promotion",
+                attestation_path.display()
+            ));
+        }
+        let current_outputs = capture_replay_baseline_output_manifest(root, &artifact.paths)?;
+        if current_outputs != attestation.outputs {
+            return Err(format!(
+                "attestation `{}` does not match the current declared replay baseline outputs; restore the recorded outputs or record a new baseline before promotion",
+                attestation_path.display()
+            ));
+        }
+        let receipt_relative = Path::new(&attestation.execution_receipt_archive);
+        if receipt_relative.is_absolute()
+            || receipt_relative.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!(
+                "attestation `{}` has an unsafe execution receipt archive path",
+                attestation_path.display()
+            ));
+        }
+        let receipt_path = root.join(receipt_relative);
+        let mut receipt: JsonValue =
+            serde_json::from_slice(&fs::read(&receipt_path).map_err(|error| {
+                format!(
+                    "attestation `{}` references unavailable execution receipt `{}`: {error}",
+                    attestation_path.display(),
+                    receipt_path.display()
+                )
+            })?)
+            .map_err(|error| {
+                format!(
+                    "attestation `{}` references invalid execution receipt `{}`: {error}",
+                    attestation_path.display(),
+                    receipt_path.display()
+                )
+            })?;
+        let attestation_identity = attestation.identity()?;
+        let expected_attestation_path = repo_relative_log_path(root, &attestation_archive_path);
+        let recording_matches = receipt
+            .pointer("/witnessed_observations/replay_baseline_recordings")
+            .and_then(JsonValue::as_array)
+            .is_some_and(|recordings| {
+                recordings.iter().any(|recording| {
+                    recording.get("artifact").and_then(JsonValue::as_str)
+                        == Some(attestation.artifact.as_str())
+                        && recording.get("producer").and_then(JsonValue::as_str)
+                            == Some(attestation.producer.as_str())
+                        && recording.get("execution_scope").and_then(JsonValue::as_str)
+                            == Some(attestation.execution_scope.as_str())
+                        && recording.get("execution_mode").and_then(JsonValue::as_str)
+                            == Some(attestation.execution_mode.as_str())
+                        && recording
+                            .get("attestation_identity")
+                            .and_then(JsonValue::as_str)
+                            == Some(attestation_identity.as_str())
+                        && recording
+                            .get("attestation_path")
+                            .and_then(JsonValue::as_str)
+                            == Some(expected_attestation_path.as_str())
+                        && recording
+                            .get("execution_lifecycle")
+                            .and_then(JsonValue::as_str)
+                            == attestation.execution_lifecycle.as_deref()
+                        && recording.get("evidence_class").and_then(JsonValue::as_str)
+                            == Some("attested")
+                })
+            });
+        if let Some(receipt_object) = receipt.as_object_mut()
+            && let Some(observations) = receipt_object
+                .get_mut("witnessed_observations")
+                .and_then(JsonValue::as_object_mut)
+        {
+            observations.remove("replay_baseline_recordings");
+            if observations.is_empty() {
+                receipt_object.remove("witnessed_observations");
+            }
+        }
+        if receipt.get("ok").and_then(JsonValue::as_bool) != Some(true)
+            || !recording_matches
+            || semantic_contract_identity(&receipt)? != attestation.execution_receipt_identity
+        {
+            return Err(format!(
+                "attestation `{}` is not bound to a successful matching execution receipt",
+                attestation_path.display()
+            ));
+        }
+        let manifest: ReplayBaselineAuthorityManifest = promote_replay_baseline_attestation(
+            &attestation,
+            format_receipt_metadata_timestamp(OffsetDateTime::now_utc())?,
+        )?;
+        validate_replay_baseline_authority_manifest(&manifest, artifact_name)?;
+        let manifest_path = root.join(&replay.authority_manifest);
+        if let Some(parent) = manifest_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create replay baseline authority directory `{}`: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        write_replay_baseline_json_atomically(&manifest_path, &manifest)?;
+        Ok(json!({
+            "ok": true,
+            "artifact": artifact_name,
+            "state": "promoted",
+            "attestation_identity": manifest.selected_attestation_identity,
+            "promotion_identity": manifest.promotion_identity,
+            "authority_manifest": replay.authority_manifest,
+        }))
+    })();
+    replay_baseline_command_output(result, format)
+}
+
+fn replay_baseline_command_output(
+    result: Result<serde_json::Value, String>,
+    format: OutputFormat,
+) -> CommandOutput {
+    match result {
+        Ok(value) => match format {
+            OutputFormat::Json => CommandOutput::success(to_json(&value)),
+            OutputFormat::Text => CommandOutput::success(format!(
+                "\n🦦 BASELINE\n\nStatus:      {}\nArtifact:    {}\nAttestation: {}\nAuthority:   {}\n",
+                value["state"].as_str().unwrap_or("recorded"),
+                value["artifact"].as_str().unwrap_or(""),
+                value["attestation"]
+                    .as_str()
+                    .unwrap_or("explicit selection required"),
+                value["authority_manifest"].as_str().unwrap_or("")
+            )),
+        },
+        Err(error) => match format {
+            OutputFormat::Json => CommandOutput::failure(to_json(&json!({
+                "ok": false,
+                "code": "replay_baseline_operation_failed",
+                "error": error,
+            }))),
+            OutputFormat::Text => CommandOutput::failure(error),
+        },
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn replay_baseline_record_and_explicit_promotion_bind_the_producer_receipt() {
+    let root = tempfile::tempdir().expect("temporary repo");
+    fs::write(
+        root.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded:
+    kind: replay_baseline
+    producer: record
+    paths: [data/baseline.txt]
+    replay:
+      authority_manifest: replay/recorded.ota.json
+      consumption: read_only
+tasks:
+  record:
+    action:
+      kind: ensure_file
+      path: data/baseline.txt
+      value: recorded
+  replay:
+    action:
+      kind: ensure_directory
+      path: scratch
+    requires_artifacts: [recorded]
+agent:
+  safe_tasks: [replay]
+"#,
+    )
+    .expect("contract");
+    for args in [
+        vec!["init"],
+        vec!["config", "user.email", "ota@example.com"],
+        vec!["config", "user.name", "Ota Tests"],
+        vec!["add", "ota.yaml"],
+        vec!["commit", "-m", "baseline contract"],
+    ] {
+        Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .status()
+            .expect("git command")
+            .success()
+            .then_some(())
+            .expect("git command succeeds");
+    }
+
+    fs::write(root.path().join("untracked-source.txt"), "dirty\n").expect("dirty source");
+    let dirty = replay_baseline_record(
+        Some(root.path()),
+        None,
+        "recorded",
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(dirty.exit_code, 1, "{:?}", dirty.stderr);
+    assert!(
+        dirty
+            .stderr
+            .as_deref()
+            .is_some_and(|message| message.contains("requires a clean Git source identity")),
+        "{:?}",
+        dirty.stderr
+    );
+    assert!(!root.path().join("data/baseline.txt").exists());
+    fs::remove_file(root.path().join("untracked-source.txt")).expect("restore clean source");
+
+    let recorded = replay_baseline_record(
+        Some(root.path()),
+        None,
+        "recorded",
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(recorded.exit_code, 0, "{:?}", recorded.stderr);
+    let recorded: serde_json::Value =
+        serde_json::from_str(&recorded.stdout).expect("recorded baseline json");
+    let attestation_path = root
+        .path()
+        .join(recorded["attestation"].as_str().expect("attestation path"));
+    let attestation: ReplayBaselineAttestation =
+        serde_json::from_slice(&fs::read(&attestation_path).expect("recorded attestation"))
+            .expect("attestation json");
+    assert_eq!(attestation.execution_scope, "task:record");
+    assert_eq!(attestation.execution_mode, "native");
+    assert_eq!(attestation.execution_lifecycle, None);
+    assert!(attestation.source_identity.starts_with("git:"));
+    assert!(
+        attestation
+            .execution_boundary_graph_identity
+            .starts_with("sha256:"),
+        "recorded provenance must retain an explicit V11.16 graph identity"
+    );
+    assert!(
+        attestation
+            .asserted_target_closure_identity
+            .starts_with("sha256:")
+            && attestation
+                .derivation_input_closure_identity
+                .starts_with("sha256:"),
+        "the graph's two selected closure identities are required even when the producer has no observed prerequisites"
+    );
+    let archived_receipt: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            root.path().join(
+                recorded["execution_receipt"]
+                    .as_str()
+                    .expect("execution receipt path"),
+            ),
+        )
+        .expect("recorded receipt"),
+    )
+    .expect("recorded receipt json");
+    assert_eq!(
+        archived_receipt
+            .pointer("/witnessed_observations/replay_baseline_recordings/0/attestation_identity")
+            .and_then(serde_json::Value::as_str),
+        Some(
+            recorded["attestation_identity"]
+                .as_str()
+                .expect("attestation identity")
+        )
+    );
+
+    let receipt_path = root.path().join(
+        recorded["execution_receipt"]
+            .as_str()
+            .expect("execution receipt path"),
+    );
+    let original_receipt = fs::read(&receipt_path).expect("recorded receipt bytes");
+    let mut detached_receipt: serde_json::Value =
+        serde_json::from_slice(&original_receipt).expect("recorded receipt json");
+    *detached_receipt
+        .pointer_mut("/witnessed_observations/replay_baseline_recordings/0/attestation_identity")
+        .expect("recorded receipt attestation identity") = serde_json::Value::String(String::from(
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    ));
+    fs::write(
+        &receipt_path,
+        serde_json::to_vec_pretty(&detached_receipt).expect("detached receipt json"),
+    )
+    .expect("write detached receipt");
+    let detached = replay_baseline_promote(
+        Some(root.path()),
+        None,
+        "recorded",
+        &attestation_path,
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(detached.exit_code, 1, "{:?}", detached.stderr);
+    assert!(
+        detached.stderr.as_deref().is_some_and(
+            |message| message.contains("not bound to a successful matching execution receipt")
+        ),
+        "{:?}",
+        detached.stderr
+    );
+    fs::write(&receipt_path, original_receipt).expect("restore recorded receipt");
+
+    fs::write(root.path().join("data/baseline.txt"), "mutated").expect("mutate recorded output");
+    let stale = replay_baseline_promote(
+        Some(root.path()),
+        None,
+        "recorded",
+        &attestation_path,
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(stale.exit_code, 1, "{:?}", stale.stderr);
+    assert!(
+        stale.stderr.as_deref().is_some_and(|message| message
+            .contains("does not match the current declared replay baseline outputs")),
+        "{:?}",
+        stale.stderr
+    );
+    fs::write(root.path().join("data/baseline.txt"), "recorded").expect("restore recorded output");
+
+    let promoted = replay_baseline_promote(
+        Some(root.path()),
+        None,
+        "recorded",
+        &attestation_path,
+        OutputFormat::Json,
+        false,
+    );
+    assert_eq!(promoted.exit_code, 0, "{:?}", promoted.stderr);
+    let manifest: ReplayBaselineAuthorityManifest = serde_json::from_slice(
+        &fs::read(root.path().join("replay/recorded.ota.json")).expect("authority manifest"),
+    )
+    .expect("manifest json");
+    validate_replay_baseline_authority_manifest(&manifest, "recorded").expect("promoted manifest");
+    assert_eq!(
+        manifest.selected_attestation_identity,
+        recorded["attestation_identity"]
+            .as_str()
+            .expect("attestation identity")
+    );
+}
+
+fn write_replay_baseline_json_atomically(
+    path: &Path,
+    payload: &impl Serialize,
+) -> Result<(), String> {
+    let content = serde_json::to_vec_pretty(payload)
+        .map_err(|error| format!("failed to serialize replay baseline record: {error}"))?;
+    let parent = path.parent().ok_or_else(|| {
+        format!(
+            "replay baseline record `{}` has no parent directory",
+            path.display()
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "failed to create replay baseline directory `{}`: {error}",
+            parent.display()
+        )
+    })?;
+    let temporary = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("baseline.json"),
+        std::process::id()
+    ));
+    fs::write(&temporary, content).map_err(|error| {
+        format!(
+            "failed to write replay baseline temporary record `{}`: {error}",
+            temporary.display()
+        )
+    })?;
+    fs::rename(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!(
+            "failed to publish replay baseline record `{}`: {error}",
+            path.display()
+        )
+    })
 }
 
 fn canonical_declared_task_name(contract: &Contract, requested_task_name: &str) -> String {
@@ -101835,7 +102587,7 @@ fn receipt_evaluated_inputs(
             collect_receipt_hydration_inputs(prepare, root, &mut inputs);
         }
         collect_receipt_compose_image_inputs(task, root, backend, &mut inputs);
-        collect_receipt_generated_artifact_inputs(contract, task, &mut inputs);
+        collect_receipt_generated_artifact_inputs(contract, root, task, &mut inputs);
     }
     inputs.into_values().collect()
 }
@@ -101935,6 +102687,7 @@ fn collect_receipt_policy_ruleset_identity_input(
                 producer: String::from("org_policy_pack"),
                 paths: vec![display_path],
                 inputs: Vec::new(),
+                replay_authority: None,
             }),
         },
     );
@@ -102305,6 +103058,7 @@ fn replay_input_class_closes_hermetic_replay(class: ReplayInputClass) -> bool {
         ReplayInputClass::DeclaredDependencyResolution
             | ReplayInputClass::SelectedRuntimeArtifact
             | ReplayInputClass::ExecutionPresentationProfile
+            | ReplayInputClass::PromotedReplayBaseline
     )
 }
 
@@ -102482,6 +103236,7 @@ fn capture_witnessed_observations_before_execution(
     }
     Ok(ExecutionReceiptWitnessedObservations {
         query_traces: query_traces.into_values().collect(),
+        replay_baseline_recordings: Vec::new(),
     })
 }
 
@@ -102701,6 +103456,7 @@ fn attach_witnessed_observations(
 // while issuing the receipt so consumers do not reconstruct producer ownership from task text.
 fn collect_receipt_generated_artifact_inputs(
     contract: &Contract,
+    root: &Path,
     task: &TaskSpec,
     inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
 ) {
@@ -102708,10 +103464,40 @@ fn collect_receipt_generated_artifact_inputs(
         let Some(artifact) = contract.artifacts.get(artifact_name) else {
             continue;
         };
+        let replay_authority =
+            if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
+                artifact.replay.as_ref().and_then(|replay| {
+                    crate::replay_baseline::verify_promoted_replay_baseline(
+                        root,
+                        artifact_name,
+                        &artifact.paths,
+                        &replay.authority_manifest,
+                    )
+                    .ok()
+                    .map(|manifest| {
+                        crate::output::ExecutionReceiptReplayBaselineAuthority {
+                            authority_manifest: replay.authority_manifest.clone(),
+                            selected_attestation_identity: manifest.selected_attestation_identity,
+                            promotion_identity: manifest.promotion_identity,
+                            consumption: match replay.consumption {
+                                crate::schema::ReplayBaselineConsumption::ReadOnly => {
+                                    String::from("read_only")
+                                }
+                                crate::schema::ReplayBaselineConsumption::VerifyUnchanged => {
+                                    String::from("verify_unchanged")
+                                }
+                            },
+                        }
+                    })
+                })
+            } else {
+                None
+            };
         let lineage = ExecutionReceiptArtifactLineage {
             producer: artifact.producer.clone(),
             paths: artifact.paths.clone(),
             inputs: artifact.inputs.clone(),
+            replay_authority,
         };
         let identity = contract_snapshot_hash(
             &serde_json::to_vec(&lineage)
@@ -102722,9 +103508,21 @@ fn collect_receipt_generated_artifact_inputs(
             id.clone(),
             ExecutionReceiptEvaluatedInput {
                 id,
-                kind: String::from("generated_artifact_lineage"),
-                input_class: ReplayInputClass::GeneratedArtifactLineage,
-                identity,
+                kind: if lineage.replay_authority.is_some() {
+                    String::from("promoted_replay_baseline")
+                } else {
+                    String::from("generated_artifact_lineage")
+                },
+                input_class: if lineage.replay_authority.is_some() {
+                    ReplayInputClass::PromotedReplayBaseline
+                } else {
+                    ReplayInputClass::GeneratedArtifactLineage
+                },
+                identity: lineage
+                    .replay_authority
+                    .as_ref()
+                    .map(|authority| authority.promotion_identity.clone())
+                    .unwrap_or(identity),
                 expected_identity: None,
                 execution_started: None,
                 hydration_provenance: None,
@@ -110973,6 +111771,31 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                         .join(", ")
                 ));
             }
+        }
+    }
+
+    if !receipt
+        .witnessed_observations
+        .replay_baseline_recordings
+        .is_empty()
+    {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Replay Baseline Recording Evidence")
+        ));
+        for recording in &receipt.witnessed_observations.replay_baseline_recordings {
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {})",
+                paint_key(&recording.artifact),
+                recording.attestation_identity,
+                recording.execution_scope,
+                recording.execution_mode
+            ));
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Attestation:"),
+                recording.attestation_path
+            ));
         }
     }
 

@@ -190,6 +190,12 @@ enum Commands {
         #[command(subcommand)]
         command: CiCommands,
     },
+    #[command(display_order = 12)]
+    /// Record and explicitly promote governed replay baselines.
+    Baseline {
+        #[command(subcommand)]
+        command: BaselineCommands,
+    },
     #[command(display_order = 5)]
     /// Propose reviewed contract mutations from bounded Ota intents.
     Assist {
@@ -745,6 +751,35 @@ enum CiCommands {
     Github {
         #[command(subcommand)]
         command: CiGithubCommands,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum BaselineCommands {
+    /// Execute a declared baseline producer and record its output attestation.
+    Record {
+        /// Declared `artifacts.<name>` replay baseline to record.
+        #[arg(long)]
+        artifact: String,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Explicitly promote one recorded baseline attestation as portable replay authority.
+    Promote {
+        /// Declared `artifacts.<name>` replay baseline to promote.
+        #[arg(long)]
+        artifact: String,
+        /// Recorded Ota baseline attestation to select. Ota never selects the newest record.
+        #[arg(long)]
+        attestation: PathBuf,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
     },
 }
 
@@ -5095,6 +5130,36 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Baseline {
+            command:
+                BaselineCommands::Record {
+                    artifact,
+                    json,
+                    path,
+                },
+        } => commands::replay_baseline_record(
+            path.as_deref(),
+            file.as_deref(),
+            &artifact,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Baseline {
+            command:
+                BaselineCommands::Promote {
+                    artifact,
+                    attestation,
+                    json,
+                    path,
+                },
+        } => commands::replay_baseline_promote(
+            path.as_deref(),
+            file.as_deref(),
+            &artifact,
+            &attestation,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Assist {
             command:
                 AssistCommands::DeclareReadiness {
@@ -6233,6 +6298,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Ci { .. } => {
             "run `ota ci github render --workflow <name>` to inspect the canonical managed projection"
         }
+        Commands::Baseline { .. } => {
+            "run `ota baseline record --artifact <name>` to record a declared producer, then promote its explicit attestation"
+        }
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
         }
@@ -6469,6 +6537,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Ci {
             command: CiCommands::Projection { json, .. },
         }
+        | Commands::Baseline {
+            command: BaselineCommands::Record { json, .. } | BaselineCommands::Promote { json, .. },
+        }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
         | Commands::Diff { json, .. }
@@ -6569,6 +6640,10 @@ fn command_where_label(command: &Commands) -> &'static str {
                 CiGithubCommands::Check { .. } => "ota ci github check",
                 CiGithubCommands::Sync { .. } => "ota ci github sync",
             },
+        },
+        Commands::Baseline { command } => match command {
+            BaselineCommands::Record { .. } => "ota baseline record",
+            BaselineCommands::Promote { .. } => "ota baseline promote",
         },
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",

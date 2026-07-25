@@ -282,7 +282,36 @@ artifacts:
       - core/schema
 ```
 
-- `kind`: currently `generated_source`
+- `kind: generated_source`: a normal generated artifact. Consumers explicitly depend on its
+  producer task before Ota checks that its declared outputs exist.
+- `kind: replay_baseline`: a generated baseline with a separate, explicit regeneration and
+  promotion authority chain. It additionally declares:
+
+  ```yaml
+  replay:
+    authority_manifest: replay/recorded-baseline.ota.json
+    consumption: read_only
+  ```
+
+  The producer is never agent-safe and replay consumers must not depend on it. Run
+  `ota baseline record --artifact <name>` to issue a receipt-bound recorded attestation, then
+  explicitly select that exact attestation with `ota baseline promote --artifact <name> --attestation <path>`.
+  Ota rejects ordinary workflows that include the producer and consumer dependency closures that
+  declare writes overlapping the baseline outputs, so replay cannot regenerate or mutate its own
+  authority through a normal verification path.
+  The committed authority manifest, not local `.ota` history and not a hand-authored digest, is
+  the portable replay authority. Consumers verify its complete output identities before execution;
+  `consumption: read_only` is strict and requires an enforceable runner-owned read-only boundary.
+  Strict consumers cannot declare `after_success`, `after_failure`, or `after_always` hooks because
+  those are separate task launches outside the mounted command boundary.
+  `consumption: verify_unchanged` is the non-strict fallback for a backend such as native execution:
+  Ota verifies the selected authority before launch, re-captures the complete output manifest after
+  the consumer ends, and fails with `replay_artifact_mutation_detected` if the baseline changed.
+  When an ephemeral container can enforce the stronger boundary, Ota upgrades this posture to its
+  runner-owned read-only overlay. Otherwise it reports a detected write and never claims that it
+  refused one.
+  Replay-baseline symlinks must resolve within the declared artifact output boundary; Ota rejects
+  escaping targets instead of mounting a link that can resolve into the mutable worktree.
 - `producer`: required task name that materializes the artifact
 - `paths`: required non-empty repo-relative output paths owned by the artifact
 - `inputs`: optional repo-relative source paths that define the declared derivation boundary

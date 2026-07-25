@@ -35,6 +35,20 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
+- active V11.17 trusted replay-baseline regeneration: Core now has an additive
+  `artifacts.<name>.kind: replay_baseline` authority chain: explicit producer record, immutable
+  recorded attestation, exact promotion, then replay consumption. A portable authority manifest
+  binds the canonical recursive output set, producer receipt, source/contract identities, and the
+  producer's V11.16 execution-boundary graph plus asserted-target and derivation-input closures.
+  `read_only` refuses outside a runner-owned ephemeral container boundary; `verify_unchanged`
+  detects mutation after native replay and automatically gains the stronger read-only overlay in
+  that boundary. Bedrock now has an additive unsafe `record:baseline` producer and separate
+  promoted offline consumers. Its promoted lane correctly fails closed with
+  `OTA_REPLAY_BASELINE_UNAVAILABLE` until an intentional live recording is reviewed and explicitly
+  promoted. No authority manifest or live-model recording has been manufactured. Core focused
+  record/promotion, JSON conformance, and published-schema tests pass. Remaining gates are
+  independent review, a real credentialed Bedrock recording/promotion, and one independent
+  generated-baseline pressure repo.
 - completed implementation slice: V11.19 typed uv local-project hydration. The replay classifier
   now requires resolved source posture, declared lockfile identity, and clean local-project source
   identity before editable hydration can be acquitting; missing lockfile or source identity remains

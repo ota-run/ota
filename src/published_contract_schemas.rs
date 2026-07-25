@@ -2104,14 +2104,39 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       }
     },
     "generatedArtifact": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "producer", "paths"],
+          "properties": {
+            "kind": { "const": "generated_source" },
+            "producer": { "type": "string" },
+            "paths": { "$ref": "#/$defs/stringArray" },
+            "inputs": { "$ref": "#/$defs/stringArray" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "producer", "paths", "replay"],
+          "properties": {
+            "kind": { "const": "replay_baseline" },
+            "producer": { "type": "string" },
+            "paths": { "$ref": "#/$defs/stringArray" },
+            "inputs": { "$ref": "#/$defs/stringArray" },
+            "replay": { "$ref": "#/$defs/replayBaselineArtifact" }
+          }
+        }
+      ]
+    },
+    "replayBaselineArtifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "producer", "paths"],
+      "required": ["authority_manifest", "consumption"],
       "properties": {
-        "kind": { "const": "generated_source" },
-        "producer": { "type": "string" },
-        "paths": { "$ref": "#/$defs/stringArray" },
-        "inputs": { "$ref": "#/$defs/stringArray" }
+        "authority_manifest": { "type": "string" },
+        "consumption": { "enum": ["read_only", "verify_unchanged"] }
       }
     },
     "taskSpec": {

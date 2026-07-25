@@ -2198,6 +2198,97 @@ fn receipt_json_schema_accepts_execution_conflict_metadata() {
 }
 
 #[test]
+fn receipt_json_schema_accepts_promoted_replay_baseline_authority() {
+    let identity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let json = serde_json::json!({
+        "ok": true,
+        "path": "/abs/path/to/ota.yaml",
+        "mode": "receipt",
+        "summary": {
+            "error_count": 0,
+            "warn_count": 0,
+            "info_count": 0,
+            "step_count": 1
+        },
+        "receipt": {
+            "ok": true,
+            "path": "/abs/path/to/ota.yaml",
+            "scope": "repo",
+            "contract": "/abs/path/to/ota.yaml",
+            "contract_identity": {
+                "version": 1,
+                "project": { "name": "replay-baseline" },
+                "counts": {
+                    "runtimes": 0,
+                    "tools": 0,
+                    "env": 0,
+                    "services": 0,
+                    "checks": 0,
+                    "tasks": 1
+                }
+            },
+            "witnessed_observations": {
+                "query_traces": [{
+                    "id": "recorded_sql",
+                    "source_path": "data/fixture.jsonl",
+                    "source_identity": identity,
+                    "evidence_class": "attested",
+                    "records": [{
+                        "subject": "total_revenue",
+                        "run": 0,
+                        "identity": identity
+                    }],
+                    "summary": {
+                        "subjects": 1,
+                        "records": 1,
+                        "divergent_subjects": [{
+                            "subject": "total_revenue",
+                            "distinct_identities": 2
+                        }]
+                    }
+                }],
+                "replay_baseline_recordings": [{
+                    "artifact": "recorded-baseline",
+                    "producer": "record:live",
+                    "execution_scope": "task:record:live",
+                    "execution_mode": "container",
+                    "execution_lifecycle": "ephemeral",
+                    "attestation_identity": identity,
+                    "attestation_path": ".ota/replay-baselines/recorded-baseline/attestation.json",
+                    "evidence_class": "attested"
+                }]
+            },
+            "evaluated_inputs": [{
+                "id": "generated_artifact:recorded-baseline",
+                "kind": "promoted_replay_baseline",
+                "input_class": "promoted_replay_baseline",
+                "identity": identity,
+                "artifact_lineage": {
+                    "producer": "record:live",
+                    "paths": ["data/baseline.json"],
+                    "replay_authority": {
+                        "authority_manifest": "replay/recorded-baseline.ota.json",
+                        "selected_attestation_identity": identity,
+                        "promotion_identity": identity,
+                        "consumption": "verify_unchanged"
+                    }
+                }
+            }],
+            "steps": [],
+            "summary": {
+                "error_count": 0,
+                "warn_count": 0,
+                "info_count": 0,
+                "step_count": 1
+            }
+        },
+        "findings": []
+    });
+
+    assert_matches_schema("receipt.json", &json);
+}
+
+#[test]
 fn up_dry_run_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
@@ -3252,4 +3343,108 @@ exit 125
         false,
     );
     assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn replay_baseline_record_and_promote_json_match_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: replay-baseline-json
+artifacts:
+  recorded:
+    kind: replay_baseline
+    producer: record
+    paths: [data/baseline.txt]
+    replay:
+      authority_manifest: replay/recorded.ota.json
+      consumption: read_only
+tasks:
+  record:
+    action:
+      kind: ensure_file
+      path: data/baseline.txt
+      value: recorded
+  replay:
+    action:
+      kind: ensure_directory
+      path: scratch
+    requires_artifacts: [recorded]
+agent:
+  safe_tasks: [replay]
+"#,
+    )
+    .expect("contract");
+    for args in [
+        vec!["init"],
+        vec!["config", "user.email", "ota@example.com"],
+        vec!["config", "user.name", "Ota Tests"],
+        vec!["add", "ota.yaml"],
+        vec!["commit", "-m", "baseline contract"],
+    ] {
+        Command::new("git")
+            .args(args)
+            .current_dir(fixture.path())
+            .status()
+            .expect("git command")
+            .success()
+            .then_some(())
+            .expect("git command succeeds");
+    }
+
+    let recorded = run_ota(
+        &[
+            "baseline",
+            "record",
+            "--artifact",
+            "recorded",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("replay-baseline.json", &recorded);
+    let attestation = recorded["attestation"].as_str().expect("attestation");
+    let attestation_json: Value = serde_json::from_slice(
+        &fs::read(fixture.path().join(attestation)).expect("recorded attestation"),
+    )
+    .expect("attestation json");
+    assert_matches_schema("replay-baseline-authority.json", &attestation_json);
+    let mut missing_boundary_graph = attestation_json.clone();
+    missing_boundary_graph
+        .as_object_mut()
+        .expect("attestation object")
+        .remove("execution_boundary_graph_identity");
+    assert_rejects_schema("replay-baseline-authority.json", &missing_boundary_graph);
+    let promoted = run_ota(
+        &[
+            "baseline",
+            "promote",
+            "--artifact",
+            "recorded",
+            "--attestation",
+            attestation,
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("replay-baseline.json", &promoted);
+    let authority_manifest = promoted["authority_manifest"]
+        .as_str()
+        .expect("authority manifest");
+    let authority_json: Value = serde_json::from_slice(
+        &fs::read(fixture.path().join(authority_manifest)).expect("authority manifest file"),
+    )
+    .expect("authority manifest json");
+    assert_matches_schema("replay-baseline-authority.json", &authority_json);
+    let mut missing_attestation = authority_json.clone();
+    missing_attestation
+        .as_object_mut()
+        .expect("authority manifest object")
+        .remove("attestation");
+    assert_rejects_schema("replay-baseline-authority.json", &missing_attestation);
 }

@@ -219,6 +219,26 @@ pub fn evaluate_execution_boundary(
     Ok(record)
 }
 
+/// Canonical runner-authored boundary evidence when no material prerequisite adapter observed a
+/// graph for the selected execution. The empty closure deliberately derives `unknown`; it never
+/// turns absent observation into a freshness or derivation claim.
+pub fn unknown_execution_boundary_record() -> ExecutionBoundaryRecord {
+    evaluate_execution_boundary(ExecutionBoundaryRecord {
+        schema_version: EXECUTION_BOUNDARY_SCHEMA_VERSION,
+        identity: String::new(),
+        asserted_target_closure: Vec::new(),
+        derivation_input_closure: Vec::new(),
+        prerequisites: Vec::new(),
+        edges: Vec::new(),
+        target_freshness: TargetFreshness::Unknown,
+        derivation_posture: DerivationPosture {
+            materialization: MaterializationPosture::Unknown,
+            immutable_inputs: ImmutableInputPosture::Unknown,
+        },
+    })
+    .expect("an empty execution boundary is canonical unknown evidence")
+}
+
 fn normalize_prerequisites(prerequisites: &mut [BoundaryPrerequisite]) -> Result<(), String> {
     for prerequisite in &mut *prerequisites {
         if prerequisite.id.trim().is_empty() {
@@ -508,6 +528,12 @@ fn derive_target_freshness(record: &ExecutionBoundaryRecord) -> TargetFreshness 
 }
 
 fn derive_derivation_posture(record: &ExecutionBoundaryRecord) -> DerivationPosture {
+    if record.prerequisites.is_empty() {
+        return DerivationPosture {
+            materialization: MaterializationPosture::Unknown,
+            immutable_inputs: ImmutableInputPosture::Unknown,
+        };
+    }
     let cache_assisted = record
         .edges
         .iter()
@@ -899,6 +925,20 @@ mod tests {
             evaluate_execution_boundary(record)
                 .expect_err("assertion must inherit its matched producer boundary and scope")
                 .contains("producer-bound asserted-at edge")
+        );
+    }
+
+    #[test]
+    fn empty_runner_boundary_is_canonical_unknown_evidence() {
+        let boundary = unknown_execution_boundary_record();
+        assert!(!boundary.identity.is_empty());
+        assert!(boundary.prerequisites.is_empty());
+        assert!(boundary.asserted_target_closure.is_empty());
+        assert!(boundary.derivation_input_closure.is_empty());
+        assert_eq!(boundary.target_freshness, TargetFreshness::Unknown);
+        assert_eq!(
+            boundary.derivation_posture.materialization,
+            MaterializationPosture::Unknown
         );
     }
 }

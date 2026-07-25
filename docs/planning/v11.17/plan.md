@@ -27,9 +27,10 @@
 
 # V11.17: Trusted Replay Baseline Regeneration
 
-Status: planned. This follows V11.16 under version discipline. It extends V11.10 replay-input
-governance and V11.13 producer-owned artifact lineage; it does not reopen their completed core
-models.
+Status: active implementation. This follows V11.16 under version discipline. It extends V11.10
+replay-input governance and V11.13 producer-owned artifact lineage; it does not reopen their
+completed core models. Core validation is in progress; Bedrock promotion pressure requires an
+intentional credentialed recording and must not be fabricated from the committed fixture.
 
 ## V11.16 Evidence Dependency
 

@@ -58,6 +58,7 @@ use crate::provisioning::{
     ProvisioningFailureKind, probe_provisioning_installability_with_target,
     render_provisioning_action_command,
 };
+use crate::replay_baseline::verify_promoted_replay_baseline;
 use crate::runner::{
     DeclaredEnvSourceStatus, ExecutionOverrides, HttpReadinessRequest, HttpReadinessStatus,
     LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
@@ -4942,6 +4943,15 @@ fn diagnose_contract_with_scope(
         );
         diagnose_selected_task_effects(contract, workflow_name, &mut findings);
     }
+    if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
+        diagnose_replay_baseline_authority(
+            contract,
+            contract_path,
+            workflow_name,
+            task_name,
+            &mut findings,
+        );
+    }
     if scope == DoctorScope::All
         && findings
             .iter()
@@ -4992,6 +5002,62 @@ fn diagnose_contract_with_scope(
         adapter_bootstrap,
         execution_target,
         findings,
+    }
+}
+
+// Replay baseline authority is runtime state, not contract syntax. Diagnose it from the same
+// selected closure that will consume it so Doctor blocks a stale or unavailable baseline before
+// a replay task reaches the runner.
+fn diagnose_replay_baseline_authority(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    findings: &mut Vec<Finding>,
+) {
+    let task_names = task_name
+        .map(|name| contract.task_dependency_closure_names([name.to_string()]))
+        .unwrap_or_else(|| contract.selected_workflow_task_closure_names(workflow_name));
+    let root = contract_working_dir(contract_path);
+    let mut checked_artifacts = BTreeSet::new();
+
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        for artifact_name in &task.requires_artifacts {
+            if !checked_artifacts.insert(artifact_name.clone()) {
+                continue;
+            }
+            let Some(artifact) = contract.artifacts.get(artifact_name) else {
+                continue;
+            };
+            if artifact.kind != crate::schema::GeneratedArtifactKind::ReplayBaseline {
+                continue;
+            }
+            let replay = artifact
+                .replay
+                .as_ref()
+                .expect("validated replay baseline artifacts declare replay authority");
+            if let Err(reason) = verify_promoted_replay_baseline(
+                root,
+                artifact_name,
+                &artifact.paths,
+                &replay.authority_manifest,
+            ) {
+                findings.push(Finding::identified(
+                    "OTA_REPLAY_BASELINE_UNAVAILABLE",
+                    "replay",
+                    "repo_contract",
+                    FindingSeverity::Error,
+                    format!("Replay baseline unavailable: {artifact_name}"),
+                    reason,
+                    format!(
+                        "record a replacement with `ota baseline record --artifact {artifact_name}`, review its output, then explicitly promote its attestation before rerunning `ota doctor` or the replay consumer"
+                    ),
+                ));
+            }
+        }
     }
 }
 
@@ -27343,5 +27409,93 @@ workflows:
             finding.summary != "Surface readiness failed: backend"
                 && finding.summary != "Surface readiness timed out: backend"
         }));
+    }
+
+    #[test]
+    fn doctor_blocks_a_selected_replay_baseline_when_its_promoted_output_drifted() {
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let output_path = repo.path().join("data/baseline.json");
+        fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+        fs::write(&output_path, "{\"version\":1}\n").unwrap();
+        let contract_text = r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record
+    paths:
+      - data/baseline.json
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: read_only
+tasks:
+  record:
+    run: "true"
+  replay:
+    run: "cat data/baseline.json"
+    requires_artifacts:
+      - recorded-baseline
+workflows:
+  default: verify
+  verify:
+    run:
+      task: replay
+"#;
+        fs::write(&contract_path, contract_text).unwrap();
+        let contract = parse_contract_str(&contract_path, contract_text).unwrap();
+        let outputs = crate::replay_baseline::capture_replay_baseline_output_manifest(
+            repo.path(),
+            &[String::from("data/baseline.json")],
+        )
+        .unwrap();
+        let attestation = crate::replay_baseline::ReplayBaselineAttestation {
+            schema_version: 1,
+            artifact: String::from("recorded-baseline"),
+            producer: String::from("record"),
+            execution_scope: String::from("task:record"),
+            execution_mode: String::from("native"),
+            execution_lifecycle: None,
+            outputs,
+            contract_identity: String::from("sha256:contract"),
+            source_identity: String::from("git:source"),
+            execution_receipt_identity: String::from("sha256:receipt"),
+            execution_receipt_archive: String::from(".ota/receipts/record.json"),
+            execution_boundary_graph_identity: String::from("sha256:boundary"),
+            asserted_target_closure_identity: String::from("sha256:target"),
+            derivation_input_closure_identity: String::from("sha256:derivation"),
+            created_at: String::from("2026-07-25T00:00:00Z"),
+        };
+        let manifest = crate::replay_baseline::promote_replay_baseline_attestation(
+            &attestation,
+            String::from("2026-07-25T00:00:00Z"),
+        )
+        .unwrap();
+        let authority_path = repo.path().join("replay/recorded-baseline.ota.json");
+        fs::create_dir_all(authority_path.parent().unwrap()).unwrap();
+        fs::write(
+            authority_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        fs::write(&output_path, "{\"version\":2}\n").unwrap();
+
+        let report = super::diagnose_contract_with_mode_and_lifecycle_for_workflow(
+            &contract,
+            &contract_path,
+            DoctorMode::Native,
+            None,
+            Some("verify"),
+        );
+
+        assert!(!report.ok, "{report:?}");
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.code() == "OTA_REPLAY_BASELINE_UNAVAILABLE")
+            .expect("expected replay baseline finding");
+        assert!(finding.why.contains("does not match promoted authority"));
     }
 }

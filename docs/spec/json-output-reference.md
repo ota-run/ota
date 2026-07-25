@@ -22,6 +22,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
 - [json-schemas/proof-lifecycle.json](json-schemas/proof-lifecycle.json)
 - [json-schemas/refusal-canary.json](json-schemas/refusal-canary.json)
+- [json-schemas/replay-baseline.json](json-schemas/replay-baseline.json)
+- [json-schemas/replay-baseline-authority.json](json-schemas/replay-baseline-authority.json)
 - [json-schemas/services.json](json-schemas/services.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
@@ -976,6 +978,28 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
 
 The command schema is [proof-lifecycle.json](json-schemas/proof-lifecycle.json); archived records
 use [proof-lifecycle-archive.json](json-schemas/proof-lifecycle-archive.json).
+
+## `ota baseline record|promote --json`
+
+The command-result schema is [replay-baseline.json](json-schemas/replay-baseline.json). The
+portable recorded attestation and committed authority-manifest schema is
+[replay-baseline-authority.json](json-schemas/replay-baseline-authority.json).
+
+- `state: recorded` means Ota executed the declared producer successfully and emitted one
+  content-addressed attestation bound to the archived execution receipt, exact task scope, and
+  resolved backend/lifecycle. It does not select that record for replay.
+- `state: promoted` means an explicit caller selected one previously recorded attestation and Ota
+  atomically wrote the declared portable authority manifest. The manifest embeds that immutable
+  attestation, so a fresh clone can re-derive selected producer provenance without local `.ota`
+  archive retention.
+- `attestation_identity` always identifies the selected Ota-authored attestation. `promotion_identity`
+  is present only after promotion.
+- `ok: false` has `code: replay_baseline_operation_failed`; no partial producer output, newest
+  record, or handwritten digest is implicitly promoted.
+
+Consumers validate the portable promoted authority and its complete output identity set before
+execution. The record and promotion JSON do not claim that a human reviewed or approved the
+change.
 
 ## `ota proof runtime --json`
 
@@ -2270,6 +2294,26 @@ separately from `evaluated_inputs[]`. Each trace is `evidence_class: attested`, 
 path, source SHA-256 identity, and per-subject/per-run identity records, and summarizes divergent subjects. Query
 identities are observed behavior, not current-run decision inputs; a divergence identifies a
 changed query shape without claiming model causality or a negative-control result.
+
+A baseline producer receipt carries its own Ota-authored attestation reference in
+`witnessed_observations.replay_baseline_recordings[]`. Each record is `evidence_class: attested`
+and binds the artifact, producer task, actual scope/backend/lifecycle, attestation identity, and
+local archive path. Promotion verifies this reference and the receipt evidence identity before it
+can select the attestation; replay consumer receipts carry the separate promoted authority below.
+The attestation also requires a V11.16 execution-boundary graph identity and identities for both
+selected closures. An empty graph is explicit `unknown` runner evidence, not an omitted claim that
+the producer had no material prerequisites.
+
+When a selected task consumes `kind: replay_baseline`, receipt `evaluated_inputs[]` emits
+`kind: promoted_replay_baseline` and `input_class: promoted_replay_baseline` only after Ota has
+verified the current declared outputs against the portable promoted authority manifest. Its
+`artifact_lineage.replay_authority` binds the receipt to the manifest path, selected attestation
+identity, promotion identity, and declared consumption posture. `read_only` means the selected backend
+enforced a runner-owned overlay. `verify_unchanged` means Ota verified the complete output set
+before and after execution and upgrades to that overlay when the selected ephemeral container can
+enforce it; `replay_artifact_mutation_detected` reports a changed baseline rather than claiming
+the write was refused. This is selected replay authority, not a claim that the regeneration
+producer ran in the replay lane.
 
 For selected structured hydration lanes, `ota up --json` also emits a typed
 `receipt.evaluated_inputs[]` record with `kind: hydration_provenance`. Its runner-derived nested
