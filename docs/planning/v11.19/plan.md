@@ -25,7 +25,8 @@
 
 # V11.19: Typed uv Local-Project Hydration
 
-Status: active. This is the current implementation slice after V11.18. It narrows one real
+Status: active. The implementation and first Dograh pressure proof are complete; one independent
+local-project pressure target remains before this slice can close. It narrows one real
 package-hydration gap before any Dev Container adapter work begins.
 
 ## Problem
@@ -180,6 +181,17 @@ it is not a `pip_local_project` mode or a generic `--container` switch.
    behavior changes.
 6. Pressure-test Dograh's API lane without the current opaque Pipecat commands, then pressure an
    independent Python repository that uses a different local-project/extras or group shape.
+
+## Pressure Evidence
+
+Dograh [run 30163022205](https://github.com/bobaikato/dograh/actions/runs/30163022205) proves the
+first target against exact Core commit `f5343ab9`. Its matrix validates and diagnoses the contract,
+lists public and agent-safe task surfaces, dry-runs the API workflow, asserts the single typed
+`setup:pipecat` source renders `pip_local_project` with editable installation and ordered `dev`
+group hydration, proves the agent boundary, and executes the API lifecycle proof through declared
+PostgreSQL and Redis services. The receipt/proof remains bounded: Dograh advertises native Linux
+and macOS execution only; its Dev Container, unpinned Node validator install, and GitHub-service
+versus local-Compose topology are not promoted into this proof.
 
 ## Acceptance Bar
 

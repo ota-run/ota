@@ -36,13 +36,15 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
 - active implementation slice: V11.19 typed uv local-project hydration. Dograh pressure
-  run [30131761139](https://github.com/bobaikato/dograh/actions/runs/30131761139) proves the
-  bounded native API/Pipecat/PostgreSQL/Redis lane against Core `ee7efea64`, but preserves two
-  explicit Ota gaps: its editable Pipecat extras plus dependency-group installation currently
-  requires structured commands rather than one typed uv source, and its Dev Container remains a
-  separate ungoverned contributor boundary. V11.19 owns only the former; a later Dev Container
-  adapter must not be smuggled into hydration scope. The unpinned Node validator `npm install` and
-  GitHub-service versus local-Compose topology divergence remain explicit replay/proof boundaries.
+  [run 30163022205](https://github.com/bobaikato/dograh/actions/runs/30163022205) proves the
+  released implementation commit `f5343ab9`: its native API lane resolves Pipecat as one typed
+  editable local-project hydration with ordered `dev` group installation and observed manifest,
+  lockfile, and Git source identities, then completes the bounded PostgreSQL/Redis lifecycle
+  proof. Dograh does not advertise a container execution mode; its Dev Container remains a
+  separate ungoverned contributor boundary, not a hydration substitute. The unpinned Node
+  validator `npm install` and GitHub-service versus local-Compose topology divergence remain
+  explicit replay/proof boundaries. V11.19 still requires one independent repository with a
+  different local-project shape before completion.
 - active finite-command interaction slice: omitted `tasks.<name>.command.interaction` resolves to
   `auto`, allowing terminal passthrough only for human native terminal execution. Explicit
   `forbidden` keeps every prepared closure step noninteractive, while `required` refuses before
