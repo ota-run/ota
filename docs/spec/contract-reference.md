@@ -296,11 +296,13 @@ artifacts:
     consumption: read_only
   ```
 
-  The producer is never agent-safe. For a `generated_source` artifact, a task that requires the
-  artifact and lists its producer in top-level `depends_on` remains an ordinary lineage consumer;
-  it runs the current producer and does not consume promoted replay authority. A task that requires
-  that artifact without the unconditional producer dependency is a replay consumer. A dedicated
-  `replay_baseline` artifact always remains a replay consumer. The artifact keeps its declared `kind`, so replay authority
+  For a `generated_source` artifact, producer safety remains the ordinary task-governance decision.
+  A task that requires the artifact and lists its producer in top-level `depends_on` remains an
+  ordinary lineage consumer; it runs the current producer and does not consume promoted replay
+  authority. A task that requires that artifact without the unconditional producer dependency is a
+  replay consumer. A dedicated `replay_baseline` artifact's producer must not be agent-safe, and
+  every consumer of that dedicated artifact uses replay authority. `ota baseline record` is the separate explicit
+  recording command; it is never inferred from an agent-safe task. The artifact keeps its declared `kind`, so replay authority
   does not erase generated-source lineage. Run
   `ota baseline record --artifact <name>` to issue a receipt-bound recorded attestation, then
   explicitly select that exact attestation with `ota baseline promote --artifact <name> --attestation <path>`.

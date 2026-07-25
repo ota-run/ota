@@ -276,13 +276,18 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
             }
             _ => {}
         }
-        if is_replay_authority_artifact
-            && contract.agent.as_ref().is_some_and(|agent| {
+        let producer_declared_agent_safe = contract
+            .tasks
+            .get(artifact.producer.as_str())
+            .is_some_and(|task| task.safe_for_agent)
+            || contract.agent.as_ref().is_some_and(|agent| {
                 agent
                     .safe_tasks
                     .iter()
                     .any(|task| task == &artifact.producer)
-            })
+            });
+        if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline
+            && producer_declared_agent_safe
         {
             errors.push(ValidationError::new(format!(
                 "replay baseline artifact `{artifact_name}` producer `{}` must not be agent-safe",
@@ -43455,6 +43460,7 @@ artifacts:
 tasks:
   generate:
     run: true
+    safe_for_agent: true
   check-current:
     run: true
     depends_on: [generate]
@@ -43563,6 +43569,7 @@ tasks:
     command:
       exe: python
       args: [record.py]
+    safe_for_agent: true
   setup:
     command:
       exe: true
@@ -43574,7 +43581,7 @@ tasks:
     depends_on: [setup]
     requires_artifacts: [recorded-baseline]
 agent:
-  safe_tasks: [record:live, replay]
+  safe_tasks: [replay]
 "#,
         )
         .unwrap();
@@ -43586,6 +43593,46 @@ agent:
             rendered.contains("must declare `replay.authority_manifest`"),
             "{rendered}"
         );
+        assert!(rendered.contains("must not be agent-safe"), "{rendered}");
+    }
+
+    #[test]
+    fn rejects_replay_baseline_producer_listed_in_agent_safe_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/fixture.jsonl]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: verify_unchanged
+tasks:
+  record:live:
+    command:
+      exe: python
+      args: [record.py]
+  replay:
+    command:
+      exe: python
+      args: [replay.py]
+    requires_artifacts: [recorded-baseline]
+agent:
+  safe_tasks: [record:live, replay]
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = validate_contract(&contract)
+            .expect_err(
+                "dedicated replay-baseline producers must stay outside agent-safe execution",
+            )
+            .to_string();
         assert!(rendered.contains("must not be agent-safe"), "{rendered}");
     }
 

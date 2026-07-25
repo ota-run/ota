@@ -97,8 +97,10 @@ The resulting rules are:
 
 - a replay baseline is a named artifact with one declared producer task;
 - the producer is explicitly classified as a regeneration lane and is never selected by a replay
-  consumer or agent-safe execution; a producer-dependent consumer remains ordinary generated-source
-  lineage execution;
+  consumer. A dedicated `replay_baseline` producer is never agent-safe; an additive
+  `generated_source` retains its ordinary task-safety posture, while `ota baseline record` remains
+  the separate explicit recording path. A producer-dependent consumer remains ordinary
+  generated-source lineage execution;
 - replay consumers declare the baseline through existing artifact/input ownership without the
   producer dependency and may read it, but cannot rewrite it;
 - Ota captures the produced path identities only after the declared producer succeeds and records
