@@ -3543,15 +3543,17 @@ fn dependency_hydration_command_specs(
                 interaction: None,
             }]
         }
-        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
-            vec![crate::schema::TaskCommandSpec {
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => source
+            .command_arg_sets()
+            .into_iter()
+            .map(|args| crate::schema::TaskCommandSpec {
                 exe: String::from("uv"),
-                args: source.command_args(),
+                args,
                 cwd: Some(source.cwd.clone()),
                 runtime_projection: None,
                 interaction: None,
-            }]
-        }
+            })
+            .collect(),
         crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
             let mut args = vec![String::from("install")];
             if !source.groups.is_empty() {
@@ -13007,15 +13009,19 @@ fn prepare_task_shell_command(
                     shell_quote_command_word(source.cwd.trim(), quote_style)
                 )),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
-                    let command = std::iter::once(String::from("uv"))
-                        .chain(
-                            source
-                                .command_args()
-                                .into_iter()
-                                .map(|argument| shell_quote_command_word(&argument, quote_style)),
-                        )
+                    let command = source
+                        .command_arg_sets()
+                        .into_iter()
+                        .map(|args| {
+                            std::iter::once(String::from("uv"))
+                                .chain(args.into_iter().map(|argument| {
+                                    shell_quote_command_word(&argument, quote_style)
+                                }))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
                         .collect::<Vec<_>>()
-                        .join(" ");
+                        .join(" && ");
                     Ok(format!(
                         "cd {} && {}",
                         shell_quote_command_word(source.cwd.trim(), quote_style),

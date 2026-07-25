@@ -56,6 +56,7 @@ Source direction:
 - [V11.16 plan](../v11.16/plan.md)
 - [V11.17 plan](../v11.17/plan.md)
 - [V11.18 plan](../v11.18/plan.md)
+- [V11.19 plan](../v11.19/plan.md)
 
 V11 theme:
 
@@ -163,6 +164,12 @@ The following planned replay-governance slice is:
 The following planned lifecycle-proof slice is:
 
 - [V11.18: managed lifecycle-sequence proof](../v11.18/plan.md)
+
+The next planned typed-hydration slice is:
+
+- [V11.19: typed uv local-project hydration](../v11.19/plan.md) - Dograh exposed the first
+  pressure case: editable local-project extras plus ordered dependency-group installation cannot
+  yet be owned as one typed uv hydration source.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 

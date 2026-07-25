@@ -702,6 +702,11 @@
   `source.requirements_file` for structural `uv pip install -r ...`, and
   `action.kind: ensure_virtualenv` now owns deterministic repo-local virtualenv materialization
   such as `.venv` without shell glue
+- widened typed uv dependency hydration again with `mode: pip_local_project`, so contract-owned
+  local project installs such as `uv pip install -e ./packages/sdk[cli]` plus declared dependency
+  groups now stay on the first-class hydration surface instead of collapsing into shell glue; Ota
+  now captures the local project's `pyproject.toml` and optional lockfile identities before
+  execution for doctor, dry-run, receipt, and replay-grade preflight
 - widened dependency-hydration governance so raw `uv sync` and raw
   `uv pip install -r requirements.txt` lanes now produce replaceable-ownership advisories instead
   of hiding a first-class Ota setup surface behind shell or command bodies

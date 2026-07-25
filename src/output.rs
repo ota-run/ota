@@ -643,6 +643,32 @@ pub struct ExecutionReceiptHydrationProvenance {
     pub source_kind: String,
     pub declared: ExecutionReceiptHydrationSourcePosture,
     pub resolved: ExecutionReceiptHydrationSourcePosture,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_project: Option<ExecutionReceiptUvLocalProjectProvenance>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptUvLocalProjectProvenance {
+    pub path: String,
+    pub editable: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extras: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+    pub manifest_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_identity_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockfile_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockfile_identity: Option<String>,
+    pub resolution: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -5231,6 +5257,10 @@ pub struct TaskPrepareSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_hydration_provenance: Option<TaskHydrationProvenanceSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_uv_local_project: Option<TaskUvLocalProjectSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_uv_local_project: Option<WorkspaceTaskUvLocalProjectSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSummary<'a>>,
 }
 
@@ -5282,6 +5312,10 @@ pub struct WorkspaceTaskPrepareSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_hydration_provenance: Option<WorkspaceTaskHydrationProvenanceSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_uv_local_project: Option<WorkspaceTaskUvLocalProjectSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_uv_local_project: Option<WorkspaceTaskUvLocalProjectSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<WorkspaceTaskComposeInvocationSummary>,
 }
 
@@ -5318,6 +5352,46 @@ pub struct WorkspaceTaskHydrationSourceIdentity {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub url: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct TaskUvLocalProjectSummary<'a> {
+    pub path: &'a str,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub editable: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extras: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockfile: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct WorkspaceTaskUvLocalProjectSummary {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub editable: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extras: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockfile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_identity_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockfile_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -5771,6 +5845,8 @@ pub fn summarize_task_prepare(
             browsers: Vec::new(),
             declared_hydration_provenance: None,
             resolved_hydration_provenance: None,
+            declared_uv_local_project: None,
+            resolved_uv_local_project: None,
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
@@ -5881,6 +5957,8 @@ fn summarize_tool_bootstrap_prepare_spec(
             .collect(),
         declared_hydration_provenance: None,
         resolved_hydration_provenance: None,
+        declared_uv_local_project: None,
+        resolved_uv_local_project: None,
         compose: None,
     }
 }
@@ -5890,6 +5968,8 @@ fn summarize_dependency_hydration_prepare_spec(
 ) -> TaskPrepareSummary<'_> {
     let mut declared_hydration_provenance = None;
     let resolved_hydration_provenance = None;
+    let mut declared_uv_local_project = None;
+    let resolved_uv_local_project = None;
     let (
         source_kind,
         cwd,
@@ -5988,6 +6068,7 @@ fn summarize_dependency_hydration_prepare_spec(
             Some(match source.mode {
                 crate::schema::TaskUvHydrationMode::Sync => "sync",
                 crate::schema::TaskUvHydrationMode::PipRequirements => "pip_requirements",
+                crate::schema::TaskUvHydrationMode::PipLocalProject => "pip_local_project",
             }),
             None,
             Vec::new(),
@@ -6146,6 +6227,17 @@ fn summarize_dependency_hydration_prepare_spec(
             offline: source.offline,
         };
         declared_hydration_provenance = Some(provenance);
+        declared_uv_local_project =
+            source
+                .local_project
+                .as_ref()
+                .map(|project| TaskUvLocalProjectSummary {
+                    path: project.path.as_str(),
+                    editable: project.editable,
+                    extras: project.extras.iter().map(String::as_str).collect(),
+                    groups: project.groups.iter().map(String::as_str).collect(),
+                    lockfile: project.lockfile.as_deref(),
+                });
     }
     TaskPrepareSummary {
         kind: "dependency_hydration",
@@ -6183,6 +6275,8 @@ fn summarize_dependency_hydration_prepare_spec(
         browsers: Vec::new(),
         declared_hydration_provenance,
         resolved_hydration_provenance,
+        declared_uv_local_project,
+        resolved_uv_local_project,
         compose,
     }
 }
@@ -6217,6 +6311,29 @@ fn declared_hydration_provenance_summary(
     }
 }
 
+pub(crate) fn declared_uv_local_project_summary(
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+) -> Option<WorkspaceTaskUvLocalProjectSummary> {
+    let crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) = source else {
+        return None;
+    };
+    let project = source.local_project.as_ref()?;
+    Some(WorkspaceTaskUvLocalProjectSummary {
+        path: project.path.clone(),
+        editable: project.editable,
+        extras: project.extras.clone(),
+        groups: project.groups.clone(),
+        lockfile: project.lockfile.clone(),
+        manifest_path: None,
+        manifest_identity: None,
+        source_identity: None,
+        source_identity_error: None,
+        lockfile_identity: None,
+        resolution: None,
+        resolution_error: None,
+    })
+}
+
 fn empty_task_prepare_summary(kind: &'static str) -> TaskPrepareSummary<'static> {
     TaskPrepareSummary {
         kind,
@@ -6242,6 +6359,8 @@ fn empty_task_prepare_summary(kind: &'static str) -> TaskPrepareSummary<'static>
         browsers: Vec::new(),
         declared_hydration_provenance: None,
         resolved_hydration_provenance: None,
+        declared_uv_local_project: None,
+        resolved_uv_local_project: None,
         compose: None,
     }
 }
@@ -6278,6 +6397,8 @@ pub fn summarize_task_prepare_owned(
             browsers: Vec::new(),
             declared_hydration_provenance: None,
             resolved_hydration_provenance: None,
+            declared_uv_local_project: None,
+            resolved_uv_local_project: None,
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
@@ -6328,6 +6449,8 @@ pub fn summarize_task_prepare_owned(
                     .collect(),
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 compose: None,
             })
         }
@@ -6571,6 +6694,8 @@ pub fn summarize_task_prepare_owned(
             };
             let mut declared_hydration_provenance = None;
             let mut resolved_hydration_provenance = None;
+            let declared_uv_local_project = declared_uv_local_project_summary(&spec.source);
+            let resolved_uv_local_project = None;
             if let Some(provenance) = declared_hydration_provenance_summary(&spec.source) {
                 declared_hydration_provenance = Some(provenance.clone());
                 resolved_hydration_provenance = None;
@@ -6616,6 +6741,8 @@ pub fn summarize_task_prepare_owned(
                 browsers: Vec::new(),
                 declared_hydration_provenance,
                 resolved_hydration_provenance,
+                declared_uv_local_project,
+                resolved_uv_local_project,
                 compose,
             })
         }
@@ -6694,6 +6821,8 @@ fn empty_workspace_task_prepare_summary(kind: &'static str) -> WorkspaceTaskPrep
         browsers: Vec::new(),
         declared_hydration_provenance: None,
         resolved_hydration_provenance: None,
+        declared_uv_local_project: None,
+        resolved_uv_local_project: None,
         compose: None,
     }
 }
@@ -6749,6 +6878,23 @@ pub fn workspace_prepare_summary_from_task_prepare_summary(
                 resolution_error: None,
             }
         }),
+        declared_uv_local_project: summary.declared_uv_local_project.map(|value| {
+            WorkspaceTaskUvLocalProjectSummary {
+                path: value.path.to_string(),
+                editable: value.editable,
+                extras: value.extras.into_iter().map(str::to_string).collect(),
+                groups: value.groups.into_iter().map(str::to_string).collect(),
+                lockfile: value.lockfile.map(str::to_string),
+                manifest_path: None,
+                manifest_identity: None,
+                source_identity: None,
+                source_identity_error: None,
+                lockfile_identity: None,
+                resolution: None,
+                resolution_error: None,
+            }
+        }),
+        resolved_uv_local_project: summary.resolved_uv_local_project,
         compose: summary
             .compose
             .map(|compose| WorkspaceTaskComposeInvocationSummary {

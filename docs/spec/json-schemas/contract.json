@@ -1547,8 +1547,20 @@
           "properties": {
             "kind": { "const": "uv" },
             "cwd": { "type": "string" },
-            "mode": { "enum": ["sync", "pip_requirements"] },
+            "mode": { "enum": ["sync", "pip_requirements", "pip_local_project"] },
             "requirements_file": { "type": "string" },
+            "local_project": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string" },
+                "editable": { "type": "boolean" },
+                "extras": { "$ref": "#/$defs/stringArray" },
+                "groups": { "$ref": "#/$defs/stringArray" },
+                "lockfile": { "type": "string" }
+              }
+            },
             "default_index": { "type": "string" },
             "indexes": { "type": "array", "items": { "type": "string" } },
             "offline": { "type": "boolean" },

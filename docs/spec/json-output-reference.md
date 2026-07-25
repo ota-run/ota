@@ -2278,6 +2278,11 @@ posture. For `.NET restore` and `uv`, the resolved record may include typed
 `source_identities[]`, or an explicit unavailable resolution when source selection would require
 ambient configuration. `uv` additionally carries its declared `offline` posture; cache-only
 execution does not turn an undeclared cache source into resolved provenance.
+For `uv` `mode: pip_local_project`, the same record carries `local_project`: the declared path,
+editable posture, extras, and ordered groups together with runner-observed manifest and optional
+lockfile identities. `source_identity` is present only when Ota can recover a clean Git identity
+for that local project; `source_identity_error` keeps a dirty or unavailable source explicit
+instead of treating the manifest hash as a source pin.
 Consumers must not replace this captured input with a later config-file read when evaluating the
 execution receipt. During replay, an unavailable hydration resolution remains `narrowing` evidence
 and cannot make a lane hermetic; only a matching resolved source identity can acquit the named
@@ -3427,7 +3432,8 @@ Use this when a human or agent needs the selected run plan before execution:
   selected source kind, working directory, Compose file and env-file sets, package filter/groups,
   browser targets, and hydration posture, including additive
   `declared_hydration_provenance` and `resolved_hydration_provenance` for hydration-owned source
-  posture such as `.NET restore` `config_file` and explicit `sources[]`; the declared record is
+  posture such as `.NET restore` `config_file`, explicit `sources[]`, or uv local-project
+  declaration; the declared record is
   contract truth, while the resolved record can add parsed `source_identities[]` with stable feed
   `url` and, when config-backed, its declared `name`, plus `resolution: resolved|unavailable` and
   `resolution_error` when Ota could not recover the config-backed source set honestly; an
@@ -4845,7 +4851,9 @@ Optional fields:
   introduced/resolved/unchanged counts
 - `plan.dependency_steps[]`: additive selected setup/dependency-plane preview for the chosen `up`
   path; when a planned step is a structured hydration lane, `prepare.declared_hydration_provenance`
-  and `prepare.resolved_hydration_provenance` publish the selected source posture on the same
+  and `prepare.resolved_hydration_provenance` publish the selected source posture, while
+  `prepare.declared_uv_local_project` and `prepare.resolved_uv_local_project` keep declared and
+  runner-observed local-project identity separate, on the same
   canonical carrier; the declared record preserves contract-owned `config_file` or explicit
   `sources[]`, while the resolved record adds parsed config-backed `source_identities[]` plus
   `resolution: resolved|unavailable` and an honest `resolution_error` when source recovery fails;
@@ -5129,8 +5137,9 @@ The nested `receipt` object can also include:
   as a current-run replay decision.
 - a typed `evaluated_inputs[]` `hydration_provenance` record when `ota up` selects a structured
   hydration lane with source posture. Its runner-derived nested detail keeps contract-declared
-  source posture separate from the resolved execution-time identity; it is not a historical query
-  observation or a substitute for a later config-file read.
+  source posture separate from the resolved execution-time identity. For uv local-project hydration
+  it also records manifest, optional lockfile, and clean source identity separately; it is not a
+  historical query observation or a substitute for a later config-file read.
 - the same selected Node hydration lane can also record `runtime:node` with the contract-local
   `node --version` observed while authoring the receipt. This is intentionally a runtime-version
   observation, not an executable or image digest.

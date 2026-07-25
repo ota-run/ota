@@ -6278,6 +6278,97 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
+                    match source.mode {
+                        crate::schema::TaskUvHydrationMode::Sync => {
+                            if source.requirements_file.is_some() || source.local_project.is_some()
+                            {
+                                errors.push(ValidationError::new(format!(
+                                    "task `{task_name}` prepare `uv` with `mode: sync` must omit `prepare.source.requirements_file` and `prepare.source.local_project`"
+                                )));
+                            }
+                        }
+                        crate::schema::TaskUvHydrationMode::PipRequirements => {
+                            if source
+                                .requirements_file
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|path| !path.is_empty())
+                                .is_none()
+                            {
+                                errors.push(ValidationError::new(format!(
+                                    "task `{task_name}` prepare `uv` with `mode: pip_requirements` must declare a non-empty `prepare.source.requirements_file`"
+                                )));
+                            } else if let Some(path) = source.requirements_file.as_deref() {
+                                validate_repo_relative_file_action_path(
+                                    task_name,
+                                    "prepare.source.requirements_file",
+                                    path,
+                                    errors,
+                                );
+                            }
+                            if source.local_project.is_some() {
+                                errors.push(ValidationError::new(format!(
+                                    "task `{task_name}` prepare `uv` with `mode: pip_requirements` must omit `prepare.source.local_project`"
+                                )));
+                            }
+                        }
+                        crate::schema::TaskUvHydrationMode::PipLocalProject => {
+                            if source.requirements_file.is_some() {
+                                errors.push(ValidationError::new(format!(
+                                    "task `{task_name}` prepare `uv` with `mode: pip_local_project` must omit `prepare.source.requirements_file`"
+                                )));
+                            }
+                            if let Some(project) = source.local_project.as_ref() {
+                                if project.path.trim().is_empty() {
+                                    errors.push(ValidationError::new(format!(
+                                        "task `{task_name}` prepare `uv` local project must declare a non-empty `prepare.source.local_project.path`"
+                                    )));
+                                } else {
+                                    validate_repo_relative_file_action_path(
+                                        task_name,
+                                        "prepare.source.local_project.path",
+                                        project.path.as_str(),
+                                        errors,
+                                    );
+                                }
+                                if let Some(lockfile) = project.lockfile.as_deref() {
+                                    if lockfile.trim().is_empty() {
+                                        errors.push(ValidationError::new(format!(
+                                            "task `{task_name}` prepare `uv` local project lockfile must be non-empty when declared"
+                                        )));
+                                    } else {
+                                        validate_repo_relative_file_action_path(
+                                            task_name,
+                                            "prepare.source.local_project.lockfile",
+                                            lockfile,
+                                            errors,
+                                        );
+                                    }
+                                }
+                                for (field, values) in
+                                    [("extras", &project.extras), ("groups", &project.groups)]
+                                {
+                                    let mut seen = BTreeSet::new();
+                                    for value in values {
+                                        let normalized = value.trim();
+                                        if normalized.is_empty() {
+                                            errors.push(ValidationError::new(format!(
+                                                "task `{task_name}` prepare `uv` local project `{field}` entries must be non-empty"
+                                            )));
+                                        } else if !seen.insert(normalized) {
+                                            errors.push(ValidationError::new(format!(
+                                                "task `{task_name}` prepare `uv` local project `{field}` entries must be unique after normalization: `{normalized}`"
+                                            )));
+                                        }
+                                    }
+                                }
+                            } else {
+                                errors.push(ValidationError::new(format!(
+                                    "task `{task_name}` prepare `uv` with `mode: pip_local_project` must declare `prepare.source.local_project`"
+                                )));
+                            }
+                        }
+                    }
                     if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
                         && !requirements
                             .toolchains
@@ -30340,6 +30431,131 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("uv prepare should validate");
+    }
+
+    #[test]
+    fn accepts_typed_uv_local_project_hydration() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.13"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_local_project
+        local_project:
+          path: pipecat
+          editable: true
+          extras: [openai, deepgram]
+          groups: [dev]
+          lockfile: pipecat/uv.lock
+    requirements:
+      toolchains: [python]
+    effects:
+      writes: [.venv]
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("typed uv local project should validate");
+    }
+
+    #[test]
+    fn rejects_uv_local_project_without_project_or_with_duplicate_group() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.13"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_local_project
+        local_project:
+          path: pipecat
+          groups: [dev, " dev "]
+    requirements:
+      toolchains: [python]
+    effects:
+      writes: [.venv]
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("duplicate normalized local-project group should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("entries must be unique after normalization")
+        );
+
+        let missing_project = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.13"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_local_project
+    requirements:
+      toolchains: [python]
+    effects:
+      writes: [.venv]
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+        let errors = validate_contract(&missing_project)
+            .expect_err("local-project mode without a project should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("must declare `prepare.source.local_project`")
+        );
     }
 
     #[test]

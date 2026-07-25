@@ -7822,6 +7822,8 @@ pub struct TaskUvHydrationSourceSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirements_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_project: Option<TaskUvLocalProjectHydrationSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_index: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub indexes: Vec<String>,
@@ -7832,8 +7834,8 @@ pub struct TaskUvHydrationSourceSpec {
 }
 
 impl TaskUvHydrationSourceSpec {
-    pub fn command_args(&self) -> Vec<String> {
-        let mut args = match self.mode {
+    pub fn command_arg_sets(&self) -> Vec<Vec<String>> {
+        let commands = match self.mode {
             TaskUvHydrationMode::Sync => vec![String::from("sync")],
             TaskUvHydrationMode::PipRequirements => vec![
                 String::from("pip"),
@@ -7843,7 +7845,44 @@ impl TaskUvHydrationSourceSpec {
                     .clone()
                     .unwrap_or_else(|| String::from("requirements.txt")),
             ],
+            TaskUvHydrationMode::PipLocalProject => {
+                let Some(project) = self.local_project.as_ref() else {
+                    return Vec::new();
+                };
+                let mut install = vec![String::from("pip"), String::from("install")];
+                if project.editable {
+                    install.push(String::from("-e"));
+                }
+                install.push(project.install_target());
+                let mut commands = vec![install];
+                for group in &project.groups {
+                    commands.push(vec![
+                        String::from("pip"),
+                        String::from("install"),
+                        String::from("--group"),
+                        format!(
+                            "{}/pyproject.toml:{group}",
+                            project.path.trim_end_matches('/')
+                        ),
+                    ]);
+                }
+                return commands
+                    .into_iter()
+                    .map(|args| self.with_source_flags(args))
+                    .collect();
+            }
         };
+        vec![self.with_source_flags(commands)]
+    }
+
+    pub fn command_args(&self) -> Vec<String> {
+        self.command_arg_sets()
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+    }
+
+    fn with_source_flags(&self, mut args: Vec<String>) -> Vec<String> {
         if let Some(default_index) = self.default_index.as_deref() {
             // These names are accepted by both older and current uv releases.
             args.push(String::from("--index-url"));
@@ -7860,7 +7899,11 @@ impl TaskUvHydrationSourceSpec {
     }
 
     pub fn command_preview(&self) -> String {
-        format!("uv {}", self.command_args().join(" "))
+        self.command_arg_sets()
+            .into_iter()
+            .map(|args| format!("uv {}", args.join(" ")))
+            .collect::<Vec<_>>()
+            .join(" && ")
     }
 
     pub const fn source_posture(&self) -> &'static str {
@@ -7880,12 +7923,42 @@ impl TaskUvHydrationSourceSpec {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskUvLocalProjectHydrationSpec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub editable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extras: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lockfile: Option<String>,
+}
+
+impl TaskUvLocalProjectHydrationSpec {
+    pub fn install_target(&self) -> String {
+        let path = if self.path.starts_with('.') {
+            self.path.clone()
+        } else {
+            format!("./{}", self.path)
+        };
+        if self.extras.is_empty() {
+            path
+        } else {
+            format!("{}[{}]", path, self.extras.join(","))
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskUvHydrationMode {
     #[default]
     Sync,
     PipRequirements,
+    PipLocalProject,
 }
 
 const fn is_default_uv_hydration_mode(value: &TaskUvHydrationMode) -> bool {
@@ -10247,6 +10320,7 @@ tasks:
             cwd: String::from("."),
             mode: super::TaskUvHydrationMode::Sync,
             requirements_file: None,
+            local_project: None,
             default_index: None,
             indexes: Vec::new(),
             offline: false,
@@ -10261,6 +10335,7 @@ tasks:
             cwd: String::from("."),
             mode: super::TaskUvHydrationMode::PipRequirements,
             requirements_file: Some(String::from("requirements.txt")),
+            local_project: None,
             default_index: None,
             indexes: Vec::new(),
             offline: false,
@@ -10270,11 +10345,65 @@ tasks:
     }
 
     #[test]
+    fn uv_local_project_prepare_renders_editable_install_before_declared_groups() {
+        let uv = super::TaskUvHydrationSourceSpec {
+            cwd: String::from("."),
+            mode: super::TaskUvHydrationMode::PipLocalProject,
+            requirements_file: None,
+            local_project: Some(super::TaskUvLocalProjectHydrationSpec {
+                path: String::from("pipecat"),
+                editable: true,
+                extras: vec![String::from("openai"), String::from("deepgram")],
+                groups: vec![String::from("dev"), String::from("test")],
+                lockfile: Some(String::from("pipecat/uv.lock")),
+            }),
+            default_index: Some(String::from("https://pypi.example.test/simple")),
+            indexes: Vec::new(),
+            offline: false,
+            compose: None,
+        };
+
+        assert_eq!(
+            uv.command_arg_sets(),
+            vec![
+                vec![
+                    "pip",
+                    "install",
+                    "-e",
+                    "./pipecat[openai,deepgram]",
+                    "--index-url",
+                    "https://pypi.example.test/simple",
+                ],
+                vec![
+                    "pip",
+                    "install",
+                    "--group",
+                    "pipecat/pyproject.toml:dev",
+                    "--index-url",
+                    "https://pypi.example.test/simple",
+                ],
+                vec![
+                    "pip",
+                    "install",
+                    "--group",
+                    "pipecat/pyproject.toml:test",
+                    "--index-url",
+                    "https://pypi.example.test/simple",
+                ],
+            ]
+            .into_iter()
+            .map(|args| args.into_iter().map(String::from).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn uv_prepare_projects_declared_index_and_offline_posture() {
         let uv = super::TaskUvHydrationSourceSpec {
             cwd: String::from("."),
             mode: super::TaskUvHydrationMode::PipRequirements,
             requirements_file: Some(String::from("requirements.txt")),
+            local_project: None,
             default_index: Some(String::from("https://pypi.example.test/simple")),
             indexes: vec![String::from("https://packages.example.test/simple")],
             offline: true,
@@ -10549,6 +10678,7 @@ tasks:
                                 cwd: String::from("api"),
                                 mode: super::TaskUvHydrationMode::Sync,
                                 requirements_file: None,
+                                local_project: None,
                                 default_index: None,
                                 indexes: Vec::new(),
                                 offline: false,

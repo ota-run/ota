@@ -154,7 +154,26 @@
                       "task": { "type": "string" },
                       "source_kind": { "type": "string" },
                       "declared": { "$ref": "./tasks.json#/$defs/taskHydrationProvenance" },
-                      "resolved": { "$ref": "./tasks.json#/$defs/taskHydrationProvenance" }
+                      "resolved": { "$ref": "./tasks.json#/$defs/taskHydrationProvenance" },
+                      "local_project": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["path", "editable", "manifest_path", "resolution"],
+                        "properties": {
+                          "path": { "type": "string" },
+                          "editable": { "type": "boolean" },
+                          "extras": { "type": "array", "items": { "type": "string" } },
+                          "groups": { "type": "array", "items": { "type": "string" } },
+                          "manifest_path": { "type": "string" },
+                          "manifest_identity": { "type": "string" },
+                          "source_identity": { "type": "string" },
+                          "source_identity_error": { "type": "string" },
+                          "lockfile_path": { "type": "string" },
+                          "lockfile_identity": { "type": "string" },
+                          "resolution": { "enum": ["resolved", "unavailable"] },
+                          "resolution_error": { "type": "string" }
+                        }
+                      }
                     }
                   }
                 }

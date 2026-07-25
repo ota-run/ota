@@ -20606,12 +20606,20 @@ fn enrich_hydration_provenance(
     spec: &crate::schema::TaskDependencyHydrationPrepareSpec,
     contract_path: &Path,
 ) {
+    prepare.declared_uv_local_project =
+        crate::output::declared_uv_local_project_summary(&spec.source);
     prepare.resolved_hydration_provenance = match &spec.source {
         crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
             Some(resolved_dotnet_hydration_provenance(contract_path, source))
         }
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
             Some(resolved_uv_hydration_provenance(source))
+        }
+        _ => None,
+    };
+    prepare.resolved_uv_local_project = match &spec.source {
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+            resolved_uv_local_project_summary(contract_path, source)
         }
         _ => None,
     };
@@ -20706,6 +20714,28 @@ fn resolved_uv_hydration_provenance(
         resolution,
         resolution_error,
     }
+}
+
+fn resolved_uv_local_project_summary(
+    contract_path: &Path,
+    source: &crate::schema::TaskUvHydrationSourceSpec,
+) -> Option<crate::output::WorkspaceTaskUvLocalProjectSummary> {
+    let resolved =
+        crate::hydration_provenance::resolve_uv_local_project_identity(contract_path, source)?;
+    Some(crate::output::WorkspaceTaskUvLocalProjectSummary {
+        path: resolved.path,
+        editable: resolved.editable,
+        extras: resolved.extras,
+        groups: resolved.groups,
+        lockfile: resolved.lockfile_path,
+        manifest_path: Some(resolved.manifest_path),
+        manifest_identity: resolved.manifest_identity,
+        source_identity: resolved.source_identity,
+        source_identity_error: resolved.source_identity_error,
+        lockfile_identity: resolved.lockfile_identity,
+        resolution: Some(String::from(resolved.resolution)),
+        resolution_error: resolved.resolution_error,
+    })
 }
 
 fn run_preview_task_execution_action(
@@ -24238,6 +24268,12 @@ pub fn doctor(
                     &target.contract_path,
                     &mut report.findings,
                 );
+                append_uv_local_project_findings(
+                    contract,
+                    &target.contract_path,
+                    workflow_name,
+                    &mut report.findings,
+                );
                 let fix_summary = if fix {
                     let outcome = match run_doctor_fix(
                         contract,
@@ -24276,6 +24312,12 @@ pub fn doctor(
                         append_contract_drift_findings(
                             contract,
                             &target.contract_path,
+                            &mut report.findings,
+                        );
+                        append_uv_local_project_findings(
+                            contract,
+                            &target.contract_path,
+                            workflow_name,
                             &mut report.findings,
                         );
                     }
@@ -24437,6 +24479,12 @@ pub fn doctor(
                             append_contract_drift_findings(
                                 &member_target.contract,
                                 &member_target.contract_path,
+                                &mut member_report.findings,
+                            );
+                            append_uv_local_project_findings(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                                workflow_name,
                                 &mut member_report.findings,
                             );
                             if !member_report.ok {
@@ -39483,6 +39531,7 @@ tasks:
                     resolution: Some(String::from("unavailable")),
                     resolution_error: Some(String::from("requires ambient environment")),
                 },
+                local_project: None,
             }),
             artifact_lineage: None,
         };
@@ -55991,8 +56040,9 @@ mod tests {
     use super::{
         DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
         RepoUpResult, RequirementActivationAction, adapter_bootstrap_request_for_missing_backend,
-        bootstrap_failure_findings, build_env_report, build_env_report_with_overrides,
-        build_up_preview, capture_hydration_provenance_before_execution,
+        append_uv_local_project_findings, bootstrap_failure_findings, build_env_report,
+        build_env_report_with_overrides, build_up_preview,
+        capture_hydration_provenance_before_execution, capture_replay_inputs_before_execution,
         capture_witnessed_observations_before_execution, ci_github_check, ci_github_render,
         ci_github_repo_path, ci_projection, ci_projection_for_contract, collect_validate_warnings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
@@ -56834,6 +56884,190 @@ tasks:
         assert_eq!(
             provenance.resolved.source_identities[0].name.as_deref(),
             Some("default")
+        );
+    }
+
+    #[test]
+    fn hydration_provenance_captures_uv_local_project_manifest_and_lockfile_identity() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::create_dir_all(repo.path().join("pipecat")).expect("create local project");
+        fs::write(
+            repo.path().join("pipecat/pyproject.toml"),
+            "[project]\nname = \"pipecat\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("write local project manifest");
+        fs::write(
+            repo.path().join("pipecat/uv.lock"),
+            "version = 1\nrevision = 1\n",
+        )
+        .expect("write local project lockfile");
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "ota@example.test"],
+            vec!["config", "user.name", "Ota Test"],
+            vec!["add", "pipecat"],
+            vec!["commit", "-m", "add local project"],
+        ] {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(repo.path())
+                .status()
+                .expect("run git for local-project source fixture");
+            assert!(status.success(), "git fixture command must succeed");
+        }
+        let yaml = r#"
+version: 1
+project:
+  name: uv-local-project
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_local_project
+        local_project:
+          path: pipecat
+          editable: true
+          extras: [openai, deepgram]
+          groups: [dev]
+          lockfile: pipecat/uv.lock
+        default_index: https://pypi.example.test/simple
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let provenance = capture_hydration_provenance_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("setup")],
+        );
+
+        let provenance = provenance[0]
+            .hydration_provenance
+            .as_ref()
+            .expect("hydration provenance detail");
+        let local_project = provenance
+            .local_project
+            .as_ref()
+            .expect("local project provenance");
+        assert_eq!(local_project.path, "pipecat");
+        assert!(local_project.editable);
+        assert_eq!(local_project.extras, vec!["openai", "deepgram"]);
+        assert_eq!(local_project.groups, vec!["dev"]);
+        assert_eq!(local_project.manifest_path, "pipecat/pyproject.toml");
+        assert_eq!(
+            local_project.lockfile_path.as_deref(),
+            Some("pipecat/uv.lock")
+        );
+        assert_eq!(local_project.resolution, "resolved");
+        assert!(
+            local_project
+                .manifest_identity
+                .as_deref()
+                .is_some_and(|value| value.starts_with("sha256:"))
+        );
+        assert!(
+            local_project
+                .lockfile_identity
+                .as_deref()
+                .is_some_and(|value| value.starts_with("sha256:"))
+        );
+        assert!(
+            local_project
+                .source_identity
+                .as_deref()
+                .is_some_and(|value| value.starts_with("git:"))
+        );
+        assert!(local_project.source_identity_error.is_none());
+    }
+
+    #[test]
+    fn replay_input_capture_blocks_missing_uv_local_project_manifest_before_execution() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        let yaml = r#"
+version: 1
+project:
+  name: uv-local-project
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_local_project
+        local_project:
+          path: pipecat
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+
+        let error = capture_replay_inputs_before_execution(
+            &contract,
+            &contract_path,
+            [String::from("setup")],
+        )
+        .expect_err("missing local project manifest must block preflight");
+
+        assert!(
+            error
+                .to_string()
+                .contains("declared uv local project inputs for task `setup`"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("pipecat/pyproject.toml"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn uv_local_project_findings_report_missing_manifest_in_selected_workflow_closure() {
+        let repo = tempdir().expect("temporary repo");
+        let contract_path = repo.path().join("ota.yaml");
+        let yaml = r#"
+version: 1
+project:
+  name: uv-local-project
+tasks:
+  setup:
+    run: "true"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+        mode: pip_local_project
+        local_project:
+          path: pipecat
+workflows:
+  default: verify
+  verify:
+    run:
+      task: setup
+"#;
+        fs::write(&contract_path, yaml).expect("write contract");
+        let contract = parse_contract_str(&contract_path, yaml).expect("parse contract");
+        let mut findings = Vec::new();
+
+        append_uv_local_project_findings(&contract, &contract_path, Some("verify"), &mut findings);
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.code(), "OTA_UV_LOCAL_PROJECT_INPUT_UNAVAILABLE");
+        assert!(
+            finding.why.contains("pipecat/pyproject.toml"),
+            "{}",
+            finding.why
         );
     }
 
@@ -63525,6 +63759,8 @@ tasks:
                         with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
+                        declared_uv_local_project: None,
+                        resolved_uv_local_project: None,
                         declared_hydration_provenance: None,
                         resolved_hydration_provenance: None,
                         compose: None,
@@ -63551,6 +63787,8 @@ tasks:
                         with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
+                        declared_uv_local_project: None,
+                        resolved_uv_local_project: None,
                         declared_hydration_provenance: None,
                         resolved_hydration_provenance: None,
                         compose: None,
@@ -63575,6 +63813,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -63665,6 +63905,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -63733,6 +63975,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -63823,6 +64067,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -63904,6 +64150,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -63987,6 +64235,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: Some(crate::output::TaskComposeInvocationSummary {
@@ -64086,6 +64336,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: Some(crate::output::TaskComposeInvocationSummary {
@@ -64186,6 +64438,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -64269,6 +64523,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: vec!["chromium"],
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -64352,6 +64608,8 @@ tasks:
                 with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -64435,6 +64693,8 @@ tasks:
                 with_deps: true,
                 targets: Vec::new(),
                 browsers: vec!["chromium"],
+                declared_uv_local_project: None,
+                resolved_uv_local_project: None,
                 declared_hydration_provenance: None,
                 resolved_hydration_provenance: None,
                 compose: None,
@@ -65185,6 +65445,8 @@ workflows:
                         with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
+                        declared_uv_local_project: None,
+                        resolved_uv_local_project: None,
                         declared_hydration_provenance: None,
                         resolved_hydration_provenance: None,
                         compose: None,
@@ -101772,8 +102034,38 @@ fn capture_replay_inputs_before_execution(
                 },
             );
         }
+        if let Some(crate::schema::TaskPrepareSpec::DependencyHydration(hydration)) =
+            task.prepare.as_ref()
+        {
+            capture_uv_local_project_inputs_before_execution(
+                contract_path,
+                task_name.as_str(),
+                &hydration.source,
+            )?;
+        }
     }
     Ok(captured.into_values().collect())
+}
+
+fn capture_uv_local_project_inputs_before_execution(
+    contract_path: &Path,
+    task_name: &str,
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+) -> Result<(), ReplayInputCaptureError> {
+    let crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) = source else {
+        return Ok(());
+    };
+    let Some(resolved) =
+        crate::hydration_provenance::resolve_uv_local_project_identity(contract_path, source)
+    else {
+        return Ok(());
+    };
+    if let Some(error) = resolved.resolution_error {
+        return Err(ReplayInputCaptureError::Capture(format!(
+            "declared uv local project inputs for task `{task_name}` could not be captured before execution: {error}",
+        )));
+    }
+    Ok(())
 }
 
 fn replay_input_identity_mismatch_finding(mismatch: &ReplayInputIdentityMismatch) -> Finding {
@@ -102186,7 +102478,7 @@ fn collect_hydration_provenance_for_hydration(
     hydration: &crate::schema::TaskDependencyHydrationPrepareSpec,
     contract_path: &Path,
 ) {
-    let (source_kind, declared, resolved) = match &hydration.source {
+    let (source_kind, declared, resolved, local_project) = match &hydration.source {
         crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
             "dotnet_restore",
             ExecutionReceiptHydrationSourcePosture {
@@ -102202,6 +102494,7 @@ fn collect_hydration_provenance_for_hydration(
                 contract_path,
                 source,
             )),
+            None,
         ),
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
             "uv",
@@ -102215,6 +102508,7 @@ fn collect_hydration_provenance_for_hydration(
                 resolution_error: None,
             },
             receipt_hydration_source_posture(resolved_uv_hydration_provenance(source)),
+            receipt_uv_local_project_provenance(contract_path, source),
         ),
         _ => return,
     };
@@ -102223,6 +102517,7 @@ fn collect_hydration_provenance_for_hydration(
         source_kind: String::from(source_kind),
         declared,
         resolved,
+        local_project,
     };
     let identity = contract_snapshot_hash(
         &serde_json::to_vec(&provenance)
@@ -102238,6 +102533,28 @@ fn collect_hydration_provenance_for_hydration(
         hydration_provenance: Some(provenance),
         artifact_lineage: None,
     });
+}
+
+fn receipt_uv_local_project_provenance(
+    contract_path: &Path,
+    source: &crate::schema::TaskUvHydrationSourceSpec,
+) -> Option<crate::output::ExecutionReceiptUvLocalProjectProvenance> {
+    let resolved =
+        crate::hydration_provenance::resolve_uv_local_project_identity(contract_path, source)?;
+    Some(crate::output::ExecutionReceiptUvLocalProjectProvenance {
+        path: resolved.path,
+        editable: resolved.editable,
+        extras: resolved.extras,
+        groups: resolved.groups,
+        manifest_path: resolved.manifest_path,
+        manifest_identity: resolved.manifest_identity,
+        source_identity: resolved.source_identity,
+        source_identity_error: resolved.source_identity_error,
+        lockfile_path: resolved.lockfile_path,
+        lockfile_identity: resolved.lockfile_identity,
+        resolution: String::from(resolved.resolution),
+        resolution_error: resolved.resolution_error,
+    })
 }
 
 fn receipt_hydration_source_posture(
@@ -118672,6 +118989,65 @@ fn append_up_safe_task_effect_policy_findings(
             overrides,
             report,
         );
+    }
+}
+
+fn append_uv_local_project_findings(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    findings: &mut Vec<Finding>,
+) {
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let Some(crate::schema::TaskPrepareSpec::DependencyHydration(hydration)) =
+            task.prepare.as_ref()
+        else {
+            continue;
+        };
+        let crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) = &hydration.source else {
+            continue;
+        };
+        let Some(local_project) =
+            crate::hydration_provenance::resolve_uv_local_project_identity(contract_path, source)
+        else {
+            continue;
+        };
+        if let Some(why) = local_project.resolution_error {
+            let target = local_project
+                .lockfile_path
+                .unwrap_or(local_project.manifest_path.clone());
+            findings.push(Finding {
+                identity: Some(FindingIdentity {
+                    code: String::from("OTA_UV_LOCAL_PROJECT_INPUT_UNAVAILABLE"),
+                    category: String::from("environment"),
+                    owner: String::from("repo_contract"),
+                }),
+                severity: FindingSeverity::Error,
+                summary: format!("Typed uv local-project input unavailable: {task_name}"),
+                why,
+                next: format!(
+                    "restore `{target}` or repair `tasks.{task_name}.prepare.source.local_project` before rerunning `ota doctor` or execution"
+                ),
+            });
+        }
+        if let Some(why) = local_project.source_identity_error {
+            findings.push(Finding {
+                identity: Some(FindingIdentity {
+                    code: String::from("OTA_UV_LOCAL_PROJECT_SOURCE_IDENTITY_UNAVAILABLE"),
+                    category: String::from("replay"),
+                    owner: String::from("repo_contract"),
+                }),
+                severity: FindingSeverity::Warn,
+                summary: format!("Typed uv local-project source identity unavailable: {task_name}"),
+                why,
+                next: String::from(
+                    "use a clean Git worktree for replay-grade local-project provenance; execution can continue but source replay identity remains unavailable",
+                ),
+            });
+        }
     }
 }
 

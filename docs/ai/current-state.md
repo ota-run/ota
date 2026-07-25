@@ -35,6 +35,14 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
+- active implementation slice: V11.19 typed uv local-project hydration. Dograh pressure
+  run [30131761139](https://github.com/bobaikato/dograh/actions/runs/30131761139) proves the
+  bounded native API/Pipecat/PostgreSQL/Redis lane against Core `ee7efea64`, but preserves two
+  explicit Ota gaps: its editable Pipecat extras plus dependency-group installation currently
+  requires structured commands rather than one typed uv source, and its Dev Container remains a
+  separate ungoverned contributor boundary. V11.19 owns only the former; a later Dev Container
+  adapter must not be smuggled into hydration scope. The unpinned Node validator `npm install` and
+  GitHub-service versus local-Compose topology divergence remain explicit replay/proof boundaries.
 - active finite-command interaction slice: omitted `tasks.<name>.command.interaction` resolves to
   `auto`, allowing terminal passthrough only for human native terminal execution. Explicit
   `forbidden` keeps every prepared closure step noninteractive, while `required` refuses before

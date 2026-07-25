@@ -2177,12 +2177,19 @@ Task-effect rules:
     - `prepare.source.cwd`: required repo-relative working directory for the Composer install invocation
     - `prepare.source.kind: uv`
     - `prepare.source.cwd`: required repo-relative working directory for the uv hydration invocation
-    - `prepare.source.mode`: optional uv hydration mode; ota currently ships `sync` and `pip_requirements`
+    - `prepare.source.mode`: optional uv hydration mode; ota currently ships `sync`, `pip_requirements`, and `pip_local_project`
     - `prepare.source.default_index`: optional authoritative default Python package index projected as `uv --index-url <url>`
     - `prepare.source.indexes`: optional ordered additional Python package indexes projected as repeated `uv --extra-index-url <url>`
       for compatibility across supported uv releases
     - `prepare.source.offline`: optional cache-only hydration posture projected as `uv --offline`; this prevents network access but does not make an undeclared local cache source replayable
     - `prepare.source.requirements_file`: required repo-relative requirements file when `prepare.source.mode: pip_requirements`; omit it for `mode: sync`
+    - `prepare.source.local_project`: required source-`cwd`-relative local project declaration when `prepare.source.mode: pip_local_project`
+      - `prepare.source.local_project.path`: required source-`cwd`-relative directory containing the local project's `pyproject.toml`
+      - `prepare.source.local_project.editable`: optional editable posture projected as `uv pip install -e`
+      - `prepare.source.local_project.extras`: optional ordered extras list projected onto the declared local project target
+      - `prepare.source.local_project.groups`: optional ordered dependency groups projected as separate `uv pip install --group <path>/pyproject.toml:<group>` invocations after the primary local-project install
+      - `prepare.source.local_project.lockfile`: optional source-`cwd`-relative lockfile whose identity Ota captures alongside the local project manifest before execution
+      - Ota separately records a clean Git source identity for the local project when it is available. A missing or dirty source does not silently become a manifest-only replay claim; Doctor reports that narrower identity boundary.
     - `prepare.source.kind: poetry`
     - `prepare.source.cwd`: required repo-relative working directory for the Poetry install invocation
     - `prepare.source.groups`: optional dependency-group list for `poetry install --with ...` or `--only ...`
@@ -2251,10 +2258,12 @@ Task-effect rules:
   - host-side or explicit repo-local path truth: `bundle config set path <path> && bundle install`
   - compose-wrapped container-default path truth: `bundle install`
 - `prepare.source.kind: composer` currently executes the narrow canonical Composer hydration lane: `composer install`
-- `prepare.source.kind: uv` currently executes one of two narrow canonical uv hydration lanes:
+- `prepare.source.kind: uv` currently executes one of three narrow canonical uv hydration lanes:
   - `uv sync`
   - `uv pip install -r <requirements_file>`
+  - `uv pip install [-e] <local_project>[extras...]` followed by ordered `uv pip install --group <local_project>/pyproject.toml:<group>` for each declared group
   - optional `--default-index <url>`, ordered repeated `--index <url>`, and `--offline` are projected from the declared source posture; leave index selection undeclared only when the repo intentionally accepts ambient uv/pip configuration, in which case Ota records resolved provenance as unavailable rather than guessing from the host
+  - for the local-project lane, Ota captures the declared local project's `pyproject.toml` identity and any declared `lockfile` identity before execution so dry-run, doctor, and replay-grade preflight can refuse a missing or changed contract-owned baseline early
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare.source.kind: helm` currently executes the narrow canonical Helm chart hydration lane: ota reads `Chart.yaml`, seeds any declared HTTP(S) chart repositories into isolated repo-owned Helm repository state under `.ota/state/helm/...`, then runs `helm dependency build .`

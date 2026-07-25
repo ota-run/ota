@@ -29,13 +29,31 @@ use quick_xml::events::{BytesStart, Event};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
-use crate::schema::TaskDotnetRestoreHydrationSourceSpec;
+use crate::schema::{TaskDotnetRestoreHydrationSourceSpec, TaskUvHydrationSourceSpec};
+use crate::semantic_identity::contract_snapshot_hash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DotnetFeedIdentity {
     pub name: String,
     pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UvLocalProjectIdentity {
+    pub path: String,
+    pub editable: bool,
+    pub extras: Vec<String>,
+    pub groups: Vec<String>,
+    pub manifest_path: String,
+    pub manifest_identity: Option<String>,
+    pub source_identity: Option<String>,
+    pub source_identity_error: Option<String>,
+    pub lockfile_path: Option<String>,
+    pub lockfile_identity: Option<String>,
+    pub resolution: &'static str,
+    pub resolution_error: Option<String>,
 }
 
 pub(crate) fn resolve_dotnet_config_sources(
@@ -66,6 +84,97 @@ pub(crate) fn resolve_dotnet_config_sources(
         ));
     }
     Ok(sources)
+}
+
+pub(crate) fn resolve_uv_local_project_identity(
+    contract_path: &Path,
+    source: &TaskUvHydrationSourceSpec,
+) -> Option<UvLocalProjectIdentity> {
+    let project = source.local_project.as_ref()?;
+    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let project_root = root.join(&source.cwd).join(&project.path);
+    let manifest_disk_path = project_root.join("pyproject.toml");
+    let manifest_identity = fs::read(&manifest_disk_path)
+        .ok()
+        .map(|bytes| contract_snapshot_hash(&bytes));
+    let (source_identity, source_identity_error) = if manifest_identity.is_some() {
+        match clean_git_head_identity(&project_root) {
+            Ok(identity) => (Some(identity), None),
+            Err(error) => (None, Some(error)),
+        }
+    } else {
+        (None, None)
+    };
+    let manifest_path = format!("{}/pyproject.toml", project.path.trim_end_matches('/'));
+    let lockfile_path = project.lockfile.clone();
+    let lockfile_identity = lockfile_path
+        .as_ref()
+        .and_then(|path| fs::read(root.join(&source.cwd).join(path)).ok())
+        .map(|bytes| contract_snapshot_hash(&bytes));
+    let resolution_error = if manifest_identity.is_none() {
+        Some(format!(
+            "declared local project manifest `{}` is unavailable",
+            manifest_disk_path.display()
+        ))
+    } else if lockfile_path.is_some() && lockfile_identity.is_none() {
+        Some(format!(
+            "declared local project lockfile `{}` is unavailable",
+            lockfile_path.as_deref().unwrap_or_default()
+        ))
+    } else {
+        None
+    };
+    Some(UvLocalProjectIdentity {
+        path: project.path.clone(),
+        editable: project.editable,
+        extras: project.extras.clone(),
+        groups: project.groups.clone(),
+        manifest_path,
+        manifest_identity,
+        source_identity,
+        source_identity_error,
+        lockfile_path,
+        lockfile_identity,
+        resolution: if resolution_error.is_some() {
+            "unavailable"
+        } else {
+            "resolved"
+        },
+        resolution_error,
+    })
+}
+
+fn clean_git_head_identity(path: &Path) -> Result<String, String> {
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all", "--", "."])
+        .current_dir(path)
+        .output()
+        .map_err(|error| format!("cannot inspect local-project source: {error}"))?;
+    if !status.status.success() {
+        return Err(format!(
+            "cannot inspect local-project source: {}",
+            String::from_utf8_lossy(&status.stderr).trim()
+        ));
+    }
+    if !status.stdout.is_empty() {
+        return Err(String::from("local-project source is dirty"));
+    }
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(path)
+        .output()
+        .map_err(|error| format!("cannot resolve local-project source identity: {error}"))?;
+    if !head.status.success() {
+        return Err(format!(
+            "cannot resolve local-project source identity: {}",
+            String::from_utf8_lossy(&head.stderr).trim()
+        ));
+    }
+    let revision = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    if revision.is_empty() {
+        return Err(String::from("local-project source HEAD is empty"));
+    }
+    Ok(format!("git:{revision}"))
 }
 
 fn contains_environment_placeholder(value: &str) -> bool {

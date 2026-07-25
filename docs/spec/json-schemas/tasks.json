@@ -352,6 +352,7 @@
             "ci",
             "sync",
             "pip_requirements",
+            "pip_local_project",
             "download",
             "uv",
             "playwright_browsers",
@@ -373,6 +374,12 @@
         },
         "resolved_hydration_provenance": {
           "$ref": "#/$defs/taskHydrationProvenance"
+        },
+        "declared_uv_local_project": {
+          "$ref": "#/$defs/taskUvLocalProject"
+        },
+        "resolved_uv_local_project": {
+          "$ref": "#/$defs/taskUvLocalProject"
         },
         "frozen_lockfile": { "type": "boolean" },
         "inline_builds": { "type": "boolean" },
@@ -453,6 +460,7 @@
             "ci",
             "sync",
             "pip_requirements",
+            "pip_local_project",
             "download",
             "uv",
             "playwright_browsers",
@@ -482,6 +490,12 @@
         },
         "resolved_hydration_provenance": {
           "$ref": "#/$defs/taskHydrationProvenance"
+        },
+        "declared_uv_local_project": {
+          "$ref": "#/$defs/taskUvLocalProject"
+        },
+        "resolved_uv_local_project": {
+          "$ref": "#/$defs/taskUvLocalProject"
         },
         "compose": { "$ref": "#/$defs/taskComposeInvocationSummary" }
       }
@@ -538,6 +552,27 @@
         },
         "resolution_error": { "type": "string" },
         "offline": { "type": "boolean" }
+      }
+    },
+    "taskUvLocalProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "editable": { "type": "boolean" },
+        "extras": { "type": "array", "items": { "type": "string" } },
+        "groups": { "type": "array", "items": { "type": "string" } },
+        "lockfile": { "type": "string" },
+        "manifest_path": { "type": "string" },
+        "manifest_identity": { "type": "string" },
+        "source_identity": { "type": "string" },
+        "source_identity_error": { "type": "string" },
+        "lockfile_identity": { "type": "string" },
+        "resolution": {
+          "enum": ["resolved", "unavailable"]
+        },
+        "resolution_error": { "type": "string" }
       }
     },
     "taskAggregate": {
