@@ -44,8 +44,9 @@ Record a candidate only when you intentionally want to change the baseline:
 ota baseline record --artifact recorded-baseline --json
 ```
 
-Recording requires a clean Git source tree. Ota captures that identity before the producer changes
-the baseline outputs, so the reviewed recording remains bound to the source that generated it.
+Recording requires a clean Git source tree. Ota verifies that identity before and after the
+producer runs, excluding only declared baseline outputs and Ota-owned `.ota` runtime state, so the
+reviewed recording cannot retain an ordinary source mutation.
 
 Review the generated artifact diff and the attestation, then select that exact record:
 

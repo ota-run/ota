@@ -201,18 +201,17 @@ use crate::runner::{
 };
 use crate::schema::{
     AgentConfig, Backend, CommandInteractionPosture, ContainerBackend, Contract, EnvRequirement,
-    EnvSource, EnvSourceKind, ExecutionSharedBackend, ExtensionSpec, GeneratedArtifactKind,
-    Lifecycle, RequirementSurface, ServiceReadinessKind, ServiceReadinessSpec,
-    TaskDependencyHydrationSourceSpec, TaskNetworkEffectKind, TaskNodePackageManagerKind,
-    TaskPrepareSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
-    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
-    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
-    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec, split_workflow_selector,
+    EnvSource, EnvSourceKind, ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface,
+    ServiceReadinessKind, ServiceReadinessSpec, TaskDependencyHydrationSourceSpec,
+    TaskNetworkEffectKind, TaskNodePackageManagerKind, TaskPrepareSpec, TaskRuntimeBindSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec,
+    TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
+    TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
+    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
+    parse_memory_size_bytes, parse_readiness_duration_spec, split_workflow_selector,
 };
 use crate::semantic_identity::{
     contract_snapshot_hash, normalize_semantic_json, normalized_contract_snapshot_json,
@@ -98449,9 +98448,9 @@ pub(crate) fn replay_baseline_record(
             .ok_or_else(|| {
                 format!("contract does not declare replay baseline artifact `{artifact_name}`")
             })?;
-        if artifact.kind != GeneratedArtifactKind::ReplayBaseline {
+        if artifact.replay.is_none() {
             return Err(format!(
-                "artifact `{artifact_name}` is not `kind: replay_baseline`"
+                "artifact `{artifact_name}` does not declare replay baseline authority"
             ));
         }
         let authority_manifest = artifact
@@ -98619,9 +98618,9 @@ pub(crate) fn replay_baseline_promote(
             .ok_or_else(|| {
                 format!("contract does not declare replay baseline artifact `{artifact_name}`")
             })?;
-        if artifact.kind != GeneratedArtifactKind::ReplayBaseline {
+        if artifact.replay.is_none() {
             return Err(format!(
-                "artifact `{artifact_name}` is not `kind: replay_baseline`"
+                "artifact `{artifact_name}` does not declare replay baseline authority"
             ));
         }
         let replay = artifact.replay.as_ref().ok_or_else(|| {
@@ -98868,7 +98867,7 @@ project:
   name: replay-baseline
 artifacts:
   recorded:
-    kind: replay_baseline
+    kind: generated_source
     producer: record
     paths: [data/baseline.txt]
     replay:
@@ -103599,36 +103598,35 @@ fn collect_receipt_generated_artifact_inputs(
         let Some(artifact) = contract.artifacts.get(artifact_name) else {
             continue;
         };
-        let replay_authority =
-            if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
-                artifact.replay.as_ref().and_then(|replay| {
-                    crate::replay_baseline::verify_promoted_replay_baseline(
-                        root,
-                        artifact_name,
-                        &artifact.paths,
-                        &replay.authority_manifest,
-                    )
-                    .ok()
-                    .map(|manifest| {
-                        crate::output::ExecutionReceiptReplayBaselineAuthority {
-                            authority_manifest: replay.authority_manifest.clone(),
-                            trust_root: String::from("scm_review"),
-                            selected_attestation_identity: manifest.selected_attestation_identity,
-                            promotion_identity: manifest.promotion_identity,
-                            consumption: match replay.consumption {
-                                crate::schema::ReplayBaselineConsumption::ReadOnly => {
-                                    String::from("read_only")
-                                }
-                                crate::schema::ReplayBaselineConsumption::VerifyUnchanged => {
-                                    String::from("verify_unchanged")
-                                }
-                            },
-                        }
-                    })
+        let replay_authority = if artifact.replay.is_some() {
+            artifact.replay.as_ref().and_then(|replay| {
+                crate::replay_baseline::verify_promoted_replay_baseline(
+                    root,
+                    artifact_name,
+                    &artifact.paths,
+                    &replay.authority_manifest,
+                )
+                .ok()
+                .map(|manifest| {
+                    crate::output::ExecutionReceiptReplayBaselineAuthority {
+                        authority_manifest: replay.authority_manifest.clone(),
+                        trust_root: String::from("scm_review"),
+                        selected_attestation_identity: manifest.selected_attestation_identity,
+                        promotion_identity: manifest.promotion_identity,
+                        consumption: match replay.consumption {
+                            crate::schema::ReplayBaselineConsumption::ReadOnly => {
+                                String::from("read_only")
+                            }
+                            crate::schema::ReplayBaselineConsumption::VerifyUnchanged => {
+                                String::from("verify_unchanged")
+                            }
+                        },
+                    }
                 })
-            } else {
-                None
-            };
+            })
+        } else {
+            None
+        };
         let lineage = ExecutionReceiptArtifactLineage {
             producer: artifact.producer.clone(),
             paths: artifact.paths.clone(),

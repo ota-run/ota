@@ -84,8 +84,8 @@ use crate::replay_baseline::{
 use crate::schema::{
     Backend, CheckKind, CheckSpec, CommandInteractionPosture, ContainerBackend, Contract,
     EnvRequirement, EnvSourceKind, ExecutionContext, ExecutionSharedBackendEnvironment,
-    ExecutionSharedBackendFulfillment, ExtensionKind, FileCheckExpectation, GeneratedArtifactKind,
-    Lifecycle, NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
+    ExecutionSharedBackendFulfillment, ExtensionKind, FileCheckExpectation, Lifecycle,
+    NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
     NativePrerequisiteActivationSpec, ReadinessProbeTargetKind, RemoteBackend,
     ReplayBaselineConsumption, RequirementSurface, RuntimeRequirement, TaskModeBranchSpec,
     TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
@@ -11558,7 +11558,7 @@ fn ensure_task_required_artifacts(
             .artifacts
             .get(artifact_name)
             .expect("validated task artifact references should exist");
-        if artifact.kind == GeneratedArtifactKind::ReplayBaseline {
+        if artifact.replay.is_some() {
             let replay = artifact
                 .replay
                 .as_ref()
@@ -11651,7 +11651,7 @@ fn prepare_selected_read_only_replay_baseline_boundary(
         .into_iter()
         .filter_map(|name| {
             let artifact = contract.artifacts.get(&name)?;
-            (artifact.kind == GeneratedArtifactKind::ReplayBaseline
+            (artifact.replay.is_some()
                 && artifact.replay.as_ref().is_some_and(|replay| {
                     replay.consumption == ReplayBaselineConsumption::ReadOnly
                 }))
@@ -11754,7 +11754,7 @@ fn prepare_replay_baseline_mutation_guards(
             .artifacts
             .get(artifact_name)
             .expect("validated task artifact references should exist");
-        if artifact.kind != GeneratedArtifactKind::ReplayBaseline {
+        if artifact.replay.is_none() {
             continue;
         }
         let replay = artifact

@@ -5032,7 +5032,7 @@ fn diagnose_replay_baseline_authority(
             let Some(artifact) = contract.artifacts.get(artifact_name) else {
                 continue;
             };
-            if artifact.kind != crate::schema::GeneratedArtifactKind::ReplayBaseline {
+            if artifact.replay.is_none() {
                 continue;
             }
             let replay = artifact

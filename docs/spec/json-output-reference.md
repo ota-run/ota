@@ -2305,7 +2305,7 @@ The attestation also requires a V11.16 execution-boundary graph identity and ide
 selected closures. An empty graph is explicit `unknown` runner evidence, not an omitted claim that
 the producer had no material prerequisites.
 
-When a selected task consumes `kind: replay_baseline`, receipt `evaluated_inputs[]` emits
+When a selected task consumes an artifact with `replay`, receipt `evaluated_inputs[]` emits
 `kind: promoted_replay_baseline` and `input_class: promoted_replay_baseline` only after Ota has
 verified the current declared outputs against the portable promoted authority manifest. Its
 `artifact_lineage.replay_authority` binds the receipt to the manifest path, explicit SCM-review

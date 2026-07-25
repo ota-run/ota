@@ -283,9 +283,12 @@ artifacts:
 ```
 
 - `kind: generated_source`: a normal generated artifact. Consumers explicitly depend on its
-  producer task before Ota checks that its declared outputs exist.
-- `kind: replay_baseline`: a generated baseline with a separate, explicit regeneration and
-  promotion authority chain. It additionally declares:
+  producer task before Ota checks that its declared outputs exist. It may additionally declare
+  `replay` when its existing generated lineage also needs an explicit regeneration and promotion
+  authority chain.
+- `kind: replay_baseline`: a baseline-first artifact. It must declare `replay`; use it when no
+  other generated-artifact lineage applies.
+- Any artifact with `replay` additionally declares:
 
   ```yaml
   replay:
@@ -293,7 +296,8 @@ artifacts:
     consumption: read_only
   ```
 
-  The producer is never agent-safe and replay consumers must not depend on it. Run
+  The producer is never agent-safe and replay consumers must not depend on it. The artifact keeps
+  its declared `kind`, so replay authority does not erase generated-source lineage. Run
   `ota baseline record --artifact <name>` to issue a receipt-bound recorded attestation, then
   explicitly select that exact attestation with `ota baseline promote --artifact <name> --attestation <path>`.
   Ota rejects ordinary workflows that include the producer and consumer dependency closures that
@@ -319,9 +323,9 @@ artifacts:
 - `producer`: required task name that materializes the artifact
 - `paths`: required non-empty repo-relative output paths owned by the artifact
 - `inputs`: optional repo-relative source paths that define the declared derivation boundary
-- task consumers declare `requires_artifacts: [typescript-sdk]` and directly depend on the
-  producer task; Ota verifies the declared output paths after dependencies complete and before the
-  consumer body starts
+- ordinary generated-artifact consumers declare `requires_artifacts: [typescript-sdk]` and directly
+  depend on the producer task; replay consumers declare `requires_artifacts` without that producer
+  dependency, because Ota resolves their promoted authority before the consumer body starts
 - presence is not freshness: Ota does not infer currentness from timestamps or Git state
 
 ## `exports` and `policies`

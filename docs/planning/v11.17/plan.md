@@ -70,7 +70,7 @@ may orchestrate that task, but are not independent artifact producers.
 ```yaml
 artifacts:
   recorded-baseline:
-    kind: replay_baseline
+    kind: generated_source
     producer: record:live
     paths:
       - data/fixture.jsonl
@@ -82,8 +82,10 @@ artifacts:
 ```
 
 The contract declares the producer, output boundary, and portable authority-manifest location. It
-does not contain a mutable hand-authored digest. The generated, committed manifest selects the
-accepted attestation and identities.
+does not contain a mutable hand-authored digest. `replay` is an additive authority capability: an
+existing `generated_source` keeps its lineage and output ownership rather than being duplicated or
+retyped as a parallel baseline artifact. The generated, committed manifest selects the accepted
+attestation and identities.
 
 The authority chain is:
 
@@ -177,9 +179,10 @@ Doctor and policy surfaces derive from it rather than calculating a second basel
 
 ## Implementation Order
 
-1. Extend V11.13 artifact lineage with `kind: replay_baseline`, one task producer, declared
+1. Extend V11.13 artifact lineage with optional `replay` authority, one task producer, declared
    outputs, portable authority-manifest location, explicit consumer ownership, and no ordinary
-   execution path to regeneration.
+   execution path to regeneration. Preserve the artifact's declared lineage kind, including
+   `generated_source`.
 2. Add explicit regeneration admission and atomic Ota-recorded attestation capture at the
    producer decision site, binding the producer run's V11.16 graph identity plus asserted-target
    and derivation-input closure identities.

@@ -237,6 +237,8 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
     let mut owned_paths = BTreeMap::new();
     let mut authority_manifests = BTreeMap::new();
     for (artifact_name, artifact) in &contract.artifacts {
+        let is_replay_authority_artifact = artifact.replay.is_some()
+            || artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline;
         if artifact_name.trim().is_empty() {
             errors.push(ValidationError::new(
                 "`artifacts` must not declare an empty artifact name",
@@ -253,7 +255,7 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                 "artifact `{artifact_name}` must declare at least one output path"
             )));
         }
-        if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
+        if is_replay_authority_artifact {
             for (index, path) in artifact.paths.iter().enumerate() {
                 let path = path.trim();
                 if artifact.paths.iter().skip(index + 1).any(|other| {
@@ -272,14 +274,9 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                     "replay baseline artifact `{artifact_name}` must declare `replay.authority_manifest` and a replay consumption posture"
                 )));
             }
-            (crate::schema::GeneratedArtifactKind::GeneratedSource, Some(_)) => {
-                errors.push(ValidationError::new(format!(
-                    "generated source artifact `{artifact_name}` must not declare `replay`; use `kind: replay_baseline`"
-                )));
-            }
             _ => {}
         }
-        if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline
+        if is_replay_authority_artifact
             && contract.agent.as_ref().is_some_and(|agent| {
                 agent
                     .safe_tasks
@@ -350,7 +347,9 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                 )));
                 continue;
             };
-            if artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline {
+            if artifact.replay.is_some()
+                || artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline
+            {
                 let closure = replay_baseline_consumer_execution_closure(contract, task_name);
                 if closure
                     .iter()
@@ -392,7 +391,9 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
 
     if let Some(workflows) = contract.workflows.as_ref() {
         for (artifact_name, artifact) in &contract.artifacts {
-            if artifact.kind != crate::schema::GeneratedArtifactKind::ReplayBaseline {
+            if artifact.replay.is_none()
+                && artifact.kind != crate::schema::GeneratedArtifactKind::ReplayBaseline
+            {
                 continue;
             }
             for workflow_name in workflows.items.keys() {
@@ -43358,7 +43359,7 @@ tasks:
     }
 
     #[test]
-    fn accepts_replay_baseline_with_explicit_portable_authority() {
+    fn accepts_generated_source_with_explicit_replay_authority() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -43367,9 +43368,10 @@ project:
   name: replay-baseline
 artifacts:
   recorded-baseline:
-    kind: replay_baseline
+    kind: generated_source
     producer: record:live
     paths: [data/fixture.jsonl, data/store.db, data/baseline.json]
+    inputs: [schema.sql]
     replay:
       authority_manifest: replay/recorded-baseline.ota.json
       consumption: read_only

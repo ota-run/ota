@@ -1975,7 +1975,9 @@ JSON output:
 
 ## `ota baseline record` and `ota baseline promote`
 
-Use these commands only for a declared `artifacts.<name>.kind: replay_baseline` lane.
+Use these commands for any declared `artifacts.<name>.replay` authority lane. The artifact keeps
+its `kind`, so an existing `generated_source` can gain replay authority without duplicate output
+ownership.
 
 ```bash
 ota baseline record --artifact recorded-baseline --json
@@ -1985,9 +1987,10 @@ ota baseline promote --artifact recorded-baseline \
 
 `record` executes the declared producer, archives its execution receipt, and writes a
 content-addressed attestation of the complete generated output set, exact task scope, resolved
-backend, lifecycle when one applies, and the clean Git source identity captured before the
-producer changes its outputs. It refuses an untracked or dirty source tree instead of recording
-ambiguous provenance. `record` does not update a baseline or select the newest recording.
+backend, lifecycle when one applies, and the clean Git source identity verified before and after
+the producer runs. Declared baseline outputs and Ota-owned `.ota` runtime state are excluded from
+that check; every other tracked or untracked source mutation refuses recording. `record` does not
+update a baseline or select the newest recording.
 Every attestation also carries the producer's V11.16 execution-boundary graph and its asserted
 target and derivation-input closure identities. When no material prerequisite adapter observed a
 graph, Ota records the canonical empty graph with `unknown` posture rather than omitting that
