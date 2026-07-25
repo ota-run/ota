@@ -2113,7 +2113,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "kind": { "const": "generated_source" },
             "producer": { "type": "string" },
             "paths": { "$ref": "#/$defs/stringArray" },
-            "inputs": { "$ref": "#/$defs/stringArray" }
+            "inputs": { "$ref": "#/$defs/stringArray" },
+            "replay": { "$ref": "#/$defs/replayBaselineArtifact" }
           }
         },
         {

@@ -5026,15 +5026,15 @@ fn diagnose_replay_baseline_authority(
             continue;
         };
         for artifact_name in &task.requires_artifacts {
+            if !contract.task_consumes_artifact_as_replay(task_name.as_str(), artifact_name) {
+                continue;
+            }
             if !checked_artifacts.insert(artifact_name.clone()) {
                 continue;
             }
             let Some(artifact) = contract.artifacts.get(artifact_name) else {
                 continue;
             };
-            if artifact.replay.is_none() {
-                continue;
-            }
             let replay = artifact
                 .replay
                 .as_ref()
@@ -27497,5 +27497,54 @@ workflows:
             .find(|finding| finding.code() == "OTA_REPLAY_BASELINE_UNAVAILABLE")
             .expect("expected replay baseline finding");
         assert!(finding.why.contains("does not match promoted authority"));
+    }
+
+    #[test]
+    fn doctor_does_not_require_replay_authority_for_generated_source_lineage_consumer() {
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract_text = r#"
+version: 1
+project:
+  name: generated-source-replay
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    replay:
+      authority_manifest: replay/client.ota.json
+      consumption: verify_unchanged
+tasks:
+  generate:
+    run: "true"
+  check-current:
+    run: "true"
+    depends_on: [generate]
+    requires_artifacts: [client]
+workflows:
+  default: generated
+  generated:
+    run:
+      task: check-current
+"#;
+        fs::write(&contract_path, contract_text).unwrap();
+        let contract = parse_contract_str(&contract_path, contract_text).unwrap();
+
+        let report = super::diagnose_contract_with_mode_and_lifecycle_for_workflow(
+            &contract,
+            &contract_path,
+            DoctorMode::Native,
+            None,
+            Some("generated"),
+        );
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.code() != "OTA_REPLAY_BASELINE_UNAVAILABLE"),
+            "ordinary generated-source lineage must not require promoted authority: {report:?}"
+        );
     }
 }

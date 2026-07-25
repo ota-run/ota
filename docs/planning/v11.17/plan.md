@@ -96,10 +96,11 @@ producer run -> recorded attestation -> explicit promotion -> immutable selected
 The resulting rules are:
 
 - a replay baseline is a named artifact with one declared producer task;
-- the producer is explicitly classified as a regeneration lane and is never selected by ordinary
-  replay, default verification, or agent-safe execution;
-- replay consumers declare the baseline through existing artifact/input ownership and may read it,
-  but cannot rewrite it;
+- the producer is explicitly classified as a regeneration lane and is never selected by a replay
+  consumer or agent-safe execution; a producer-dependent consumer remains ordinary generated-source
+  lineage execution;
+- replay consumers declare the baseline through existing artifact/input ownership without the
+  producer dependency and may read it, but cannot rewrite it;
 - Ota captures the produced path identities only after the declared producer succeeds and records
   one immutable, content-addressed regeneration attestation;
 - the attestation, not a contract literal, binds artifact name, output paths and SHA-256 identities,

@@ -36,7 +36,7 @@ durable agent workflow belongs in the canonical Ota skill.
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
 - active V11.17 trusted replay-baseline regeneration: Core now has an additive
-  `artifacts.<name>.kind: replay_baseline` authority chain: explicit producer record, immutable
+  `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
   binds the canonical recursive output set, producer receipt, source/contract identities, and the
   producer's V11.16 execution-boundary graph plus asserted-target and derivation-input closures.
@@ -50,7 +50,11 @@ durable agent workflow belongs in the canonical Ota skill.
   promoted. No authority manifest or live-model recording has been manufactured. Core focused
   record/promotion, JSON conformance, and published-schema tests pass. Remaining gates are
   independent review, a real credentialed Bedrock recording/promotion, and one independent
-  generated-baseline pressure repo.
+  generated-baseline pressure repo. Dagger exposed and now exercises the needed hybrid posture:
+  `generated_source` retains an ordinary producer-dependent SDK check while a second task can
+  consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
+  receipt, mutation guard, and strict runner boundary all derive that consumer distinction from the
+  producer dependency; Dagger's hosted record/promote/replay proof awaits the current Core commit.
 - completed implementation slice: V11.19 typed uv local-project hydration. The replay classifier
   now requires resolved source posture, declared lockfile identity, and clean local-project source
   identity before editable hydration can be acquitting; missing lockfile or source identity remains

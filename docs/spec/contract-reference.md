@@ -296,13 +296,17 @@ artifacts:
     consumption: read_only
   ```
 
-  The producer is never agent-safe and replay consumers must not depend on it. The artifact keeps
-  its declared `kind`, so replay authority does not erase generated-source lineage. Run
+  The producer is never agent-safe. For a `generated_source` artifact, a task that requires the
+  artifact and lists its producer in top-level `depends_on` remains an ordinary lineage consumer;
+  it runs the current producer and does not consume promoted replay authority. A task that requires
+  that artifact without the unconditional producer dependency is a replay consumer. A dedicated
+  `replay_baseline` artifact always remains a replay consumer. The artifact keeps its declared `kind`, so replay authority
+  does not erase generated-source lineage. Run
   `ota baseline record --artifact <name>` to issue a receipt-bound recorded attestation, then
   explicitly select that exact attestation with `ota baseline promote --artifact <name> --attestation <path>`.
-  Ota rejects ordinary workflows that include the producer and consumer dependency closures that
-  declare writes overlapping the baseline outputs, so replay cannot regenerate or mutate its own
-  authority through a normal verification path.
+  Ota rejects a selected replay workflow that includes the producer, and it rejects replay consumer
+  closures that declare writes overlapping the baseline outputs, so replay cannot regenerate or
+  mutate its own authority through a normal verification path.
   The committed authority manifest, not local `.ota` history and not a hand-authored digest, is
   the portable replay authority. Its `trust_root: scm_review` relies on the repository delivery
   path to review that committed selection; Ota does not verify reviewer or signer provenance.

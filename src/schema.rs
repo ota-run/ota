@@ -466,6 +466,70 @@ impl Contract {
         ordered
     }
 
+    /// Returns the execution closure for a task, including lifecycle hooks that can run in the
+    /// same transaction. Replay admission uses this wider closure so a hook cannot regenerate a
+    /// promoted artifact behind the consumer's back.
+    pub fn task_execution_closure_names(
+        &self,
+        roots: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        fn collect(
+            contract: &Contract,
+            task_name: &str,
+            visited: &mut BTreeSet<String>,
+            ordered: &mut Vec<String>,
+        ) {
+            if !visited.insert(task_name.to_string()) {
+                return;
+            }
+            let Some(task) = contract.tasks.get(task_name) else {
+                return;
+            };
+            if let Some(aggregate) = task.aggregate.as_ref() {
+                for dependency in &aggregate.tasks {
+                    collect(contract, dependency, visited, ordered);
+                }
+            }
+            for dependency in task.all_depends_on() {
+                collect(contract, dependency, visited, ordered);
+            }
+            for hook in task
+                .after_success
+                .iter()
+                .chain(task.after_failure.iter())
+                .chain(task.after_always.iter())
+            {
+                collect(contract, hook, visited, ordered);
+            }
+            ordered.push(task_name.to_string());
+        }
+
+        let mut visited = BTreeSet::new();
+        let mut ordered = Vec::new();
+        for root in roots {
+            collect(self, root.as_str(), &mut visited, &mut ordered);
+        }
+        ordered
+    }
+
+    /// A replay-capable generated-source artifact retains ordinary lineage when its consumer
+    /// declares the producer dependency. Without that dependency, the consumer is a promoted
+    /// replay lane and must be admitted against the selected authority instead. Dedicated
+    /// replay-baseline artifacts always require promoted authority.
+    pub fn task_consumes_artifact_as_replay(&self, task_name: &str, artifact_name: &str) -> bool {
+        let Some(artifact) = self.artifacts.get(artifact_name) else {
+            return false;
+        };
+        artifact.replay.is_some()
+            && (artifact.kind != GeneratedArtifactKind::GeneratedSource
+                || self.tasks.get(task_name).is_none_or(|task| {
+                    !task
+                        .depends_on
+                        .iter()
+                        .any(|dependency| dependency.as_str() == artifact.producer)
+                }))
+    }
+
     pub fn selected_workflow_task_closure_names(&self, workflow_name: Option<&str>) -> Vec<String> {
         let mut roots = Vec::new();
         if let Some(prepare) = self.selected_prepare_task_name_for(workflow_name) {

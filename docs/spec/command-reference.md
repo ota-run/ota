@@ -2000,8 +2000,10 @@ contract identity, then atomically writes only the contract-declared portable au
 That manifest embeds the selected attestation, retaining reviewable source, scope, receipt, and
 boundary provenance without requiring local archive retention.
 
-`ota doctor` evaluates the selected consumer closure against that portable authority before a
-replay task starts. A missing, revoked, malformed, or identity-mismatched authority emits
+`ota doctor` evaluates the selected replay-consumer closure against that portable authority before
+a replay task starts. For a `generated_source` artifact, a consumer that explicitly depends on the
+producer is ordinary generated lineage execution, not replay; dedicated `replay_baseline` artifacts
+always require authority. A missing, revoked, malformed, or identity-mismatched authority emits
 `OTA_REPLAY_BASELINE_UNAVAILABLE`; record and explicitly promote a reviewed replacement instead
 of editing a digest or letting replay regenerate the baseline.
 

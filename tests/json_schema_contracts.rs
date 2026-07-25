@@ -332,6 +332,23 @@ fn published_contract_schema_includes_container_image_hydration_network_kind() {
 }
 
 #[test]
+fn published_contract_schema_allows_replay_authority_on_generated_source() {
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    let generated_source = schema["$defs"]["generatedArtifact"]["oneOf"]
+        .as_array()
+        .expect("generated artifact variants")
+        .iter()
+        .find(|variant| variant["properties"]["kind"] == json!({ "const": "generated_source" }))
+        .expect("generated_source artifact variant");
+
+    assert_eq!(
+        generated_source["properties"]["replay"],
+        json!({ "$ref": "#/$defs/replayBaselineArtifact" }),
+        "generated source artifacts must expose the canonical replay authority definition"
+    );
+}
+
+#[test]
 fn services_schema_covers_published_service_summary_fields() {
     let schema = load_schema("docs/spec/json-schemas/services.json");
     let success = &schema["oneOf"][0]["properties"];

@@ -26,11 +26,13 @@
 
 ## Unreleased
 
-- added first-class `replay_baseline` artifact authority. A declared producer can now issue a
+- added first-class replay authority for generated artifacts. A declared producer can now issue a
   receipt-bound, content-addressed recording through `ota baseline record --artifact <name>`;
   only `ota baseline promote --artifact <name> --attestation <path>` may atomically select it in
   the contract-declared portable authority manifest. Consumers verify the selected complete output
-  identity set before execution. Strict `read_only` consumers receive run-scoped snapshots outside
+  identity set before execution. Existing `generated_source` artifacts retain their producer
+  lineage: a producer-dependent consumer remains ordinary generated-source execution, while a
+  consumer without that dependency uses promoted replay authority. Strict `read_only` consumers receive run-scoped snapshots outside
   the writable workspace mounted across their full ephemeral-container closure. Native or other
   non-strict consumers may instead declare `consumption: verify_unchanged`; Ota rechecks the
   canonical output manifest after execution and fails with `replay_artifact_mutation_detected`

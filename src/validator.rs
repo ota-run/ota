@@ -347,10 +347,8 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                 )));
                 continue;
             };
-            if artifact.replay.is_some()
-                || artifact.kind == crate::schema::GeneratedArtifactKind::ReplayBaseline
-            {
-                let closure = replay_baseline_consumer_execution_closure(contract, task_name);
+            if contract.task_consumes_artifact_as_replay(task_name, artifact_name) {
+                let closure = contract.task_execution_closure_names([task_name.to_string()]);
                 if closure
                     .iter()
                     .any(|dependency| dependency == &artifact.producer)
@@ -389,16 +387,81 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
         }
     }
 
-    if let Some(workflows) = contract.workflows.as_ref() {
+    // A task can select several child closures through an aggregate or hook graph. If one child
+    // regenerates an artifact while another consumes its promoted authority, the runner would have
+    // to mix mutually exclusive lineages in one transaction. Reject that root before execution.
+    for (root_task_name, root_task) in &contract.tasks {
+        let closure = contract.task_execution_closure_names([root_task_name.to_string()]);
         for (artifact_name, artifact) in &contract.artifacts {
             if artifact.replay.is_none()
-                && artifact.kind != crate::schema::GeneratedArtifactKind::ReplayBaseline
+                || root_task
+                    .requires_artifacts
+                    .iter()
+                    .any(|required| required == artifact_name)
             {
                 continue;
             }
+            let consumes_replay = closure.iter().any(|task_name| {
+                contract.tasks.get(task_name).is_some_and(|task| {
+                    task.requires_artifacts.iter().any(|required| {
+                        required == artifact_name
+                            && contract.task_consumes_artifact_as_replay(task_name, artifact_name)
+                    })
+                })
+            });
+            if !consumes_replay {
+                continue;
+            }
+            if closure
+                .iter()
+                .any(|task_name| task_name == &artifact.producer)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{root_task_name}` selects replay consumer(s) for artifact `{artifact_name}` together with regeneration producer `{}`; run the ordinary lineage and promoted replay lanes separately",
+                    artifact.producer
+                )));
+            }
+            for closure_task_name in &closure {
+                let Some(closure_task) = contract.tasks.get(closure_task_name) else {
+                    continue;
+                };
+                for write in &closure_task.effects.writes {
+                    if artifact
+                        .paths
+                        .iter()
+                        .any(|path| replay_baseline_paths_overlap(path.trim(), write.trim()))
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{root_task_name}` selects replay consumer(s) for artifact `{artifact_name}` but its execution closure task `{closure_task_name}` declares a write overlapping baseline output `{write}`"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(workflows) = contract.workflows.as_ref() {
+        for (artifact_name, artifact) in &contract.artifacts {
+            if artifact.replay.is_none() {
+                continue;
+            }
             for workflow_name in workflows.items.keys() {
-                if contract
-                    .selected_workflow_task_closure_names(Some(workflow_name))
+                let closure = contract.task_execution_closure_names(
+                    contract.selected_workflow_task_closure_names(Some(workflow_name)),
+                );
+                let consumes_replay = closure.iter().any(|task_name| {
+                    contract.tasks.get(task_name).is_some_and(|task| {
+                        task.requires_artifacts.iter().any(|required| {
+                            required == artifact_name
+                                && contract
+                                    .task_consumes_artifact_as_replay(task_name, artifact_name)
+                        })
+                    })
+                });
+                if !consumes_replay {
+                    continue;
+                }
+                if closure
                     .iter()
                     .any(|task_name| task_name == &artifact.producer)
                 {
@@ -406,6 +469,22 @@ fn validate_generated_artifacts(contract: &Contract, errors: &mut Vec<Validation
                         "workflow `{workflow_name}` includes replay baseline regeneration producer `{}` for artifact `{artifact_name}`; use `ota baseline record --artifact {artifact_name}` instead",
                         artifact.producer
                     )));
+                }
+                for closure_task_name in &closure {
+                    let Some(closure_task) = contract.tasks.get(closure_task_name) else {
+                        continue;
+                    };
+                    for write in &closure_task.effects.writes {
+                        if artifact
+                            .paths
+                            .iter()
+                            .any(|path| replay_baseline_paths_overlap(path.trim(), write.trim()))
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "workflow `{workflow_name}` consumes replay baseline artifact `{artifact_name}` but its selected closure task `{closure_task_name}` declares a write overlapping baseline output `{write}`"
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -422,47 +501,6 @@ fn replay_baseline_paths_overlap(left: &str, right: &str) -> bool {
         || right
             .strip_prefix(left)
             .is_some_and(|suffix| suffix.starts_with('/') || suffix.starts_with('\\'))
-}
-
-/// Replay consumers cannot regenerate or mutate their selected authority through dependencies or
-/// lifecycle hooks. Hooks execute in the same selected run even though they are not dependency
-/// prerequisites, so they belong to the admission closure for this boundary.
-fn replay_baseline_consumer_execution_closure(contract: &Contract, root: &str) -> Vec<String> {
-    fn collect(
-        contract: &Contract,
-        task_name: &str,
-        visited: &mut BTreeSet<String>,
-        ordered: &mut Vec<String>,
-    ) {
-        if !visited.insert(task_name.to_string()) {
-            return;
-        }
-        let Some(task) = contract.tasks.get(task_name) else {
-            return;
-        };
-        if let Some(aggregate) = task.aggregate.as_ref() {
-            for dependency in &aggregate.tasks {
-                collect(contract, dependency, visited, ordered);
-            }
-        }
-        for dependency in task.all_depends_on() {
-            collect(contract, dependency, visited, ordered);
-        }
-        for hook in task
-            .after_success
-            .iter()
-            .chain(task.after_failure.iter())
-            .chain(task.after_always.iter())
-        {
-            collect(contract, hook, visited, ordered);
-        }
-        ordered.push(task_name.to_string());
-    }
-
-    let mut visited = BTreeSet::new();
-    let mut ordered = Vec::new();
-    collect(contract, root, &mut visited, &mut ordered);
-    ordered
 }
 
 fn validate_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -43399,6 +43437,48 @@ agent:
     }
 
     #[test]
+    fn accepts_generated_source_with_ordinary_and_replay_consumers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: generated-source-replay
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    replay:
+      authority_manifest: replay/client.ota.json
+      consumption: verify_unchanged
+tasks:
+  generate:
+    run: true
+  check-current:
+    run: true
+    depends_on: [generate]
+    requires_artifacts: [client]
+  check-promoted:
+    run: true
+    requires_artifacts: [client]
+workflows:
+  default: generated
+  generated:
+    run:
+      task: check-current
+  promoted:
+    run:
+      task: check-promoted
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("one generated artifact may have ordinary and promoted consumers");
+    }
+
+    #[test]
     fn accepts_verify_unchanged_replay_baseline_consumption() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -43428,7 +43508,45 @@ tasks:
     }
 
     #[test]
-    fn rejects_replay_baseline_without_authority_or_with_producer_dependency() {
+    fn rejects_replay_baseline_consumer_with_direct_producer_dependency() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: verify_unchanged
+tasks:
+  record:live:
+    run: true
+  replay:
+    run: cat data/baseline.json
+    depends_on: [record:live]
+    requires_artifacts: [recorded-baseline]
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = validate_contract(&contract)
+            .expect_err("dedicated replay-baseline consumers must never regenerate authority")
+            .to_string();
+        assert!(
+            rendered.contains(
+                "dependency closure must not include regeneration producer `record:live`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_replay_baseline_without_authority_or_agent_safe_producer() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -43462,17 +43580,140 @@ agent:
         .unwrap();
 
         let rendered = validate_contract(&contract)
-            .expect_err("a replay baseline needs portable authority and isolated regeneration")
+            .expect_err("a replay baseline needs portable authority and an unsafe producer")
             .to_string();
         assert!(
             rendered.contains("must declare `replay.authority_manifest`"),
             "{rendered}"
         );
         assert!(rendered.contains("must not be agent-safe"), "{rendered}");
+    }
+
+    #[test]
+    fn rejects_replay_consumer_with_indirect_producer_dependency() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: generated_source
+    producer: record:live
+    paths: [data/fixture.jsonl]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: verify_unchanged
+tasks:
+  record:live:
+    command:
+      exe: python
+      args: [record.py]
+  setup:
+    command:
+      exe: true
+    depends_on: [record:live]
+  replay:
+    command:
+      exe: python
+      args: [replay.py]
+    depends_on: [setup]
+    requires_artifacts: [recorded-baseline]
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("a replay consumer must not regenerate through an indirect dependency")
+            .to_string();
         assert!(
             rendered.contains(
                 "dependency closure must not include regeneration producer `record:live`"
             ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_mode_specific_producer_dependency_for_replay_authority() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: generated_source
+    producer: record:live
+    paths: [data/fixture.jsonl]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: verify_unchanged
+tasks:
+  record:live:
+    run: true
+  replay:
+    run: true
+    execution:
+      modes:
+        container:
+          depends_on: [record:live]
+    requires_artifacts: [recorded-baseline]
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("a mode-only producer dependency cannot disable replay admission")
+            .to_string();
+        assert!(
+            rendered.contains(
+                "dependency closure must not include regeneration producer `record:live`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_aggregate_that_combines_generated_lineage_and_promoted_replay() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: generated-source-replay
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    replay:
+      authority_manifest: replay/client.ota.json
+      consumption: read_only
+tasks:
+  generate:
+    run: true
+  check-current:
+    run: true
+    depends_on: [generate]
+    requires_artifacts: [client]
+  check-promoted:
+    run: true
+    requires_artifacts: [client]
+  verify-all:
+    aggregate:
+      tasks: [check-current, check-promoted]
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("one transaction must not combine regeneration and promoted replay")
+            .to_string();
+        assert!(
+            rendered.contains("task `verify-all` selects replay consumer(s) for artifact `client` together with regeneration producer `generate`"),
             "{rendered}"
         );
     }
@@ -43555,6 +43796,50 @@ tasks:
     }
 
     #[test]
+    fn rejects_sibling_hook_write_alongside_replay_consumer() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: replay-baseline
+artifacts:
+  recorded-baseline:
+    kind: replay_baseline
+    producer: record:live
+    paths: [data/baseline.json]
+    replay:
+      authority_manifest: replay/recorded-baseline.ota.json
+      consumption: verify_unchanged
+tasks:
+  record:live:
+    run: true
+  replay:
+    run: true
+    requires_artifacts: [recorded-baseline]
+  mutate-baseline:
+    run: true
+    effects:
+      writes: [data/baseline.json]
+  verify:
+    run: true
+    after_success: [replay, mutate-baseline]
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = validate_contract(&contract)
+            .expect_err("a replay consumer cannot share a hook transaction with a baseline writer")
+            .to_string();
+        assert!(rendered.contains("task `verify`"), "{rendered}");
+        assert!(rendered.contains("mutate-baseline"), "{rendered}");
+        assert!(
+            rendered.contains("overlapping baseline output"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn accepts_read_only_replay_baseline_consumer_post_hooks_inside_selected_closure() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -43588,7 +43873,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_workflow_or_dependency_writes_that_can_regenerate_a_replay_baseline() {
+    fn rejects_replay_dependency_writes_that_overlap_baseline_outputs() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -43629,13 +43914,9 @@ workflows:
         .unwrap();
 
         let rendered = validate_contract(&contract)
-            .expect_err("ordinary workflow and closure writes must not reach regeneration")
+            .expect_err("replay dependency writes must not overlap baseline outputs")
             .to_string();
         assert!(rendered.contains("declares a write overlapping baseline output `data`"));
-        assert!(
-            rendered.contains("workflow `verify` includes replay baseline regeneration producer"),
-            "{rendered}"
-        );
     }
 
     #[test]

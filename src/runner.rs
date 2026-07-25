@@ -11558,7 +11558,7 @@ fn ensure_task_required_artifacts(
             .artifacts
             .get(artifact_name)
             .expect("validated task artifact references should exist");
-        if artifact.replay.is_some() {
+        if contract.task_consumes_artifact_as_replay(task_name, artifact_name) {
             let replay = artifact
                 .replay
                 .as_ref()
@@ -11621,7 +11621,11 @@ fn prepare_selected_read_only_replay_baseline_boundary(
         let Some(task) = contract.tasks.get(task_name) else {
             return;
         };
-        artifacts.extend(task.requires_artifacts.iter().cloned());
+        for artifact_name in &task.requires_artifacts {
+            if contract.task_consumes_artifact_as_replay(task_name, artifact_name) {
+                artifacts.insert(artifact_name.clone());
+            }
+        }
         if let Some(aggregate) = task.aggregate.as_ref() {
             for dependency in &aggregate.tasks {
                 collect(contract, dependency, visited, artifacts);
@@ -11754,7 +11758,7 @@ fn prepare_replay_baseline_mutation_guards(
             .artifacts
             .get(artifact_name)
             .expect("validated task artifact references should exist");
-        if artifact.replay.is_none() {
+        if !contract.task_consumes_artifact_as_replay(task_name, artifact_name) {
             continue;
         }
         let replay = artifact
@@ -61839,7 +61843,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn read_only_replay_mounts_external_snapshot_across_selected_dependency_closure() {
+    fn generated_source_replay_mounts_external_snapshot_across_selected_dependency_closure() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -61855,7 +61859,7 @@ execution:
         image: alpine:3.21
 artifacts:
   recorded-baseline:
-    kind: replay_baseline
+    kind: generated_source
     producer: record:live
     paths: [data/baseline.json]
     replay:
@@ -62001,6 +62005,37 @@ tasks:
                 .exists(),
             "unsupported native replay must refuse before creating runner snapshot state"
         );
+    }
+
+    #[test]
+    fn generated_source_lineage_consumer_does_not_require_promoted_authority() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: generated-source-replay
+artifacts:
+  client:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    replay:
+      authority_manifest: replay/client.ota.json
+      consumption: verify_unchanged
+tasks:
+  generate:
+    run: true
+  check-current:
+    run: test -f sdk/client.gen.ts
+    depends_on: [generate]
+    requires_artifacts: [client]
+"#,
+        );
+        fixture.write("sdk/client.gen.ts", "export const client = true;\n");
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "check-current")
+            .expect("ordinary generated-source consumer must not require replay authority");
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
     }
 
     #[cfg(unix)]

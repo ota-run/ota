@@ -40354,6 +40354,101 @@ tasks:
     }
 
     #[test]
+    fn receipt_keeps_producer_dependent_generated_source_as_lineage() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir_all(repo.path().join("sdk")).expect("sdk directory");
+        fs::write(
+            repo.path().join("sdk/client.gen.ts"),
+            "export const sdk = true;\n",
+        )
+        .expect("generated source");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: receipt-generated-source-replay
+artifacts:
+  sdk:
+    kind: generated_source
+    producer: generate
+    paths: [sdk/client.gen.ts]
+    replay:
+      authority_manifest: replay/sdk.ota.json
+      consumption: verify_unchanged
+tasks:
+  generate:
+    command:
+      exe: true
+  check-current:
+    command:
+      exe: true
+    depends_on: [generate]
+    requires_artifacts: [sdk]
+"#,
+        )
+        .expect("parse contract");
+        let outputs = crate::replay_baseline::capture_replay_baseline_output_manifest(
+            repo.path(),
+            &[String::from("sdk/client.gen.ts")],
+        )
+        .expect("capture output identity");
+        let attestation = crate::replay_baseline::ReplayBaselineAttestation {
+            schema_version: 1,
+            artifact: String::from("sdk"),
+            producer: String::from("generate"),
+            execution_scope: String::from("task:generate"),
+            execution_mode: String::from("native"),
+            execution_lifecycle: None,
+            outputs,
+            contract_identity: String::from("sha256:contract"),
+            source_identity: String::from("git:source"),
+            execution_receipt_identity: String::from("sha256:receipt"),
+            execution_receipt_archive: String::from(".ota/receipts/record.json"),
+            execution_boundary_graph_identity: String::from("sha256:boundary"),
+            asserted_target_closure_identity: String::from("sha256:target"),
+            derivation_input_closure_identity: String::from("sha256:derivation"),
+            created_at: String::from("2026-07-25T00:00:00Z"),
+        };
+        let authority = crate::replay_baseline::promote_replay_baseline_attestation(
+            &attestation,
+            String::from("2026-07-25T00:01:00Z"),
+        )
+        .expect("promote authority");
+        fs::create_dir_all(repo.path().join("replay")).expect("authority directory");
+        fs::write(
+            repo.path().join("replay/sdk.ota.json"),
+            serde_json::to_vec_pretty(&authority).expect("authority json"),
+        )
+        .expect("write authority");
+
+        let inputs = super::receipt_evaluated_inputs(
+            &contract,
+            &contract_path,
+            vec![String::from("check-current")],
+            ExecutionOverrides::default(),
+        );
+        let input = inputs
+            .iter()
+            .find(|input| input.id == "generated_artifact:sdk")
+            .expect("captured generated source lineage");
+        assert_eq!(input.kind, "generated_artifact_lineage");
+        assert_eq!(
+            input.input_class,
+            ReplayInputClass::GeneratedArtifactLineage
+        );
+        assert!(
+            input
+                .artifact_lineage
+                .as_ref()
+                .and_then(|lineage| lineage.replay_authority.as_ref())
+                .is_none(),
+            "ordinary generated-source execution must not claim promoted replay authority"
+        );
+    }
+
+    #[test]
     fn receipt_captures_clean_git_head_source_identity() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         std::process::Command::new("git")
@@ -102709,7 +102804,13 @@ fn receipt_evaluated_inputs(
             collect_receipt_hydration_inputs(prepare, root, &mut inputs);
         }
         collect_receipt_compose_image_inputs(task, root, backend, &mut inputs);
-        collect_receipt_generated_artifact_inputs(contract, root, task, &mut inputs);
+        collect_receipt_generated_artifact_inputs(
+            contract,
+            root,
+            task_name.as_str(),
+            task,
+            &mut inputs,
+        );
     }
     inputs.into_values().collect()
 }
@@ -103591,6 +103692,7 @@ fn attach_witnessed_observations(
 fn collect_receipt_generated_artifact_inputs(
     contract: &Contract,
     root: &Path,
+    task_name: &str,
     task: &TaskSpec,
     inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
 ) {
@@ -103598,35 +103700,36 @@ fn collect_receipt_generated_artifact_inputs(
         let Some(artifact) = contract.artifacts.get(artifact_name) else {
             continue;
         };
-        let replay_authority = if artifact.replay.is_some() {
-            artifact.replay.as_ref().and_then(|replay| {
-                crate::replay_baseline::verify_promoted_replay_baseline(
-                    root,
-                    artifact_name,
-                    &artifact.paths,
-                    &replay.authority_manifest,
-                )
-                .ok()
-                .map(|manifest| {
-                    crate::output::ExecutionReceiptReplayBaselineAuthority {
-                        authority_manifest: replay.authority_manifest.clone(),
-                        trust_root: String::from("scm_review"),
-                        selected_attestation_identity: manifest.selected_attestation_identity,
-                        promotion_identity: manifest.promotion_identity,
-                        consumption: match replay.consumption {
-                            crate::schema::ReplayBaselineConsumption::ReadOnly => {
-                                String::from("read_only")
-                            }
-                            crate::schema::ReplayBaselineConsumption::VerifyUnchanged => {
-                                String::from("verify_unchanged")
-                            }
-                        },
-                    }
+        let replay_authority =
+            if contract.task_consumes_artifact_as_replay(task_name, artifact_name) {
+                artifact.replay.as_ref().and_then(|replay| {
+                    crate::replay_baseline::verify_promoted_replay_baseline(
+                        root,
+                        artifact_name,
+                        &artifact.paths,
+                        &replay.authority_manifest,
+                    )
+                    .ok()
+                    .map(|manifest| {
+                        crate::output::ExecutionReceiptReplayBaselineAuthority {
+                            authority_manifest: replay.authority_manifest.clone(),
+                            trust_root: String::from("scm_review"),
+                            selected_attestation_identity: manifest.selected_attestation_identity,
+                            promotion_identity: manifest.promotion_identity,
+                            consumption: match replay.consumption {
+                                crate::schema::ReplayBaselineConsumption::ReadOnly => {
+                                    String::from("read_only")
+                                }
+                                crate::schema::ReplayBaselineConsumption::VerifyUnchanged => {
+                                    String::from("verify_unchanged")
+                                }
+                            },
+                        }
+                    })
                 })
-            })
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         let lineage = ExecutionReceiptArtifactLineage {
             producer: artifact.producer.clone(),
             paths: artifact.paths.clone(),
