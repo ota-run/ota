@@ -39574,11 +39574,87 @@ tasks:
                 name: Some(String::from("public")),
                 url: String::from("https://api.nuget.org/v3/index.json"),
             }];
-        let resolved_trust =
-            super::receipt_diff_artifact_trust(None, None, &[resolved.clone()], &[resolved]);
+        let resolved_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[resolved.clone()],
+            &[resolved.clone()],
+        );
         assert_eq!(
             resolved_trust[0].trust_role,
             crate::output::ReceiptDiffArtifactTrustRole::Acquitting
+        );
+
+        let mut unlocked_local_project = resolved.clone();
+        unlocked_local_project
+            .hydration_provenance
+            .as_mut()
+            .expect("hydration provenance")
+            .local_project = Some(crate::output::ExecutionReceiptUvLocalProjectProvenance {
+            path: String::from("packages/sdk"),
+            editable: true,
+            extras: Vec::new(),
+            groups: Vec::new(),
+            manifest_path: String::from("packages/sdk/pyproject.toml"),
+            manifest_identity: Some(String::from("sha256:manifest")),
+            source_identity: Some(String::from("git:source")),
+            source_identity_error: None,
+            lockfile_path: None,
+            lockfile_identity: None,
+            resolution: String::from("resolved"),
+            resolution_error: None,
+        });
+        let unlocked_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[unlocked_local_project.clone()],
+            &[unlocked_local_project.clone()],
+        );
+        assert_eq!(
+            unlocked_trust[0].trust_role,
+            crate::output::ReceiptDiffArtifactTrustRole::Narrowing
+        );
+
+        let mut pinned_local_project = unlocked_local_project;
+        let project = pinned_local_project
+            .hydration_provenance
+            .as_mut()
+            .expect("hydration provenance")
+            .local_project
+            .as_mut()
+            .expect("local project provenance");
+        project.lockfile_path = Some(String::from("packages/sdk/uv.lock"));
+        project.lockfile_identity = Some(String::from("sha256:lockfile"));
+        let pinned_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[pinned_local_project.clone()],
+            &[pinned_local_project.clone()],
+        );
+        assert_eq!(
+            pinned_trust[0].trust_role,
+            crate::output::ReceiptDiffArtifactTrustRole::Acquitting
+        );
+
+        let mut source_unavailable_local_project = pinned_local_project;
+        let project = source_unavailable_local_project
+            .hydration_provenance
+            .as_mut()
+            .expect("hydration provenance")
+            .local_project
+            .as_mut()
+            .expect("local project provenance");
+        project.source_identity = None;
+        project.source_identity_error = Some(String::from("working tree is dirty"));
+        let source_unavailable_trust = super::receipt_diff_artifact_trust(
+            None,
+            None,
+            &[source_unavailable_local_project.clone()],
+            &[source_unavailable_local_project],
+        );
+        assert_eq!(
+            source_unavailable_trust[0].trust_role,
+            crate::output::ReceiptDiffArtifactTrustRole::Narrowing
         );
     }
 
@@ -41490,17 +41566,18 @@ fn receipt_diff_artifact_trust(
             // A matching declared env source clears only the named env-source file class.
             ReplayInputClass::DeclaredEnvSourceIdentity => ReceiptDiffArtifactTrustRole::Acquitting,
             // A matching lockfile clears its named dependency-resolution class. A hydration
-            // record can do the same only when both receipt captures resolved its source rather
-            // than leaving feed selection ambient.
+            // record can do the same only when both receipts capture resolved source posture.
+            // A local project also needs its declared lockfile and clean source identities: a
+            // resolved package index alone cannot pin editable project content for replay.
             ReplayInputClass::DeclaredDependencyResolution => {
                 if baseline
                     .hydration_provenance
                     .as_ref()
-                    .is_some_and(hydration_provenance_is_resolved)
+                    .is_some_and(hydration_provenance_is_replay_acquitting)
                     && current
                         .hydration_provenance
                         .as_ref()
-                        .is_some_and(hydration_provenance_is_resolved)
+                        .is_some_and(hydration_provenance_is_replay_acquitting)
                 {
                     ReceiptDiffArtifactTrustRole::Acquitting
                 } else if baseline.hydration_provenance.is_some()
@@ -41547,8 +41624,19 @@ fn receipt_diff_artifact_trust(
     artifacts
 }
 
-fn hydration_provenance_is_resolved(provenance: &ExecutionReceiptHydrationProvenance) -> bool {
-    provenance.resolved.resolution.as_deref() == Some("resolved")
+fn hydration_provenance_is_replay_acquitting(
+    provenance: &ExecutionReceiptHydrationProvenance,
+) -> bool {
+    if provenance.resolved.resolution.as_deref() != Some("resolved") {
+        return false;
+    }
+    let Some(project) = provenance.local_project.as_ref() else {
+        return true;
+    };
+    project.resolution == "resolved"
+        && project.manifest_identity.is_some()
+        && project.lockfile_identity.is_some()
+        && project.source_identity.is_some()
 }
 
 fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {

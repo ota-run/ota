@@ -126,8 +126,10 @@ Ota records its resolved revision when available and otherwise reports source id
 unavailable. The local project must never be represented as a witnessed execution observation.
 
 For V11.10 replay, a declared `lockfile` is a pinned input only after its observed identity is
-captured. A missing lockfile, source-identity failure, or undeclared ambient index leaves the
-affected replay class unavailable or suspect; a successful install does not erase that boundary.
+captured. A local project is replay-acquitting only when both receipts also carry its clean source
+identity and resolved hydration posture. A missing lockfile, source-identity failure, or undeclared
+ambient index can narrow a matching receipt comparison but never makes that dependency class
+replay-pinned; a successful install does not erase the boundary.
 
 ## Admission And Diagnostics
 

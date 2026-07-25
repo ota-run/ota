@@ -2184,12 +2184,12 @@ Task-effect rules:
     - `prepare.source.offline`: optional cache-only hydration posture projected as `uv --offline`; this prevents network access but does not make an undeclared local cache source replayable
     - `prepare.source.requirements_file`: required repo-relative requirements file when `prepare.source.mode: pip_requirements`; omit it for `mode: sync`
     - `prepare.source.local_project`: required source-`cwd`-relative local project declaration when `prepare.source.mode: pip_local_project`
-      - `prepare.source.local_project.path`: required source-`cwd`-relative directory containing the local project's `pyproject.toml`
+      - `prepare.source.local_project.path`: required source-`cwd`-relative directory containing the local project's `pyproject.toml`; `..` segments are valid only when the resolved path remains inside the contract root
       - `prepare.source.local_project.editable`: optional editable posture projected as `uv pip install -e`
       - `prepare.source.local_project.extras`: optional ordered extras list projected onto the declared local project target
       - `prepare.source.local_project.groups`: optional ordered dependency groups projected as separate `uv pip install --group <path>/pyproject.toml:<group>` invocations after the primary local-project install
-      - `prepare.source.local_project.lockfile`: optional source-`cwd`-relative lockfile whose identity Ota captures alongside the local project manifest before execution
-      - Ota separately records a clean Git source identity for the local project when it is available. A missing or dirty source does not silently become a manifest-only replay claim; Doctor reports that narrower identity boundary.
+      - `prepare.source.local_project.lockfile`: optional source-`cwd`-relative lockfile whose identity Ota captures alongside the local project manifest before execution; `..` segments are valid only when the resolved path remains inside the contract root
+      - Ota separately records a clean Git source identity for the local project when it is available. An editable local project is replay-acquitting only when both receipts carry resolved hydration posture, its declared lockfile identity, and its clean source identity. A missing lockfile or dirty/unavailable source remains narrowing evidence; Doctor reports that boundary.
     - `prepare.source.kind: poetry`
     - `prepare.source.cwd`: required repo-relative working directory for the Poetry install invocation
     - `prepare.source.groups`: optional dependency-group list for `poetry install --with ...` or `--only ...`

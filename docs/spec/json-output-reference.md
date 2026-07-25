@@ -2285,8 +2285,9 @@ for that local project; `source_identity_error` keeps a dirty or unavailable sou
 instead of treating the manifest hash as a source pin.
 Consumers must not replace this captured input with a later config-file read when evaluating the
 execution receipt. During replay, an unavailable hydration resolution remains `narrowing` evidence
-and cannot make a lane hermetic; only a matching resolved source identity can acquit the named
-dependency-resolution class.
+and cannot make a lane hermetic. For an editable local project, the named dependency-resolution
+class is acquitting only when both receipts carry resolved hydration posture plus matching declared
+lockfile and clean source identities; a manifest identity alone only narrows the comparison.
 
 - unavailable local planes remain explicit with `availability: "unavailable"` and
   `reason: "not_supported_by_task"`; this describes contract support, not current machine

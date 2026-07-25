@@ -6324,9 +6324,10 @@ fn validate_task_prepare(
                                         "task `{task_name}` prepare `uv` local project must declare a non-empty `prepare.source.local_project.path`"
                                     )));
                                 } else {
-                                    validate_repo_relative_file_action_path(
+                                    validate_source_cwd_relative_file_action_path(
                                         task_name,
                                         "prepare.source.local_project.path",
+                                        source.cwd.as_str(),
                                         project.path.as_str(),
                                         errors,
                                     );
@@ -6337,9 +6338,10 @@ fn validate_task_prepare(
                                             "task `{task_name}` prepare `uv` local project lockfile must be non-empty when declared"
                                         )));
                                     } else {
-                                        validate_repo_relative_file_action_path(
+                                        validate_source_cwd_relative_file_action_path(
                                             task_name,
                                             "prepare.source.local_project.lockfile",
+                                            source.cwd.as_str(),
                                             lockfile,
                                             errors,
                                         );
@@ -7322,6 +7324,27 @@ fn validate_repo_relative_file_action_path(
     }
 }
 
+fn validate_source_cwd_relative_file_action_path(
+    task_name: &str,
+    field: &str,
+    cwd: &str,
+    value: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must declare a non-empty `{field}` path"
+        )));
+        return;
+    }
+    if !is_safe_repo_relative_path_from_cwd(cwd, trimmed) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` `{field}` must resolve inside the repo from `prepare.source.cwd`"
+        )));
+    }
+}
+
 fn is_safe_repo_relative_file_path(value: &str) -> bool {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
@@ -7346,6 +7369,36 @@ fn is_safe_repo_relative_file_path(value: &str) -> bool {
         .replace('\\', "/")
         .split('/')
         .any(|part| part == "..")
+}
+
+fn is_safe_repo_relative_path_from_cwd(cwd: &str, value: &str) -> bool {
+    if !is_safe_repo_relative_file_path(cwd) {
+        return false;
+    }
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let path = Path::new(cwd).join(trimmed);
+    let mut depth = 0_usize;
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    true
 }
 
 fn is_safe_checkout_materialization_path(value: &str) -> bool {
@@ -30473,6 +30526,90 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("typed uv local project should validate");
+    }
+
+    #[test]
+    fn accepts_uv_local_project_paths_relative_to_source_cwd() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.13"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: apps/api
+        mode: pip_local_project
+        local_project:
+          path: ../../packages/sdk
+          lockfile: ../../packages/sdk/uv.lock
+    requirements:
+      toolchains: [python]
+    effects:
+      writes: [.venv]
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("local-project paths that resolve inside the repo should validate");
+    }
+
+    #[test]
+    fn rejects_uv_local_project_paths_that_escape_the_repo_from_source_cwd() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.13"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: apps/api
+        mode: pip_local_project
+        local_project:
+          path: ../../../outside
+    requirements:
+      toolchains: [python]
+    effects:
+      writes: [.venv]
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("a source-cwd-relative path escaping the repo should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("must resolve inside the repo from `prepare.source.cwd`")
+        );
     }
 
     #[test]
