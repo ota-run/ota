@@ -27,11 +27,12 @@
 
 # V11.17: Trusted Replay Baseline Regeneration
 
-Status: active pressure and release reconciliation. This follows V11.16 under version discipline.
+Status: active Bedrock pressure and release reconciliation. This follows V11.16 under version discipline.
 It extends V11.10 replay-input governance and V11.13 producer-owned artifact lineage; it does not
 reopen their completed core models. Core implementation and the independent non-model pressure
-gate are complete. Bedrock promotion pressure still requires an intentional credentialed recording
-and must not be fabricated from the committed fixture.
+gate are complete, including fresh-checkout consumption of a committed portable authority. Bedrock
+promotion pressure still requires an intentional credentialed recording and must not be fabricated
+from the committed fixture, followed by explicit promotion and strict container `read_only` replay.
 
 ## V11.16 Evidence Dependency
 

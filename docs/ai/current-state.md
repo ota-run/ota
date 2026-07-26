@@ -49,15 +49,17 @@ durable agent workflow belongs in the canonical Ota skill.
   `OTA_REPLAY_BASELINE_UNAVAILABLE` until an intentional live recording is reviewed and explicitly
   promoted. No authority manifest or live-model recording has been manufactured. Core focused
   record/promotion, JSON conformance, and published-schema tests pass. EventCatalog closes the
-  independent non-model generated-baseline gate: [run 30181008860](https://github.com/bobaikato/eventcatalog/actions/runs/30181008860)
-  uses an agent-safe ordinary Langium generator and a detached promoted compiler consumer, then
-  proves record, explicit promotion, Doctor admission, workflow dry-run, replay consumption, and
-  receipt archival on Ubuntu while preserving the normal native generated-source matrix on Ubuntu,
-  macOS, and Windows. Its source identity check correctly excluded declared Langium outputs but
-  refused workflow-generated transient JSON until that evidence moved to `$RUNNER_TEMP`; its
-  promoted consumer compiles the authority rather than comparing a newly approved baseline against
-  Git `HEAD`. Remaining gates are final independent review and a real credentialed Bedrock
-  recording/promotion. Dagger exposed and now exercises the needed hybrid posture:
+  independent non-model generated-baseline gate: [run 30198942717](https://github.com/bobaikato/eventcatalog/actions/runs/30198942717)
+  preserves the ordinary native generator matrix on Ubuntu, macOS, and Windows and separately
+  proves a fresh runner can consume the committed portable authority without local `.ota` history:
+  Doctor admission, workflow dry-run, setup hydration, detached compiler consumption, and receipt
+  archival all pass. CI never creates or commits that authority; its `scm_review` trust root remains
+  an external delivery/review assumption, not Ota-verified reviewer approval. Source identity
+  correctly excludes declared Langium outputs and refuses workflow-generated transient JSON until
+  that evidence moves to `$RUNNER_TEMP`; the promoted consumer compiles the approved authority
+  rather than comparing a newly approved baseline against Git `HEAD`. The remaining V11.17 gate is
+  a real credentialed Bedrock recording followed by external review, explicit promotion, and strict
+  container `read_only` replay. Dagger exposed and now exercises the needed hybrid posture:
   `generated_source` retains an ordinary producer-dependent SDK check while a second task can
   consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
   receipt, mutation guard, and strict runner boundary all derive that consumer distinction from the
