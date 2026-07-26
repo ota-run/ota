@@ -2014,6 +2014,8 @@ closure. Ota mounts a run-scoped snapshot stored outside the writable workspace;
 authority before the task and re-checks it afterward. A changed output fails with
 `replay_artifact_mutation_detected`; this detects a write after it occurred and does not claim it
 was prevented.
+Command-capable typed preparation remains declarative in `ota.yaml`; Ota projects it through the
+same strict container boundary instead of requiring a shell replacement.
 
 Use this when a fixture, generated store, or model baseline must change through an intentional
 recording lane. Review the producer output and selected attestation; never hand-edit a digest to

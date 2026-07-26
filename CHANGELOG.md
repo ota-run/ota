@@ -44,7 +44,10 @@
   promotion identities so later comparison does not reconstruct baseline authority from paths.
   Recorded attestations always carry V11.16 graph and closure identities; a producer with no
   observed material prerequisites records canonical `unknown` evidence rather than omitting the
-  graph.
+  graph. Strict replay now projects command-capable typed preparation through the same
+  runner-owned container closure instead of requiring repos to replace typed hydration with shell
+  glue. Container execution also defaults `CI=true` when the contract does not explicitly set it,
+  matching its noninteractive execution boundary.
 
 - added `effects.network_kind: service_readiness` for finite probes of declared repo-managed
   service endpoints. Contract schemas, task and dry-run JSON, Doctor findings, effect overrides,

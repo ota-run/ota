@@ -318,8 +318,9 @@ artifacts:
   workspace mount and mounts those snapshots read-only at their declared paths. `verify_unchanged`
   is not a weaker read-only mount: it detects a changed output after execution.
   Dependency and post-hook steps are part of the selected strict closure and receive the same
-  runner-owned read-only mounts. A step that cannot execute through that ephemeral container
-  boundary is refused before it runs.
+  runner-owned read-only mounts. Command-capable typed preparation remains typed in the contract
+  and is projected through that boundary; a step that cannot execute or be projected there is
+  refused before it runs.
   `consumption: verify_unchanged` is the non-strict fallback for a backend such as native execution:
   Ota verifies the selected authority before launch, re-captures the complete output manifest after
   the consumer ends, and fails with `replay_artifact_mutation_detected` if the baseline changed.

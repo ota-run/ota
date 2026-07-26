@@ -142,6 +142,9 @@ The first implementation must make regeneration intentional and auditable:
 - an interrupted, partial, unverified, or scope-mismatched producer cannot publish an attestation;
 - strict replay executes against a runner-owned copy or read-only mount of the promoted artifact
   set. Ota refuses strict replay when its selected backend cannot enforce that boundary;
+- command-capable typed preparation remains contract-owned and is projected through the same
+  strict selected container closure; Ota refuses only steps that cannot execute through that
+  boundary;
 - non-strict native replay may detect a post-run mutation, but must report
   `replay_artifact_mutation_detected` rather than claiming that the write was refused.
 

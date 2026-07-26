@@ -10862,7 +10862,7 @@ fn execute_task_with_hooks(
             },
         }
     };
-    let prepared_execution = if let Some((selection, spec)) = orchestrator_execution {
+    let mut prepared_execution = if let Some((selection, spec)) = orchestrator_execution {
         match &prepared_execution {
             PreparedTaskExecution::Preparation { prepare }
                 if selection.mode == crate::schema::TaskExecutionOrchestratorMode::Exec
@@ -10921,6 +10921,29 @@ fn execute_task_with_hooks(
                 "selected execution must be an ephemeral container without deferred fulfillment",
             ),
         });
+    }
+    if requires_read_only_replay_baseline
+        && let PreparedTaskExecution::Preparation { prepare } = &prepared_execution
+    {
+        // Keep the contract-owned prepare surface typed while executing its derived command through
+        // the same runner-owned container and read-only mounts as the rest of the replay closure.
+        let command = prepare_task_shell_command(Some(contract), task_name, Some(task), prepare, &backend)
+            .map_err(|error| match error {
+                RunError::InvalidTaskExecution { .. } => {
+                    RunError::ReplayBaselineReadOnlyBoundaryUnavailable {
+                        task: task_name.to_string(),
+                        reason: String::from(
+                            "strict replay closure contains a typed preparation that cannot be projected as a container command",
+                        ),
+                    }
+                }
+                error => error,
+            })?;
+        prepared_execution = PreparedTaskExecution::Shell {
+            command,
+            cwd: None,
+            interaction: None,
+        };
     }
     if requires_read_only_replay_baseline
         && !matches!(
@@ -25983,6 +26006,7 @@ fn execute_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let repo_ownership_token = repo_ownership_token_for_working_dir(task_name, working_dir)?;
     let command = wrap_container_command_for_corepack_activation(contract, task_name, command);
+    let container_env_overrides = container_execution_env_overrides(env_overrides);
     if let Some(issue) = probe_container_backend(engine, task_name)? {
         return Ok(TaskCommandOutput {
             exit_code: 1,
@@ -26013,7 +26037,7 @@ fn execute_container_task_command(
                     &repo_ownership_token,
                     &command,
                     working_dir,
-                    env_overrides,
+                    &container_env_overrides,
                     path_export,
                     secret_env_names,
                     image,
@@ -26051,7 +26075,7 @@ fn execute_container_task_command(
                     true,
                     host_port_override,
                 )?;
-                let mut resolved_env = env_overrides.clone();
+                let mut resolved_env = container_env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
                 extend_missing_env(&mut resolved_env, runtime_bind_env(runtime));
                 if let Some(deferred_backend_fulfillment) = deferred_backend_fulfillment {
@@ -26255,7 +26279,7 @@ fn execute_container_task_command(
                 &repo_ownership_token,
                 &command,
                 working_dir,
-                env_overrides,
+                &container_env_overrides,
                 path_export,
                 secret_env_names,
                 image,
@@ -26269,6 +26293,17 @@ fn execute_container_task_command(
             )
         }
     }
+}
+
+fn container_execution_env_overrides(
+    env_overrides: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut resolved = env_overrides.clone();
+    // Container execution has no terminal; package managers need this posture to avoid prompts.
+    resolved
+        .entry(String::from("CI"))
+        .or_insert_with(|| String::from("true"));
+    resolved
 }
 
 fn probe_container_backend(engine: &str, _task_name: &str) -> Result<Option<String>, RunError> {
@@ -61208,6 +61243,16 @@ tasks:
         }
     }
 
+    #[test]
+    fn container_execution_defaults_ci_without_overriding_declared_value() {
+        let defaulted = super::container_execution_env_overrides(&BTreeMap::new());
+        assert_eq!(defaulted.get("CI"), Some(&String::from("true")));
+
+        let declared = BTreeMap::from([(String::from("CI"), String::from("false"))]);
+        let preserved = super::container_execution_env_overrides(&declared);
+        assert_eq!(preserved.get("CI"), Some(&String::from("false")));
+    }
+
     #[cfg(unix)]
     #[test]
     fn container_mode_override_command_runs_with_corepack_owned_pnpm() {
@@ -61843,7 +61888,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn generated_source_replay_mounts_external_snapshot_across_selected_dependency_closure() {
+    fn generated_source_replay_projects_typed_hydration_through_strict_container_boundary() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -61870,7 +61915,17 @@ tasks:
     run: true
   prepare:
     context: replay
-    run: printf prep
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    effects:
+      writes: [node_modules]
   replay:
     context: replay
     run: test -f data/baseline.json
@@ -61879,6 +61934,8 @@ tasks:
 "#,
         );
         fixture.write("data/baseline.json", "recorded");
+        fixture.write("package.json", "{\"packageManager\":\"pnpm@10.0.0\"}\n");
+        fixture.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
         let outputs = crate::replay_baseline::capture_replay_baseline_output_manifest(
             fixture.dir.path(),
             &[String::from("data/baseline.json")],
