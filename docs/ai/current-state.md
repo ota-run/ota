@@ -48,9 +48,16 @@ durable agent workflow belongs in the canonical Ota skill.
   promoted offline consumers. Its promoted lane correctly fails closed with
   `OTA_REPLAY_BASELINE_UNAVAILABLE` until an intentional live recording is reviewed and explicitly
   promoted. No authority manifest or live-model recording has been manufactured. Core focused
-  record/promotion, JSON conformance, and published-schema tests pass. Remaining gates are
-  independent review, a real credentialed Bedrock recording/promotion, and one independent
-  generated-baseline pressure repo. Dagger exposed and now exercises the needed hybrid posture:
+  record/promotion, JSON conformance, and published-schema tests pass. EventCatalog closes the
+  independent non-model generated-baseline gate: [run 30181008860](https://github.com/bobaikato/eventcatalog/actions/runs/30181008860)
+  uses an agent-safe ordinary Langium generator and a detached promoted compiler consumer, then
+  proves record, explicit promotion, Doctor admission, workflow dry-run, replay consumption, and
+  receipt archival on Ubuntu while preserving the normal native generated-source matrix on Ubuntu,
+  macOS, and Windows. Its source identity check correctly excluded declared Langium outputs but
+  refused workflow-generated transient JSON until that evidence moved to `$RUNNER_TEMP`; its
+  promoted consumer compiles the authority rather than comparing a newly approved baseline against
+  Git `HEAD`. Remaining gates are final independent review and a real credentialed Bedrock
+  recording/promotion. Dagger exposed and now exercises the needed hybrid posture:
   `generated_source` retains an ordinary producer-dependent SDK check while a second task can
   consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
   receipt, mutation guard, and strict runner boundary all derive that consumer distinction from the
@@ -59,9 +66,9 @@ durable agent workflow belongs in the canonical Ota skill.
   producer failed before record/promotion because Dagger's module-owned runtime resolves
   `protobuf-dev~32` against a mutable Alpine package index that no longer satisfies it. This is not
   an Ota replay defect or a reason to weaken the generator; it is an explicitly bounded external
-  Dagger engine/module-runtime provenance gap. Dagger therefore remains unsuitable as V11.17's
-  independent green generated-baseline proof until its upstream runtime is made reproducible or Ota
-  gains a Dagger adapter that can attest that tool-managed container state.
+  Dagger engine/module-runtime provenance gap. Dagger remains unsuitable for green generated-
+  baseline pressure until its upstream runtime is made reproducible or Ota gains a Dagger adapter
+  that can attest that tool-managed container state.
 - completed implementation slice: V11.19 typed uv local-project hydration. The replay classifier
   now requires resolved source posture, declared lockfile identity, and clean local-project source
   identity before editable hydration can be acquitting; missing lockfile or source identity remains
