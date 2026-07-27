@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed Windows optional-shell capability detection so a failing `bash` or WSL probe cannot leak
+  child output into Ota human or `--json` command output.
+
 - added first-class replay authority for generated artifacts. A declared producer can now issue a
   receipt-bound, content-addressed recording through `ota baseline record --artifact <name>`;
   only `ota baseline promote --artifact <name> --attestation <path>` may atomically select it in

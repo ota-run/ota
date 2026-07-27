@@ -29,6 +29,8 @@ use std::net::TcpStream;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(windows)]
+use std::process::Stdio;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -13893,6 +13895,9 @@ fn has_bash() -> bool {
     *HAS_BASH.get_or_init(|| {
         Command::new("bash")
             .arg("--version")
+            // A failed optional-shell probe is diagnostic input, never command output.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|status| status.success())
             .unwrap_or(false)

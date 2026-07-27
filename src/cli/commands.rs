@@ -125998,6 +125998,9 @@ fn find_bash_executable() -> Option<PathBuf> {
         candidate.is_file()
             && Command::new(candidate)
                 .arg("--version")
+                // Capability discovery must never leak a candidate shell's output into Ota output.
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .status()
                 .map(|status| status.success())
                 .unwrap_or(false)
