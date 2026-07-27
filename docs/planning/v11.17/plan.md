@@ -27,12 +27,13 @@
 
 # V11.17: Trusted Replay Baseline Regeneration
 
-Status: active Bedrock pressure and release reconciliation. This follows V11.16 under version discipline.
+Status: complete. This follows V11.16 under version discipline.
 It extends V11.10 replay-input governance and V11.13 producer-owned artifact lineage; it does not
-reopen their completed core models. Core implementation and the independent non-model pressure
-gate are complete, including fresh-checkout consumption of a committed portable authority. Bedrock
-promotion pressure still requires an intentional credentialed recording and must not be fabricated
-from the committed fixture, followed by explicit promotion and strict container `read_only` replay.
+reopen their completed core models. Core implementation and independent EventCatalog pressure are
+complete, including explicit record/promotion and fresh-checkout consumption of a committed
+portable authority through the strict ephemeral container boundary. A credentialed Bedrock recording
+remains an external adoption follow-up: it must be intentional and must not be fabricated from the
+committed fixture, but it is not a release gate for the general replay-baseline model.
 
 ## V11.16 Evidence Dependency
 
@@ -204,8 +205,9 @@ Doctor and policy surfaces derive from it rather than calculating a second basel
 6. Add fixtures for valid regeneration and promotion, newest-recording-not-promoted, revoked
    attestation, manual artifact edit, typed digest with no provenance, ambiguous producer,
    interrupted producer, strict replay write refusal, and native mutation detection.
-7. Pressure-test Bedrock's explicit live recording lane against its frozen fixture, SQLite store,
-   and baseline, then independently pressure one non-model generated-baseline repository.
+7. Pressure-test explicit record/promotion and strict replay on an independent generated-baseline
+   repository. Pressure a credentialed live-model producer separately when its owner elects to run
+   that external lane; do not fabricate it from a committed fixture.
 
 ## Non-Goals
 
@@ -239,8 +241,9 @@ V11.17 is complete when:
   artifact during replay;
 - JSON and archive schemas require the same recorded-attestation, promotion, canonical output
   manifest, and comparison identities;
-- Bedrock proves explicit recording followed by read-only deterministic replay, and an independent
-  generated-baseline repo proves this is not model-specific.
+- an independent generated-baseline repo proves explicit recording, promotion, and strict
+  read-only deterministic replay without local receipt history. A credentialed live-model producer
+  may provide additional adoption evidence, but is not required to prove this general model.
 
 ## Acknowledgment
 

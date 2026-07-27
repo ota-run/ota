@@ -27,7 +27,7 @@
 
 # V11.14: Contract-Claim Assurance
 
-Status: implementation complete; pressure and release reconciliation ongoing. This follows V11.13
+Status: complete. This follows V11.13
 and does not reopen V11.3's shipped runner-enforcement foundation.
 
 ## Problem

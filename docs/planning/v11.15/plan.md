@@ -26,7 +26,7 @@
 
 # V11.15: Managed GitHub Actions Governance Projection
 
-Status: implementation and real-repo pressure complete; release reconciliation remains active.
+Status: complete. Implementation and real-repo pressure are complete.
 V11.14 assurance/policy implementation is complete and pressure-proven. This slice consumed its
 canonical evaluator and policy semantics without reopening them.
 

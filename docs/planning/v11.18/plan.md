@@ -367,6 +367,3 @@ V11.18 is complete when:
   `fc88d215`: it emitted `passed_with_unproven_boundaries`, archive
   `sha256:c2dab2e7535589819f416159ca06b5384d599093e87546cc1aab1b242d8e3235`, and exact session
   `container:docker:ota-ephemeral-3890811a19b2944d`.
-
-Do not mark the slice complete until final independent review confirms the cleanup, snapshot, and
-phase-transition invariants.

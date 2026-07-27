@@ -35,7 +35,7 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.25-implementation`
 - released baseline: `v1.6.24`
-- active V11.17 trusted replay-baseline regeneration: Core now has an additive
+- completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
   binds the canonical recursive output set, producer receipt, source/contract identities, and the
@@ -57,9 +57,14 @@ durable agent workflow belongs in the canonical Ota skill.
   an external delivery/review assumption, not Ota-verified reviewer approval. Source identity
   correctly excludes declared Langium outputs and refuses workflow-generated transient JSON until
   that evidence moves to `$RUNNER_TEMP`; the promoted consumer compiles the approved authority
-  rather than comparing a newly approved baseline against Git `HEAD`. The remaining V11.17 gate is
-  a real credentialed Bedrock recording followed by external review, explicit promotion, and strict
-  container `read_only` replay. Dagger exposed and now exercises the needed hybrid posture:
+  rather than comparing a newly approved baseline against Git `HEAD`. EventCatalog run
+  [30226480354](https://github.com/bobaikato/eventcatalog/actions/runs/30226480354) completes the
+  independent strict-replay pressure gate: ordinary generated-source lineage remains green on
+  Ubuntu, macOS, and Windows, while explicit record/promotion and committed-authority consumption
+  both run through the declared ephemeral container boundary with `read_only` enforcement. A
+  credentialed Bedrock recording remains an external adoption follow-up and must not be fabricated
+  from its committed fixture; it is not a release gate for the general V11.17 model. Dagger exposed
+  and now exercises the needed hybrid posture:
   `generated_source` retains an ordinary producer-dependent SDK check while a second task can
   consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
   receipt, mutation guard, and strict runner boundary all derive that consumer distinction from the
@@ -98,8 +103,7 @@ durable agent workflow belongs in the canonical Ota skill.
   receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
   dry-run, and real native plus container agent-safe execution. Strict-policy admission for lanes
   that require declared pins remains a future policy refinement rather than an implicit default.
-- V11.14 contract-claim assurance implementation is complete; pressure and release reconciliation
-  remain active. The shared `claim_assurance` domain now supplies the
+- completed V11.14 contract-claim assurance: the shared `claim_assurance` domain supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer
   declaration, derived V11.3 closure, policy-independent assurance, and policy decision separate;
@@ -130,7 +134,7 @@ durable agent workflow belongs in the canonical Ota skill.
   acquire terminal interaction. The task JSON and dry-run JSON expose the resolved posture and
   invocation resolution; the copy-ready Wrangler OAuth example, canonical skill, public site
   contract reference, schemas, changelog, and regressions are aligned.
-- active V11.18 managed lifecycle-sequence proof: committed lifecycle admission (`10a14971`) and
+- completed V11.18 managed lifecycle-sequence proof: committed lifecycle admission (`10a14971`) and
   the first bounded executor (`d70ca67e`, qualified by `dd3b02cd`). `ota proof lifecycle` selects
   only workflow-declared manager services, leases manager-observed inactive state before start,
   starts in dependency order, reuses transaction-owned services for an optional post-readiness
@@ -245,8 +249,7 @@ durable agent workflow belongs in the canonical Ota skill.
   upstream CI equivalence until it can recover the lifecycle assertion without reducing it to a
   command-shaped approximation. The final V11.15 review passed focused neutral projection,
   GitHub renderer, JSON-conformance, and formatting checks; Kylrix plus OrchardCore/Caddy satisfy
-  the two-repository pressure bar. V11.15 is implementation and pressure complete; release
-  reconciliation remains active.
+  the two-repository pressure bar. V11.15 is complete.
   Projection identity now reuses the canonical normalized semantic snapshot identity used by
   receipts; omitted mode resolves from the selected task's effective contract default, while an
   unavailable explicit mode is refused. Denied provider-neutral JSON preserves the evaluated

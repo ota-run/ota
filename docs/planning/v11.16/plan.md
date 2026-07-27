@@ -27,7 +27,7 @@
 
 # V11.16: Fresh-Boundary Setup Proof
 
-Status: complete pending release reconciliation. The scoped implementation and pressure acceptance
+Status: complete. The scoped implementation and pressure acceptance
 bar are complete for `1.6.25`. The shared semantic evaluator and additive
 `ota proof runtime --json` carrier are implemented. Runner-attested native paths cover
 `ensure_virtualenv` producers followed by a
