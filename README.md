@@ -505,9 +505,9 @@ Current behavior:
 | `ota run <task> --agent`, `ota up --agent` | Enforce declared agent-safe boundaries; refuse unsafe requested/closure tasks; emit refusal receipts. |
 | `ota diff` | Semantic contract diff with deterministic added/missing/changed reporting. |
 | `ota explain` | Turns readiness findings into an ordered remediation plan. |
-| `ota doctor` | Reports env/runtime/tool/service/check findings with severity, explanation, and next action; works even without `ota.yaml`; supports `--mode container` and deterministic `--fix` pass. |
+| `ota doctor` | Reports env/runtime/tool/service/check findings with severity, explanation, and next action; works even without `ota.yaml`; supports `--mode container`; and `--fix` applies only shipped deterministic repo-hygiene and native command-tool activation fixes before re-diagnosing. |
 | `ota init` | Creates starter contracts (detector-led or pack-led), includes starter task descriptions, can carry repo dotenv sources into `env.sources`, supports advisory `--pack` mismatch notes, and ships packs for `node`, `python`, `ruby`, `go`, `rust`, `dotnet`, `php-composer`, `java-maven`, `java-gradle`. |
-| `ota agents` | Exports/syncs repo-local `AGENTS.md`, preserves user-authored content with an ota-managed block, skips no-op writes, and labels managed section explicitly. |
+| `ota agents` | Exports/syncs repo-local `AGENTS.md`, preserves user-authored content with an ota-managed block, skips no-op writes, labels that section explicitly, and emits the contract-owned `ota run ...` form for listed tasks. |
 | `ota check` | Runs declared checks without runtime/tool/env/task execution. |
 | `ota up` | Validates, selects default workflow, runs setup early on precondition failures, starts workflow services in dependency order, activates workflow run task runtime when present, then re-checks readiness. |
 | `ota detect` | Default mode infers a candidate contract with provenance/confidence without writing. |
@@ -524,7 +524,7 @@ Current behavior:
 | `ota workspace check` | Runs checks across repos; honors workflow pinning via `repos.<name>.workflow`. |
 | `ota workspace doctor` | Aggregates readiness across workspace repos (including not-yet-acquired repos) without merging repo/workspace truth; respects per-repo workflow selection. |
 | `ota workspace up` | Can acquire missing repos from declared sources and orchestrates repo-level `up` across workspace workflows. |
-| `ota workspace refresh` | Re-syncs existing repos only; supports `--dry-run`, `--force`, `--prune`, and `--ref <branch\|tag\|sha>`. |
+| `ota workspace refresh` | Re-syncs existing repos only; supports `--dry-run`, `--force`, `--prune`, and a branch, tag, or SHA `--ref` override. |
 | `ota workspace diff` | Read-only comparison of local workspace repo state vs declared source. |
 | `ota workspace status` | Combines readiness and drift in one read-only summary using workflow-selected repo paths when declared. |
 | `ota workspace receipt` | Captures workspace state as a read-only receipt artifact for CI/archiving. |
