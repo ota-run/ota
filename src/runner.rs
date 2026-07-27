@@ -825,6 +825,14 @@ pub enum RunError {
         requested_mode: String,
         supported_modes: String,
     },
+    #[error(
+        "task `{task}` was requested with `--lifecycle {requested_lifecycle}`, but `{backend}` execution does not provide a managed lifecycle boundary"
+    )]
+    UnsupportedTaskLifecycleOverride {
+        task: String,
+        requested_lifecycle: String,
+        backend: &'static str,
+    },
     #[error("environment variable `{name}` is required for task execution but is not set")]
     MissingRequiredEnv { name: String },
     #[error(
@@ -8420,6 +8428,7 @@ fn run_task_internal_with_started_services(
     }
     // Admission must match dry-run planning before any backend provisioning or task side effects.
     plan_task_execution_with_overrides(contract, task_name, overrides)?;
+    preflight_task_execution_overrides(contract, task_name, overrides, Some(contract_path))?;
     let backend = match resolve_execution_backend_with_contract_path(
         contract,
         task_name,
@@ -8440,16 +8449,6 @@ fn run_task_internal_with_started_services(
     let _active_repo_execution =
         register_active_repo_execution(task_name, working_dir, &lock_owner)?;
     let effective = effective_task_execution(contract, task_name, overrides);
-    let effective_depends_on = contract
-        .tasks
-        .get(task_name)
-        .map(|task| task.depends_on_for_backend(effective.backend))
-        .unwrap_or_default();
-    if overrides.skip_deps && effective_depends_on.is_empty() {
-        return Err(RunError::SkipDepsWithoutDependencies {
-            task: task_name.to_string(),
-        });
-    }
     let mut preflight_execution_note = None;
     if let ResolvedExecutionBackend::Container { lifecycle, .. } = &backend
         && matches!(lifecycle, Lifecycle::Ephemeral)
@@ -8507,17 +8506,6 @@ fn run_task_internal_with_started_services(
                 }
             }
         }
-    }
-    if matches!(backend, ResolvedExecutionBackend::Container { .. })
-        && let Some(task) = contract.tasks.get(task_name)
-        && let Err(error) = preflight_host_port_override(
-            task_name,
-            task.service_runtime_for_backend(resolved_execution_backend_kind(&backend)),
-            &backend,
-            overrides.host_port,
-        )
-    {
-        return Err(error);
     }
     let current_os = current_os();
     let mut state = TaskRunState::default();
@@ -22047,39 +22035,42 @@ struct NativeComposeHostPortOverride {
     compose_file_value: String,
 }
 
-fn selected_native_compose_host_port_override(
+fn native_compose_up_engine(
+    execution: crate::schema::TaskExecution<'_>,
+) -> Option<crate::schema::ComposeCliEngine> {
+    if let Some(compose) = execution.compose()
+        && compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Up
+    {
+        return Some(compose.invocation.engine);
+    }
+    if let Some(crate::schema::TaskLaunchSpec::Compose(compose)) = execution.launch() {
+        return Some(compose.engine);
+    }
+    execution.command().and_then(|command| {
+        if command.exe.trim().eq_ignore_ascii_case("docker")
+            && command.args.first().map(String::as_str) == Some("compose")
+            && command.args.get(1).map(String::as_str) == Some("up")
+        {
+            Some(crate::schema::ComposeCliEngine::Docker)
+        } else if command.exe.trim().eq_ignore_ascii_case("podman")
+            && command.args.first().map(String::as_str) == Some("compose")
+            && command.args.get(1).map(String::as_str) == Some("up")
+        {
+            Some(crate::schema::ComposeCliEngine::Podman)
+        } else {
+            None
+        }
+    })
+}
+
+fn preflight_native_compose_host_port_shape(
     task_name: &str,
-    task: &TaskSpec,
     runtime: Option<&TaskRuntimeSpec>,
-    env_overrides: &BTreeMap<String, String>,
-    exe: &str,
-    args: &[String],
-    repo_working_dir: &Path,
-    effective_working_dir: &Path,
-    host_port_override: Option<u16>,
-) -> Result<Option<NativeComposeHostPortOverride>, RunError> {
-    let Some(host_port) = host_port_override else {
-        return Ok(None);
-    };
+    engine: crate::schema::ComposeCliEngine,
+) -> Result<(String, u16, String), RunError> {
     let Some(runtime) = runtime else {
         return Err(RunError::HostPortOverrideNoProjectedListener {
             task: task_name.to_string(),
-        });
-    };
-    let engine = if exe.trim().eq_ignore_ascii_case("docker")
-        && args.first().map(String::as_str) == Some("compose")
-        && args.get(1).map(String::as_str) == Some("up")
-    {
-        crate::schema::ComposeCliEngine::Docker
-    } else if exe.trim().eq_ignore_ascii_case("podman")
-        && args.first().map(String::as_str) == Some("compose")
-        && args.get(1).map(String::as_str) == Some("up")
-    {
-        crate::schema::ComposeCliEngine::Podman
-    } else {
-        return Err(RunError::HostPortOverrideUnsupportedBackend {
-            task: task_name.to_string(),
-            backend: "native",
         });
     };
     if engine != crate::schema::ComposeCliEngine::Docker {
@@ -22128,12 +22119,49 @@ fn selected_native_compose_host_port_override(
             listener: listener_name.clone(),
         })?;
 
+    Ok((listener_name, bind_port, service.to_string()))
+}
+
+fn selected_native_compose_host_port_override(
+    task_name: &str,
+    task: &TaskSpec,
+    runtime: Option<&TaskRuntimeSpec>,
+    env_overrides: &BTreeMap<String, String>,
+    exe: &str,
+    args: &[String],
+    repo_working_dir: &Path,
+    effective_working_dir: &Path,
+    host_port_override: Option<u16>,
+) -> Result<Option<NativeComposeHostPortOverride>, RunError> {
+    let Some(host_port) = host_port_override else {
+        return Ok(None);
+    };
+    let engine = if exe.trim().eq_ignore_ascii_case("docker")
+        && args.first().map(String::as_str) == Some("compose")
+        && args.get(1).map(String::as_str) == Some("up")
+    {
+        crate::schema::ComposeCliEngine::Docker
+    } else if exe.trim().eq_ignore_ascii_case("podman")
+        && args.first().map(String::as_str) == Some("compose")
+        && args.get(1).map(String::as_str) == Some("up")
+    {
+        crate::schema::ComposeCliEngine::Podman
+    } else {
+        return Err(RunError::HostPortOverrideUnsupportedBackend {
+            task: task_name.to_string(),
+            backend: "native",
+        });
+    };
+    let (listener_name, bind_port, service) =
+        preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
+    let runtime = runtime.expect("validated native compose runtime should exist");
+
     let compose_stack =
         effective_native_compose_file_stack(task_name, task, env_overrides, effective_working_dir)?;
     let override_file = write_native_compose_host_port_override_file(
         task_name,
         repo_working_dir,
-        service,
+        service.as_str(),
         host_port,
         bind_port,
     )?;
@@ -23810,6 +23838,72 @@ pub(crate) fn resolve_execution_backend(
     resolve_execution_backend_with_contract_path(contract, task_name, overrides, None)
 }
 
+pub(crate) fn preflight_task_execution_overrides(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    contract_path: Option<&Path>,
+) -> Result<(), RunError> {
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let task = contract
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| RunError::UnknownTask {
+            task: task_name.to_string(),
+        })?;
+    let effective_depends_on = task.depends_on_for_backend(effective.backend);
+    if overrides.skip_deps && effective_depends_on.is_empty() {
+        return Err(RunError::SkipDepsWithoutDependencies {
+            task: task_name.to_string(),
+        });
+    }
+    let Some(host_port) = overrides.host_port else {
+        return Ok(());
+    };
+    let runtime = task.service_runtime_for_backend(effective.backend);
+    match effective.backend {
+        Backend::Container => {
+            let mut publications = task_runtime_listener_publications(runtime);
+            apply_host_port_override_to_listener_publications(
+                task_name,
+                runtime,
+                &mut publications,
+                Some(host_port),
+            )
+        }
+        Backend::Remote => Err(RunError::HostPortOverrideUnsupportedBackend {
+            task: task_name.to_string(),
+            backend: "remote",
+        }),
+        Backend::Native => {
+            let execution = task
+                .resolved_execution_for_backend(Backend::Native, current_os())
+                .ok_or_else(|| RunError::InvalidTaskExecution {
+                    task: task_name.to_string(),
+                })?;
+            let engine = native_compose_up_engine(execution).ok_or_else(|| {
+                RunError::HostPortOverrideUnsupportedBackend {
+                    task: task_name.to_string(),
+                    backend: "native",
+                }
+            })?;
+            preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
+            if let Some(contract_path) = contract_path {
+                let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+                let env = task.env_for_backend_with_context_name_for_os(
+                    contract.execution.as_ref(),
+                    Backend::Native,
+                    effective.context_name,
+                    current_os(),
+                );
+                let working_dir = effective_task_execution_working_dir(task, Backend::Native, root);
+                effective_native_compose_file_stack(task_name, task, &env, &working_dir)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 pub(crate) fn resolve_execution_backend_with_contract_path(
     contract: &Contract,
     task_name: &str,
@@ -23882,6 +23976,12 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
             }
             let shared_local_backend =
                 resolve_task_shared_local_backend(contract, task_name, Backend::Native)?;
+            reject_unenforceable_lifecycle_override(
+                task_name,
+                Backend::Native,
+                overrides.lifecycle,
+                shared_local_backend.as_ref(),
+            )?;
             if let Some(shared_local_backend) = shared_local_backend.as_ref() {
                 if let Some(requested) = overrides.lifecycle
                     && requested != shared_local_backend.lifecycle
@@ -24012,6 +24112,12 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
             }
             let shared_local_backend =
                 resolve_task_shared_local_backend(contract, task_name, Backend::Remote)?;
+            reject_unenforceable_lifecycle_override(
+                task_name,
+                Backend::Remote,
+                overrides.lifecycle,
+                shared_local_backend.as_ref(),
+            )?;
             if let Some(shared_local_backend) = shared_local_backend.as_ref() {
                 if let Some(requested) = overrides.lifecycle
                     && requested != shared_local_backend.lifecycle
@@ -24085,6 +24191,25 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                 })
         }
     }
+}
+
+fn reject_unenforceable_lifecycle_override(
+    task_name: &str,
+    backend: Backend,
+    requested: Option<Lifecycle>,
+    shared_local_backend: Option<&ResolvedSharedLocalBackend>,
+) -> Result<(), RunError> {
+    let Some(requested) = requested else {
+        return Ok(());
+    };
+    if backend == Backend::Container || shared_local_backend.is_some() {
+        return Ok(());
+    }
+    Err(RunError::UnsupportedTaskLifecycleOverride {
+        task: task_name.to_string(),
+        requested_lifecycle: format_lifecycle(requested).to_string(),
+        backend: format_backend(backend),
+    })
 }
 
 /// Aggregate tasks are orchestration-only. Their admissible execution modes are the intersection
@@ -55675,6 +55800,50 @@ tasks:
             } if task == "start"
                 && requested_mode == "container"
                 && supported_modes == "native"
+        ));
+    }
+
+    #[test]
+    fn run_task_rejects_explicit_lifecycle_for_native_task_without_managed_boundary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deploy:
+    command:
+      exe: true
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+"#,
+        );
+
+        let error = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "deploy",
+            ExecutionOverrides {
+                backend: None,
+                lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::UnsupportedTaskLifecycleOverride {
+                task,
+                requested_lifecycle,
+                backend,
+            } if task == "deploy"
+                && requested_lifecycle == "ephemeral"
+                && backend == "native"
         ));
     }
 

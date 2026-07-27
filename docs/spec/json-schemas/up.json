@@ -6,11 +6,12 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "dry_run", "status", "preview_status", "phase", "summary", "contract_identity", "execution", "plan"],
+      "required": ["ok", "path", "dry_run", "execution_started", "status", "preview_status", "phase", "summary", "contract_identity", "execution", "plan"],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "dry_run": { "const": true },
+        "execution_started": { "const": false },
         "status": { "type": "string" },
         "preview_status": {
           "enum": ["RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"]
@@ -226,11 +227,12 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["member", "ok", "dry_run", "status", "preview_status", "phase", "summary", "contract_identity", "execution", "plan"],
+            "required": ["member", "ok", "dry_run", "execution_started", "status", "preview_status", "phase", "summary", "contract_identity", "execution", "plan"],
             "properties": {
               "member": { "type": "string" },
               "ok": { "type": "boolean" },
               "dry_run": { "const": true },
+              "execution_started": { "const": false },
               "status": { "type": "string" },
               "preview_status": {
                 "enum": ["RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"]

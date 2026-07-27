@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- tightened execution-option admission across task execution and previews. Explicit lifecycle
+  overrides such as `--ephemeral` and `--persistent` now fail before dependencies, provisioning,
+  or task startup when the resolved native or remote path has no managed lifecycle boundary,
+  instead of degrading to advisory behavior. Existing mode, host-port, memory, and dependency
+  override refusals remain fail-closed. Run summaries distinguish requested options from effective
+  execution and state `Execution: not started`; run and up preview JSON now carry
+  `execution_started: false`, and option refusals use typed blocker codes.
+
 - fixed Windows optional-shell capability detection so a failing `bash` or WSL probe cannot leak
   child output into Ota human or `--json` command output.
 

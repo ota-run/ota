@@ -3091,6 +3091,11 @@ executed for that toolchain during the recorded run path.
 same selected task path, execution backend, env requirements, toolchains, native prerequisites,
 dependency order, and preview actions that text `RUN PREVIEW` uses, but it does not execute setup,
 dependencies, containers, or task processes.
+Every full preview payload therefore carries `execution_started: false`. When an explicit
+execution option is unsupported, `ok` is false, `preview_status` is `BLOCKED`, `overrides` retains
+the requested value, and `summary.primary_blocker.code` identifies the rejected option family
+without implying that the requested backend, boundary, publication, resource limit, or dependency
+policy started.
 When that selected path also carries direct provisioning truth, the payload includes additive
 top-level `provisioning` and `provisioning_request` fields using the same machine-readable shape as
 `ota doctor --json`, so agents do not need to re-derive selected-path host fulfillment from
@@ -3125,6 +3130,7 @@ filesystem or outbound boundary posture.
   "contract": "/path/to/ota.yaml",
   "task": "ci",
   "dry_run": true,
+  "execution_started": false,
   "preview_status": "RUNNABLE",
   "summary": {
     "verdict": "ready",
@@ -3391,6 +3397,10 @@ filesystem or outbound boundary posture.
   }
 }
 ```
+
+`ota up --dry-run --json` uses the same `execution_started: false` invariant. If a selected
+workflow task cannot honor an explicit execution option, the preview is blocked before prepare,
+setup, or run phases and `blockers[].identity.code` identifies the refused option family.
 
 Use this when a human or agent needs the selected run plan before execution:
 

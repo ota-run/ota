@@ -1132,6 +1132,12 @@ pub struct ExecutionPlanOverrides {
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_memory_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_deps: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1453,6 +1459,7 @@ pub struct RunPreviewSuccess<'a> {
     pub member: Option<&'a str>,
     pub task: &'a str,
     pub dry_run: bool,
+    pub execution_started: bool,
     pub preview_status: &'a str,
     pub summary: DoctorSummary,
     pub contract_identity: ContractIdentity,
@@ -3398,6 +3405,7 @@ pub struct UpPreviewStatus<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub dry_run: bool,
+    pub execution_started: bool,
     pub status: &'a str,
     pub preview_status: &'a str,
     pub phase: &'a str,

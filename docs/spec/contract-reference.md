@@ -564,6 +564,9 @@ Current lifecycle meaning:
 - `persistent`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` reuse a persistent named container for the effective contract directory
 - `ephemeral`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` use a fresh `run --rm` container with the first available configured engine for each invocation
 - outside backend-backed task execution, such as service startup, service readiness, and diagnosis, lifecycle remains advisory today
+- explicit `ota run` / task-backed `ota up` lifecycle overrides are never advisory: a selected
+  native or remote task path without a managed shared backend refuses `--ephemeral` or
+  `--persistent` before execution starts
 
 Current command behavior:
 

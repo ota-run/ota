@@ -2352,6 +2352,7 @@ workflows:
         fixture.path(),
     );
     assert_matches_schema("up.json", &json);
+    assert_eq!(json["execution_started"], false);
     assert_eq!(
         json["plan"]["dependency_steps"][0]["prepare"]["declared_hydration_provenance"]["source_posture"],
         "config_file"
@@ -2373,6 +2374,60 @@ workflows:
     assert_eq!(
         json["plan"]["dependency_steps"][0]["prepare"]["resolved_hydration_provenance"]["resolution"],
         "resolved"
+    );
+}
+
+#[test]
+fn up_dry_run_json_refuses_unenforceable_native_lifecycle_before_execution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: rejected-up-lifecycle-preview
+tasks:
+  setup:
+    command:
+      exe: true
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "up",
+            "--ephemeral",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("up.json", &json);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["preview_status"], "BLOCKED");
+    assert_eq!(
+        json["blockers"][0]["code"],
+        "OTA_EXECUTION_OPTION_UNSUPPORTED_LIFECYCLE"
+    );
+    assert_eq!(
+        json["blockers"][0]["summary"],
+        "Requested lifecycle is not supported by this execution mode"
+    );
+    assert_eq!(
+        json["plan"]["actions"],
+        serde_json::json!(["refuse unsupported execution option before task `setup` startup"])
     );
 }
 
@@ -2637,6 +2692,7 @@ tasks:
     );
 
     assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["execution_started"], false);
     assert_eq!(json["overrides"]["backend"], "container");
     assert_eq!(json["governance"]["default_mode"], "native");
     assert_eq!(
@@ -2648,6 +2704,260 @@ tasks:
     assert_eq!(
         json["summary"]["primary_blocker"]["why"],
         "task `integration:down` was requested with `--mode container`, but it only supports modes: native"
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["code"],
+        "OTA_EXECUTION_OPTION_UNSUPPORTED_MODE"
+    );
+}
+
+#[test]
+fn run_dry_run_json_refuses_unenforceable_native_lifecycle_before_execution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: rejected-lifecycle-preview
+tasks:
+  deploy:
+    command:
+      exe: true
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "deploy",
+            "--ephemeral",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["overrides"]["lifecycle"], "ephemeral");
+    assert_eq!(
+        json["summary"]["primary_blocker"]["code"],
+        "OTA_EXECUTION_OPTION_UNSUPPORTED_LIFECYCLE"
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["summary"],
+        "Requested lifecycle is not supported by this execution mode"
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["why"],
+        "task `deploy` was requested with `--lifecycle ephemeral`, but `native` execution does not provide a managed lifecycle boundary"
+    );
+    assert_eq!(
+        json["plan"]["actions"],
+        serde_json::json!(["refuse unsupported execution option before task `deploy` startup"])
+    );
+}
+
+#[test]
+fn run_dry_run_json_classifies_other_execution_option_refusals_before_execution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: rejected-execution-options-preview
+tasks:
+  verify:
+    command:
+      exe: true
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+"#,
+    );
+
+    for (arguments, expected_code, override_field, expected_value) in [
+        (
+            vec!["--host-port", "4000"],
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_HOST_PORT",
+            "host_port",
+            serde_json::json!(4000),
+        ),
+        (
+            vec!["--memory", "2GiB"],
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_MEMORY",
+            "container_memory_bytes",
+            serde_json::json!(2_147_483_648_u64),
+        ),
+        (
+            vec!["--skip-deps"],
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_SKIP_DEPS",
+            "skip_deps",
+            serde_json::json!(true),
+        ),
+    ] {
+        let mut command = vec!["run", "verify"];
+        command.extend(arguments);
+        command.extend(["--dry-run", "--json", fixture.path().to_str().unwrap()]);
+        let json = run_ota_failure_stdout_json(&command, fixture.path());
+
+        assert_matches_schema("run-preview.json", &json);
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(json["summary"]["primary_blocker"]["code"], expected_code);
+        assert_eq!(json["overrides"][override_field], expected_value);
+        assert_eq!(
+            json["plan"]["actions"],
+            serde_json::json!(["refuse unsupported execution option before task `verify` startup"])
+        );
+    }
+}
+
+#[test]
+fn run_dry_run_json_admits_native_docker_compose_host_port_projection() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: native-compose-host-port-preview
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        files:
+          - docker-compose.yml
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    requirements:
+      tools:
+        docker: "*"
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+            publication:
+              compose:
+                service: web
+"#,
+    );
+    fs::write(
+        fixture.path().join("docker-compose.yml"),
+        "services:\n  web:\n    image: nginx:alpine\n",
+    )
+    .expect("compose fixture");
+
+    let json = run_ota(
+        &[
+            "run",
+            "dev",
+            "--host-port",
+            "4000",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["overrides"]["host_port"], 4000);
+    assert_eq!(json["preview_status"], "RUNNABLE");
+}
+
+#[test]
+fn run_dry_run_json_refuses_native_compose_host_port_without_file_stack() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: native-compose-host-port-missing-stack
+tasks:
+  dev:
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    requirements:
+      tools:
+        docker: "*"
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+            publication:
+              compose:
+                service: web
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "dev",
+            "--host-port",
+            "4000",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["overrides"]["host_port"], 4000);
+    assert_eq!(
+        json["summary"]["primary_blocker"]["code"],
+        "OTA_EXECUTION_OPTION_UNSUPPORTED_HOST_PORT"
+    );
+    assert_eq!(
+        json["plan"]["actions"],
+        serde_json::json!(["refuse unsupported execution option before task `dev` startup"])
     );
 }
 

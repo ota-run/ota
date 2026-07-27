@@ -34656,7 +34656,7 @@ tasks:
     }
 
     #[test]
-    fn run_reports_native_lifecycle_as_advisory_when_user_explicitly_overrides() {
+    fn run_refuses_explicit_lifecycle_override_for_native_execution() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -34681,17 +34681,88 @@ tasks:
             fixture.path(),
         ]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1);
         let rendered = strip_ansi(&format!(
             "{}\n{}",
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         ));
-        assert!(rendered.contains("Lifecycle:"), "{rendered}");
-        assert!(rendered.contains("persistent"), "{rendered}");
         assert!(
-            rendered.contains("requested `--lifecycle persistent` is advisory in native mode only"),
+            rendered.contains("Requested lifecycle is not supported by this execution mode"),
             "{rendered}"
+        );
+        assert!(
+            rendered.contains("requested with `--lifecycle persistent`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .contains("native` execution path does not provide a managed lifecycle boundary"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Status:      success"), "{rendered}");
+        assert!(rendered.contains("Execution:   not started"), "{rendered}");
+        assert!(
+            rendered.contains("Requested Lifecycle: persistent"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Lifecycle:   persistent"), "{rendered}");
+        assert!(!rendered.contains("advisory in native mode"), "{rendered}");
+        assert!(
+            !rendered.contains("using a fresh container image"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn up_refuses_explicit_lifecycle_override_before_native_setup_starts() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf started > setup-started.txt
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--ephemeral", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(
+            rendered.contains("Requested lifecycle is not supported by this execution mode"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("task `setup` was requested with `--lifecycle ephemeral`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Execution:   not started"), "{rendered}");
+        assert!(
+            rendered.contains("Requested Lifecycle: ephemeral"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("\nLifecycle:   ephemeral"), "{rendered}");
+        assert!(!rendered.contains("advisory in native mode"), "{rendered}");
+        assert!(
+            !fixture.dir.path().join("setup-started.txt").exists(),
+            "setup must not start after lifecycle admission refusal"
         );
     }
 

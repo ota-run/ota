@@ -1402,6 +1402,12 @@ Current behavior:
 - `--mode`, `--lifecycle`, and `--ephemeral` can select a contract-advertised execution mode for
   one invocation; ota refuses an unadvertised backend instead of forcing a host-owned task into a
   container or remote runtime
+- explicit execution options are capability requests, not advisory hints: ota refuses unsupported
+  mode, lifecycle, host-port, memory, or dependency overrides before task startup; native and
+  remote tasks without a managed shared backend reject `--ephemeral` / `--persistent` rather than
+  pretending those lifecycles changed host or provider execution
+- dry-run and real execution use the same option-admission decision; refused preview JSON carries
+  `execution_started: false`, the requested override, and a typed primary blocker
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure
@@ -2252,6 +2258,11 @@ Current behavior:
 - `--ready-timeout <duration>` overrides readiness wait budget for detached service-runtime proof behavior
 - when setup binds to a named context that uses `extends`, `ota up` uses the merged context backend/lifecycle/image shape
 - can override execution mode and lifecycle for the selected workflow setup/run phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
+- explicit workflow execution overrides use the same fail-closed admission as `ota run`; if the
+  selected task path cannot enforce a requested mode or lifecycle, `ota up` refuses before
+  prepare/setup/run execution instead of treating the request as advisory
+- `ota up --dry-run --json` carries `execution_started: false`; option-admission blockers identify
+  the requested flag and selected task before any workflow phase starts
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this `ota up` invocation only using the same selectors as `ota run`
 - `--replay-baseline <latest|promoted|archive-path>` resolves an archived repo receipt baseline

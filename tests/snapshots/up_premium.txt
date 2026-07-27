@@ -17,7 +17,7 @@ Contract:    ./ota.yaml
 Mode:        native
 Task:        post-up diagnosis
 Lifecycle:   ephemeral
-Note:        running on the host environment; requested `--lifecycle ephemeral` is advisory in native mode only
+Note:        running on the host environment; declared lifecycle `ephemeral` has no managed effect in native mode
 
 Next:
   » use `ota run <task>` for isolated execution

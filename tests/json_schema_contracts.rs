@@ -687,6 +687,9 @@ fn workspace_execution_schema_reports_per_repo_resolved_and_declared_fields() {
 #[test]
 fn up_schema_preview_execution_includes_optional_image() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
+    let preview_required = schema["oneOf"][0]["required"]
+        .as_array()
+        .expect("up preview required fields should be an array");
     let preview_properties = &schema["oneOf"][0]["properties"];
     let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];
     let preview_governance = &schema["oneOf"][0]["properties"]["governance"]["properties"];
@@ -698,6 +701,15 @@ fn up_schema_preview_execution_includes_optional_image() {
     let preview_member_governance = &preview_member_properties["governance"]["properties"];
 
     assert!(preview_properties.get("summary").is_some());
+    assert!(
+        preview_required
+            .iter()
+            .any(|field| field == "execution_started")
+    );
+    assert_eq!(
+        preview_properties["execution_started"]["const"],
+        serde_json::json!(false)
+    );
     assert_eq!(
         preview_properties["summary"]["$ref"],
         serde_json::json!("./doctor.json#/properties/summary")
@@ -759,6 +771,9 @@ fn up_schema_keeps_aggregate_member_output_separate_from_repo_receipts() {
 #[test]
 fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
     let schema = load_schema("docs/spec/json-schemas/run-preview.json");
+    let single_target_required = schema["$defs"]["singleTarget"]["required"]
+        .as_array()
+        .expect("single-target required fields should be an array");
     let single_target = &schema["$defs"]["singleTarget"]["properties"];
     let env_summary = &schema["$defs"]["envSummary"]["properties"];
     let plan = &schema["$defs"]["plan"]["properties"];
@@ -768,6 +783,15 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
     assert_eq!(
         single_target["summary"]["$ref"],
         serde_json::json!("./doctor.json#/properties/summary")
+    );
+    assert!(
+        single_target_required
+            .iter()
+            .any(|field| field == "execution_started")
+    );
+    assert_eq!(
+        single_target["execution_started"]["const"],
+        serde_json::json!(false)
     );
     assert_eq!(
         single_target["contract_identity"]["$ref"],

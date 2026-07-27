@@ -53,6 +53,12 @@ pub(super) fn render_execution_receipt_summary_block(
         build_execution_summary_note(receipt, task, backend_summary.as_deref(), mode.as_str());
     let log_capture_warning = receipt_log_capture_warning(receipt).map(str::to_string);
     let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
+    let refused_mode = refused_execution_option_value(receipt, "mode");
+    let refused_lifecycle = refused_execution_option_value(receipt, "lifecycle");
+    let execution_option_refused = receipt
+        .blocked
+        .iter()
+        .any(|entry| entry.starts_with("execution_option_refused:"));
 
     let path_display = if receipt.scope == "repo" {
         Path::new(receipt.path.as_str())
@@ -73,25 +79,37 @@ pub(super) fn render_execution_receipt_summary_block(
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
-    lines.push(summary_detail_line("Mode:", &mode));
+    if let Some(requested_mode) = refused_mode {
+        lines.push(summary_detail_line("Requested Mode:", requested_mode));
+    } else {
+        lines.push(summary_detail_line("Mode:", &mode));
+    }
     lines.push(summary_detail_line("Task:", task));
+    if execution_option_refused {
+        lines.push(summary_detail_line("Execution:", "not started"));
+    }
     if let Some(workspace) = receipt.workspace.as_deref() {
         lines.push(summary_detail_line("Workspace:", workspace));
     }
     if let Some(context) = receipt.context.as_deref() {
         lines.push(summary_detail_line("Context:", context));
     }
-    if let Some(lifecycle) = receipt.lifecycle.as_deref() {
+    if let Some(requested_lifecycle) = refused_lifecycle {
+        lines.push(summary_detail_line(
+            "Requested Lifecycle:",
+            requested_lifecycle,
+        ));
+    } else if let Some(lifecycle) = receipt.lifecycle.as_deref() {
         lines.push(summary_detail_line("Lifecycle:", lifecycle));
     }
-    if let Some(image) = receipt.image.as_deref() {
+    if !execution_option_refused && let Some(image) = receipt.image.as_deref() {
         lines.push(summary_detail_line("Image:", image));
     }
-    if let Some(memory_bytes) = receipt.container_memory_bytes {
+    if !execution_option_refused && let Some(memory_bytes) = receipt.container_memory_bytes {
         let memory_display = format_memory_size_bytes(memory_bytes);
         lines.push(summary_detail_line("Memory:", memory_display.as_str()));
     }
-    if let Some(target) = receipt.target.as_deref() {
+    if !execution_option_refused && let Some(target) = receipt.target.as_deref() {
         if receipt.backend.as_deref() == Some("container") {
             lines.push(summary_detail_line("Container:", target));
         } else if !matches!(
@@ -248,19 +266,29 @@ fn build_execution_summary_note(
     let mut parts = Vec::new();
 
     // Add base backend context note based on mode and lifecycle
-    let base_note = match (mode, receipt.lifecycle.as_deref()) {
-        ("container", Some("persistent")) => Some(
-            persistent_container_note_from_receipt(receipt, task)
-                .unwrap_or_else(|| String::from("reusing persistent container backend")),
-        ),
-        ("container", Some("ephemeral")) => {
-            Some(String::from("using a fresh container image for this run"))
+    let base_note = if receipt
+        .blocked
+        .iter()
+        .any(|entry| entry.starts_with("execution_option_refused:"))
+    {
+        Some(String::from(
+            "requested execution option was refused before task startup",
+        ))
+    } else {
+        match (mode, receipt.lifecycle.as_deref()) {
+            ("container", Some("persistent")) => Some(
+                persistent_container_note_from_receipt(receipt, task)
+                    .unwrap_or_else(|| String::from("reusing persistent container backend")),
+            ),
+            ("container", Some("ephemeral")) => {
+                Some(String::from("using a fresh container image for this run"))
+            }
+            ("native", Some(lifecycle)) => Some(format!(
+                "running on the host environment; declared lifecycle `{lifecycle}` has no managed effect in native mode"
+            )),
+            ("native", _) => Some(String::from("running on the host environment")),
+            (other, _) => Some(format!("executing through the `{other}` backend")),
         }
-        ("native", Some(lifecycle)) => Some(format!(
-            "running on the host environment; requested `--lifecycle {lifecycle}` is advisory in native mode only"
-        )),
-        ("native", _) => Some(String::from("running on the host environment")),
-        (other, _) => Some(format!("executing through the `{other}` backend")),
     };
 
     if let Some(note) = base_note {
@@ -295,6 +323,17 @@ fn build_execution_summary_note(
         );
     }
     (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+fn refused_execution_option_value<'a>(
+    receipt: &'a ExecutionReceipt,
+    option: &str,
+) -> Option<&'a str> {
+    let prefix = format!("execution_option_refused:{option}:");
+    receipt
+        .blocked
+        .iter()
+        .find_map(|entry| entry.strip_prefix(prefix.as_str()))
 }
 
 fn persistent_container_note_from_receipt(

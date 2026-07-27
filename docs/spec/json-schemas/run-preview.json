@@ -288,6 +288,7 @@
         "contract",
         "task",
         "dry_run",
+        "execution_started",
         "preview_status",
         "summary",
         "contract_identity",
@@ -304,6 +305,7 @@
         "member": { "type": "string" },
         "task": { "type": "string" },
         "dry_run": { "const": true },
+        "execution_started": { "const": false },
         "preview_status": {
           "enum": ["RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"]
         },

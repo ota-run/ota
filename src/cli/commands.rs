@@ -5189,9 +5189,17 @@ fn execution_plan_overrides(overrides: ExecutionOverrides) -> Option<ExecutionPl
             .lifecycle
             .map(format_lifecycle)
             .map(str::to_string),
+        host_port: overrides.host_port,
+        container_memory_bytes: overrides.memory,
+        skip_deps: overrides.skip_deps,
     };
 
-    if overrides.backend.is_none() && overrides.lifecycle.is_none() {
+    if overrides.backend.is_none()
+        && overrides.lifecycle.is_none()
+        && overrides.host_port.is_none()
+        && overrides.container_memory_bytes.is_none()
+        && !overrides.skip_deps
+    {
         None
     } else {
         Some(overrides)
@@ -5236,7 +5244,95 @@ fn execution_plan_error(error: &RunError) -> String {
         } => format!(
             "task `{task}` was requested with `--mode {requested_mode}`, but it only supports modes: {supported_modes}"
         ),
+        RunError::UnsupportedTaskLifecycleOverride {
+            task,
+            requested_lifecycle,
+            backend,
+        } => format!(
+            "task `{task}` was requested with `--lifecycle {requested_lifecycle}`, but `{backend}` execution does not provide a managed lifecycle boundary"
+        ),
         other => other.to_string(),
+    }
+}
+
+fn execution_option_admission_finding(error: &RunError) -> Option<Finding> {
+    let (code, summary, flag) = match error {
+        RunError::UnsupportedTaskModeOverride { .. } => (
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_MODE",
+            "Requested mode is not declared for this task",
+            "--mode",
+        ),
+        RunError::UnsupportedTaskLifecycleOverride { .. } => (
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_LIFECYCLE",
+            "Requested lifecycle is not supported by this execution mode",
+            "--lifecycle",
+        ),
+        RunError::SkipDepsWithoutDependencies { .. } => (
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_SKIP_DEPS",
+            "Dependency override has no effect",
+            "--skip-deps",
+        ),
+        RunError::HostPortOverrideNoProjectedListener { .. }
+        | RunError::HostPortOverrideRequiresFixedProjectedPort { .. }
+        | RunError::HostPortOverrideRequiresFixedBindPort { .. }
+        | RunError::HostPortOverrideAmbiguousProjectedListener { .. }
+        | RunError::HostPortOverrideUnsupportedBackend { .. }
+        | RunError::HostPortOverrideUnsupportedComposeEngine { .. }
+        | RunError::HostPortOverrideNativeComposeServiceMissing { .. }
+        | RunError::HostPortOverrideNativeComposeFileMissing { .. } => (
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_HOST_PORT",
+            "Requested host-port override is not supported by this task",
+            "--host-port",
+        ),
+        RunError::MemoryOverrideUnsupportedBackend { .. }
+        | RunError::MemoryOverrideBelowMinimum { .. } => (
+            "OTA_EXECUTION_OPTION_UNSUPPORTED_MEMORY",
+            "Requested memory override is not supported by this execution path",
+            "--memory",
+        ),
+        _ => return None,
+    };
+
+    Some(Finding::identified(
+        code,
+        "execution",
+        "repo_contract",
+        FindingSeverity::Error,
+        summary,
+        execution_plan_error(error),
+        format!(
+            "remove or correct `{flag}`, then run `ota tasks --use` to inspect the task's declared execution capabilities"
+        ),
+    ))
+}
+
+fn execution_option_refusal_run_preview_plan(task_name: &str) -> RunPreviewPlan {
+    let action = format!("refuse unsupported execution option before task `{task_name}` startup");
+    RunPreviewPlan {
+        actions: vec![action.clone()],
+        staged_actions: vec![crate::output::PreviewStageAction {
+            stage_family: String::from("verify"),
+            action,
+        }],
+        notes: vec![String::from(
+            "no dependency, provisioning, container, service, or task process starts",
+        )],
+        ..RunPreviewPlan::default()
+    }
+}
+
+fn execution_option_refusal_up_preview_plan(task_name: &str) -> UpPreviewPlan {
+    let action = format!("refuse unsupported execution option before task `{task_name}` startup");
+    UpPreviewPlan {
+        actions: vec![action.clone()],
+        staged_actions: vec![crate::output::PreviewStageAction {
+            stage_family: String::from("verify"),
+            action,
+        }],
+        skipped: Vec::new(),
+        staged_skipped: Vec::new(),
+        dependency_chain: Vec::new(),
+        dependency_steps: Vec::new(),
     }
 }
 
@@ -5417,6 +5513,27 @@ fn render_execution_plan_structured_error(
                 String::from("rerun without the explicit mode override to use the task default"),
             ],
         ),
+        RunError::UnsupportedTaskLifecycleOverride {
+            task,
+            requested_lifecycle,
+            backend,
+        } => (
+            "Requested lifecycle is not supported by this execution mode",
+            vec![
+                format!("task `{task}` was requested with `--lifecycle {requested_lifecycle}`"),
+                format!(
+                    "the resolved `{backend}` execution path does not provide a managed lifecycle boundary"
+                ),
+            ],
+            vec![
+                String::from(
+                    "rerun without the explicit lifecycle override to use the task's declared execution path",
+                ),
+                format!(
+                    "or select a contract-advertised container mode before requesting `{requested_lifecycle}` lifecycle"
+                ),
+            ],
+        ),
         _ => (
             "Execution plan could not be resolved",
             vec![execution_plan_error(error)],
@@ -5503,6 +5620,12 @@ fn resolve_execution_plan_for_selected_task(
     if let Some(selected_task_name) = selected_task_name {
         // Keep preview admission on the same closure-aware platform boundary as execution.
         crate::runner::plan_task_execution_with_overrides(contract, selected_task_name, overrides)?;
+        crate::runner::preflight_task_execution_overrides(
+            contract,
+            selected_task_name,
+            overrides,
+            Some(contract_path),
+        )?;
     }
     let task_name = selected_task_name.unwrap_or("execution plan");
     let effective = effective_task_execution(contract, task_name, overrides);
@@ -19623,15 +19746,19 @@ fn render_run_preview_target(
                 current_requirement_platform(),
                 false,
             );
-            let plan = build_run_preview_plan(
-                &target.contract,
-                &target.contract_path,
-                task_name.as_str(),
-                overrides,
-                &requested_task,
-                &unresolved_execution_plan,
-                persist_logs,
-            );
+            let plan = if execution_option_admission_finding(&error).is_some() {
+                execution_option_refusal_run_preview_plan(task_name.as_str())
+            } else {
+                build_run_preview_plan(
+                    &target.contract,
+                    &target.contract_path,
+                    task_name.as_str(),
+                    overrides,
+                    &requested_task,
+                    &unresolved_execution_plan,
+                    persist_logs,
+                )
+            };
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
                 agent_verdict: DoctorVerdict::Ready,
@@ -19665,12 +19792,15 @@ fn render_run_preview_target(
             return match format {
                 OutputFormat::Text => CommandOutput::failure(text),
                 OutputFormat::Json => {
-                    let governance_overrides =
-                        if matches!(&error, RunError::UnsupportedTaskModeOverride { .. }) {
-                            ExecutionOverrides::default()
-                        } else {
-                            overrides
-                        };
+                    let governance_overrides = if matches!(
+                        &error,
+                        RunError::UnsupportedTaskModeOverride { .. }
+                            | RunError::UnsupportedTaskLifecycleOverride { .. }
+                    ) {
+                        ExecutionOverrides::default()
+                    } else {
+                        overrides
+                    };
                     let governance_task = TaskSummary::from_spec_with_overrides(
                         task_name.as_str(),
                         task,
@@ -19702,6 +19832,7 @@ fn render_run_preview_target(
                             member,
                             task: task_name.as_str(),
                             dry_run: true,
+                            execution_started: false,
                             preview_status: doctor_preview_status_label(summary.verdict),
                             summary,
                             contract_identity,
@@ -19836,6 +19967,7 @@ fn render_run_preview_target(
                 member,
                 task: task_name.as_str(),
                 dry_run: true,
+                execution_started: false,
                 preview_status: doctor_preview_status_label(summary.verdict),
                 summary: summary.clone(),
                 contract_identity,
@@ -20212,14 +20344,29 @@ fn run_preview_execution_primary_blocker(
     overrides: ExecutionOverrides,
     error: &RunError,
 ) -> DoctorPrimaryBlocker {
+    if let Some(finding) = execution_option_admission_finding(error) {
+        return DoctorPrimaryBlocker {
+            code: finding
+                .identity
+                .as_ref()
+                .map(|identity| identity.code.clone()),
+            severity: finding.severity,
+            summary: finding.summary,
+            why: finding.why,
+            next: finding.next,
+            provenance: Some(String::from("execution")),
+            provenance_key: None,
+        };
+    }
     let backend = effective_task_execution(contract, task_name, overrides).backend;
-    let (summary, next) = match error {
+    let (code, summary, next) = match error {
         RunError::UnsupportedHostPlatform {
             os,
             supported,
             supported_arch,
             ..
         } => (
+            None,
             String::from("Unsupported host platform"),
             if os == "windows" && supported.split(", ").any(|platform| platform == "linux") {
                 format!(
@@ -20239,6 +20386,7 @@ fn run_preview_execution_primary_blocker(
             },
         ),
         _ => (
+            None,
             String::from("Execution plan could not be resolved"),
             format!(
                 "run `{}` to inspect the selected execution path before retrying task `{task_name}`",
@@ -20247,7 +20395,7 @@ fn run_preview_execution_primary_blocker(
         ),
     };
     DoctorPrimaryBlocker {
-        code: None,
+        code,
         severity: FindingSeverity::Error,
         summary,
         why: execution_plan_error(error),
@@ -55788,6 +55936,7 @@ fn render_up_preview_result(
                 ok: ready,
                 path,
                 dry_run: true,
+                execution_started: false,
                 status,
                 preview_status: doctor_preview_status_label(summary.verdict),
                 phase,
@@ -55810,6 +55959,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "ok": result.ok,
             "path": path,
             "dry_run": true,
+            "execution_started": false,
             "status": result.status,
             "preview_status": doctor_preview_status_label(preview.summary.verdict),
             "phase": result.phase,
@@ -84780,7 +84930,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides {
                 backend: Some(Backend::Native),
-                lifecycle: Some(Lifecycle::Persistent),
+                lifecycle: None,
                 host_port: None,
                 memory: None,
                 skip_deps: false,
@@ -84804,20 +84954,14 @@ tasks:
         );
         assert_eq!(native_override_receipt.backend.as_deref(), Some("native"));
         assert_eq!(native_override_receipt.context.as_deref(), Some("host"));
-        assert_eq!(
-            native_override_receipt.lifecycle.as_deref(),
-            Some("persistent")
-        );
+        assert_eq!(native_override_receipt.lifecycle, None);
         let rendered = render_execution_receipt_summary_block(
             &native_override_receipt,
             Some("test"),
             "RUN SUMMARY",
         );
-        assert!(rendered.contains("Lifecycle:"));
-        assert!(rendered.contains("persistent"));
-        assert!(
-            rendered.contains("requested `--lifecycle persistent` is advisory in native mode only")
-        );
+        assert!(!rendered.contains("Lifecycle:"));
+        assert!(rendered.contains("running on the host environment"));
     }
 
     #[test]
@@ -101772,6 +101916,28 @@ fn render_run_structured_error_text(
                 format!("rerun without `--mode {requested_mode}` to use the task default mode",),
             ],
         ),
+        RunError::UnsupportedTaskLifecycleOverride {
+            task,
+            requested_lifecycle,
+            backend,
+        } => (
+            String::from("Requested lifecycle is not supported by this execution mode"),
+            vec![
+                format!("task `{task}` was requested with `--lifecycle {requested_lifecycle}`"),
+                format!(
+                    "the resolved `{backend}` execution path does not provide a managed lifecycle boundary"
+                ),
+            ],
+            vec![
+                String::from(
+                    "rerun without the explicit lifecycle override to use the task's declared execution path",
+                ),
+                format!(
+                    "or select a contract-advertised container mode before requesting `{requested_lifecycle}` lifecycle"
+                ),
+                task_use_details_step(Some(contract_path), member),
+            ],
+        ),
         RunError::HostPublicationConflict {
             task,
             listener,
@@ -102590,6 +102756,32 @@ fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
                 )
             })
             .collect(),
+        RunError::UnsupportedTaskModeOverride { requested_mode, .. } => {
+            vec![format!("execution_option_refused:mode:{requested_mode}")]
+        }
+        RunError::UnsupportedTaskLifecycleOverride {
+            requested_lifecycle,
+            ..
+        } => vec![format!(
+            "execution_option_refused:lifecycle:{requested_lifecycle}"
+        )],
+        RunError::SkipDepsWithoutDependencies { .. } => {
+            vec![String::from("execution_option_refused:skip_deps")]
+        }
+        RunError::HostPortOverrideNoProjectedListener { .. }
+        | RunError::HostPortOverrideRequiresFixedProjectedPort { .. }
+        | RunError::HostPortOverrideRequiresFixedBindPort { .. }
+        | RunError::HostPortOverrideAmbiguousProjectedListener { .. }
+        | RunError::HostPortOverrideUnsupportedBackend { .. }
+        | RunError::HostPortOverrideUnsupportedComposeEngine { .. }
+        | RunError::HostPortOverrideNativeComposeServiceMissing { .. }
+        | RunError::HostPortOverrideNativeComposeFileMissing { .. } => {
+            vec![String::from("execution_option_refused:host_port")]
+        }
+        RunError::MemoryOverrideUnsupportedBackend { .. }
+        | RunError::MemoryOverrideBelowMinimum { .. } => {
+            vec![String::from("execution_option_refused:memory")]
+        }
         _ => Vec::new(),
     }
 }
@@ -111207,6 +111399,11 @@ fn render_up_preview_text(
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
 ) -> String {
+    let execution_option_refused = summary
+        .primary_blocker
+        .as_ref()
+        .and_then(|finding| finding.code.as_deref())
+        .is_some_and(|code| code.starts_with("OTA_EXECUTION_OPTION_UNSUPPORTED_"));
     let mut stdout = format!(
         "{}\n\n{}\n\n{}",
         format_command_header("UP PREVIEW", path),
@@ -111216,6 +111413,10 @@ fn render_up_preview_text(
 
     stdout.push_str(&format!("\n\n{}\n", paint_section_title("Execution")));
     stdout.push_str(&detail_list_row(&paint_key("Backend:"), &execution.backend));
+    if execution_option_refused {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(&paint_key("Execution:"), "not started"));
+    }
     if let Some(context) = execution.context.as_deref() {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
@@ -111225,16 +111426,23 @@ fn render_up_preview_text(
     }
     if let Some(lifecycle) = execution.lifecycle.as_deref() {
         stdout.push('\n');
-        stdout.push_str(&detail_list_row(&paint_key("Lifecycle:"), lifecycle));
+        stdout.push_str(&detail_list_row(
+            &paint_key(if execution_option_refused {
+                "Requested Lifecycle:"
+            } else {
+                "Lifecycle:"
+            }),
+            lifecycle,
+        ));
     }
-    if let Some(image) = execution.image.as_deref() {
+    if !execution_option_refused && let Some(image) = execution.image.as_deref() {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
             &paint_key("Image:"),
             &paint_backticked_code(image),
         ));
     }
-    if let Some(target) = execution.target.as_deref() {
+    if !execution_option_refused && let Some(target) = execution.target.as_deref() {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
             &paint_key("Target:"),
@@ -120355,6 +120563,97 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         ));
     }
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+    if let Some((task_name, blocker, blocked_entries)) = up_execution_option_admission_blocker(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+    ) {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![blocker.clone()],
+        };
+        if dry_run {
+            let mut preview = build_up_preview_with_actor(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                run_behavior_preference,
+                &report,
+                agent,
+            );
+            preview.plan = execution_option_refusal_up_preview_plan(&task_name);
+            let receipt = preview_receipt(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                "BLOCKED",
+                &report.findings,
+            );
+            return Ok(RepoUpResult {
+                ok: false,
+                status: "BLOCKED",
+                phase: "preview",
+                report,
+                preview: Some(preview),
+                governance_preflight: None,
+                receipt,
+                service: None,
+                service_command: None,
+                task: Some(task_name),
+                task_command: None,
+                exit_code: None,
+                stdout,
+                stderr,
+            });
+        }
+        let governance_preflight = up_result_preflight_evaluation(
+            contract,
+            workflow_name,
+            overrides,
+            run_behavior_preference,
+            &report,
+            agent,
+            None,
+        );
+        let mut receipt = repo_execution_receipt_with_overrides(
+            resolved_path,
+            contract,
+            task_phase_execution_context(contract, resolved_path, &task_name, overrides, None),
+            "BLOCKED",
+            "preconditions",
+            workflow_name,
+            None,
+            Some(task_name.as_str()),
+            &report.findings,
+            None,
+            Some(blocker.next.clone()),
+            Some(overrides),
+        );
+        receipt.blocked.extend(blocked_entries);
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "preconditions",
+            preview: None,
+            governance_preflight: Some(governance_preflight),
+            receipt,
+            report,
+            service: None,
+            service_command: None,
+            task: Some(task_name),
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
     let prepare_action = selected_up_prepare_action(contract, workflow_name);
@@ -125648,6 +125947,31 @@ fn selected_up_agent_task_names(
     names
 }
 
+fn up_execution_option_admission_blocker(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior_preference: UpRunBehaviorPreference,
+) -> Option<(String, Finding, Vec<String>)> {
+    for task_name in selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
+    {
+        let Err(error) =
+            resolve_execution_plan_for_task(contract, contract_path, &task_name, overrides)
+        else {
+            continue;
+        };
+        if let Some(finding) = execution_option_admission_finding(&error) {
+            return Some((
+                task_name,
+                finding,
+                run_error_receipt_blocked_entries(&error),
+            ));
+        }
+    }
+    None
+}
+
 fn up_agent_execution_refusal_result(
     contract: &Contract,
     resolved_path: &Path,
@@ -126390,6 +126714,46 @@ fn render_up_run_error(
     error: RunError,
 ) -> String {
     match error {
+        RunError::UnsupportedTaskModeOverride {
+            task,
+            requested_mode,
+            supported_modes,
+        } => structured_error_text(
+            "UP",
+            &display_contract_target(&compact_contract_path(contract_path), None),
+            "Requested mode is not declared for this task",
+            &[
+                format!("task `{task}` was requested with `--mode {requested_mode}`"),
+                format!("declared mode branches: {supported_modes}"),
+                String::from("execution did not start"),
+            ],
+            &[
+                String::from("rerun without the explicit mode override"),
+                String::from("run `ota tasks --use` to inspect declared mode branches"),
+            ],
+        ),
+        RunError::UnsupportedTaskLifecycleOverride {
+            task,
+            requested_lifecycle,
+            backend,
+        } => structured_error_text(
+            "UP",
+            &display_contract_target(&compact_contract_path(contract_path), None),
+            "Requested lifecycle is not supported by this execution mode",
+            &[
+                format!("task `{task}` was requested with `--lifecycle {requested_lifecycle}`"),
+                format!(
+                    "the resolved `{backend}` execution path does not provide a managed lifecycle boundary"
+                ),
+                String::from("execution did not start"),
+            ],
+            &[
+                String::from("rerun without the explicit lifecycle override"),
+                format!(
+                    "or select a contract-advertised container mode before requesting `{requested_lifecycle}` lifecycle"
+                ),
+            ],
+        ),
         RunError::RepoExecutionConflict {
             task,
             path,

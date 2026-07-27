@@ -223,7 +223,10 @@
           "additionalProperties": false,
           "properties": {
             "backend": { "enum": ["native", "container", "remote"] },
-            "lifecycle": { "enum": ["persistent", "ephemeral"] }
+            "lifecycle": { "enum": ["persistent", "ephemeral"] },
+            "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "container_memory_bytes": { "type": "integer", "minimum": 1 },
+            "skip_deps": { "const": true }
           }
         }
       }
