@@ -24,12 +24,13 @@
 
 # V11.8 Plan
 
-Status: partially implemented. Capability-profile compilation is shipped; provider-enforced sandbox
-application and receipt-bound compiled-policy identity/freshness remain open.
+Status: complete at the capability-profile compilation boundary. Provider-enforced application,
+fail-closed capability negotiation, and receipt-bound applied-policy evidence are a separate
+follow-on in [V11.21](../v11.21/plan.md).
 
 Release target:
 
-- partially implemented continuation after `v11.7`; provider-enforced sandbox application remains open
+- completed compilation/profile foundation after `v11.7`
 
 Source direction:
 
@@ -613,13 +614,11 @@ Ota should publish:
 - which fields stayed advisory
 - which outbound targets required stronger narrowing than first-hop host allowlisting alone
 - which destination-constrained lanes required pinned shared policy truth
-- whether shared destination policy was resolved locally, missing, unresolved, aging, or stale
 - whether a destination-constrained lane relied on runtime enforcement or local app-path
   enforcement
 - whether destination truth was repo-local or shared-pinned at the time of compilation
 - which pinned destination-policy version, revision, or digest was in force
-- how old that pinned truth was
-- whether the freshness posture was `fresh`, `warning`, or `blocking`
+- which contract-declared freshness posture was in force: `fresh`, `warning`, or `blocking`
 - why a lane was denied or widened
 
 This visibility should not live only in one place.
@@ -627,11 +626,8 @@ This visibility should not live only in one place.
 Direction:
 
 - governance output should carry source posture, freshness posture, and pinned identity
-- receipts should carry the same pinned identity and freshness posture so later audits can answer
-  "which truth did this run enforce"
-- when the selected lane actually starts, the same pinned identity should be available to runtime
-  logs or startup evidence so operators do not need a forensic dig to answer which destination
-  truth was active
+- execution receipt and runtime persistence are deferred to V11.21, where a provider can bind the
+  compiled policy to an applied boundary instead of turning a profile into execution evidence
 
 The mature operator question should become:
 
@@ -644,16 +640,25 @@ not:
 This should stay machine-readable and aligned with the V11.4 governance model rather than
 becoming provider-specific prose.
 
-### 6. Freshness lifecycle and fan-out posture
+### 6. Declared freshness posture and deferred lifecycle automation
 
-Pinned shared destination truth should not be governed by one implicit age rule.
+V11.8 carries a contract-declared freshness posture. It does not infer age from `shared_pin.ref`,
+fetch shared policy, or compute elapsed-time thresholds.
 
-Direction:
+The shipped posture is:
 
-- repos or policy packs should be able to define a warning threshold and a hard blocking limit
-- the default operational stance should be "warn first, block later"
-- hard blocking should be reserved for pins that are clearly outside tolerated freshness, not for
-  every ordinary lagging consumer
+- `fresh`
+- `warning`
+- `blocking`
+
+That value is declaration, not runner-observed age evidence.
+
+Future policy lifecycle work may add:
+
+- explicit warning thresholds
+- explicit hard blocking limits
+- independently resolved shared-policy identity and age
+- fan-out rebuild or verification triggers
 
 This slice should also acknowledge, without overloading itself, the best follow-on automation:
 
@@ -666,8 +671,7 @@ The core of `11.8` is:
 
 - declaring the pinned truth
 - compiling the local enforcement boundary
-- surfacing freshness early
-- blocking only when the pin is truly too stale or missing
+- surfacing the declared freshness posture without claiming automatic age verification
 
 ## Acceptance bar
 
@@ -683,12 +687,24 @@ V11.8 is complete when:
   destination-constrained lanes
 - the compiled output distinguishes destination-truth source posture from enforcement posture
 - the compiled output also distinguishes freshness posture for shared-pinned truth
-- pinned destination-policy identity and age are visible in governance output and receipts
-- warning thresholds and hard blocking limits for stale shared-pinned truth are explicit
-- at least one real sandbox/runtime target can consume that compiled policy
+- pinned destination-policy identity and freshness are visible in compiled governance discovery and
+  preview output
+- the `codex_local` harness-facing target receives the compiled policy without claiming that profile
+  publication is provider enforcement
 - the compiled output makes authoritative versus advisory policy explicit
 - the provider-facing compilation is clearly derived from the canonical governance model instead
   of inventing a parallel policy taxonomy
+
+Provider application is intentionally not part of this completed slice. V11.21 owns:
+
+- provider capability negotiation;
+- fail-closed admission for unsupported authoritative controls;
+- provider-specific application;
+- runner-witnessed applied-policy identity; and
+- receipt/archive reconciliation of compiled and applied policy.
+
+V11.21 also owns carrying selected shared-pin identity/freshness into execution receipts. V11.8
+does not claim receipt persistence for a profile that it only compiles and publishes.
 
 ## OSS / enterprise boundary
 

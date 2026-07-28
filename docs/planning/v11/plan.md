@@ -57,6 +57,8 @@ Source direction:
 - [V11.17 plan](../v11.17/plan.md)
 - [V11.18 plan](../v11.18/plan.md)
 - [V11.19 plan](../v11.19/plan.md)
+- [V11.20 plan](../v11.20/plan.md)
+- [V11.21 plan](../v11.21/plan.md)
 
 V11 theme:
 
@@ -125,13 +127,11 @@ The implemented OSS governance slices after that are:
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 
-The following governance slices have open acceptance work and must not be represented as complete
-until their stated pressure or implementation bars close:
+The following governance slice has open acceptance work and must not be represented as complete
+until its stated pressure or implementation bars close:
 
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;
   reusable grant authority and crossing-time liveness remain open.
-- [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - compiled
-  advisory profiles are shipped; provider-enforced sandbox application remains open.
 
 The completed trust/product follow-ons are:
 
@@ -144,6 +144,9 @@ The completed trust/product follow-ons are:
 - [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
 - [V11.13: generated artifact lineage](../v11.13/plan.md)
+- [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - completed at
+  the capability-profile compilation boundary; provider-enforced application is planned
+  separately in V11.21.
 - [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation complete; release
   reconciliation remains active.
 
@@ -171,6 +174,16 @@ The completed typed-hydration slice is:
   editable-project, full extras, and ordered dependency-group lane; Marimo independently proves
   the root-project test-group shape on Linux and macOS while remaining narrowing because it has no
   lockfile.
+
+The active policy-governance slice is:
+
+- [V11.20: policy-governed replay input identity](../v11.20/plan.md)
+
+The next planned sandbox-enforcement slice is:
+
+- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - planned and inactive until
+  V11.20 closes. It consumes V11.8's shipped `runtime_boundary` and capability-profile foundation;
+  it does not reopen or replace that contract model.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 

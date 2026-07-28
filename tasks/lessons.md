@@ -181,3 +181,15 @@
 - Pattern: A product-direction discussion about CLI shape can be mistaken for approval to implement the command immediately.
 - Correction: Treat strategic agreement as direction only; wait for an explicit implementation request before changing CLI code.
 - Rule: Do not implement a new command from design discussion alone. First confirm the user has asked for code changes, then keep edits to the requested surface.
+
+## 2026-07-28
+
+- Pattern: A provider-enforcement plan can accidentally place provider-relative support states inside canonical policy or let runner defaults behave like hidden policy.
+- Correction: Keep canonical requirements, explicit restriction overlays, effective policy, provider capability, and witnessed application as separately identified objects.
+- Rule: Capability describes what a provider can enforce; only explicit policy authority may narrow execution, and observed application never becomes declaration.
+- Pattern: A start-time application attestation can overclaim enforcement across the complete execution.
+- Correction: Bind execution to one boundary lease and require immutable-lifetime evidence or terminal reinspection after every completion and interruption path.
+- Rule: Completed enforcement requires authenticated authorship and terminal boundary evidence, not only a preflight success flag or matching hash.
+- Pattern: A closure-wide sandbox policy can erase legitimate phase differences, and an optional provider flag can become an enforcement bypass.
+- Correction: Preserve an ordered per-step policy graph under the closure identity and resolve an enforcing target automatically or refuse whenever authoritative runtime controls apply.
+- Rule: Never flatten differing phase boundaries, infer policy from provider defaults, or let omission of an execution flag weaken declared enforcement.
