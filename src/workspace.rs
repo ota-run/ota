@@ -1229,7 +1229,9 @@ pub(crate) fn agent_verdict_from_agent(
         return DoctorVerdict::NotReady;
     }
 
-    if agent.safe_tasks.is_empty() || agent.writable_paths.is_empty() {
+    if agent.safe_tasks.is_empty()
+        || (agent.writable_paths.is_empty() && agent.protected_paths.is_empty())
+    {
         return DoctorVerdict::Risky;
     }
 
@@ -1330,9 +1332,40 @@ mod tests {
     use crate::parser::parse_contract_str;
 
     use super::{
-        WorkspaceExecutionSummary, diagnose_workspace_contract_with_jobs, load_workspace_contract,
-        parse_workspace_contract_str, validate_workspace_contract,
+        WorkspaceExecutionSummary, agent_verdict_from_agent, diagnose_workspace_contract_with_jobs,
+        load_workspace_contract, parse_workspace_contract_str, validate_workspace_contract,
     };
+
+    #[test]
+    fn agent_with_protected_only_filesystem_boundary_is_ready() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: read-only-agent
+tasks:
+  verify:
+    command:
+      exe: "true"
+agent:
+  entrypoint: verify
+  safe_tasks:
+    - verify
+  writable_paths: []
+  protected_paths:
+    - ota.yaml
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            agent_verdict_from_agent(contract.agent.as_ref()),
+            crate::output::DoctorVerdict::Ready
+        );
+    }
 
     #[test]
     fn validates_workspace_with_existing_repo_contracts() {

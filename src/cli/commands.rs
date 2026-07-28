@@ -51170,7 +51170,9 @@ fn agent_verdict_from_summary(
         return DoctorVerdict::NotReady;
     }
 
-    if agent.safe_tasks.is_empty() || agent.writable_paths.is_empty() {
+    if agent.safe_tasks.is_empty()
+        || (agent.writable_paths.is_empty() && agent.protected_paths.is_empty())
+    {
         return DoctorVerdict::Risky;
     }
 
@@ -83531,6 +83533,29 @@ execution:
             .expect("agent");
         assert!(verdict < next);
         assert!(next < agent_index);
+    }
+
+    #[test]
+    fn doctor_treats_protected_only_agent_boundary_as_ready() {
+        let safe_tasks = vec![String::from("verify")];
+        let protected_paths = vec![String::from("ota.yaml")];
+        let agent = crate::output::AgentSummary {
+            posture: "readiness_strict",
+            entrypoint: Some("verify"),
+            default_task: Some("verify"),
+            safe_tasks,
+            verify_after_changes: Vec::new(),
+            writable_paths: Vec::new(),
+            protected_paths,
+            inferred_boundary_reviewed: None,
+            bootstrap: None,
+            notes: None,
+        };
+
+        assert_eq!(
+            super::agent_verdict_from_summary(Some(&agent), None),
+            super::DoctorVerdict::Ready
+        );
     }
 
     #[test]

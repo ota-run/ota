@@ -193,3 +193,6 @@
 - Pattern: A closure-wide sandbox policy can erase legitimate phase differences, and an optional provider flag can become an enforcement bypass.
 - Correction: Preserve an ordered per-step policy graph under the closure identity and resolve an enforcing target automatically or refuse whenever authoritative runtime controls apply.
 - Rule: Never flatten differing phase boundaries, infer policy from provider defaults, or let omission of an execution flag weaken declared enforcement.
+- Pattern: Agent readiness can report an invisible warning when verdict derivation treats an intentionally empty writable set as a missing boundary despite declared protected paths.
+- Correction: Derive readiness from the same filesystem-boundary semantics used by enforcement: either writable or protected paths establishes a boundary, while neither remains risky.
+- Rule: Every risky Doctor verdict must correspond to actionable visible evidence, and summary derivation must not drift from the runner's boundary model.

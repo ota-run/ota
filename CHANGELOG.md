@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed Doctor agent-readiness derivation for intentionally read-only agent boundaries. A contract
+  with safe tasks, no writable paths, and declared protected paths now reports `Agent: ready`
+  instead of an unexplained `ready with warnings`; contracts with no filesystem boundary remain
+  risky.
+
 ## 1.6.25
 
 - tightened execution-option admission across task execution and previews. Explicit lifecycle
