@@ -31,9 +31,13 @@ Status: complete. This follows V11.16 under version discipline.
 It extends V11.10 replay-input governance and V11.13 producer-owned artifact lineage; it does not
 reopen their completed core models. Core implementation and independent EventCatalog pressure are
 complete, including explicit record/promotion and fresh-checkout consumption of a committed
-portable authority through the strict ephemeral container boundary. A credentialed Bedrock recording
-remains an external adoption follow-up: it must be intentional and must not be fabricated from the
-committed fixture, but it is not a release gate for the general replay-baseline model.
+portable authority through the strict ephemeral container boundary. Upstream Bedrock
+[run 30268181240](https://github.com/vinimabreu/bedrock/actions/runs/30268181240) is the first
+intentional credentialed recording adoption path. Its candidate is correctly unpromoted because
+`top_product_by_quantity` regressed to `stable_wrong`; the workflow also omitted the producer
+receipt archive required by explicit promotion, so it must retain that archive and record a fresh
+review candidate. This is an external integration correction, not a release gate for the general
+replay-baseline model.
 
 ## V11.16 Evidence Dependency
 

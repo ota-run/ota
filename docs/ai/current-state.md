@@ -47,7 +47,14 @@ durable agent workflow belongs in the canonical Ota skill.
   Ota-verified reviewer approval. Bedrock now has an additive unsafe `record:baseline` producer and separate
   promoted offline consumers. Its promoted lane correctly fails closed with
   `OTA_REPLAY_BASELINE_UNAVAILABLE` until an intentional live recording is reviewed and explicitly
-  promoted. No authority manifest or live-model recording has been manufactured. Core focused
+  promoted. Upstream [run 30268181240](https://github.com/vinimabreu/bedrock/actions/runs/30268181240)
+  recorded an approved live-model candidate with attestation
+  `sha256:0bfb61977a38310c7ee515a4de31cec5ca4198b7bb63fb1a1bd980f920a39b93`
+  and source `git:bb0ace385cfe17c1a5c195f3cd20de60a446cea6`. Its aggregate score improved, but
+  `top_product_by_quantity` became `stable_wrong`; it is intentionally unpromoted. The uploaded
+  review artifact omitted the required producer receipt archive, so it cannot later support
+  `ota baseline promote`; Bedrock must retain `.ota/receipts/` and make a fresh reviewed recording
+  after that workflow fix. This is a Bedrock workflow-retention gap, not an Ota Core defect. Core focused
   record/promotion, JSON conformance, and published-schema tests pass. EventCatalog closes the
   independent non-model generated-baseline gate: [run 30198942717](https://github.com/bobaikato/eventcatalog/actions/runs/30198942717)
   preserves the ordinary native generator matrix on Ubuntu, macOS, and Windows and separately
@@ -62,8 +69,9 @@ durable agent workflow belongs in the canonical Ota skill.
   independent strict-replay pressure gate: ordinary generated-source lineage remains green on
   Ubuntu, macOS, and Windows, while explicit record/promotion and committed-authority consumption
   both run through the declared ephemeral container boundary with `read_only` enforcement. A
-  credentialed Bedrock recording remains an external adoption follow-up and must not be fabricated
-  from its committed fixture; it is not a release gate for the general V11.17 model. Dagger exposed
+  credentialed Bedrock recording is now an upstream, intentionally reviewed adoption lane. Its first
+  candidate remains unpromoted for a real `stable_wrong` regression and missing receipt retention;
+  it is not a release gate for the general V11.17 model. Dagger exposed
   and now exercises the needed hybrid posture:
   `generated_source` retains an ordinary producer-dependent SDK check while a second task can
   consume the same output only through explicit promoted replay authority. The Core schema, Doctor,
@@ -103,12 +111,12 @@ durable agent workflow belongs in the canonical Ota skill.
   Windows. Windows also proves a failed optional WSL shell probe cannot corrupt machine JSON.
   The real OAuth/account success remains intentionally external and not proved; the contract does
   not advertise container or remote execution for this terminal-auth lane.
-- active replay-input identity hardening: optional task `replay_inputs[].expected_identity` pins
-  now validate canonical SHA-256 values, surface missing or mismatched artifacts through Doctor,
+- completed replay-input identity hardening: optional task `replay_inputs[].expected_identity`
+  pins validate canonical SHA-256 values, surface missing or mismatched artifacts through Doctor,
   block dry-run/run/up before task startup, and preserve expected plus observed identity in the
   receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
-  dry-run, and real native plus container agent-safe execution. Strict-policy admission for lanes
-  that require declared pins remains a future policy refinement rather than an implicit default.
+  dry-run, and real native plus container agent-safe execution. V11.20 is planned to add selective
+  policy admission for declared pins; optional pins remain the default until that slice is proven.
 - completed V11.14 contract-claim assurance: the shared `claim_assurance` domain supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer
