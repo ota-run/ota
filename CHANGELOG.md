@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.25
+
 - tightened execution-option admission across task execution and previews. Explicit lifecycle
   overrides such as `--ephemeral` and `--persistent` now fail before dependencies, provisioning,
   or task startup when the resolved native or remote path has no managed lifecycle boundary,

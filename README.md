@@ -914,3 +914,8 @@ If you want the shortest “which example proves what?” guide, use
 
 - [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter; compare `ota workspace detect --dry-run` with `ota workspace init --dry-run`, then use `ota workspace up --dry-run` before preparing the stack.
 - [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow; compare `ota workspace detect --dry-run` with `ota workspace init --dry-run`, then use `ota workspace up --dry-run` and `ota workspace up` to acquire and prepare repos.
+
+---
+<div align="center">
+    Ota 🦦
+    </div>
