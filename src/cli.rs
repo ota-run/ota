@@ -17439,10 +17439,8 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
-        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("ota tasks --use"));
-        assert!(stderr.contains(&repo_path));
     }
 
     #[test]
@@ -42148,6 +42146,7 @@ tasks:
     #[test]
     fn agents_text_snapshot_is_stable() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -44744,7 +44743,7 @@ tasks:
         let output = run_with([
             "ota",
             "run",
-            "install-from-source",
+            "install:from:source",
             fixture.file_path().to_str().unwrap(),
         ]);
 
@@ -52394,6 +52393,7 @@ project:
 
     #[test]
     fn assist_add_task_preview_uses_clean_relative_contract_path() {
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1

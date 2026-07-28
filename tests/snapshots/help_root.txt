@@ -24,6 +24,8 @@ Commands:
   proof        Prove that one runtime path can become ready and capture the canonical artifacts
   receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines
+  baseline     Record and explicitly promote governed replay baselines
+  ci           Render and validate provider projections from canonical contract truth
   agents       Generate or sync AGENTS.md from an Ota contract
   clean        Clean persistent execution state for a repo
   extensions   List staged extension descriptors from an Ota contract
