@@ -41484,6 +41484,13 @@ tasks:
 "#;
         fs::write(&contract_path, contract_yaml).expect("write contract");
         let contract = parse_contract_str(&contract_path, contract_yaml).expect("parse contract");
+        let loaded_policy = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("load policy pack")
+            .expect("policy pack exists");
+        let expected_policy_identity = loaded_policy
+            .source_identity
+            .clone()
+            .expect("semantic policy identity");
 
         let inputs = super::receipt_evaluated_inputs(
             &contract,
@@ -41500,10 +41507,7 @@ tasks:
             policy_input.input_class,
             ReplayInputClass::PolicyRulesetIdentity
         );
-        assert_eq!(
-            policy_input.identity,
-            super::contract_snapshot_hash(policy.as_bytes())
-        );
+        assert_eq!(policy_input.identity, expected_policy_identity);
         let lineage = policy_input
             .artifact_lineage
             .as_ref()
@@ -58012,9 +58016,7 @@ tasks:
         kind: static_file
         path: fixture.txt
         expected_identity: {expected}
-    command:
-      exe: sh
-      args: ["-c", "printf changed > fixture.txt"]
+    run: printf changed > fixture.txt
 "#
             ),
         )
@@ -58083,9 +58085,7 @@ tasks:
       - id: fixture
         kind: static_file
         path: fixture.txt
-    command:
-      exe: sh
-      args: ["-c", "touch should-not-exist"]
+    run: touch should-not-exist
 "#,
         )
         .unwrap();
@@ -58685,10 +58685,8 @@ tasks:
                 .contains("declared uv local project inputs for task `setup`"),
             "{error}"
         );
-        assert!(
-            error.to_string().contains("pipecat/pyproject.toml"),
-            "{error}"
-        );
+        let normalized = error.to_string().replace('\\', "/");
+        assert!(normalized.contains("pipecat/pyproject.toml"), "{error}");
     }
 
     #[test]
@@ -58726,8 +58724,9 @@ workflows:
         assert_eq!(findings.len(), 1);
         let finding = &findings[0];
         assert_eq!(finding.code(), "OTA_UV_LOCAL_PROJECT_INPUT_UNAVAILABLE");
+        let normalized = finding.why.replace('\\', "/");
         assert!(
-            finding.why.contains("pipecat/pyproject.toml"),
+            normalized.contains("pipecat/pyproject.toml"),
             "{}",
             finding.why
         );
@@ -93164,13 +93163,20 @@ policies:
         let contract =
             parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
                 .unwrap();
-        let receipt = super::preview_receipt(
+        let loaded_policy = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("load policy pack")
+            .expect("policy pack exists");
+        let receipt = super::preview_receipt_with_policy_snapshot(
             &contract,
             &contract_path,
             ExecutionOverrides::default(),
             Some("app"),
             "READY",
             &[],
+            Some(DoctorPolicySnapshot {
+                loaded: Some(&loaded_policy),
+                load_error: None,
+            }),
         );
 
         assert_eq!(receipt.toolchains.len(), 2, "{:?}", receipt.toolchains);
@@ -93616,10 +93622,16 @@ policies:
         let contract =
             parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
                 .unwrap();
+        let loaded_policy = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("load policy pack")
+            .expect("policy pack exists");
         let receipt = super::run_execution_receipt_with_shared(
             &contract,
             &contract_path,
-            None,
+            Some(DoctorPolicySnapshot {
+                loaded: Some(&loaded_policy),
+                load_error: None,
+            }),
             ExecutionOverrides::default(),
             "setup",
             None,
