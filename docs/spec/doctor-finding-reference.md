@@ -45,6 +45,7 @@ field is not emitted for that finding family.
 | `OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_SERVICE_READINESS` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_EXTERNAL_STATE_TOKEN_CANONICAL` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |

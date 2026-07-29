@@ -27027,7 +27027,6 @@ toolchains:
   ruby:
     provider: ruby
     version: ">=3.4,<3.5"
-    fulfillment: run
     package_managers:
       bundler: "2.6.4"
 tasks:
