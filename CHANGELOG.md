@@ -269,7 +269,9 @@
   Aggregate monorepo Doctor JSON retains each member's canonical policy result. CI projection binds
   the active policy identity, applicable rules, canonical execution closure including recursive
   outcome hooks, and unresolved selector identities while each provider checkout evaluates its
-  own observed replay-input identities.
+  own observed replay-input identities. Bedrock pressure proves strict matching admission across
+  native and container replay, while Kylrix proves ordinary unpinned compatibility and strict
+  refusal before setup mutation.
 
 - added native virtualenv provenance to the V11.16 `execution_boundary` carrier in
   `ota proof runtime --json` and archived runtime proofs. Ota now records a repo-local

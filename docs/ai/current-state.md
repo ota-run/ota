@@ -116,7 +116,7 @@ durable agent workflow belongs in the canonical Ota skill.
   block dry-run/run/up before task startup, and preserve expected plus observed identity in the
   receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
   dry-run, and real native plus container agent-safe execution.
-- active V11.20 policy-governed replay-input identity implementation: the shared
+- completed V11.20 policy-governed replay-input identity implementation: the shared
   `replay_input_policy` evaluator applies cumulative task/workflow rules over their exact selected
   closures, observes each task-qualified declared input once, and derives `deny > review > allow`.
   Doctor findings and JSON, dry-run, run, up, proof runtime, proof lifecycle, and
@@ -143,8 +143,20 @@ durable agent workflow belongs in the canonical Ota skill.
   unit, real-repo no-execution, JSON-schema, JSON-conformance, and projection
   checkout-re-evaluation regressions pass; copy-ready Core/external examples, canonical skill, and
   site reference are aligned.
-  Bedrock plus one independent strict/refusal pressure repo remain required before V11.20 can move
-  from active to complete.
+  Bedrock [run 30413944121](https://github.com/bobaikato/bedrock/actions/runs/30413944121)
+  proves strict matching admission for four declared frozen inputs through native and container
+  execution. Kylrix [run 30413944203](https://github.com/bobaikato/kylrix/actions/runs/30413944203)
+  preserves ordinary unpinned compatibility while its dedicated strict-policy lane refuses
+  Doctor, dry-run, real `ota up`, receipt, and `doctor --fix` before setup outputs are created.
+  Both bootstrap exact implementation Core `f97b96cc`; later Core `d0e77a95`, `ff35a910`,
+  `2d0b20fc`, `c85af3d2`, `6aaa063e`, and `4729e042` reconcile release-gate fixtures, generated
+  reference truth, and hermetic test tooling without changing runtime behavior. Core
+  [run 30448491779](https://github.com/ota-run/ota/actions/runs/30448491779) is green across the
+  Ubuntu, macOS, and Windows release gates at final candidate `4729e042`. Bedrock live
+  recording/promotion, Kylrix long-running runtime surfaces, and undeclared ambient inputs remain
+  outside this bounded policy proof. No new Ota platform gap was exposed.
+- next planned slice: V11.21 enforced sandbox policy application is unblocked but remains inactive
+  until explicitly activated. No V11.21 implementation is part of the V11.20 completion batch.
 - completed V11.14 contract-claim assurance: the shared `claim_assurance` domain supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer

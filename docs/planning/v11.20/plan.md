@@ -24,8 +24,17 @@
 
 # V11.20: Policy-Governed Replay Input Identity
 
-Status: active. This follows V11.19. It is a narrow policy refinement of the shipped optional
-`tasks.<name>.replay_inputs[].expected_identity` surface, not another replay model.
+Status: complete. This follows V11.19. It is a narrow policy refinement of the shipped optional
+`tasks.<name>.replay_inputs[].expected_identity` surface, not another replay model. The
+implementation is pressure-proven against exact Core `f97b96cc`; later Core `d0e77a95` changes
+execution-admission fixtures, `ff35a910` reconciles command-snapshot test fixtures, and
+`2d0b20fc` restores the generated Doctor reference and a stale Bundler fixture. Core `c85af3d2`
+makes strict replay hydration coverage independent of ambient host pnpm, and `6aaa063e` removes
+remaining container-engine and lifecycle-message assumptions from release-gate fixtures. None
+changes runtime behavior. Core `4729e042` makes native Compose projection conformance independent
+of ambient host Docker; release-gate
+[run 30448491779](https://github.com/ota-run/ota/actions/runs/30448491779) is green on Ubuntu,
+macOS, and Windows.
 
 ## Problem
 
@@ -182,6 +191,35 @@ actually exist.
 6. Pressure-test Bedrock's frozen SQL/store lane under a strict policy, then use one independent
    repository with a different fixture or baseline shape to prove an unpinned lane is refused
    without weakening ordinary optional-pin behavior.
+
+## Pressure Evidence
+
+- Bedrock [run 30413944121](https://github.com/bobaikato/bedrock/actions/runs/30413944121)
+  bootstraps exact Core `f97b96cc` and proves strict matching policy admission for its four
+  declared frozen replay inputs. Ubuntu executes the real deterministic replay workflow and
+  bounded runtime proof; macOS and Windows execute the deterministic native contract surface; the
+  isolated Linux container lane executes the same replay workflow. Contract-to-CI drift also
+  remains green.
+- Kylrix [run 30413944203](https://github.com/bobaikato/kylrix/actions/runs/30413944203)
+  bootstraps the same Core revision. Its ordinary native/container governance lanes retain
+  compatible optional-pin behavior for the unpinned `pnpm-lock.yaml` replay input. A dedicated
+  strict-policy lane proves typed denial through Doctor, dry-run, real `ota up`, receipt output,
+  and `doctor --fix` before `.env`, `node_modules`, or `.next` can be created.
+
+The uncovered-material-behavior inventory remains explicit:
+
+- Bedrock's declared frozen SQL fixture, SQLite store, scorecard baseline, and presentation profile
+  are contract-owned and proved for the selected offline replay workflow.
+- Bedrock's live model recording, review, and promotion path is repo-owned credentialed behavior
+  outside this V11.20 proof. Matching declared input identities do not prove that all model,
+  environment, or presentation inputs are complete.
+- Kylrix's finite `verify` workflow, native/container execution, managed CI projection, and strict
+  refusal lane are contract-owned and proved.
+- Kylrix's long-running development and self-host lifecycle surfaces remain separately governed
+  by their existing runtime and refusal-canary lanes; V11.20 does not promote them into this finite
+  replay-input claim.
+- No new Ota platform gap was exposed by these two V11.20 pressure passes. Undeclared ambient
+  inputs remain explicitly not proved rather than inferred from a green policy decision.
 
 ## Acceptance Bar
 

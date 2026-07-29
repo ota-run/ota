@@ -175,14 +175,16 @@ The completed typed-hydration slice is:
   the root-project test-group shape on Linux and macOS while remaining narrowing because it has no
   lockfile.
 
-The active policy-governance slice is:
+The completed policy-governance slice is:
 
-- [V11.20: policy-governed replay input identity](../v11.20/plan.md)
+- [V11.20: policy-governed replay input identity](../v11.20/plan.md) - implementation and
+  Bedrock/Kylrix pressure complete.
 
 The next planned sandbox-enforcement slice is:
 
-- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - planned and inactive until
-  V11.20 closes. It consumes V11.8's shipped `runtime_boundary` and capability-profile foundation;
+- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - planned, unblocked, and
+  inactive until explicitly activated. It consumes V11.8's shipped `runtime_boundary` and
+  capability-profile foundation;
   it does not reopen or replace that contract model.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:

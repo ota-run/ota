@@ -24,8 +24,8 @@
 
 # V11.21: Enforced Sandbox Policy Application
 
-Status: planned and inactive. V11.20 remains the active slice. V11.21 must not begin implementation
-until V11.20 closes.
+Status: planned and inactive. V11.20 is complete; V11.21 is now unblocked but must not begin
+implementation until it is explicitly activated as the next slice.
 
 Source direction:
 
