@@ -20034,7 +20034,7 @@ services:
         assert!(
             errors
                 .to_string()
-                .contains("lifecycle requires a typed Compose or systemd")
+                .contains("lifecycle requires a typed Compose/systemd active-inactive observer")
         );
     }
 

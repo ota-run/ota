@@ -55380,6 +55380,32 @@ tasks:
 
     #[test]
     fn aggregate_task_inherits_concrete_container_mode_support() {
+        let _guard = env_mutex_lock();
+        let fixture = tempdir().expect("tempdir");
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake container engine directory");
+        write_fake_bin(
+            &bin_dir,
+            "docker",
+            if cfg!(windows) {
+                "@echo off\r\nexit /b 0\r\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths(path_entries).expect("join test PATH"),
+            );
+        }
+        let _path_guard = PathEnvGuard(original_path);
+
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
