@@ -223,3 +223,6 @@
 - Pattern: A pressure workflow can be proven on a fork branch and then accidentally carry that branch-specific push filter or manual branch-source override into an upstream integration PR.
 - Correction: Before opening an upstream-facing PR, audit every active contract, workflow, and public instruction for pressure branches; replace push filters with the repository's real default branch and remove unreleased source selectors when the contract pins a released Ota version.
 - Rule: Fork branches are temporary evidence sources, never durable workflow or bootstrap authority; shipped governance must run after merge on the upstream default branch and consume contract-owned release truth.
+- Pattern: Pinning Ota's setup Action while leaving other changed workflow Actions on moving major tags or branches preserves a supply-chain drift path.
+- Correction: Resolve every Action reference introduced or modified by an upstream governance PR to its current full commit SHA and retain the human-readable release line as a comment.
+- Rule: Upstream-facing Ota governance changes must not add mutable GitHub Action references; full commit identities are the execution authority.
