@@ -62140,6 +62140,13 @@ tasks:
             &serde_json::to_string_pretty(&authority).expect("authority json"),
         );
 
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake tool directory");
+        write_fake_bin(
+            &bin_dir,
+            "pnpm",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.0.0\\n'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ]; then\n  mkdir -p node_modules\n  printf 'layoutVersion: 1\\n' > node_modules/.modules.yaml\n  exit 0\nfi\nexit 1\n",
+        );
         let _docker = install_fake_docker_on_path(fixture.dir.path());
         let outcome = run_task(&fixture.contract, fixture.file_path(), "replay")
             .expect("strict replay closure should execute");
