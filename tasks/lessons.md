@@ -220,3 +220,6 @@
 - Pattern: Sharing one policy snapshot does not guarantee safe ordering if a mutating Doctor fix runs after that snapshot has already produced a refusal.
 - Correction: Admit the full selected replay-input closure before any repo-hygiene write or tool activation, and return a zero-applied typed fix summary on refusal.
 - Rule: Every mutating execution surface, including repair commands, must enforce command-scoped policy and hard-pin admission before its first side effect.
+- Pattern: A pressure workflow can be proven on a fork branch and then accidentally carry that branch-specific push filter into an upstream integration PR.
+- Correction: Before opening an upstream-facing PR, replace pressure-only push filters with the repository's real default branch while retaining pull-request and explicit manual triggers.
+- Rule: Fork branches are temporary evidence sources, never durable workflow authority; shipped governance must run after merge on the upstream default branch.
