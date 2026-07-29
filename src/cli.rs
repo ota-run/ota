@@ -15941,7 +15941,7 @@ tasks:
             std::env::set_var("OTA_KUBECTL_LOG", &log_path);
         }
 
-        let output = run_with(["ota", "run", "setup", "--ephemeral", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         match original_path {
             Some(path) => unsafe {
@@ -44195,6 +44195,11 @@ execution:
 tasks:
   setup:
     run: echo ready
+    execution:
+      default_mode: native
+      modes:
+        native: {}
+        container: {}
 tools:
   curl: "8.13.0"
 "#,
@@ -46537,7 +46542,10 @@ tasks:
             fixture.path(),
         ]);
         assert_eq!(doctor.exit_code, 0);
-        assert_json_top_level_keys(&doctor, &["findings", "members", "ok", "path"]);
+        assert_json_top_level_keys(
+            &doctor,
+            &["findings", "members", "mode", "ok", "path", "summary"],
+        );
 
         let check = run_with([
             "ota",
