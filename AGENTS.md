@@ -921,9 +921,6 @@ Use declared `ota run <task>` paths before raw package-manager, compiler, or tes
   - `contract:validate` (`ota run contract:validate`)
   - `doctor-annotations` (`ota run doctor-annotations`)
 - `verify_after_changes`:
-  - `fmt` (`ota run fmt`)
-  - `check` (`ota run check`)
-  - `test` (`ota run test`)
   - `ci` (`ota run ci`)
 - `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`, `CHANGELOG.md`, `Cargo.toml`
 - `protected_paths`: `Cargo.lock`, `ota.yaml`, `LICENSE`
@@ -933,9 +930,9 @@ Use declared `ota run <task>` paths before raw package-manager, compiler, or tes
 Only install ota if it is missing and installation is approved.
 
 - `source.kind`: `git_rev`
-- `source.rev`: `272dd258772170c6fae5d1034a171bc9ad976303`
-- `sh`: `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=272dd258772170c6fae5d1034a171bc9ad976303 sh -s -- --from-git`
-- `powershell`: `$env:OTA_GIT_REV='272dd258772170c6fae5d1034a171bc9ad976303'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+- `source.rev`: `6538cc074a78b3a0471f976a415238d13307a699`
+- `sh`: `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=6538cc074a78b3a0471f976a415238d13307a699 sh -s -- --from-git`
+- `powershell`: `$env:OTA_GIT_REV='6538cc074a78b3a0471f976a415238d13307a699'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
 
 ## Notes
 

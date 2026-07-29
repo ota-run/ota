@@ -4358,7 +4358,7 @@ agent:
     ota:
       source:
         kind: branch
-        branch: 1.6.21-implementation
+        branch: branch-name
 ```
 
 Ota renders the matching shell and PowerShell installer commands from `bootstrap.ota.source`.

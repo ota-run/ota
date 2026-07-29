@@ -61,7 +61,7 @@ curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=vX.Y.Z sh
 Track an unreleased branch tip for active pressure testing:
 
 ```bash
-curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=1.6.21-implementation sh -s -- --from-git
+curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=branch-name sh -s -- --from-git
 ```
 
 From a cloned ota repository:
@@ -113,7 +113,7 @@ irm https://dist.ota.run/install.ps1 | iex
 Track an unreleased branch tip for active pressure testing:
 
 ```powershell
-$env:OTA_GIT_BRANCH = "1.6.21-implementation"
+$env:OTA_GIT_BRANCH = "branch-name"
 & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit
 ```
 

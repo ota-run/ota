@@ -70,7 +70,10 @@ tasks:
       prepares the workspace without compiling the crate.
     category: setup
     internal: true
-    run: cargo fetch
+    command:
+      exe: cargo
+      args:
+        - fetch
     requirements:
       toolchains:
         - rust
@@ -80,7 +83,10 @@ tasks:
     notes: |
       Use this when you want to confirm the crate still builds after code changes.
     category: build
-    run: cargo build
+    command:
+      exe: cargo
+      args:
+        - build
     requirements:
       toolchains:
         - rust
@@ -92,7 +98,11 @@ tasks:
     notes: |
       Use this before committing to catch formatting drift early.
     category: test
-    run: cargo fmt --check
+    command:
+      exe: cargo
+      args:
+        - fmt
+        - --check
     requirements:
       toolchains:
         - rust
@@ -102,7 +112,10 @@ tasks:
     notes: |
       Use this for a fast compiler-only verification pass without running tests.
     category: test
-    run: cargo check
+    command:
+      exe: cargo
+      args:
+        - check
     requirements:
       toolchains:
         - rust
@@ -114,7 +127,10 @@ tasks:
     notes: |
       Use this when you want the full unit and integration test coverage.
     category: test
-    run: cargo test
+    command:
+      exe: cargo
+      args:
+        - test
     requirements:
       toolchains:
         - rust
@@ -192,7 +208,17 @@ tasks:
       Use this to self-host the contract validator against `./ota.yaml`.
       It exercises hook follow-ups inside the main repo without touching build artifacts or snapshots.
     category: dev
-    run: cargo run --quiet --bin ota -- validate ./ota.yaml --plain
+    command:
+      exe: cargo
+      args:
+        - run
+        - --quiet
+        - --bin
+        - ota
+        - --
+        - validate
+        - ./ota.yaml
+        - --plain
     requirements:
       toolchains:
         - rust
@@ -209,7 +235,18 @@ tasks:
       Use this as the success follow-up for `ota run contract:validate`.
       It keeps the repo contract self-hosting by pointing straight at the validated task surface.
     category: dev
-    run: cargo run --quiet --bin ota -- tasks . --use --plain
+    command:
+      exe: cargo
+      args:
+        - run
+        - --quiet
+        - --bin
+        - ota
+        - --
+        - tasks
+        - .
+        - --use
+        - --plain
     requirements:
       toolchains:
         - rust
@@ -220,7 +257,17 @@ tasks:
       Use this as the failure follow-up for `ota run contract:validate`.
       It points the operator at concrete readiness findings instead of stopping at a raw validation error.
     category: dev
-    run: cargo run --quiet --bin ota -- doctor . --plain
+    command:
+      exe: cargo
+      args:
+        - run
+        - --quiet
+        - --bin
+        - ota
+        - --
+        - doctor
+        - .
+        - --plain
     requirements:
       toolchains:
         - rust
@@ -273,7 +320,8 @@ tasks:
       and you need to prove first-party consumer repos such as ota-run/skills or ota-run/ota-site
       were either synced or explicitly waived.
     category: test
-    run: ./scripts/check-first-party-sync.sh
+    command:
+      exe: ./scripts/check-first-party-sync.sh
     safe_for_agent: true
   skills:sync:check:
     description: Compatibility alias for the first-party consumer sync governance check
@@ -281,7 +329,8 @@ tasks:
       Prefer `first-party:sync:check`. This alias keeps older maintainer flows working while the
       governance surface widens beyond ota-run/skills alone.
     category: test
-    run: ./scripts/check-skills-sync.sh
+    command:
+      exe: ./scripts/check-skills-sync.sh
     safe_for_agent: true
   schemas:sync:
     description: Regenerate the published repo and workspace contract schema artifacts
@@ -290,7 +339,12 @@ tasks:
       It rewrites `docs/spec/json-schemas/contract.json` and
       `docs/spec/json-schemas/workspace-contract.json` from the canonical Rust source.
     category: dev
-    run: cargo run --bin sync_published_contract_schemas
+    command:
+      exe: cargo
+      args:
+        - run
+        - --bin
+        - sync_published_contract_schemas
     requirements:
       toolchains:
         - rust
@@ -301,7 +355,12 @@ tasks:
       Use this after changing the Rust-owned canonical docs publication surface.
       It rewrites `docs/spec/published-docs/canonical-docs.json` from the canonical Rust source.
     category: dev
-    run: cargo run --bin sync_published_doc_manifests
+    command:
+      exe: cargo
+      args:
+        - run
+        - --bin
+        - sync_published_doc_manifests
     requirements:
       toolchains:
         - rust
@@ -339,8 +398,13 @@ tasks:
       Use this after changing help text, human-readable command output, or docs that promise
       specific CLI presentation. It keeps the premium snapshot-backed text surfaces honest.
     category: test
-    script: |
-      cargo test snapshot_is_stable -- --test-threads=1
+    command:
+      exe: cargo
+      args:
+        - test
+        - snapshot_is_stable
+        - --
+        - --test-threads=1
     requirements:
       toolchains:
         - rust
@@ -372,8 +436,8 @@ tasks:
       a release and you need to update Cargo.toml, CHANGELOG.md, and the readiness workflow
       pin consistently.
     category: release
-    script: |
-      ./scripts/bump-version.sh
+    command:
+      exe: ./scripts/bump-version.sh
     inputs:
       version:
         description: Release bump selector (`patch`, `minor`, `major`) or explicit semver version
@@ -407,11 +471,21 @@ tasks:
     category: dev
     execution:
       default_mode: native
-    run: ./scripts/install.sh --from-source
+    command:
+      exe: ./scripts/install.sh
+      args:
+        - --from-source
     variants:
       - when:
           os: windows
-        run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
+        command:
+          exe: powershell
+          args:
+            - -ExecutionPolicy
+            - Bypass
+            - -File
+            - .\scripts\install.ps1
+            - -FromSource
   install:from:source:
     description: Reinstall ota from the local workspace source
     notes: |
@@ -419,11 +493,21 @@ tasks:
     category: dev
     execution:
       default_mode: native
-    run: ./scripts/install.sh --from-source
+    command:
+      exe: ./scripts/install.sh
+      args:
+        - --from-source
     variants:
       - when:
           os: windows
-        run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
+        command:
+          exe: powershell
+          args:
+            - -ExecutionPolicy
+            - Bypass
+            - -File
+            - .\scripts\install.ps1
+            - -FromSource
 agent:
   entrypoint: setup
   default_task: ci
@@ -437,9 +521,6 @@ agent:
     - contract:validate
     - doctor-annotations
   verify_after_changes:
-    - fmt
-    - check
-    - test
     - ci
   writable_paths:
     - src
@@ -458,7 +539,7 @@ agent:
       note: Only install ota if it is missing and installation is approved.
       source:
         kind: git_rev
-        rev: 272dd258772170c6fae5d1034a171bc9ad976303
+        rev: 6538cc074a78b3a0471f976a415238d13307a699
   notes: |
     Treat Ota as the default workflow, the way npm is the default in Node repos.
     Use `ota validate` to verify the contract.

@@ -26,12 +26,12 @@
 
 ## Unreleased
 
+## 1.6.25
+
 - fixed Doctor agent-readiness derivation for intentionally read-only agent boundaries. A contract
   with safe tasks, no writable paths, and declared protected paths now reports `Agent: ready`
   instead of an unexplained `ready with warnings`; contracts with no filesystem boundary remain
   risky.
-
-## 1.6.25
 
 - tightened execution-option admission across task execution and previews. Explicit lifecycle
   overrides such as `--ephemeral` and `--persistent` now fail before dependencies, provisioning,
@@ -245,7 +245,7 @@
 - added optional immutable `tasks.<name>.replay_inputs[].expected_identity` pins. Ota now
   validates canonical SHA-256 identities, evaluates them in dry-run and Doctor, blocks `ota run`
   and `ota up` before task startup on missing or mismatched pins, and preserves expected plus
-  observed identity in the resulting blocked receipt instead of reducing the failure to text
+  observed identity in the resulting blocked receipt instead of reducing the failure to text.
 - added policy-governed replay-input identity admission through
   `policies.replay_inputs.identity.tasks|workflows`. One runner-owned preflight observation set now
   drives Doctor findings and JSON, dry-run, run, up, proof runtime, proof lifecycle, and

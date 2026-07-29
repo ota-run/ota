@@ -151,8 +151,10 @@ durable agent workflow belongs in the canonical Ota skill.
   Both bootstrap exact implementation Core `f97b96cc`; later Core `d0e77a95`, `ff35a910`,
   `2d0b20fc`, `c85af3d2`, `6aaa063e`, and `4729e042` reconcile release-gate fixtures, generated
   reference truth, and hermetic test tooling without changing runtime behavior. Core
-  [run 30448491779](https://github.com/ota-run/ota/actions/runs/30448491779) is green across the
-  Ubuntu, macOS, and Windows release gates at final candidate `4729e042`. Bedrock live
+  [Release Gate run 30452821989](https://github.com/ota-run/ota/actions/runs/30452821989) and
+  [Ota Readiness run 30452822253](https://github.com/ota-run/ota/actions/runs/30452822253) are
+  green at pushed candidate `6538cc07`; docs-quality, Smoke, CodeQL, and cargo-deny are green on
+  the same source. Bedrock live
   recording/promotion, Kylrix long-running runtime surfaces, and undeclared ambient inputs remain
   outside this bounded policy proof. No new Ota platform gap was exposed.
 - next planned slice: V11.21 enforced sandbox policy application is unblocked but remains inactive
@@ -525,25 +527,19 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.9/plan.md` through `docs/planning/v11.13/plan.md`. Then run `git status --short` in `ota`, `ota-site`,
-`/Users/bobai/Workspace/Ota.run/skills`, and the active pressure repo before editing.
+`docs/planning/v11.20/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
+`ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
-The continuity batch immediately before this handoff added the canonical pressure-testing protocol,
-required a connected-surface decision for Ota changes, and synchronized the skill into the global
-Codex and agent skill stores. Its installation smoke test could not run locally because this
-machine does not currently provide `node` or `npx`; source integrity was verified with diff and
-shell-syntax checks.
+V11.20 is implemented and pressure-proven within the boundaries recorded above. Bedrock proves
+strict matching admission across native and container replay; Kylrix proves ordinary unpinned
+compatibility and strict refusal before setup mutation. Neither matrix proves undeclared ambient
+inputs, long-running Kylrix runtime behavior, or repo-global readiness.
 
-V11.9 through V11.13 first OSS cuts are complete and pressure-proven. Do not create a parallel
-proof carrier by copying `ota proof runtime` evidence into generic `ota up` or readiness receipts:
-those artifacts did not execute the proof lane. Start the next product slice only from a real repo
-gap or an explicitly approved follow-on design, and follow the pressure-testing protocol exactly.
-
-The current `1.6.24` branch-pinned pressure subset has green pushed matrices for Athena, Azure SDK
-for .NET, Bedrock, Dagger, EventCatalog, Grafana, Immich, Kylrix, Lead Quorum, and Flagr. Lead
-Quorum also has one newer local-only contract commit that is not yet matrix-proven; do not present
-that local tip as release evidence until it is pushed and rerun. The case-study root README is
-stale inventory and should not be used as the release ledger.
+The remaining release work is reconciliation, not product widening: commit and push the
+first-party alignment batch, rerun Core plus connected first-party workflows from the exact
+contract-owned candidate source, and cut `v1.6.25` only after those checks are green. Do not
+activate V11.21 until the V11.20 release is complete. After release, replace unreleased
+`git_rev` bootstrap pins with `version: v1.6.25` where released proof is intended.
 
 ## Working Rules
 

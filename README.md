@@ -129,7 +129,7 @@ curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=vX.Y.Z sh
 Track an unreleased branch tip during active pressure testing:
 
 ```bash
-curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=1.6.21-implementation sh -s -- --from-git
+curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=branch-name sh -s -- --from-git
 ```
 
 When a repo contract declares `agent.bootstrap.ota.source`, the canonical installer mapping is:
@@ -152,7 +152,7 @@ irm https://dist.ota.run/install.ps1 | iex
 Active pressure testing from a branch tip:
 
 ```powershell
-$env:OTA_GIT_BRANCH = "1.6.21-implementation"
+$env:OTA_GIT_BRANCH = "branch-name"
 & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit
 ```
 
@@ -788,7 +788,9 @@ Current planning state:
 - V2 archive: [docs/planning/v2/plan.md](docs/planning/v2/plan.md)
 - V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
 - V6 archive: [docs/planning/v6/plan.md](docs/planning/v6/plan.md)
-- Active version: [docs/planning/v7/plan.md](docs/planning/v7/plan.md)
+- Active branch and implementation handoff: [docs/ai/current-state.md](docs/ai/current-state.md)
+- Next planned, inactive slice: [docs/planning/v11.21/plan.md](docs/planning/v11.21/plan.md)
+- Each version plan retains its own explicit status; version order does not imply completion.
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
 - V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)
 
