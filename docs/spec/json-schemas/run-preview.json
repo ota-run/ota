@@ -342,6 +342,7 @@
         "provisioning": { "$ref": "./doctor.json#/properties/provisioning" },
         "provisioning_request": { "$ref": "./doctor.json#/properties/provisioning_request" },
         "governance": { "$ref": "#/$defs/governance" },
+        "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" },
         "artifact_routing": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
@@ -374,13 +375,68 @@
         "member": { "type": "string" },
         "task": { "type": "string" },
         "dry_run": { "const": true },
-        "error": { "type": "string" }
+        "execution_started": { "const": false },
+        "code": { "type": "string" },
+        "error": { "type": "string" },
+        "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" }
+      }
+    },
+    "replayInputIdentityFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "task", "dry_run", "preflight"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "preflight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "task",
+            "input_id",
+            "path",
+            "input_kind",
+            "input_class",
+            "expected_identity",
+            "observed_identity",
+            "execution_started"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "replay_input_identity_missing",
+                "replay_input_identity_mismatch"
+              ]
+            },
+            "task": { "type": "string" },
+            "input_id": { "type": "string" },
+            "path": { "type": "string" },
+            "input_kind": { "type": "string" },
+            "input_class": {
+              "enum": [
+                "declared_replay_input",
+                "execution_presentation_profile",
+                "comparator_semantics"
+              ]
+            },
+            "expected_identity": { "type": "string" },
+            "observed_identity": { "type": "string" },
+            "identity_error": { "type": "string" },
+            "execution_started": { "const": false }
+          }
+        },
+        "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" }
       }
     }
   },
   "oneOf": [
     { "$ref": "#/$defs/singleTarget" },
     { "$ref": "#/$defs/aggregate" },
-    { "$ref": "#/$defs/simpleFailure" }
+    { "$ref": "#/$defs/simpleFailure" },
+    { "$ref": "#/$defs/replayInputIdentityFailure" }
   ]
 }

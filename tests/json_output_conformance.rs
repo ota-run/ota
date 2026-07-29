@@ -1302,6 +1302,191 @@ workflows:
 }
 
 #[test]
+fn proof_runtime_replay_policy_refusal_precedes_artifacts_and_execution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: proof-policy-refusal
+services:
+  database:
+    manager:
+      kind: compose
+      name: proof-policy-refusal
+      file: compose.yaml
+      service: database
+tasks:
+  setup:
+    requires_services: [database]
+    command:
+      exe: sh
+      args: ["-c", "touch task-ran"]
+  observe-database:
+    requires_services: [database]
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    command:
+      exe: sh
+      args: ["-c", "touch observer-ran"]
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    proof:
+      seam_observations:
+        - id: database-marker
+          dependency: database
+          producer_task: setup
+          task: observe-database
+          marker_env: OTA_PROOF_DATABASE_MARKER
+"#,
+    );
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("fixture input");
+    fs::write(
+        fixture.path().join("compose.yaml"),
+        "services:\n  database:\n    image: postgres:17\n",
+    )
+    .expect("compose file");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      workflows:
+        app:
+          on_insufficient: review
+"#,
+    )
+    .expect("policy");
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "app",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "replay_input_identity_mismatch");
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["preflight"]["kind"], "replay_input_identity_mismatch");
+    assert_eq!(
+        json["replay_input_policy"]["decision"], "deny",
+        "a declared pin mismatch must remain an unconditional denial"
+    );
+    assert_eq!(
+        json["replay_input_policy"]["applicable_rules"][0]["closure_tasks"],
+        serde_json::json!(["observe-database", "setup"])
+    );
+    assert!(!fixture.path().join("task-ran").exists());
+    assert!(!fixture.path().join("observer-ran").exists());
+    assert!(
+        !fixture.path().join(".ota/proof").exists(),
+        "proof refusal must precede parent artifact creation"
+    );
+}
+
+#[test]
+fn proof_lifecycle_replay_policy_refusal_covers_assertion_closure() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: lifecycle-policy-refusal
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-policy-refusal
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    command:
+      exe: sh
+      args: ["-c", "touch build-ran"]
+  assert-database:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    command:
+      exe: sh
+      args: ["-c", "touch assertion-ran"]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: assert-database
+"#,
+    );
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("fixture input");
+    fs::write(
+        fixture.path().join("compose.yaml"),
+        "services:\n  database:\n    image: postgres:17\n",
+    )
+    .expect("compose file");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      workflows:
+        smoke:
+          on_insufficient: deny
+"#,
+    )
+    .expect("policy");
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "lifecycle",
+            "--json",
+            "--workflow",
+            "smoke",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-lifecycle.json", &json);
+    assert_eq!(json["code"], "replay_input_policy_deny");
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["replay_input_policy"]["decision"], "deny");
+    assert_eq!(
+        json["replay_input_policy"]["applicable_rules"][0]["closure_tasks"],
+        serde_json::json!(["assert-database", "build"])
+    );
+    assert!(!fixture.path().join("build-ran").exists());
+    assert!(!fixture.path().join("assertion-ran").exists());
+}
+
+#[test]
 fn tasks_json_output_with_copy_if_missing_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
@@ -1809,6 +1994,248 @@ agent:
         fixture.path(),
     );
     assert_matches_schema("doctor.json", &json);
+}
+
+#[test]
+fn replay_input_identity_policy_matches_doctor_preview_receipt_and_projection_schemas() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: replay-input-policy-schema-fixture
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    command:
+      exe: sh
+      args: ["-c", "true"]
+agent:
+  default_task: verify
+"#,
+    );
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("fixture input");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+    )
+    .expect("policy");
+
+    let doctor = run_ota_json_output(&["doctor", "--json"], fixture.path());
+    assert_matches_schema("doctor.json", &doctor);
+    assert_eq!(doctor["replay_input_policy"]["decision"], "deny");
+    let mut unavailable_doctor = doctor.clone();
+    let unavailable_input = &mut unavailable_doctor["replay_input_policy"]["inputs"][0];
+    unavailable_input["status"] = serde_json::json!("observation_unavailable");
+    unavailable_input
+        .as_object_mut()
+        .expect("policy input should be an object")
+        .remove("observed_identity");
+    unavailable_input["error"] =
+        serde_json::json!("replay input was not captured by the command preflight");
+    assert_matches_schema("doctor.json", &unavailable_doctor);
+
+    let preview = run_ota_json_output(&["run", "verify", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &preview);
+    assert_eq!(preview["replay_input_policy"]["decision"], "deny");
+    assert_eq!(preview["execution_started"], false);
+
+    let refusal = run_ota_json_output(&["up", "--json", "--receipt"], fixture.path());
+    assert_matches_schema("up.json", &refusal);
+    assert_eq!(
+        refusal["receipt"]["replay_input_policy"]["decision"],
+        "deny"
+    );
+    assert_eq!(
+        refusal["receipt"]["failure_origin"],
+        "replay_input_policy_deny"
+    );
+    assert_eq!(refusal["receipt"]["status"], "blocked");
+
+    fs::remove_file(fixture.path().join("fixture.txt")).expect("remove replay input");
+    let missing_preview =
+        run_ota_json_output(&["run", "verify", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &missing_preview);
+    assert_eq!(missing_preview["execution_started"], false);
+    assert_eq!(
+        missing_preview["replay_input_policy"]["inputs"][0]["status"],
+        "unpinned_unreadable"
+    );
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("restore fixture input");
+
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        "policies:\n  replay_inputs: [invalid\n",
+    )
+    .expect("invalid policy");
+    let unavailable_policy_preview =
+        run_ota_json_output(&["run", "verify", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &unavailable_policy_preview);
+    assert_eq!(
+        unavailable_policy_preview["code"],
+        "replay_input_policy_unavailable"
+    );
+    assert_eq!(unavailable_policy_preview["execution_started"], false);
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+    )
+    .expect("restore policy");
+
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: replay-input-policy-schema-fixture
+tasks:
+  verify:
+    safe_for_agent: true
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    command:
+      exe: sh
+      args: ["-c", "true"]
+workflows:
+  default: verify
+  verify:
+    intent: ci_verification
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+    let projection = run_ota_json_output(
+        &[
+            "ci",
+            "projection",
+            "--json",
+            "--workflow",
+            "verify",
+            "--mode",
+            "native",
+            "--target-os",
+            "linux",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("ci-projection.json", &projection);
+    assert_eq!(projection["code"], "replay_input_policy_deny");
+    assert_eq!(
+        projection["projection"]["governance"]["replay_input_policy"]["selected_closure"],
+        serde_json::json!(["verify"])
+    );
+}
+
+#[test]
+fn aggregate_monorepo_doctor_carries_member_replay_input_policy() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: replay-policy-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "true"]
+agent:
+  default_task: verify
+"#,
+    );
+    for member in ["api", "web"] {
+        let member_dir = fixture.path().join(member);
+        fs::create_dir_all(&member_dir).expect("member directory");
+        fs::write(
+            member_dir.join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: {member}
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    command:
+      exe: sh
+      args: ["-c", "true"]
+"#
+            ),
+        )
+        .expect("member contract");
+        fs::write(member_dir.join("fixture.txt"), "frozen").expect("member replay input");
+    }
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+    )
+    .expect("member policy");
+
+    let json = run_ota_failure_stdout_json(
+        &["doctor", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+
+    assert_matches_schema("doctor.json", &json);
+    let members = json["members"].as_array().expect("aggregate members");
+    let api = members
+        .iter()
+        .find(|member| member["member"] == "api")
+        .expect("api member");
+    assert_eq!(api["replay_input_policy"]["decision"], "deny");
+    assert_eq!(
+        api["replay_input_policy"]["applicable_rules"][0]["closure_tasks"],
+        serde_json::json!(["verify"])
+    );
+    let web = members
+        .iter()
+        .find(|member| member["member"] == "web")
+        .expect("web member");
+    assert_eq!(web["replay_input_policy"]["decision"], "deny");
+    assert_eq!(
+        web["replay_input_policy"]["applicable_rules"][0]["closure_tasks"],
+        serde_json::json!(["verify"])
+    );
 }
 
 #[test]

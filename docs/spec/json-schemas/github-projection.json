@@ -65,6 +65,15 @@
             "proof_assurance": {
               "type": "object", "additionalProperties": false, "required": ["status", "policy_decision", "basis"],
               "properties": { "status": { "enum": ["supported", "contradicted", "unknown"] }, "policy_decision": { "enum": ["allow", "deny", "review"] }, "basis": { "type": "array", "items": { "type": "string" } } }
+            },
+            "replay_input_policy": {
+              "type": "object", "additionalProperties": false, "required": ["policy_identity", "rule_identities", "selected_closure", "unknown_selector_identities"],
+              "properties": {
+                "policy_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                "rule_identities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+                "selected_closure": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+                "unknown_selector_identities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+              }
             }
           }
         },

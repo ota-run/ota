@@ -79,6 +79,14 @@
       "properties": {
         "ok": { "const": false },
         "path": { "type": "string" },
+        "code": { "type": "string" },
+        "execution_started": { "const": false },
+        "preflight": {
+          "$ref": "./run-preview.json#/$defs/replayInputIdentityFailure/properties/preflight"
+        },
+        "replay_input_policy": {
+          "$ref": "./doctor.json#/$defs/replayInputPolicy"
+        },
         "summary": {
           "type": ["object", "null"]
         },

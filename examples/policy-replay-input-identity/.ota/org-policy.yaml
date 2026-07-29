@@ -1,0 +1,19 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny

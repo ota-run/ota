@@ -24,7 +24,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -50,7 +50,8 @@ use super::{
 };
 use crate::adapter_inputs::bind_workflow_adapter_overlays;
 use crate::ci_projection::{
-    CiProjection, CiProjectionProofAssurance, build_ci_projection, refresh_ci_projection_identity,
+    CiProjection, CiProjectionProofAssurance, CiProjectionReplayInputPolicyRequirement,
+    build_ci_projection, refresh_ci_projection_identity,
 };
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
@@ -61,15 +62,18 @@ use crate::detector::{
     Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
 };
 use crate::doctor::{
-    DoctorMode, DoctorReport, Finding, FindingIdentity, FindingSeverity,
+    DoctorMode, DoctorPolicySnapshot, DoctorReport, Finding, FindingIdentity, FindingSeverity,
     OTA_CONTRACTS_GITIGNORE_ENTRY, OTA_PROOF_GITIGNORE_ENTRY, OTA_RECEIPTS_GITIGNORE_ENTRY,
     OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
     command_version_in_working_dir, diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
-    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode_for_task_with_overrides,
-    diagnose_preconditions_with_mode_for_workflow_with_overrides, diagnose_service,
-    diagnose_services_only_for_workflow, finding_targets_container_image,
+    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
+    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy,
+    diagnose_policy_review, diagnose_preconditions,
+    diagnose_preconditions_with_mode_for_task_with_overrides_and_replay_input_policy,
+    diagnose_preconditions_with_mode_for_workflow_with_overrides,
+    diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy,
+    diagnose_service, diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::execution::{
@@ -150,9 +154,9 @@ use crate::parser::{
     load_contract_for_member_with_contents, parse_contract_str,
 };
 use crate::policy_pack::{
-    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack, OrgPolicyPack,
-    PolicyClaimAssuranceStatus, PolicyEffectDecision, load_org_policy_pack_auto,
-    load_org_policy_pack_auto_details,
+    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack,
+    OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, OrgPolicyPack, PolicyClaimAssuranceStatus,
+    PolicyEffectDecision, load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
@@ -164,9 +168,13 @@ use crate::replay_baseline::{
     capture_replay_baseline_output_manifest, promote_replay_baseline_attestation,
     validate_replay_baseline_authority_manifest,
 };
-use crate::replay_inputs::{
-    ReplayInputIdentityEvaluation, evaluate_replay_input_identity, sha256_identity,
+use crate::replay_input_policy::{
+    ReplayInputPolicyEvaluation, ReplayInputPolicyObservations, ReplayInputPolicySubject,
+    evaluate_replay_input_policy, evaluate_replay_input_policy_for_closure_with_observations,
+    evaluate_replay_input_policy_with_observations, observe_replay_inputs,
+    replay_input_observation_key, selected_replay_input_policy_closure,
 };
+use crate::replay_inputs::{ReplayInputIdentityEvaluation, evaluate_replay_input_identity};
 use crate::runner::{
     CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason, CleanExecutionReport,
     CleanExecutionResourceKind, DeclaredEnvSourceStatus, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
@@ -2018,8 +2026,37 @@ fn ci_projection_for_contract(
             None,
         ));
     }
-    let mut projection = build_ci_projection(contract, workflow, mode, target_os)
+    let projection = build_ci_projection(contract, workflow, mode, target_os)
         .map_err(|message| (String::from("projection_unavailable"), message, None))?;
+    let loaded_policy = load_org_policy_pack_auto_details(contract_path).map_err(|error| {
+        (
+            String::from("org_policy_unavailable"),
+            error.to_string(),
+            Some(projection.clone()),
+        )
+    })?;
+    apply_ci_projection_governance(
+        contract,
+        contract_path,
+        workflow,
+        mode,
+        projection,
+        loaded_policy.as_ref(),
+    )
+}
+
+fn apply_ci_projection_governance(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow: &str,
+    mode: &str,
+    mut projection: CiProjection,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<CiProjection, (String, String, Option<CiProjection>)> {
+    let policy_snapshot = DoctorPolicySnapshot {
+        loaded: loaded_policy,
+        load_error: None,
+    };
     let overrides = ExecutionOverrides {
         backend: Some(match mode {
             "native" => Backend::Native,
@@ -2035,6 +2072,7 @@ fn ci_projection_for_contract(
         Some(workflow),
         overrides,
         UpRunBehaviorPreference::Auto,
+        policy_snapshot,
     ) {
         projection.governance.agent_admission.decision = if refusal.reason.contains("review") {
             String::from("review")
@@ -2057,22 +2095,25 @@ fn ci_projection_for_contract(
     }
 
     if projection.proof_required {
-        let record = doctor_claim_assurance_with_overrides(contract, contract_path, overrides)
-            .into_iter()
-            .find(|record| {
-                record.subject.kind == "workflow"
-                    && record.subject.name == workflow
-                    && record.family == "proof_breadth"
-            })
-            .ok_or_else(|| {
-                (
-                    String::from("proof_assurance_unavailable"),
-                    format!(
-                        "workflow `{workflow}` declares proof without a proof-assurance record"
-                    ),
-                    None,
-                )
-            })?;
+        let record = doctor_claim_assurance_with_overrides(
+            contract,
+            contract_path,
+            overrides,
+            policy_snapshot.loaded,
+        )
+        .into_iter()
+        .find(|record| {
+            record.subject.kind == "workflow"
+                && record.subject.name == workflow
+                && record.family == "proof_breadth"
+        })
+        .ok_or_else(|| {
+            (
+                String::from("proof_assurance_unavailable"),
+                format!("workflow `{workflow}` declares proof without a proof-assurance record"),
+                None,
+            )
+        })?;
         projection.governance.proof_assurance = Some(CiProjectionProofAssurance {
             status: record.assurance.status,
             policy_decision: record.policy.decision.clone(),
@@ -2088,6 +2129,63 @@ fn ci_projection_for_contract(
                 ),
                 Some(projection),
             ));
+        }
+    }
+    if let Some(loaded_policy) = loaded_policy {
+        let evaluation = evaluate_replay_input_policy(
+            contract,
+            contract_path.parent().unwrap_or_else(|| Path::new(".")),
+            &loaded_policy.pack,
+            ReplayInputPolicySubject::Workflow(workflow),
+        );
+        if evaluation.required {
+            projection.governance.replay_input_policy =
+                Some(CiProjectionReplayInputPolicyRequirement {
+                    policy_identity: evaluation.policy_identity.clone(),
+                    rule_identities: evaluation
+                        .applicable_rules
+                        .iter()
+                        .map(|rule| rule.identity.clone())
+                        .collect(),
+                    selected_closure: selected_replay_input_policy_closure(
+                        contract,
+                        ReplayInputPolicySubject::Workflow(workflow),
+                    ),
+                    unknown_selector_identities: evaluation
+                        .unknown_selectors
+                        .iter()
+                        .map(|selector| selector.identity.clone())
+                        .collect(),
+                });
+        }
+        if !evaluation.unknown_selectors.is_empty() {
+            let identities = evaluation
+                .unknown_selectors
+                .iter()
+                .map(|selector| selector.identity.clone())
+                .collect::<Vec<_>>();
+            let _ = refresh_ci_projection_identity(&mut projection);
+            return Err((
+                String::from("replay_input_policy_selector_unknown"),
+                format!(
+                    "workflow `{workflow}` cannot be projected while replay-input policy selectors are unresolved: {}",
+                    identities.join(", ")
+                ),
+                Some(projection),
+            ));
+        }
+        if evaluation.required {
+            if matches!(evaluation.decision.as_str(), "deny" | "review") {
+                let decision = evaluation.decision.clone();
+                let _ = refresh_ci_projection_identity(&mut projection);
+                return Err((
+                    format!("replay_input_policy_{decision}"),
+                    format!(
+                        "workflow `{workflow}` replay-input identity policy decision is `{decision}` in this checkout"
+                    ),
+                    Some(projection),
+                ));
+            }
         }
     }
     refresh_ci_projection_identity(&mut projection).map_err(|message| {
@@ -3134,6 +3232,31 @@ pub fn proof_lifecycle(
             2,
         );
     };
+    let mut proof_task_closure = contract.selected_workflow_task_closure_names(Some(workflow_key));
+    if let Some(assertion) = lifecycle.assertion.as_ref() {
+        proof_task_closure.extend(contract.task_dependency_closure_names([assertion.task.clone()]));
+    }
+    proof_task_closure.sort();
+    proof_task_closure.dedup();
+    let replay_input_preflight = workflow_replay_input_preflight_for_closure(
+        &contract,
+        &target.contract_path,
+        workflow_key,
+        proof_task_closure.clone(),
+    );
+    if let Err(failure) = evaluate_replay_input_admission(
+        &contract,
+        &target.contract_path,
+        proof_task_closure,
+        &replay_input_preflight,
+    ) {
+        return proof_replay_input_admission_failure_output(
+            format,
+            "ota proof lifecycle",
+            &target.contract_path,
+            failure,
+        );
+    }
     if agent
         && let Some(refusal) = agent_workflow_execution_refusal_with_policy(
             &contract,
@@ -3141,6 +3264,7 @@ pub fn proof_lifecycle(
             Some(workflow_key),
             overrides,
             UpRunBehaviorPreference::Auto,
+            replay_input_preflight.doctor_policy_snapshot(),
         )
     {
         return CommandOutput::failure_with_code(
@@ -3608,6 +3732,58 @@ pub fn proof_runtime(
                     .as_ref()
                     .map(workflow_selector_from_summary)
                     .or_else(|| workflow_name.map(str::to_string));
+                let selected_negative_control = match proof_runtime_negative_control(
+                    contract,
+                    effective_workflow_selector.as_deref(),
+                    negative_control,
+                ) {
+                    Ok(control) => control,
+                    Err(error) => return CommandOutput::failure_with_code(error, 2),
+                };
+                let selected_seam_observations = proof_runtime_seam_observations(
+                    contract,
+                    effective_workflow_selector.as_deref(),
+                );
+                let mut proof_task_closure = contract
+                    .selected_workflow_task_closure_names(effective_workflow_selector.as_deref());
+                for observation in &selected_seam_observations {
+                    proof_task_closure
+                        .extend(contract.task_dependency_closure_names([observation.task.clone()]));
+                }
+                if let Some(control) = selected_negative_control.as_ref() {
+                    proof_task_closure
+                        .extend(contract.task_dependency_closure_names([control.task.clone()]));
+                }
+                proof_task_closure.sort();
+                proof_task_closure.dedup();
+                let proof_replay_input_preflight =
+                    if let Some(workflow_name) = effective_workflow_selector.as_deref() {
+                        workflow_replay_input_preflight_for_closure(
+                            contract,
+                            &target.contract_path,
+                            workflow_name,
+                            proof_task_closure.clone(),
+                        )
+                    } else {
+                        workflow_replay_input_preflight(
+                            contract,
+                            &target.contract_path,
+                            effective_workflow_selector.as_deref(),
+                        )
+                    };
+                if let Err(failure) = evaluate_replay_input_admission(
+                    contract,
+                    &target.contract_path,
+                    proof_task_closure,
+                    &proof_replay_input_preflight,
+                ) {
+                    return proof_replay_input_admission_failure_output(
+                        format,
+                        "ota proof runtime",
+                        &target.contract_path,
+                        failure,
+                    );
+                }
                 let proof_archive_context = if archive {
                     let root = contract_working_dir(&target.contract_path);
                     match build_proof_runtime_archive_context(
@@ -3623,14 +3799,6 @@ pub fn proof_runtime(
                 } else {
                     None
                 };
-                let selected_negative_control =
-                    match proof_runtime_negative_control(contract, workflow_name, negative_control)
-                    {
-                        Ok(control) => control,
-                        Err(error) => return CommandOutput::failure_with_code(error, 2),
-                    };
-                let selected_seam_observations =
-                    proof_runtime_seam_observations(contract, workflow_name);
                 let seam_marker = if selected_seam_observations.is_empty() {
                     None
                 } else {
@@ -3715,6 +3883,13 @@ pub fn proof_runtime(
                         Ok(services) => services,
                         Err(error) => return CommandOutput::failure(error),
                     };
+                let policy_snapshot_file = match materialize_proof_runtime_policy_snapshot(
+                    proof_replay_input_preflight.loaded_policy.as_ref(),
+                    &execution_boundary_trace_token,
+                ) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return CommandOutput::failure(error),
+                };
                 let mut up_process = match spawn_proof_runtime_up_process(
                     &target.contract_path,
                     workflow_name,
@@ -3725,6 +3900,9 @@ pub fn proof_runtime(
                     &up_log_artifact_path,
                     &execution_boundary_trace_path,
                     &execution_boundary_trace_token,
+                    policy_snapshot_file
+                        .as_ref()
+                        .map(|snapshot| snapshot.path.as_path()),
                 ) {
                     Ok(child) => child,
                     Err(error) => return CommandOutput::failure(error.to_string()),
@@ -3739,6 +3917,8 @@ pub fn proof_runtime(
                         "ota up --stream",
                         &up_log_artifact_path,
                         ready_timeout,
+                        proof_replay_input_preflight.policy.as_ref(),
+                        proof_replay_input_preflight.doctor_policy_snapshot(),
                     ) {
                         Ok(result) => result,
                         Err(error) => {
@@ -4007,6 +4187,8 @@ pub fn proof_runtime(
                     &proof_report,
                     &proof_summary_for_output,
                     proof_likely_cause.as_ref(),
+                    proof_replay_input_preflight.policy.as_ref(),
+                    proof_replay_input_preflight.doctor_policy_snapshot(),
                 ) {
                     Ok(body) => body,
                     Err(error) => {
@@ -18384,23 +18566,27 @@ fn run_preview_preconditions_report(
     contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
+    replay_input_preflight: &TaskReplayInputPreflight,
 ) -> DoctorReport {
     let mode = doctor_mode_from_backend(Some(format_backend(
         effective_task_execution(contract, task_name, overrides).backend,
     )))
     .unwrap_or(DoctorMode::Native);
-    let mut report = diagnose_preconditions_with_mode_for_task_with_overrides(
-        contract,
-        contract_path,
-        mode,
-        task_name,
-        overrides,
-    );
+    let mut report =
+        diagnose_preconditions_with_mode_for_task_with_overrides_and_replay_input_policy(
+            contract,
+            contract_path,
+            mode,
+            task_name,
+            overrides,
+            replay_input_preflight.policy.as_ref(),
+            replay_input_preflight.doctor_policy_snapshot(),
+        );
     append_safe_task_effect_policy_findings(
         contract,
-        contract_path,
         task_name,
         overrides,
+        replay_input_preflight.loaded_policy.as_ref(),
         &mut report,
     );
     report
@@ -18445,6 +18631,7 @@ impl AgentExecutionRefusal {
             "unsafe_dependency_closure" => "unsafe_dependency_closure",
             "claim_assurance_policy_denied" => "policy_denied",
             "claim_assurance_policy_review_required" => "policy_review_required",
+            "org_policy_unavailable" => "policy_unavailable",
             _ => "unsafe",
         }
     }
@@ -18681,29 +18868,44 @@ fn agent_execution_admission(
     contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> AgentExecutionAdmission {
+    if policy_snapshot.load_error.is_some() {
+        let task_name = canonical_declared_task_name(contract, task_name);
+        return AgentExecutionAdmission::PolicyRefused(AgentExecutionRefusal {
+            requested_task: task_name.clone(),
+            blocked_task: task_name.clone(),
+            path: vec![task_name],
+            reason: "org_policy_unavailable",
+        });
+    }
     if let Some(refusal) = agent_execution_refusal_for_task(contract, task_name, overrides) {
         return AgentExecutionAdmission::SafetyRefused(refusal);
     }
     let task_name = canonical_declared_task_name(contract, task_name);
-    let policy_refusal = doctor_claim_assurance_with_overrides(contract, contract_path, overrides)
-        .into_iter()
-        .find(|record| {
-            record.subject.kind == "task"
-                && record.subject.name == task_name
-                && record.family == "agent_safety"
-                && matches!(record.policy.decision.as_str(), "deny" | "review")
-        })
-        .map(|record| AgentExecutionRefusal {
-            requested_task: task_name.clone(),
-            blocked_task: task_name.clone(),
-            path: vec![task_name],
-            reason: if record.policy.decision == "deny" {
-                "claim_assurance_policy_denied"
-            } else {
-                "claim_assurance_policy_review_required"
-            },
-        });
+    let policy_refusal = doctor_claim_assurance_with_overrides(
+        contract,
+        contract_path,
+        overrides,
+        policy_snapshot.loaded,
+    )
+    .into_iter()
+    .find(|record| {
+        record.subject.kind == "task"
+            && record.subject.name == task_name
+            && record.family == "agent_safety"
+            && matches!(record.policy.decision.as_str(), "deny" | "review")
+    })
+    .map(|record| AgentExecutionRefusal {
+        requested_task: task_name.clone(),
+        blocked_task: task_name.clone(),
+        path: vec![task_name],
+        reason: if record.policy.decision == "deny" {
+            "claim_assurance_policy_denied"
+        } else {
+            "claim_assurance_policy_review_required"
+        },
+    });
     match policy_refusal {
         Some(refusal) => AgentExecutionAdmission::PolicyRefused(refusal),
         None => AgentExecutionAdmission::Admitted,
@@ -18715,10 +18917,17 @@ fn agent_execution_refusal_with_policy(
     contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> Option<AgentExecutionRefusal> {
-    agent_execution_admission(contract, contract_path, task_name, overrides)
-        .refusal()
-        .cloned()
+    agent_execution_admission(
+        contract,
+        contract_path,
+        task_name,
+        overrides,
+        policy_snapshot,
+    )
+    .refusal()
+    .cloned()
 }
 
 /// CI projection must use the same ordered workflow roots as `ota up --agent`; checking only the
@@ -18729,13 +18938,20 @@ fn agent_workflow_execution_refusal_with_policy(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     run_behavior_preference: UpRunBehaviorPreference,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> Option<AgentExecutionRefusal> {
     selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
         .into_iter()
         .find_map(|task_name| {
-            agent_execution_admission(contract, contract_path, task_name.as_str(), overrides)
-                .refusal()
-                .cloned()
+            agent_execution_admission(
+                contract,
+                contract_path,
+                task_name.as_str(),
+                overrides,
+                policy_snapshot,
+            )
+            .refusal()
+            .cloned()
         })
 }
 
@@ -18746,19 +18962,342 @@ pub(crate) fn task_effective_safety(contract: &Contract, task_name: &str) -> Tas
 fn doctor_claim_assurance(
     contract: &Contract,
     contract_path: &Path,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
-    doctor_claim_assurance_with_overrides(contract, contract_path, ExecutionOverrides::default())
+    doctor_claim_assurance_with_overrides(
+        contract,
+        contract_path,
+        ExecutionOverrides::default(),
+        policy_snapshot.loaded,
+    )
+}
+
+fn doctor_replay_input_policy_with_observations(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    observations: &ReplayInputPolicyObservations,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Option<ReplayInputPolicyEvaluation> {
+    let loaded_policy = loaded_policy?;
+    let evaluation = if let Some((name, _)) = contract.selected_workflow(workflow_name) {
+        evaluate_replay_input_policy_with_observations(
+            contract,
+            &loaded_policy.pack,
+            ReplayInputPolicySubject::Workflow(name),
+            observations,
+        )
+    } else {
+        let Some(task_name) = contract.selected_run_task_name_for(None) else {
+            return None;
+        };
+        evaluate_replay_input_policy_with_observations(
+            contract,
+            &loaded_policy.pack,
+            ReplayInputPolicySubject::Task(task_name),
+            observations,
+        )
+    };
+    (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
+}
+
+fn task_replay_input_policy_with_observations(
+    contract: &Contract,
+    task_name: &str,
+    observations: &ReplayInputPolicyObservations,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Option<ReplayInputPolicyEvaluation> {
+    let loaded_policy = loaded_policy?;
+    let evaluation = evaluate_replay_input_policy_with_observations(
+        contract,
+        &loaded_policy.pack,
+        ReplayInputPolicySubject::Task(task_name),
+        observations,
+    );
+    (evaluation.required || !evaluation.unknown_selectors.is_empty()).then_some(evaluation)
+}
+
+struct TaskReplayInputPreflight {
+    observations: ReplayInputPolicyObservations,
+    loaded_policy: Option<LoadedOrgPolicyPack>,
+    policy: Option<ReplayInputPolicyEvaluation>,
+    policy_load_error: Option<String>,
+}
+
+impl TaskReplayInputPreflight {
+    fn doctor_policy_snapshot(&self) -> DoctorPolicySnapshot<'_> {
+        DoctorPolicySnapshot {
+            loaded: self.loaded_policy.as_ref(),
+            load_error: self.policy_load_error.as_deref(),
+        }
+    }
+
+    fn refresh_workflow_observations(
+        &mut self,
+        contract: &Contract,
+        contract_path: &Path,
+        workflow_name: Option<&str>,
+    ) {
+        self.observations = observe_replay_inputs(
+            contract,
+            contract_path.parent().unwrap_or_else(|| Path::new(".")),
+            contract.selected_workflow_task_closure_names(workflow_name),
+        );
+        self.policy = doctor_replay_input_policy_with_observations(
+            contract,
+            workflow_name,
+            &self.observations,
+            self.loaded_policy.as_ref(),
+        );
+    }
+}
+
+#[derive(Debug)]
+enum ReplayInputAdmissionFailure {
+    Identity {
+        mismatch: ReplayInputIdentityMismatch,
+        policy: Option<ReplayInputPolicyEvaluation>,
+    },
+    Policy(ReplayInputPolicyEvaluation),
+    PolicyUnavailable(String),
+    Capture(String),
+}
+
+impl ReplayInputAdmissionFailure {
+    fn code(&self) -> String {
+        match self {
+            Self::Identity { mismatch, .. } => mismatch.kind.to_string(),
+            Self::Policy(evaluation) => {
+                format!("replay_input_policy_{}", evaluation.decision)
+            }
+            Self::PolicyUnavailable(_) => String::from("replay_input_policy_unavailable"),
+            Self::Capture(_) => String::from("replay_input_observation_unavailable"),
+        }
+    }
+
+    fn message(&self) -> String {
+        match self {
+            Self::Identity { mismatch, .. } => mismatch.message(),
+            Self::Policy(evaluation) => {
+                let finding = replay_input_policy_refusal_finding(evaluation);
+                format!("{}: {}", finding.summary, finding.why)
+            }
+            Self::PolicyUnavailable(error) => {
+                format!("active replay-input policy could not be loaded: {error}")
+            }
+            Self::Capture(error) => error.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ProofReplayInputAdmissionFailure {
+    ok: bool,
+    path: String,
+    code: String,
+    error: String,
+    execution_started: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preflight: Option<ReplayInputIdentityMismatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replay_input_policy: Option<ReplayInputPolicyEvaluation>,
+}
+
+fn proof_replay_input_admission_failure_output(
+    format: OutputFormat,
+    command: &str,
+    contract_path: &Path,
+    failure: ReplayInputAdmissionFailure,
+) -> CommandOutput {
+    let (code, error, preflight, replay_input_policy) = match failure {
+        ReplayInputAdmissionFailure::Identity { mismatch, policy } => (
+            mismatch.kind.to_string(),
+            mismatch.message(),
+            Some(mismatch),
+            policy,
+        ),
+        ReplayInputAdmissionFailure::Policy(evaluation) => {
+            let finding = replay_input_policy_refusal_finding(&evaluation);
+            (
+                format!("replay_input_policy_{}", evaluation.decision),
+                format!("{}: {}", finding.summary, finding.why),
+                None,
+                Some(evaluation),
+            )
+        }
+        ReplayInputAdmissionFailure::PolicyUnavailable(error) => (
+            String::from("replay_input_policy_unavailable"),
+            format!("active replay-input policy could not be loaded: {error}"),
+            None,
+            None,
+        ),
+        ReplayInputAdmissionFailure::Capture(error) => (
+            String::from("replay_input_observation_unavailable"),
+            error,
+            None,
+            None,
+        ),
+    };
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(command, &error)),
+        OutputFormat::Json => CommandOutput::failure(to_json(&ProofReplayInputAdmissionFailure {
+            ok: false,
+            path: compact_contract_path(contract_path),
+            code,
+            error,
+            execution_started: false,
+            preflight,
+            replay_input_policy,
+        })),
+    }
+}
+
+fn evaluate_replay_input_admission(
+    contract: &Contract,
+    contract_path: &Path,
+    roots: impl IntoIterator<Item = String>,
+    preflight: &TaskReplayInputPreflight,
+) -> Result<Vec<ExecutionReceiptEvaluatedInput>, ReplayInputAdmissionFailure> {
+    if let Some(error) = preflight.policy_load_error.as_ref() {
+        return Err(ReplayInputAdmissionFailure::PolicyUnavailable(
+            error.clone(),
+        ));
+    }
+    let captured = match capture_replay_inputs_from_observations(
+        contract,
+        contract_path,
+        roots,
+        &preflight.observations,
+    ) {
+        Ok(captured) => captured,
+        Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
+            return Err(ReplayInputAdmissionFailure::Identity {
+                mismatch,
+                policy: preflight.policy.clone(),
+            });
+        }
+        Err(error) => {
+            if let Some(evaluation) = preflight
+                .policy
+                .as_ref()
+                .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+                .cloned()
+            {
+                return Err(ReplayInputAdmissionFailure::Policy(evaluation));
+            }
+            return Err(ReplayInputAdmissionFailure::Capture(error.to_string()));
+        }
+    };
+    if let Some(evaluation) = preflight
+        .policy
+        .as_ref()
+        .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+        .cloned()
+    {
+        return Err(ReplayInputAdmissionFailure::Policy(evaluation));
+    }
+    Ok(captured)
+}
+
+fn workflow_replay_input_preflight(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> TaskReplayInputPreflight {
+    let observations = observe_replay_inputs(
+        contract,
+        contract_path.parent().unwrap_or_else(|| Path::new(".")),
+        contract.selected_workflow_task_closure_names(workflow_name),
+    );
+    let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
+    {
+        Ok(policy) => (policy, None),
+        Err(error) => (None, Some(error.to_string())),
+    };
+    let policy = doctor_replay_input_policy_with_observations(
+        contract,
+        workflow_name,
+        &observations,
+        loaded_policy.as_ref(),
+    );
+    TaskReplayInputPreflight {
+        observations,
+        loaded_policy,
+        policy,
+        policy_load_error,
+    }
+}
+
+fn workflow_replay_input_preflight_for_closure(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: &str,
+    closure: Vec<String>,
+) -> TaskReplayInputPreflight {
+    let observations = observe_replay_inputs(
+        contract,
+        contract_path.parent().unwrap_or_else(|| Path::new(".")),
+        closure.clone(),
+    );
+    let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
+    {
+        Ok(policy) => (policy, None),
+        Err(error) => (None, Some(error.to_string())),
+    };
+    let policy = loaded_policy.as_ref().map(|loaded| {
+        evaluate_replay_input_policy_for_closure_with_observations(
+            contract,
+            &loaded.pack,
+            ReplayInputPolicySubject::Workflow(workflow_name),
+            closure,
+            &observations,
+        )
+    });
+    let policy =
+        policy.filter(|evaluation| evaluation.required || !evaluation.unknown_selectors.is_empty());
+    TaskReplayInputPreflight {
+        observations,
+        loaded_policy,
+        policy,
+        policy_load_error,
+    }
+}
+
+fn task_replay_input_preflight(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+) -> TaskReplayInputPreflight {
+    let observations = observe_replay_inputs(
+        contract,
+        contract_path.parent().unwrap_or_else(|| Path::new(".")),
+        [task_name.to_string()],
+    );
+    let (loaded_policy, policy_load_error) = match load_org_policy_pack_auto_details(contract_path)
+    {
+        Ok(policy) => (policy, None),
+        Err(error) => (None, Some(error.to_string())),
+    };
+    let policy = task_replay_input_policy_with_observations(
+        contract,
+        task_name,
+        &observations,
+        loaded_policy.as_ref(),
+    );
+    TaskReplayInputPreflight {
+        observations,
+        loaded_policy,
+        policy,
+        policy_load_error,
+    }
 }
 
 fn doctor_claim_assurance_with_overrides(
     contract: &Contract,
     contract_path: &Path,
     overrides: ExecutionOverrides,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> Vec<crate::claim_assurance::ClaimAssuranceRecord> {
-    let policy_pack = load_org_policy_pack_auto(contract_path)
-        .ok()
-        .flatten()
-        .map(|(policy_pack, _)| policy_pack);
+    let policy_pack = loaded_policy.map(|loaded| &loaded.pack);
     let mut records = contract
         .tasks
         .iter()
@@ -18771,7 +19310,7 @@ fn doctor_claim_assurance_with_overrides(
                     safety.effective_safe,
                     safety.unsafe_closure_tasks,
                 );
-                apply_claim_assurance_policy(&mut record, policy_pack.as_ref());
+                apply_claim_assurance_policy(&mut record, policy_pack);
                 record
             })
         })
@@ -18802,7 +19341,7 @@ fn doctor_claim_assurance_with_overrides(
                 source_identity.as_deref(),
                 &archives,
             );
-            apply_claim_assurance_policy(&mut record, policy_pack.as_ref());
+            apply_claim_assurance_policy(&mut record, policy_pack);
             records.push(record);
         }
     }
@@ -18950,6 +19489,16 @@ fn agent_execution_refusal_finding(refusal: &AgentExecutionRefusal, command: &st
                 refusal.requested_task
             ),
         ),
+        "org_policy_unavailable" => (
+            format!(
+                "Agent execution refused: org policy unavailable for `{}`",
+                refusal.requested_task
+            ),
+            format!(
+                "the active org policy could not be loaded, so Ota refused agent execution before evaluating the task safety boundary for `{}`",
+                refusal.requested_task
+            ),
+        ),
         _ => (
             format!(
                 "Agent execution refused: unsafe task closure for `{}`",
@@ -18987,9 +19536,10 @@ fn repo_agent_execution_refusal_receipt(
     task_name: &str,
     command: &str,
     refusal: &AgentExecutionRefusal,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> ExecutionReceipt {
     let finding = agent_execution_refusal_finding(refusal, command);
-    let mut receipt = repo_execution_receipt_with_overrides(
+    let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
         contract_path,
         contract,
         task_phase_execution_context(
@@ -19008,6 +19558,7 @@ fn repo_agent_execution_refusal_receipt(
         None,
         Some(finding.next.clone()),
         Some(overrides),
+        Some(policy_snapshot),
     );
     receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];
     receipt.refusal = Some(refusal.governance_record());
@@ -19049,6 +19600,7 @@ fn agent_execution_refusal_detail_lines(
             "unsafe_dependency_closure" => "unsafe_dependency_closure",
             "claim_assurance_policy_denied" => "policy_denied",
             "claim_assurance_policy_review_required" => "policy_review_required",
+            "org_policy_unavailable" => "policy_unavailable",
             _ => "unsafe",
         }
     ));
@@ -19100,10 +19652,17 @@ fn run_agent_execution_refusal(
     contract: &Contract,
     contract_path: &Path,
     _show_receipt: bool,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> Option<RunCommandFailure> {
-    let refusal = agent_execution_admission(contract, contract_path, task_name, overrides)
-        .refusal()
-        .cloned()?;
+    let refusal = agent_execution_admission(
+        contract,
+        contract_path,
+        task_name,
+        overrides,
+        policy_snapshot,
+    )
+    .refusal()
+    .cloned()?;
     let task_name = canonical_declared_task_name(contract, task_name);
     let command = format!(
         "{} --agent",
@@ -19119,6 +19678,7 @@ fn run_agent_execution_refusal(
         task_name.as_str(),
         &command,
         &refusal,
+        policy_snapshot,
     );
     let finding = agent_execution_refusal_finding(&refusal, &command);
     let detail_lines = agent_execution_refusal_detail_lines(
@@ -19281,11 +19841,20 @@ fn run_refusal_canary_command(
             2,
         );
     }
+    let (loaded_policy, policy_load_error) =
+        match load_org_policy_pack_auto_details(&target.contract_path) {
+            Ok(policy) => (policy, None),
+            Err(error) => (None, Some(error.to_string())),
+        };
     let admission = agent_execution_admission(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
         overrides,
+        DoctorPolicySnapshot {
+            loaded: loaded_policy.as_ref(),
+            load_error: policy_load_error.as_deref(),
+        },
     );
     let outcome = match admission {
         AgentExecutionAdmission::SafetyRefused(refusal) => {
@@ -19308,6 +19877,10 @@ fn run_refusal_canary_command(
             task_name.as_str(),
             command.as_str(),
             refusal,
+            DoctorPolicySnapshot {
+                loaded: loaded_policy.as_ref(),
+                load_error: policy_load_error.as_deref(),
+            },
         )
     });
     render_refusal_canary_result(
@@ -19339,6 +19912,15 @@ fn up_refusal_canary_command(
             2,
         );
     }
+    let (loaded_policy, policy_load_error) =
+        match load_org_policy_pack_auto_details(&target.contract_path) {
+            Ok(policy) => (policy, None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+    let policy_snapshot = DoctorPolicySnapshot {
+        loaded: loaded_policy.as_ref(),
+        load_error: policy_load_error.as_deref(),
+    };
     let admission = selected_up_agent_task_names(
         &target.contract,
         Some(selected_name),
@@ -19351,6 +19933,7 @@ fn up_refusal_canary_command(
             &target.contract_path,
             task_name.as_str(),
             overrides,
+            policy_snapshot,
         )
     })
     .find(|admission| !matches!(admission, AgentExecutionAdmission::Admitted))
@@ -19376,6 +19959,7 @@ fn up_refusal_canary_command(
             refusal.requested_task.as_str(),
             command.as_str(),
             refusal,
+            policy_snapshot,
         )
     });
     render_refusal_canary_result(
@@ -19478,18 +20062,19 @@ fn collect_task_closure_effects(
 
 fn safe_task_effect_policy_lines(
     contract: &Contract,
-    contract_path: &Path,
     task_name: &str,
     overrides: ExecutionOverrides,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> Vec<String> {
-    let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
+    let Some(loaded_policy) = loaded_policy else {
         return Vec::new();
     };
     let (network_kind, adapter_state, external_state) =
         collect_task_closure_effects(contract, task_name, overrides);
     let scope = task_effect_governance_scope(contract, task_name);
     let overrides = current_effect_governance_overrides();
-    policy_pack
+    loaded_policy
+        .pack
         .effect_governance_decisions(
             scope,
             network_kind,
@@ -19514,19 +20099,19 @@ fn safe_task_effect_policy_lines(
 
 fn append_safe_task_effect_policy_findings(
     contract: &Contract,
-    contract_path: &Path,
     task_name: &str,
     execution_overrides: ExecutionOverrides,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
     report: &mut DoctorReport,
 ) {
-    let Ok(Some((policy_pack, policy_path))) = load_org_policy_pack_auto(contract_path) else {
+    let Some(loaded_policy) = loaded_policy else {
         return;
     };
     let (network_kind, adapter_state, external_state) =
         collect_task_closure_effects(contract, task_name, execution_overrides);
     let scope = task_effect_governance_scope(contract, task_name);
     let overrides = current_effect_governance_overrides();
-    let decisions = policy_pack.effect_governance_decisions(
+    let decisions = loaded_policy.pack.effect_governance_decisions(
         scope,
         network_kind,
         &adapter_state,
@@ -19536,7 +20121,7 @@ fn append_safe_task_effect_policy_findings(
     if decisions.is_empty() {
         return;
     }
-    let policy_display = compact_contract_path(&policy_path);
+    let policy_display = compact_contract_path(&loaded_policy.path);
     for decision in decisions {
         let severity = match decision.decision {
             PolicyEffectDecision::Allow => FindingSeverity::Info,
@@ -19644,10 +20229,23 @@ fn render_run_preview_target(
         };
     };
 
-    if let Err(error) = capture_replay_inputs_before_execution(
+    let replay_input_preflight =
+        task_replay_input_preflight(&target.contract, &target.contract_path, task_name.as_str());
+    if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
+        return render_replay_input_policy_unavailable_preview(
+            format,
+            &target.contract_path,
+            member,
+            task_name.as_str(),
+            error.clone(),
+        );
+    }
+    let replay_input_policy = replay_input_preflight.policy.clone();
+    if let Err(error) = capture_replay_inputs_from_observations(
         &target.contract,
         &target.contract_path,
         [task_name.clone()],
+        &replay_input_preflight.observations,
     ) {
         return render_replay_input_preflight_failure(
             format,
@@ -19655,6 +20253,7 @@ fn render_run_preview_target(
             member,
             task_name.as_str(),
             error,
+            replay_input_policy,
         );
     }
 
@@ -19856,6 +20455,7 @@ fn render_run_preview_target(
                             provisioning: None,
                             provisioning_request: None,
                             governance,
+                            replay_input_policy: replay_input_policy.clone(),
                             artifact_routing,
                             plan,
                         }),
@@ -19890,6 +20490,7 @@ fn render_run_preview_target(
         &target.contract_path,
         task_name.as_str(),
         overrides,
+        &replay_input_preflight,
     );
     let artifact_routing = run_preview_artifact_routing(&target.contract_path, None);
     let mut summary = run_preview_summary(
@@ -19906,6 +20507,7 @@ fn render_run_preview_target(
             &target.contract_path,
             task_name.as_str(),
             overrides,
+            replay_input_preflight.doctor_policy_snapshot(),
         )
     } else {
         None
@@ -20005,6 +20607,7 @@ fn render_run_preview_target(
                     agent,
                     refusal.as_ref(),
                 ),
+                replay_input_policy,
                 artifact_routing,
                 plan,
             }),
@@ -20014,12 +20617,49 @@ fn render_run_preview_target(
     }
 }
 
+fn render_replay_input_policy_unavailable_preview(
+    format: OutputFormat,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    error: String,
+) -> CommandOutput {
+    let finding = replay_input_policy_unavailable_finding(&error);
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            "ota run",
+            &format!(
+                "{}\nWhy: {}\nNext: {}",
+                finding.summary, finding.why, finding.next
+            ),
+        )),
+        OutputFormat::Json => {
+            let mut body = serde_json::from_str::<serde_json::Map<String, JsonValue>>(
+                &run_preview_error_json(
+                    contract_path.display().to_string(),
+                    member,
+                    task_name,
+                    format!("{}: {}", finding.summary, finding.why),
+                ),
+            )
+            .expect("run preview failure serialization should produce an object");
+            body.insert(
+                String::from("code"),
+                JsonValue::String(String::from("replay_input_policy_unavailable")),
+            );
+            body.insert(String::from("execution_started"), JsonValue::Bool(false));
+            CommandOutput::failure(to_json_value(JsonValue::Object(body)))
+        }
+    }
+}
+
 fn render_replay_input_preflight_failure(
     format: OutputFormat,
     contract_path: &Path,
     member: Option<&str>,
     task_name: &str,
     error: ReplayInputCaptureError,
+    replay_input_policy: Option<ReplayInputPolicyEvaluation>,
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => {
@@ -20034,14 +20674,16 @@ fn render_replay_input_preflight_failure(
                     task: task_name.to_string(),
                     dry_run: true,
                     preflight: mismatch,
+                    replay_input_policy,
                 }))
             }
             ReplayInputCaptureError::Capture(error) => {
-                CommandOutput::failure(run_preview_error_json(
+                CommandOutput::failure(run_preview_error_json_with_replay_input_policy(
                     contract_path.display().to_string(),
                     member,
                     task_name,
                     error,
+                    replay_input_policy,
                 ))
             }
         },
@@ -20057,6 +20699,30 @@ struct ReplayInputIdentityPreflightFailure {
     task: String,
     dry_run: bool,
     preflight: ReplayInputIdentityMismatch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replay_input_policy: Option<ReplayInputPolicyEvaluation>,
+}
+
+fn run_preview_error_json_with_replay_input_policy(
+    path: String,
+    member: Option<&str>,
+    task_name: &str,
+    error: String,
+    replay_input_policy: Option<ReplayInputPolicyEvaluation>,
+) -> String {
+    let mut body = serde_json::from_str::<serde_json::Map<String, JsonValue>>(
+        &run_preview_error_json(path, member, task_name, error),
+    )
+    .expect("run preview failure serialization should produce an object");
+    body.insert(String::from("execution_started"), JsonValue::Bool(false));
+    if let Some(evaluation) = replay_input_policy {
+        body.insert(
+            String::from("replay_input_policy"),
+            serde_json::to_value(evaluation)
+                .expect("replay-input policy evaluation should serialize"),
+        );
+    }
+    to_json_value(JsonValue::Object(body))
 }
 
 fn run_preview_error_json(
@@ -22676,6 +23342,24 @@ fn contractless_doctor_fix_summary(dry_run: bool) -> DoctorFixSummary {
     }
 }
 
+fn refused_doctor_fix_outcome(failure: &ReplayInputAdmissionFailure) -> DoctorFixRunOutcome {
+    DoctorFixRunOutcome {
+        summary: DoctorFixSummary {
+            requested: true,
+            dry_run: false,
+            fixable_count: 0,
+            planned_count: 0,
+            applied_count: 0,
+            note: Some(String::from(
+                "mutating Doctor fixes were refused before any state changed",
+            )),
+            actions: Vec::new(),
+            errors: vec![format!("{}: {}", failure.code(), failure.message())],
+        },
+        applied_changes: false,
+    }
+}
+
 fn run_doctor_fix(
     contract: &Contract,
     report: &DoctorReport,
@@ -24330,6 +25014,7 @@ pub fn doctor(
                                 execution: None,
                                 governance: None,
                                 claim_assurance: Vec::new(),
+                                replay_input_policy: None,
                                 provisioning: report.provisioning.as_ref().map(|value| &value.plan),
                                 provisioning_request: report
                                     .provisioning
@@ -24409,14 +25094,18 @@ pub fn doctor(
                     doctor_mode_for_contract(contract, overrides, workflow_name)
                 });
                 let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
+                let mut replay_input_preflight =
+                    workflow_replay_input_preflight(contract, &target.contract_path, workflow_name);
                 let mut report =
-                    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
                         contract,
                         &target.contract_path,
                         mode,
                         doctor_lifecycle,
                         workflow_name,
                         diagnosis_overrides,
+                        replay_input_preflight.policy.as_ref(),
+                        replay_input_preflight.doctor_policy_snapshot(),
                     );
                 append_contract_drift_findings(
                     contract,
@@ -24430,39 +25119,60 @@ pub fn doctor(
                     &mut report.findings,
                 );
                 let fix_summary = if fix {
-                    let outcome = match run_doctor_fix(
-                        contract,
-                        &report,
-                        workflow_name,
-                        mode,
-                        diagnosis_overrides,
-                        contract_working_dir(&target.contract_path),
-                        fix_dry_run,
-                    ) {
-                        Ok(outcome) => outcome,
-                        Err(error) => DoctorFixRunOutcome {
-                            summary: DoctorFixSummary {
-                                requested: true,
-                                dry_run: fix_dry_run,
-                                fixable_count: 0,
-                                planned_count: 0,
-                                applied_count: 0,
-                                note: None,
-                                actions: Vec::new(),
-                                errors: vec![error],
+                    let mutating_fix_refusal = (!fix_dry_run)
+                        .then(|| {
+                            evaluate_replay_input_admission(
+                                contract,
+                                &target.contract_path,
+                                contract.selected_workflow_task_closure_names(workflow_name),
+                                &replay_input_preflight,
+                            )
+                        })
+                        .and_then(Result::err);
+                    let outcome = if let Some(failure) = mutating_fix_refusal.as_ref() {
+                        refused_doctor_fix_outcome(failure)
+                    } else {
+                        match run_doctor_fix(
+                            contract,
+                            &report,
+                            workflow_name,
+                            mode,
+                            diagnosis_overrides,
+                            contract_working_dir(&target.contract_path),
+                            fix_dry_run,
+                        ) {
+                            Ok(outcome) => outcome,
+                            Err(error) => DoctorFixRunOutcome {
+                                summary: DoctorFixSummary {
+                                    requested: true,
+                                    dry_run: fix_dry_run,
+                                    fixable_count: 0,
+                                    planned_count: 0,
+                                    applied_count: 0,
+                                    note: None,
+                                    actions: Vec::new(),
+                                    errors: vec![error],
+                                },
+                                applied_changes: false,
                             },
-                            applied_changes: false,
-                        },
+                        }
                     };
                     if outcome.applied_changes && !fix_dry_run {
+                        replay_input_preflight.refresh_workflow_observations(
+                            contract,
+                            &target.contract_path,
+                            workflow_name,
+                        );
                         report =
-                            diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                            diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
                                 contract,
                                 &target.contract_path,
                                 mode,
                                 doctor_lifecycle,
                                 workflow_name,
                                 diagnosis_overrides,
+                                replay_input_preflight.policy.as_ref(),
+                                replay_input_preflight.doctor_policy_snapshot(),
                             );
                         append_contract_drift_findings(
                             contract,
@@ -24622,14 +25332,21 @@ pub fn doctor(
                                         );
                                     }
                                 };
+                            let member_replay_input_preflight = workflow_replay_input_preflight(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                                workflow_name,
+                            );
                             let mut member_report =
-                                diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                                diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
                                     &member_target.contract,
                                     &member_target.contract_path,
                                     mode,
                                     doctor_lifecycle,
                                     workflow_name,
                                     diagnosis_overrides,
+                                    member_replay_input_preflight.policy.as_ref(),
+                                    member_replay_input_preflight.doctor_policy_snapshot(),
                                 );
                             append_contract_drift_findings(
                                 &member_target.contract,
@@ -24707,14 +25424,31 @@ pub fn doctor(
                                 doctor_lifecycle,
                                 &member_report,
                             ));
-                            member_results.push(json!({
+                            let mut member_result = json!({
                                 "member": member,
                                 "ok": member_report.ok,
                                 "workflow": member_workflow,
                                 "agent": member_agent,
                                 "toolchains": member_toolchains,
                                 "findings": rewritten_member_findings,
-                            }));
+                            });
+                            if member_result["workflow"].is_null() {
+                                member_result
+                                    .as_object_mut()
+                                    .expect("member result should be an object")
+                                    .remove("workflow");
+                            }
+                            if member_result["agent"].is_null() {
+                                member_result
+                                    .as_object_mut()
+                                    .expect("member result should be an object")
+                                    .remove("agent");
+                            }
+                            if let Some(policy) = member_replay_input_preflight.policy {
+                                member_result["replay_input_policy"] = serde_json::to_value(policy)
+                                    .expect("member replay-input policy should serialize");
+                            }
+                            member_results.push(member_result);
                         }
                     }
 
@@ -24733,10 +25467,11 @@ pub fn doctor(
                             }
                             output
                         }
-                        OutputFormat::Json => CommandOutput {
-                            stdout: to_json_value(json!({
+                        OutputFormat::Json => {
+                            let mut result = json!({
                                 "ok": overall_ok,
                                 "path": path_display,
+                                "mode": mode.as_str(),
                                 "summary": check_summary,
                                 "workflow": workflow_summary,
                                 "agent": agent_summary,
@@ -24744,10 +25479,21 @@ pub fn doctor(
                                 "toolchains": selected_toolchains,
                                 "findings": rewritten_findings,
                                 "members": member_results,
-                            })),
-                            stderr: None,
-                            exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
-                        },
+                            });
+                            for optional in ["workflow", "agent", "fix"] {
+                                if result[optional].is_null() {
+                                    result
+                                        .as_object_mut()
+                                        .expect("doctor result should be an object")
+                                        .remove(optional);
+                                }
+                            }
+                            CommandOutput {
+                                stdout: to_json_value(result),
+                                stderr: None,
+                                exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
+                            }
+                        }
                     }
                 } else {
                     match format {
@@ -24811,7 +25557,9 @@ pub fn doctor(
                                     claim_assurance: doctor_claim_assurance(
                                         &target.contract,
                                         &target.contract_path,
+                                        replay_input_preflight.doctor_policy_snapshot(),
                                     ),
+                                    replay_input_policy: replay_input_preflight.policy.clone(),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -24837,6 +25585,7 @@ pub fn doctor(
                 let mut overall_ok = true;
                 let mut text_sections = Vec::new();
                 let mut member_results = Vec::new();
+                let mut check_summary = DoctorSummary::default();
                 let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
                 for member in members {
                     let target =
@@ -24891,14 +25640,21 @@ pub fn doctor(
                                 );
                             }
                         };
+                    let member_replay_input_preflight = workflow_replay_input_preflight(
+                        &target.contract,
+                        &target.contract_path,
+                        workflow_name,
+                    );
                     let mut report =
-                        diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                        diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
                             &target.contract,
                             &target.contract_path,
                             mode,
                             doctor_lifecycle,
                             workflow_name,
                             diagnosis_overrides,
+                            member_replay_input_preflight.policy.as_ref(),
+                            member_replay_input_preflight.doctor_policy_snapshot(),
                         );
                     append_contract_drift_findings(
                         &target.contract,
@@ -24933,6 +25689,11 @@ pub fn doctor(
                         Some(mode),
                         doctor_lifecycle,
                     );
+                    add_doctor_summary_from_findings(
+                        &mut check_summary,
+                        &rewritten_findings,
+                        crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
+                    );
                     let execution_summary =
                         ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                     let selected_toolchains = selected_workflow_toolchain_summaries(
@@ -24952,14 +25713,31 @@ pub fn doctor(
                         doctor_lifecycle,
                         &report,
                     ));
-                    member_results.push(json!({
+                    let mut member_result = json!({
                         "member": member,
                         "ok": report.ok,
                         "workflow": workflow,
                         "agent": agent,
                         "toolchains": selected_toolchains,
                         "findings": rewritten_findings,
-                    }));
+                    });
+                    if member_result["workflow"].is_null() {
+                        member_result
+                            .as_object_mut()
+                            .expect("member result should be an object")
+                            .remove("workflow");
+                    }
+                    if member_result["agent"].is_null() {
+                        member_result
+                            .as_object_mut()
+                            .expect("member result should be an object")
+                            .remove("agent");
+                    }
+                    if let Some(policy) = member_replay_input_preflight.policy {
+                        member_result["replay_input_policy"] = serde_json::to_value(policy)
+                            .expect("member replay-input policy should serialize");
+                    }
+                    member_results.push(member_result);
                 }
 
                 match format {
@@ -24972,6 +25750,8 @@ pub fn doctor(
                         stdout: to_json_value(json!({
                             "ok": overall_ok,
                             "path": path_display,
+                            "mode": mode.as_str(),
+                            "summary": check_summary,
                             "members": member_results,
                             "findings": Vec::<JsonValue>::new(),
                         })),
@@ -40906,6 +41686,7 @@ project:
   name: receipt-replay-profiles
 tasks:
   verify:
+    safe_for_agent: true
     replay_inputs:
       - id: runtime-profile
         kind: presentation_profile
@@ -41171,6 +41952,75 @@ tasks:
         assert!(stderr.contains("replay_input_identity_missing"), "{stderr}");
         assert!(
             stderr.contains("Failure Origin: replay_input_identity_missing"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn run_policy_refusal_emits_admission_receipt_without_starting_task() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(repo.path().join("fixture.txt"), "frozen").expect("write fixture");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: policy-refusal-receipt
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    command:
+      exe: sh
+      args: ["-c", "touch task-ran.txt"]
+"#,
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("policy directory");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command_with_agent(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(!repo.path().join("task-ran.txt").exists());
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("RUN SUMMARY"), "{stderr}");
+        assert!(
+            stderr.contains("Failure Origin: replay_input_policy_deny"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Replay Input Policy"), "{stderr}");
+        assert!(stderr.contains("Decision: deny"), "{stderr}");
+        assert!(
+            stderr.contains("missing_expected_identity:task:verify:input:fixture"),
             "{stderr}"
         );
     }
@@ -56443,6 +57293,7 @@ impl Drop for PlainModeGuard {
 
 #[cfg(test)]
 mod tests {
+    use crate::doctor::DoctorPolicySnapshot;
     use crate::output::ExecutionEvidenceClass;
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -56894,6 +57745,382 @@ agent:
         let payload: serde_json::Value =
             serde_json::from_str(&result.stdout).expect("failure JSON should parse");
         assert_eq!(payload["code"], "projection_mode_unavailable");
+    }
+
+    #[test]
+    fn ci_projection_carries_replay_policy_requirement_without_observed_checkout_identity() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+        let identity = crate::replay_inputs::sha256_identity(b"frozen");
+        let contract_yaml = format!(
+            r#"
+version: 1
+project:
+  name: replay-policy-projection
+tasks:
+  verify:
+    safe_for_agent: true
+    after_success: [report]
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {identity}
+    command:
+      exe: sh
+      args: ["-c", "true"]
+  report:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "true"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify, report]
+"#,
+        );
+        fs::write(&contract_path, &contract_yaml).unwrap();
+        fs::create_dir_all(repo.path().join(".ota")).unwrap();
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      workflows:
+        verify:
+          on_insufficient: review
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let projection = ci_projection_for_contract(
+            &contract,
+            &contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect("matching checkout identity should permit projection");
+        let requirement = projection
+            .governance
+            .replay_input_policy
+            .as_ref()
+            .expect("policy requirement should be projected");
+        assert_eq!(
+            requirement.rule_identities,
+            ["replay_inputs:identity:workflow:verify"]
+        );
+        assert!(requirement.policy_identity.starts_with("sha256:"));
+        assert_eq!(requirement.selected_closure, ["report", "verify"]);
+        assert!(requirement.unknown_selector_identities.is_empty());
+        let projection_json = serde_json::to_string(&projection).unwrap();
+        assert!(!projection_json.contains("observed_identity"));
+        assert!(!projection_json.contains(identity.as_str()));
+
+        let unpinned_yaml =
+            contract_yaml.replace(&format!("        expected_identity: {identity}\n"), "");
+        let unpinned_contract = parse_contract_str(&contract_path, &unpinned_yaml).unwrap();
+        let review = ci_projection_for_contract(
+            &unpinned_contract,
+            &contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("review remains a refusing CI projection decision");
+        assert_eq!(review.0, "replay_input_policy_review");
+
+        fs::write(repo.path().join("fixture.txt"), "changed").unwrap();
+        let refusal = ci_projection_for_contract(
+            &contract,
+            &contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("provider checkout must re-evaluate the declared identity");
+        assert_eq!(refusal.0, "replay_input_policy_deny");
+        assert!(
+            refusal
+                .2
+                .expect("denial projection should remain inspectable")
+                .governance
+                .replay_input_policy
+                .is_some()
+        );
+
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        missing:
+          on_insufficient: deny
+"#,
+        )
+        .unwrap();
+        let unknown = ci_projection_for_contract(
+            &contract,
+            &contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("unknown selectors must refuse projection");
+        assert_eq!(unknown.0, "replay_input_policy_selector_unknown");
+        assert_eq!(
+            unknown
+                .2
+                .expect("unknown-selector projection should remain inspectable")
+                .governance
+                .replay_input_policy
+                .expect("policy requirement should be present")
+                .unknown_selector_identities,
+            ["replay_inputs:identity:task:missing"]
+        );
+    }
+
+    #[test]
+    fn ci_projection_reuses_one_loaded_policy_across_all_governance_domains() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+        let identity = crate::replay_inputs::sha256_identity(b"frozen");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: projection-policy-snapshot
+tasks:
+  verify:
+    safe_for_agent: true
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {identity}
+    command:
+      exe: sh
+      args: ["-c", "true"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+    proof:
+      claim: bounded
+agent:
+  safe_tasks: [verify]
+"#
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(repo.path().join(".ota")).unwrap();
+        let policy_path = repo.path().join(".ota/org-policy.yaml");
+        fs::write(
+            &policy_path,
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      workflows:
+        verify:
+          on_insufficient: deny
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let loaded_policy = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("policy should load")
+            .expect("policy should exist");
+        let policy_identity = loaded_policy
+            .source_identity
+            .clone()
+            .expect("policy snapshot should have an identity");
+
+        fs::write(&policy_path, "policies: [changed after command load]\n").unwrap();
+        let projection = super::apply_ci_projection_governance(
+            &contract,
+            &contract_path,
+            "verify",
+            "native",
+            super::build_ci_projection(&contract, "verify", "native", "linux").unwrap(),
+            Some(&loaded_policy),
+        )
+        .expect("all governance domains must consume the already loaded policy");
+        assert_eq!(
+            projection
+                .governance
+                .replay_input_policy
+                .expect("replay requirement")
+                .policy_identity,
+            policy_identity
+        );
+        assert_eq!(projection.governance.agent_admission.decision, "allow");
+        assert_eq!(
+            projection
+                .governance
+                .proof_assurance
+                .expect("proof assurance")
+                .policy_decision,
+            "allow"
+        );
+
+        let failure = ci_projection_for_contract(
+            &contract,
+            &contract_path,
+            "verify",
+            Some("native"),
+            "linux",
+        )
+        .expect_err("a new command must observe the changed invalid policy");
+        assert_eq!(failure.0, "org_policy_unavailable");
+    }
+
+    #[test]
+    fn run_receipt_preserves_pre_execution_replay_policy_evidence() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let expected = crate::replay_inputs::sha256_identity(b"frozen");
+        fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: replay-policy-receipt
+tasks:
+  mutate:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {expected}
+    command:
+      exe: sh
+      args: ["-c", "printf changed > fixture.txt"]
+"#
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(repo.path().join(".ota")).unwrap();
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        mutate:
+          on_insufficient: deny
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let preflight = super::task_replay_input_preflight(&contract, &contract_path, "mutate");
+
+        let success = super::run_single_contract_target_captured(
+            "mutate",
+            ExecutionOverrides::default(),
+            None,
+            super::LoadedContractTarget {
+                contract,
+                contract_path: contract_path.clone(),
+            },
+            &[],
+            false,
+            None,
+            false,
+            "inspect task usage",
+            false,
+            preflight,
+        )
+        .unwrap_or_else(|failure| panic!("matching input should be admitted: {}", failure.message));
+
+        assert_eq!(
+            fs::read_to_string(repo.path().join("fixture.txt")).unwrap(),
+            "changed"
+        );
+        let evaluation = success
+            .receipt
+            .replay_input_policy
+            .expect("receipt should retain pre-execution policy evidence");
+        assert_eq!(evaluation.decision, "allow");
+        assert_eq!(evaluation.inputs[0].status, "matched");
+        assert_eq!(
+            evaluation.inputs[0].observed_identity.as_deref(),
+            Some(expected.as_str())
+        );
+
+        fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: replay-policy-refusal
+tasks:
+  mutate:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+"#,
+        )
+        .unwrap();
+        let denied_contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let denied_preflight =
+            super::task_replay_input_preflight(&denied_contract, &contract_path, "mutate");
+        let failure = match super::run_single_contract_target_captured(
+            "mutate",
+            ExecutionOverrides::default(),
+            None,
+            super::LoadedContractTarget {
+                contract: denied_contract,
+                contract_path: contract_path.clone(),
+            },
+            &[],
+            false,
+            None,
+            true,
+            "inspect task usage",
+            false,
+            denied_preflight,
+        ) {
+            Ok(_) => {
+                panic!("low-level execution boundary must refuse insufficient identity policy")
+            }
+            Err(failure) => failure,
+        };
+        assert!(
+            failure
+                .message
+                .contains("Replay-input identity policy denies")
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
     }
 
     #[test]
@@ -57806,6 +59033,11 @@ workflows:
             "ota up --stream",
             &contract_path,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -57874,6 +59106,11 @@ workflows:
             "ota up --stream",
             &up_log_path,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -57976,6 +59213,11 @@ workflows:
             "ota up --stream",
             &up_log_path,
             Some(Duration::from_secs(5)),
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58086,6 +59328,11 @@ workflows:
             "ota up --stream",
             &contract_path,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58188,6 +59435,11 @@ workflows:
             "ota up --stream",
             &contract_path,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58281,6 +59533,11 @@ workflows:
             "ota up --stream",
             &contract_path,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58384,6 +59641,11 @@ readiness:
             "ota up --stream",
             &contract_path,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58460,6 +59722,11 @@ readiness:
             "ota run dev --stream",
             &contract_path,
             Some(Duration::from_secs(3)),
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58579,6 +59846,11 @@ workflows:
             "ota run dev --stream",
             &contract_path,
             Some(Duration::from_secs(3)),
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -58693,6 +59965,11 @@ readiness:
             "ota run dev --stream",
             &contract_path,
             Some(Duration::from_secs(5)),
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .unwrap();
 
@@ -62989,6 +64266,11 @@ workflows:
                     "Cannot connect to the Docker daemon at unix:///Users/test/.orbstack/run/docker.sock. Is the docker daemon running?",
                 ),
             }),
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .expect("doctor artifact should render");
         let json: serde_json::Value =
@@ -63086,6 +64368,11 @@ workflows:
             &report,
             &summary,
             None,
+            None,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
         )
         .expect("doctor artifact should render");
         let json: serde_json::Value =
@@ -63098,6 +64385,204 @@ workflows:
         assert_eq!(
             json["summary"]["primary_blocker"]["why"].as_str(),
             Some("platform mismatch")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_doctor_artifact_reuses_command_scoped_replay_input_policy() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let expected = crate::replay_inputs::sha256_identity(b"frozen");
+        fs::write(repo.path().join("fixture.txt"), "frozen").expect("write replay input");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-policy-snapshot
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {expected}
+    command:
+      exe: true
+workflows:
+  default: app
+  app:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#
+            ),
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota")).expect("create policy directory");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      workflows:
+        app:
+          on_insufficient: deny
+"#,
+        )
+        .expect("write policy");
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .expect("contract should parse");
+        let preflight =
+            super::workflow_replay_input_preflight(&contract, &contract_path, Some("app"));
+        assert_eq!(
+            preflight
+                .policy
+                .as_ref()
+                .expect("policy should apply")
+                .inputs[0]
+                .status,
+            "matched"
+        );
+
+        fs::write(repo.path().join("fixture.txt"), "changed")
+            .expect("mutate after command preflight");
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            "policies: [invalid after command snapshot]\n",
+        )
+        .expect("mutate policy after command preflight");
+        assert!(matches!(
+            super::agent_execution_admission(
+                &contract,
+                &contract_path,
+                "verify",
+                ExecutionOverrides::default(),
+                preflight.doctor_policy_snapshot(),
+            ),
+            super::AgentExecutionAdmission::Admitted
+        ));
+        let report = super::proof_runtime_doctor_report(
+            &contract,
+            &contract_path,
+            Some("app"),
+            DoctorMode::Native,
+            ExecutionOverrides::default(),
+            preflight.policy.as_ref(),
+            preflight.doctor_policy_snapshot(),
+        );
+        assert!(
+            report.findings.iter().all(|finding| {
+                finding
+                    .identity
+                    .as_ref()
+                    .map(|identity| identity.code.as_str())
+                    != Some("OTA_POLICY_PACK_INVALID")
+            }),
+            "Doctor must consume the command-scoped loaded policy rather than reloading drift"
+        );
+        let summary = super::doctor_summary(
+            &report,
+            crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+        );
+        let body = super::proof_runtime_doctor_artifact_json(
+            &contract,
+            &contract_path,
+            "./ota.yaml",
+            Some("app"),
+            DoctorMode::Native,
+            ExecutionOverrides::default(),
+            &report,
+            &summary,
+            None,
+            preflight.policy.as_ref(),
+            preflight.doctor_policy_snapshot(),
+        )
+        .expect("doctor artifact should render");
+        let json: serde_json::Value =
+            serde_json::from_str(&body).expect("doctor artifact json should parse");
+
+        assert_eq!(
+            json["replay_input_policy"]["inputs"][0]["status"].as_str(),
+            Some("matched")
+        );
+        assert_eq!(
+            json["replay_input_policy"]["inputs"][0]["observed_identity"].as_str(),
+            Some(expected.as_str())
+        );
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings should be an array")
+                .iter()
+                .all(|finding| finding["code"] != "OTA_REPLAY_INPUT_IDENTITY_MISMATCH")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_child_consumes_the_parent_policy_snapshot() {
+        let _env_guard = crate::test_support::env_mutex_lock();
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            "version: 1\nproject:\n  name: proof-policy-child\n",
+        )
+        .unwrap();
+        fs::create_dir_all(repo.path().join(".ota")).unwrap();
+        let policy_path = repo.path().join(".ota/org-policy.yaml");
+        fs::write(
+            &policy_path,
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+        )
+        .unwrap();
+        let loaded = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("policy should load")
+            .expect("policy should exist");
+        let expected_identity = loaded.source_identity.clone();
+        let snapshot = super::materialize_proof_runtime_policy_snapshot(
+            Some(&loaded),
+            &super::proof_runtime_seam_marker().expect("snapshot token"),
+        )
+        .expect("snapshot should materialize")
+        .expect("loaded policy should create a snapshot");
+
+        fs::write(&policy_path, "policies: [changed after parent admission]\n").unwrap();
+        let original_policy = std::env::var_os("OTA_POLICY");
+        let original_absent = std::env::var_os(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV);
+        unsafe {
+            std::env::set_var("OTA_POLICY", &snapshot.path);
+            std::env::remove_var(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV);
+        }
+        let child_loaded = super::load_org_policy_pack_auto_details(&contract_path)
+            .expect("child snapshot should load")
+            .expect("child snapshot should remain present");
+        match original_policy {
+            Some(value) => unsafe { std::env::set_var("OTA_POLICY", value) },
+            None => unsafe { std::env::remove_var("OTA_POLICY") },
+        }
+        match original_absent {
+            Some(value) => unsafe {
+                std::env::set_var(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, value)
+            },
+            None => unsafe { std::env::remove_var(super::OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV) },
+        }
+
+        assert_eq!(child_loaded.source_identity, expected_identity);
+        assert_eq!(
+            crate::semantic_identity::semantic_contract_identity(&child_loaded.pack).unwrap(),
+            crate::semantic_identity::semantic_contract_identity(&loaded.pack).unwrap()
         );
     }
 
@@ -66152,6 +67637,7 @@ workflows:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: None,
             context: None,
@@ -67242,6 +68728,7 @@ project:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -73188,6 +74675,7 @@ tasks:
             },
             path: policy.clone(),
             source: PolicyPackSource::RepoPolicy,
+            source_identity: None,
         };
 
         env::set_current_dir(repo.path()).unwrap();
@@ -74188,6 +75676,7 @@ tasks:
             },
             path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
             source: PolicyPackSource::RepoPolicy,
+            source_identity: None,
         };
 
         let text = strip_ansi_codes(&super::render_policy_review_text(
@@ -74234,6 +75723,7 @@ tasks:
             },
             path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
             source: PolicyPackSource::RepoPolicy,
+            source_identity: None,
         };
 
         let text = strip_ansi_codes(&super::render_policy_review_text(
@@ -74296,6 +75786,7 @@ tasks:
             },
             path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
             source: PolicyPackSource::RepoPolicy,
+            source_identity: None,
         };
 
         let text = strip_ansi_codes(&super::render_policy_review_text(
@@ -74348,6 +75839,7 @@ tasks:
             },
             path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
             source: PolicyPackSource::RepoPolicy,
+            source_identity: None,
         };
 
         let text = strip_ansi_codes(&super::render_policy_review_text(
@@ -74649,6 +76141,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -74741,6 +76234,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: None,
@@ -74947,6 +76441,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75020,6 +76515,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75123,6 +76619,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75248,6 +76745,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75340,6 +76838,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75439,6 +76938,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -75728,6 +77228,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: Some(crossing.clone()),
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -76054,6 +77555,7 @@ tasks:
                     crate::output::ExecutionReceiptWitnessedObservations::default(),
                 crossing: None,
                 refusal: None,
+                replay_input_policy: None,
                 workspace: None,
                 backend: None,
                 context: None,
@@ -79493,6 +80995,27 @@ workflows:
         fs::create_dir_all(&bin_dir).unwrap();
         let node_path = fake_command_path(&bin_dir, "node");
         let activation_log = repo.path().join("activation.log");
+        let policy_path = repo.path().join(".ota/org-policy.yaml");
+        fs::create_dir_all(policy_path.parent().unwrap()).unwrap();
+        fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+        fs::write(
+            &policy_path,
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+        )
+        .unwrap();
+        let initial_policy_identity =
+            crate::policy_pack::load_org_policy_pack_auto_details(&repo.path().join("ota.yaml"))
+                .expect("initial policy should load")
+                .expect("repo policy should be selected")
+                .source_identity
+                .expect("policy should have semantic identity");
         write_executable_script(
             &node_path,
             if cfg!(windows) {
@@ -79516,6 +81039,14 @@ tools:
       shell: sh
       run: |
         printf 'activated\n' > '{activation_log}'
+        cat > '{policy_path}' <<'EOF'
+        policies:
+          replay_inputs:
+            identity:
+              tasks:
+                verify:
+                  on_insufficient: review
+        EOF
         cat > '{devbox_path}' <<'EOF'
         #!/bin/sh
         set -eu
@@ -79528,13 +81059,25 @@ tools:
         chmod +x '{devbox_path}'
 tasks:
   verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {fixture_identity}
     command:
       exe: devbox
       args:
         - --version
+    requirements:
+      tools:
+        devbox: "*"
+agent:
+  default_task: verify
 "#,
                 activation_log = activation_log.display(),
+                policy_path = policy_path.display(),
                 devbox_path = bin_dir.join("devbox").display(),
+                fixture_identity = crate::replay_inputs::sha256_identity(b"frozen"),
             ),
         )
         .unwrap();
@@ -79575,6 +81118,20 @@ tasks:
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("doctor fix json");
         assert_eq!(json["ok"], true, "{json}");
+        assert_eq!(
+            json["replay_input_policy"]["policy_identity"], initial_policy_identity,
+            "the final report must retain the policy authority loaded before activation"
+        );
+        let changed_policy_identity =
+            crate::policy_pack::load_org_policy_pack_auto_details(&repo.path().join("ota.yaml"))
+                .expect("changed policy should load")
+                .expect("repo policy should remain selected")
+                .source_identity
+                .expect("changed policy should have semantic identity");
+        assert_ne!(
+            changed_policy_identity, initial_policy_identity,
+            "the activation must actually mutate policy for this regression"
+        );
         assert!(
             json["fix"]["applied_count"].as_u64().unwrap_or_default() >= 1,
             "{json}"
@@ -79596,6 +81153,156 @@ tasks:
                 .all(|finding| finding["summary"] != "Missing tool: devbox"),
             "{json}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_fix_refuses_mutation_before_policy_or_identity_admission() {
+        let _guard = env_mutex_lock();
+        let cases = [
+            (
+                "policy-unavailable",
+                Some("policies: [invalid]\n"),
+                None,
+                "replay_input_policy_unavailable",
+            ),
+            (
+                "policy-deny",
+                Some(
+                    r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+                ),
+                None,
+                "replay_input_policy_deny",
+            ),
+            (
+                "policy-review",
+                Some(
+                    r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: review
+"#,
+                ),
+                None,
+                "replay_input_policy_review",
+            ),
+            (
+                "identity-mismatch",
+                None,
+                Some("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
+                "replay_input_identity_mismatch",
+            ),
+        ];
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([Path::new("/usr/bin"), Path::new("/bin")]).unwrap(),
+            );
+        }
+
+        for (case, policy, expected_identity, expected_code) in cases {
+            let repo = TempDir::new().unwrap();
+            let sentinel = repo.path().join("activation-ran");
+            let tool_name = format!("ota-doctor-fix-{case}-tool");
+            fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+            if let Some(policy) = policy {
+                fs::create_dir_all(repo.path().join(".ota")).unwrap();
+                fs::write(repo.path().join(".ota/org-policy.yaml"), policy).unwrap();
+            }
+            let expected_identity = expected_identity
+                .map(|identity| format!("\n        expected_identity: {identity}"))
+                .unwrap_or_default();
+            fs::write(
+                repo.path().join("ota.yaml"),
+                format!(
+                    r#"
+version: 1
+project:
+  name: doctor-fix-refusal-{case}
+tools:
+  {tool_name}:
+    version: "*"
+    acquisition:
+      provider: command
+      shell: sh
+      run: |
+        touch '{sentinel}'
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt{expected_identity}
+    command:
+      exe: {tool_name}
+      args:
+        - --version
+    requirements:
+      tools:
+        {tool_name}: "*"
+agent:
+  default_task: verify
+"#,
+                    sentinel = sentinel.display(),
+                ),
+            )
+            .unwrap();
+
+            let output = super::doctor(
+                Some(repo.path()),
+                None,
+                &[],
+                None,
+                true,
+                false,
+                ExecutionOverrides::default(),
+                OutputFormat::Json,
+                false,
+            );
+
+            assert_eq!(output.exit_code, 1, "{case}: {output:?}");
+            assert!(
+                !repo.path().join(".gitignore").exists(),
+                "{case}: Doctor mutated .gitignore after refusal"
+            );
+            assert!(
+                !sentinel.exists(),
+                "{case}: Doctor ran activation after refusal"
+            );
+            let json: serde_json::Value =
+                serde_json::from_str(&output.stdout).expect("Doctor refusal JSON");
+            assert_eq!(json["fix"]["applied_count"], 0, "{case}: {json}");
+            assert!(
+                json["fix"]
+                    .get("actions")
+                    .is_none_or(|actions| actions.as_array().is_some_and(Vec::is_empty)),
+                "{case}: {json}"
+            );
+            assert!(
+                json["fix"]["errors"]
+                    .as_array()
+                    .is_some_and(|errors| errors.iter().any(|error| error
+                        .as_str()
+                        .is_some_and(|error| error.contains(expected_code)))),
+                "{case}: {json}"
+            );
+        }
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
     }
 
     #[test]
@@ -83866,6 +85573,7 @@ agent:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -84592,6 +86300,7 @@ tasks:
         let receipt = run_execution_receipt_with_shared(
             &contract,
             Path::new("/tmp/ota.yaml"),
+            None,
             ExecutionOverrides::default(),
             "sandbox",
             None,
@@ -85316,6 +87025,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -85379,6 +87089,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -85442,6 +87153,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -85522,6 +87234,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),
@@ -85602,6 +87315,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -85723,6 +87437,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -85789,6 +87504,7 @@ tasks:
         let receipt = super::run_execution_receipt_with_shared(
             &contract,
             Path::new("./ota.yaml"),
+            None,
             ExecutionOverrides::default(),
             "build",
             None,
@@ -85832,6 +87548,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -85949,6 +87666,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -86014,6 +87732,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -89303,6 +91022,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -89391,6 +91111,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -89463,6 +91184,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -89538,6 +91260,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -89607,6 +91330,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -89676,6 +91400,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -89752,6 +91477,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -90584,6 +92310,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -90733,6 +92460,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -90842,6 +92570,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("sandbox:ctx")),
@@ -91076,6 +92805,72 @@ execution:
         assert!(rendered.contains("Mode:        container"));
         assert!(rendered.contains("Image:       ghcr.io/ota/dev:latest"));
         assert!(rendered.contains("Container:"));
+    }
+
+    #[test]
+    fn generic_receipt_does_not_recompute_replay_policy_after_execution() {
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(repo.path().join("fixture.txt"), "frozen").unwrap();
+        let identity = crate::replay_inputs::sha256_identity(b"frozen");
+        let contract = parse_contract_str(
+            &contract_path,
+            &format!(
+                r#"
+version: 1
+project:
+  name: receipt-policy-timing
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {identity}
+    command:
+      exe: true
+"#
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(repo.path().join(".ota")).unwrap();
+        fs::write(
+            repo.path().join(".ota/org-policy.yaml"),
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::repo_execution_receipt(
+            &contract_path,
+            &contract,
+            super::task_phase_execution_context(
+                &contract,
+                &contract_path,
+                "verify",
+                ExecutionOverrides::default(),
+                None,
+            ),
+            "READY",
+            "post-execution",
+            None,
+            None,
+            Some("verify"),
+            &[],
+            Some(0),
+            None,
+        );
+
+        assert!(
+            receipt.replay_input_policy.is_none(),
+            "only an admission path may attach pre-execution replay policy evidence"
+        );
     }
 
     #[test]
@@ -91454,6 +93249,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -91554,6 +93350,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -91640,6 +93437,7 @@ tasks:
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -91728,6 +93526,7 @@ tasks:
         let receipt = super::run_execution_receipt_with_shared(
             &contract,
             Path::new("./ota.yaml"),
+            None,
             ExecutionOverrides::default(),
             "setup",
             None,
@@ -91820,6 +93619,7 @@ policies:
         let receipt = super::run_execution_receipt_with_shared(
             &contract,
             &contract_path,
+            None,
             ExecutionOverrides::default(),
             "setup",
             None,
@@ -94435,6 +96235,74 @@ workflows:
 
     #[cfg(unix)]
     #[test]
+    fn proof_lifecycle_refuses_invalid_policy_before_execution() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let task_marker = fixture.path().join("task-ran");
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota/org-policy.yaml"),
+            "policies:\n  replay_inputs: [invalid\n",
+        )
+        .unwrap();
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: lifecycle-policy-load
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-policy-load
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    command:
+      exe: sh
+      args: ["-c", "touch '{}'"]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+"#,
+                task_marker.display()
+            ),
+        )
+        .unwrap();
+
+        let output = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default()).unwrap();
+        assert_eq!(json["code"], "replay_input_policy_unavailable");
+        assert_eq!(json["execution_started"], false);
+        assert!(!task_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proof_lifecycle_leases_inactive_compose_service_and_finalizes_it() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -95483,7 +97351,14 @@ workflows:
             Some("verify"),
             ExecutionOverrides::default(),
         );
-        let claims = super::doctor_claim_assurance(&contract, &contract_path);
+        let claims = super::doctor_claim_assurance(
+            &contract,
+            &contract_path,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
+        );
         let proof = claims
             .iter()
             .find(|claim| claim.family == "proof_breadth")
@@ -95513,7 +97388,14 @@ workflows:
         fs::create_dir_all(archive_path.parent().unwrap()).unwrap();
         fs::write(archive_path, bytes).unwrap();
 
-        let claims = super::doctor_claim_assurance(&contract, &contract_path);
+        let claims = super::doctor_claim_assurance(
+            &contract,
+            &contract_path,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
+        );
         let proof = claims
             .iter()
             .find(|claim| claim.family == "proof_breadth")
@@ -95547,7 +97429,14 @@ policies:
             b"tampered snapshot",
         )
         .unwrap();
-        let claims = super::doctor_claim_assurance(&contract, &contract_path);
+        let claims = super::doctor_claim_assurance(
+            &contract,
+            &contract_path,
+            DoctorPolicySnapshot {
+                loaded: None,
+                load_error: None,
+            },
+        );
         let proof = claims
             .iter()
             .find(|claim| claim.family == "proof_breadth")
@@ -97393,6 +99282,21 @@ fn run_single_contract_target(
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
+    let selected_task_name = canonical_declared_task_name(&target.contract, task_name);
+    let replay_input_preflight = task_replay_input_preflight(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+    );
+    enforce_task_replay_input_preflight(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+        member,
+        overrides,
+        show_receipt,
+        &replay_input_preflight,
+    )?;
     if agent
         && let Some(failure) = run_agent_execution_refusal(
             task_name,
@@ -97401,6 +99305,7 @@ fn run_single_contract_target(
             &target.contract,
             &target.contract_path,
             show_receipt,
+            replay_input_preflight.doctor_policy_snapshot(),
         )
     {
         return Err(failure);
@@ -97441,6 +99346,7 @@ fn run_single_contract_target(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                None,
                 overrides,
                 task_name,
                 member,
@@ -97488,11 +99394,13 @@ fn run_single_contract_target(
     }
 
     if let Some(failure) = run_selected_precondition_failure(
-        task_name,
+        selected_task_name.as_str(),
         overrides,
         member,
         &target.contract,
         &target.contract_path,
+        show_receipt,
+        &replay_input_preflight,
     ) {
         return Err(failure);
     }
@@ -97516,6 +99424,7 @@ fn run_single_contract_target(
             &details_footer,
             persist_logs,
             use_terminal_passthrough,
+            replay_input_preflight,
         );
     }
 
@@ -97530,6 +99439,7 @@ fn run_single_contract_target(
         show_receipt,
         &details_footer,
         persist_logs,
+        replay_input_preflight,
     )
     .map(|result| result.output)
 }
@@ -97653,12 +99563,30 @@ fn run_selected_precondition_failure(
     member: Option<&str>,
     contract: &Contract,
     contract_path: &Path,
+    show_receipt: bool,
+    replay_input_preflight: &TaskReplayInputPreflight,
 ) -> Option<RunCommandFailure> {
     let task_name = canonical_declared_task_name(contract, task_name);
     if resolve_execution_plan_for_task(contract, contract_path, task_name.as_str(), overrides)
         .is_err()
     {
         return None;
+    }
+    if let Some(evaluation) = replay_input_preflight
+        .policy
+        .as_ref()
+        .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+        .cloned()
+    {
+        return Some(replay_input_policy_run_failure(
+            contract,
+            contract_path,
+            task_name.as_str(),
+            member,
+            overrides,
+            show_receipt,
+            evaluation,
+        ));
     }
     let env_report = build_env_report_with_overrides(
         contract,
@@ -97668,8 +99596,13 @@ fn run_selected_precondition_failure(
         overrides,
     )
     .ok()?;
-    let preconditions_report =
-        run_preview_preconditions_report(contract, contract_path, task_name.as_str(), overrides);
+    let preconditions_report = run_preview_preconditions_report(
+        contract,
+        contract_path,
+        task_name.as_str(),
+        overrides,
+        replay_input_preflight,
+    );
     let mut summary = run_preview_summary(
         contract,
         task_name.as_str(),
@@ -97697,12 +99630,14 @@ fn run_selected_precondition_failure(
                 contract_path,
                 &request,
                 &ProvisioningExecutionTarget::Native,
+                replay_input_preflight.loaded_policy.as_ref(),
             ) {
                 let refreshed_report = run_preview_preconditions_report(
                     contract,
                     contract_path,
                     task_name.as_str(),
                     overrides,
+                    replay_input_preflight,
                 );
                 let refreshed_summary = run_preview_summary(
                     contract,
@@ -97722,6 +99657,24 @@ fn run_selected_precondition_failure(
     let primary_blocker = summary.primary_blocker?;
     if !run_precondition_blocker_should_stop_execution(&primary_blocker.summary) {
         return None;
+    }
+    if primary_blocker
+        .summary
+        .starts_with("Replay-input identity policy ")
+        || primary_blocker
+            .summary
+            .starts_with("Replay-input policy references unknown ")
+    {
+        let evaluation = replay_input_preflight.policy.as_ref()?.to_owned();
+        return Some(replay_input_policy_run_failure(
+            contract,
+            contract_path,
+            task_name.as_str(),
+            member,
+            overrides,
+            show_receipt,
+            evaluation,
+        ));
     }
     let effective = effective_task_execution(contract, task_name.as_str(), overrides);
     let doctor_mode = doctor_mode_from_backend(Some(format_backend(effective.backend)))
@@ -97782,6 +99735,68 @@ fn run_selected_precondition_failure(
         exit_code: 1,
         receipt: None,
     })
+}
+
+fn enforce_task_replay_input_preflight(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    preflight: &TaskReplayInputPreflight,
+) -> Result<(), RunCommandFailure> {
+    match evaluate_replay_input_admission(
+        contract,
+        contract_path,
+        [task_name.to_string()],
+        preflight,
+    ) {
+        Ok(_) => {}
+        Err(ReplayInputAdmissionFailure::Identity { mismatch, policy }) => {
+            return Err(replay_input_identity_run_failure(
+                contract,
+                contract_path,
+                task_name,
+                member,
+                overrides,
+                show_receipt,
+                mismatch,
+                policy,
+            ));
+        }
+        Err(ReplayInputAdmissionFailure::Policy(evaluation)) => {
+            return Err(replay_input_policy_run_failure(
+                contract,
+                contract_path,
+                task_name,
+                member,
+                overrides,
+                show_receipt,
+                evaluation,
+            ));
+        }
+        Err(ReplayInputAdmissionFailure::PolicyUnavailable(error)) => {
+            return Err(replay_input_policy_unavailable_run_failure(
+                contract,
+                contract_path,
+                task_name,
+                member,
+                overrides,
+                show_receipt,
+                error,
+            ));
+        }
+        Err(ReplayInputAdmissionFailure::Capture(error)) => {
+            return Err(RunCommandFailure {
+                message: error,
+                summary: None,
+                exit_code: 1,
+                receipt: None,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn render_run_version_mismatch_precondition_text(
@@ -97896,6 +99911,8 @@ fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
         || summary.starts_with("Runtime probe failed: ")
         || summary.starts_with("Version mismatch for tool: ")
         || summary.starts_with("Version mismatch for runtime: ")
+        || summary.starts_with("Replay-input identity policy ")
+        || summary.starts_with("Replay-input policy references unknown ")
         || is_effect_governance_policy_block_summary(summary)
 }
 
@@ -97992,6 +100009,7 @@ fn run_single_contract_target_streaming(
     details_footer: &str,
     persist_logs: bool,
     terminal_passthrough: bool,
+    replay_input_preflight: TaskReplayInputPreflight,
 ) -> Result<String, RunCommandFailure> {
     if let Err(error) =
         materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
@@ -98004,10 +100022,12 @@ fn run_single_contract_target_streaming(
         });
     }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    let replay_inputs = match capture_replay_inputs_before_execution(
+    let replay_input_policy = replay_input_preflight.policy.clone();
+    let replay_inputs = match capture_replay_inputs_from_observations(
         &target.contract,
         &target.contract_path,
         [task_name.clone()],
+        &replay_input_preflight.observations,
     ) {
         Ok(inputs) => inputs,
         Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
@@ -98019,6 +100039,7 @@ fn run_single_contract_target_streaming(
                 overrides,
                 show_receipt,
                 mismatch,
+                replay_input_policy.clone(),
             ));
         }
         Err(error) => {
@@ -98030,6 +100051,21 @@ fn run_single_contract_target_streaming(
             });
         }
     };
+    if let Some(evaluation) = replay_input_policy
+        .as_ref()
+        .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+        .cloned()
+    {
+        return Err(replay_input_policy_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            member,
+            overrides,
+            show_receipt,
+            evaluation,
+        ));
+    }
     let witnessed_observations = capture_witnessed_observations_before_execution(
         &target.contract,
         &target.contract_path,
@@ -98082,6 +100118,7 @@ fn run_single_contract_target_streaming(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
                 overrides,
                 task_name.as_str(),
                 member,
@@ -98100,6 +100137,7 @@ fn run_single_contract_target_streaming(
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            receipt.replay_input_policy = replay_input_policy.clone();
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
@@ -98161,6 +100199,7 @@ fn run_single_contract_target_streaming(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
                 overrides,
                 task_name.as_str(),
                 member,
@@ -98185,6 +100224,7 @@ fn run_single_contract_target_streaming(
                 )),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            receipt.replay_input_policy = replay_input_policy.clone();
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
@@ -98278,6 +100318,7 @@ fn run_single_contract_target_streaming(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
                 overrides,
                 task_name.as_str(),
                 member,
@@ -98296,6 +100337,7 @@ fn run_single_contract_target_streaming(
                 Some(next_note),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            receipt.replay_input_policy = replay_input_policy;
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
             attach_task_crossing_to_receipt(
@@ -98359,6 +100401,7 @@ fn run_single_contract_target_captured(
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
+    replay_input_preflight: TaskReplayInputPreflight,
 ) -> Result<CapturedTaskRunSuccess, RunCommandFailure> {
     if let Err(error) =
         materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
@@ -98371,10 +100414,12 @@ fn run_single_contract_target_captured(
         });
     }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    let replay_inputs = match capture_replay_inputs_before_execution(
+    let replay_input_policy = replay_input_preflight.policy.clone();
+    let replay_inputs = match capture_replay_inputs_from_observations(
         &target.contract,
         &target.contract_path,
         [task_name.clone()],
+        &replay_input_preflight.observations,
     ) {
         Ok(inputs) => inputs,
         Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
@@ -98386,6 +100431,7 @@ fn run_single_contract_target_captured(
                 overrides,
                 show_receipt,
                 mismatch,
+                replay_input_policy.clone(),
             ));
         }
         Err(error) => {
@@ -98397,6 +100443,21 @@ fn run_single_contract_target_captured(
             });
         }
     };
+    if let Some(evaluation) = replay_input_policy
+        .as_ref()
+        .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+        .cloned()
+    {
+        return Err(replay_input_policy_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            member,
+            overrides,
+            show_receipt,
+            evaluation,
+        ));
+    }
     let witnessed_observations = capture_witnessed_observations_before_execution(
         &target.contract,
         &target.contract_path,
@@ -98428,6 +100489,7 @@ fn run_single_contract_target_captured(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
                 overrides,
                 task_name.as_str(),
                 member,
@@ -98446,6 +100508,7 @@ fn run_single_contract_target_captured(
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            receipt.replay_input_policy = replay_input_policy.clone();
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
@@ -98507,6 +100570,7 @@ fn run_single_contract_target_captured(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
                 overrides,
                 task_name.as_str(),
                 member,
@@ -98533,6 +100597,7 @@ fn run_single_contract_target_captured(
                 )),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            receipt.replay_input_policy = replay_input_policy.clone();
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.service_termination = outcome.service_termination.clone();
             receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
@@ -98626,6 +100691,7 @@ fn run_single_contract_target_captured(
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
                 overrides,
                 task_name.as_str(),
                 member,
@@ -98644,6 +100710,7 @@ fn run_single_contract_target_captured(
                 Some(next_note),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
+            receipt.replay_input_policy = replay_input_policy;
             attach_witnessed_observations(&mut receipt, &witnessed_observations);
             receipt.blocked = run_error_receipt_blocked_entries(&error);
             attach_task_crossing_to_receipt(
@@ -98741,12 +100808,26 @@ pub(crate) fn replay_baseline_record(
                 "replay baseline producer `{producer}` requires a clean Git source identity before recording: {reason}"
             )
         })?;
+        let replay_input_preflight =
+            task_replay_input_preflight(&target.contract, &target.contract_path, producer.as_str());
+        enforce_task_replay_input_preflight(
+            &target.contract,
+            &target.contract_path,
+            producer.as_str(),
+            None,
+            ExecutionOverrides::default(),
+            false,
+            &replay_input_preflight,
+        )
+        .map_err(|failure| failure.message)?;
         if let Some(failure) = run_selected_precondition_failure(
             producer.as_str(),
             ExecutionOverrides::default(),
             None,
             &target.contract,
             &target.contract_path,
+            false,
+            &replay_input_preflight,
         ) {
             return Err(failure.message);
         }
@@ -98768,6 +100849,7 @@ pub(crate) fn replay_baseline_record(
             false,
             details_footer.as_str(),
             true,
+            replay_input_preflight,
         )
         .map_err(|failure| failure.message)?;
         let completed_source_identity =
@@ -102883,22 +104965,31 @@ fn execution_policy_lines(
     contract_path: &Path,
     backend: Backend,
 ) -> Vec<String> {
+    let loaded_policy = load_org_policy_pack_auto_details(contract_path)
+        .ok()
+        .flatten();
     execution_policy_lines_for_toolchain_names(
         contract,
         contract_path,
         backend,
         &contract.toolchains.keys().cloned().collect(),
+        Some(DoctorPolicySnapshot {
+            loaded: loaded_policy.as_ref(),
+            load_error: None,
+        }),
     )
 }
 
 fn execution_policy_lines_for_toolchain_names(
     contract: &Contract,
-    contract_path: &Path,
+    _contract_path: &Path,
     backend: Backend,
     toolchain_names: &BTreeSet<String>,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
 ) -> Vec<String> {
-    let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
-        return Vec::new();
+    let policy_pack = match policy_snapshot.and_then(|snapshot| snapshot.loaded) {
+        Some(loaded) => &loaded.pack,
+        None => return Vec::new(),
     };
 
     let requirements = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
@@ -102979,6 +105070,7 @@ fn run_execution_receipt(
     run_execution_receipt_with_shared(
         contract,
         contract_path,
+        None,
         overrides,
         task_name,
         member,
@@ -103000,17 +105092,40 @@ fn run_execution_receipt(
 
 // Capture declared, lockfile-strict hydration inputs as the receipt is issued. Receipt comparison
 // must use these stored identities rather than re-reading the repository later.
+#[cfg(test)]
 fn receipt_evaluated_inputs(
     contract: &Contract,
     contract_path: &Path,
     task_names: impl IntoIterator<Item = String>,
     overrides: ExecutionOverrides,
 ) -> Vec<ExecutionReceiptEvaluatedInput> {
+    let loaded_policy = load_org_policy_pack_auto_details(contract_path)
+        .ok()
+        .flatten();
+    receipt_evaluated_inputs_with_policy_snapshot(
+        contract,
+        contract_path,
+        task_names,
+        overrides,
+        Some(DoctorPolicySnapshot {
+            loaded: loaded_policy.as_ref(),
+            load_error: None,
+        }),
+    )
+}
+
+fn receipt_evaluated_inputs_with_policy_snapshot(
+    contract: &Contract,
+    contract_path: &Path,
+    task_names: impl IntoIterator<Item = String>,
+    overrides: ExecutionOverrides,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
+) -> Vec<ExecutionReceiptEvaluatedInput> {
     let task_names = task_names.into_iter().collect::<Vec<_>>();
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let mut inputs = BTreeMap::new();
     collect_receipt_source_identity_input(root, &mut inputs);
-    collect_receipt_policy_ruleset_identity_input(contract_path, root, &mut inputs);
+    collect_receipt_policy_ruleset_identity_input(policy_snapshot, root, &mut inputs);
     collect_receipt_declared_env_source_inputs(contract, contract_path, &task_names, &mut inputs);
     for task_name in task_names {
         let Some(task) = contract.tasks.get(&task_name) else {
@@ -103109,16 +105224,21 @@ fn git_head_identity_excluding(root: &Path, excluded_paths: &[String]) -> Result
 // A loaded org policy pack is part of execution truth. When it changes, replay should report
 // named policy/ruleset drift instead of leaving governance movement ambient.
 fn collect_receipt_policy_ruleset_identity_input(
-    contract_path: &Path,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
     root: &Path,
     inputs: &mut BTreeMap<String, ExecutionReceiptEvaluatedInput>,
 ) {
-    let Ok(Some((_policy_pack, policy_path))) = load_org_policy_pack_auto(contract_path) else {
+    let Some(loaded_policy) = policy_snapshot.and_then(|snapshot| snapshot.loaded) else {
         return;
     };
-    let Ok(policy_bytes) = fs::read(&policy_path) else {
+    let policy_identity = loaded_policy
+        .source_identity
+        .clone()
+        .or_else(|| semantic_contract_identity(&loaded_policy.pack).ok());
+    let Some(policy_identity) = policy_identity else {
         return;
     };
+    let policy_path = loaded_policy.path.as_path();
     let display_path = policy_path
         .strip_prefix(root)
         .ok()
@@ -103131,7 +105251,7 @@ fn collect_receipt_policy_ruleset_identity_input(
             id: String::from("policy:org_ruleset"),
             kind: String::from("policy_ruleset_identity"),
             input_class: ReplayInputClass::PolicyRulesetIdentity,
-            identity: contract_snapshot_hash(&policy_bytes),
+            identity: policy_identity,
             expected_identity: None,
             execution_started: None,
             hydration_provenance: None,
@@ -103251,18 +105371,48 @@ fn capture_replay_inputs_before_execution(
     contract_path: &Path,
     roots: impl IntoIterator<Item = String>,
 ) -> Result<Vec<ExecutionReceiptEvaluatedInput>, ReplayInputCaptureError> {
+    let roots = roots.into_iter().collect::<Vec<_>>();
     let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let observations = observe_replay_inputs(contract, root, roots.clone());
+    capture_replay_inputs_from_observations(contract, contract_path, roots, &observations)
+}
+
+fn capture_replay_inputs_from_observations(
+    contract: &Contract,
+    contract_path: &Path,
+    roots: impl IntoIterator<Item = String>,
+    observations: &ReplayInputPolicyObservations,
+) -> Result<Vec<ExecutionReceiptEvaluatedInput>, ReplayInputCaptureError> {
     let mut captured = BTreeMap::new();
-    for task_name in contract.task_dependency_closure_names(roots) {
+    for task_name in contract.task_execution_closure_names(roots) {
         let Some(task) = contract.tasks.get(&task_name) else {
             continue;
         };
         for input in &task.replay_inputs {
             let path = input.path.trim();
             let (kind, input_class) = replay_input_capture_surface(input.kind);
-            let observed = fs::read(root.join(path))
-                .map(|bytes| sha256_identity(&bytes))
-                .map_err(|error| error.to_string());
+            let observation = observations
+                .get(&replay_input_observation_key(&task_name, &input.id))
+                .cloned()
+                .unwrap_or_else(
+                    || crate::replay_input_policy::ReplayInputPolicyInputRecord {
+                        task: task_name.clone(),
+                        id: input.id.clone(),
+                        path: input.path.clone(),
+                        expected_identity: input.expected_identity.clone(),
+                        observed_identity: None,
+                        status: String::from("observation_unavailable"),
+                        error: Some(String::from(
+                            "replay input was not captured by the command preflight",
+                        )),
+                    },
+                );
+            let observed = observation.observed_identity.clone().ok_or_else(|| {
+                observation
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| String::from("replay input identity was not observed"))
+            });
             let id = format!("replay_input:{task_name}:{}", input.id.trim());
             if let Some(evaluation) = evaluate_replay_input_identity(input, observed.clone()) {
                 match evaluation {
@@ -103410,6 +105560,7 @@ fn replay_input_identity_run_failure(
     overrides: ExecutionOverrides,
     show_receipt: bool,
     mismatch: ReplayInputIdentityMismatch,
+    replay_input_policy: Option<ReplayInputPolicyEvaluation>,
 ) -> RunCommandFailure {
     let finding = replay_input_identity_mismatch_finding(&mismatch);
     let mut receipt = repo_execution_receipt_with_overrides(
@@ -103433,11 +105584,115 @@ fn replay_input_identity_run_failure(
         Some(overrides),
     );
     receipt.evaluated_inputs = vec![replay_input_identity_mismatch_evaluated_input(&mismatch)];
+    receipt.replay_input_policy = replay_input_policy;
     receipt.failure_origin = Some(mismatch.kind.to_string());
     receipt.blocked = vec![mismatch.kind.to_string()];
     refresh_execution_receipt_status(&mut receipt);
     RunCommandFailure {
         message: stylize_text_failure("ota run", &mismatch.message()),
+        summary: Some(render_execution_receipt_summary_block(
+            &receipt,
+            Some(task_name),
+            "RUN SUMMARY",
+        )),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+fn replay_input_policy_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    evaluation: ReplayInputPolicyEvaluation,
+) -> RunCommandFailure {
+    let finding = replay_input_policy_refusal_finding(&evaluation);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            contract_path,
+            task_name,
+            overrides,
+            member.map(str::to_string),
+        ),
+        "BLOCKED",
+        "preconditions",
+        None,
+        member,
+        Some(task_name),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(format!("replay_input_policy_{}", evaluation.decision));
+    receipt.blocked = vec![format!("replay_input_policy_{}", evaluation.decision)];
+    receipt.replay_input_policy = Some(evaluation);
+    refresh_execution_receipt_status(&mut receipt);
+    RunCommandFailure {
+        message: stylize_text_failure(
+            "ota run",
+            &format!(
+                "{}\nWhy: {}\nNext: {}",
+                finding.summary, finding.why, finding.next
+            ),
+        ),
+        summary: Some(render_execution_receipt_summary_block(
+            &receipt,
+            Some(task_name),
+            "RUN SUMMARY",
+        )),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+fn replay_input_policy_unavailable_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    error: String,
+) -> RunCommandFailure {
+    let finding = replay_input_policy_unavailable_finding(&error);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            contract_path,
+            task_name,
+            overrides,
+            member.map(str::to_string),
+        ),
+        "BLOCKED",
+        "preconditions",
+        None,
+        member,
+        Some(task_name),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(String::from("replay_input_policy_unavailable"));
+    receipt.blocked = vec![String::from("replay_input_policy_unavailable")];
+    refresh_execution_receipt_status(&mut receipt);
+    RunCommandFailure {
+        message: stylize_text_failure(
+            "ota run",
+            &format!(
+                "{}\nWhy: {}\nNext: {}",
+                finding.summary, finding.why, finding.next
+            ),
+        ),
         summary: Some(render_execution_receipt_summary_block(
             &receipt,
             Some(task_name),
@@ -103870,6 +106125,191 @@ fn receipt_hydration_source_posture(
             .collect(),
         resolution: summary.resolution,
         resolution_error: summary.resolution_error,
+    }
+}
+
+fn replay_input_policy_refusal_finding(evaluation: &ReplayInputPolicyEvaluation) -> Finding {
+    if let Some(selector) = evaluation.unknown_selectors.first() {
+        return Finding::identified(
+            "OTA_POLICY_REPLAY_INPUT_SELECTOR_UNKNOWN",
+            "policy",
+            "org_policy",
+            FindingSeverity::Error,
+            format!(
+                "Replay-input policy references unknown {} `{}`",
+                selector.subject.kind, selector.subject.name
+            ),
+            format!(
+                "active policy contains rule `{}`, but the selected contract does not declare that {}",
+                selector.identity, selector.subject.kind
+            ),
+            format!(
+                "correct or remove `{}` in the active policy before governed execution",
+                selector.identity
+            ),
+        );
+    }
+    let code = if evaluation.decision == "deny" {
+        "OTA_REPLAY_INPUT_POLICY_DENIED"
+    } else {
+        "OTA_REPLAY_INPUT_POLICY_REVIEW_REQUIRED"
+    };
+    Finding::identified(
+        code,
+        "policy",
+        "org_policy",
+        FindingSeverity::Error,
+        format!(
+            "Replay-input identity policy {} selected {} `{}`",
+            if evaluation.decision == "deny" {
+                "denies"
+            } else {
+                "requires review for"
+            },
+            evaluation.subject.kind,
+            evaluation.subject.name
+        ),
+        format!(
+            "policy coverage is `{}` with decision `{}`",
+            evaluation.coverage, evaluation.decision
+        ),
+        String::from(
+            "declare and verify every required replay input identity, then rerun `ota doctor`",
+        ),
+    )
+}
+
+fn replay_input_policy_unavailable_finding(error: &str) -> Finding {
+    Finding::identified(
+        "OTA_REPLAY_INPUT_POLICY_UNAVAILABLE",
+        "policy",
+        "org_policy",
+        FindingSeverity::Error,
+        String::from("Replay-input policy could not be loaded"),
+        format!(
+            "Ota cannot establish replay-input admission because the active policy source failed to load: {error}"
+        ),
+        String::from(
+            "repair or remove the invalid active policy source, then rerun `ota doctor` before execution",
+        ),
+    )
+}
+
+fn up_replay_input_policy_refusal_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    evaluation: ReplayInputPolicyEvaluation,
+) -> RepoUpResult {
+    let finding = replay_input_policy_refusal_finding(&evaluation);
+    let task_name = contract
+        .selected_run_task_name_for(workflow_name)
+        .map(str::to_string)
+        .or_else(|| (evaluation.subject.kind == "task").then(|| evaluation.subject.name.clone()));
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, resolved_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        resolved_path,
+        contract,
+        context,
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(format!("replay_input_policy_{}", evaluation.decision));
+    receipt.blocked = vec![format!("replay_input_policy_{}", evaluation.decision)];
+    receipt.replay_input_policy = Some(evaluation);
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "preconditions",
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+}
+
+fn up_replay_input_policy_unavailable_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    error: String,
+) -> RepoUpResult {
+    let finding = replay_input_policy_unavailable_finding(&error);
+    let task_name = contract
+        .selected_run_task_name_for(workflow_name)
+        .map(str::to_string);
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, resolved_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        resolved_path,
+        contract,
+        context,
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(String::from("replay_input_policy_unavailable"));
+    receipt.blocked = vec![String::from("replay_input_policy_unavailable")];
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "preconditions",
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
     }
 }
 
@@ -104397,6 +106837,7 @@ fn collect_receipt_hydration_source_inputs(
 fn run_execution_receipt_with_shared(
     contract: &Contract,
     contract_path: &Path,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
     overrides: ExecutionOverrides,
     task_name: &str,
     _member: Option<&str>,
@@ -104586,14 +107027,15 @@ fn run_execution_receipt_with_shared(
         contract_path,
         backend,
         &toolchain_names,
+        policy_snapshot,
     );
     policy_lines.extend(safe_task_effect_policy_lines(
         contract,
-        contract_path,
         task_name,
         overrides,
+        policy_snapshot.and_then(|snapshot| snapshot.loaded),
     ));
-    let evaluated_inputs = receipt_evaluated_inputs(
+    let evaluated_inputs = receipt_evaluated_inputs_with_policy_snapshot(
         contract,
         contract_path,
         executed_steps
@@ -104601,6 +107043,7 @@ fn run_execution_receipt_with_shared(
             .map(|step| step.name.clone())
             .chain(std::iter::once(task_name.to_string())),
         overrides,
+        policy_snapshot,
     );
 
     ExecutionReceipt {
@@ -104616,6 +107059,7 @@ fn run_execution_receipt_with_shared(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        replay_input_policy: None,
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         context,
@@ -107500,6 +109944,48 @@ fn proof_runtime_artifact_segment(value: &str) -> String {
     }
 }
 
+struct ProofRuntimePolicySnapshotFile {
+    path: PathBuf,
+}
+
+impl Drop for ProofRuntimePolicySnapshotFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn materialize_proof_runtime_policy_snapshot(
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    token: &str,
+) -> Result<Option<ProofRuntimePolicySnapshotFile>, String> {
+    let Some(loaded_policy) = loaded_policy else {
+        return Ok(None);
+    };
+    let contents = serde_yaml::to_string(&loaded_policy.pack)
+        .map_err(|error| format!("could not serialize the command-scoped org policy: {error}"))?;
+    let path = env::temp_dir().join(format!("ota-policy-snapshot-{token}.yaml"));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).map_err(|error| {
+        format!(
+            "could not create command-scoped org-policy snapshot `{}`: {error}",
+            compact_path(&path, ".")
+        )
+    })?;
+    file.write_all(contents.as_bytes()).map_err(|error| {
+        format!(
+            "could not write command-scoped org-policy snapshot `{}`: {error}",
+            compact_path(&path, ".")
+        )
+    })?;
+    Ok(Some(ProofRuntimePolicySnapshotFile { path }))
+}
+
 fn spawn_proof_runtime_up_process(
     contract_path: &Path,
     workflow_name: Option<&str>,
@@ -107510,6 +109996,7 @@ fn spawn_proof_runtime_up_process(
     up_log_artifact_path: &Path,
     execution_boundary_trace_path: &Path,
     execution_boundary_trace_token: &str,
+    policy_snapshot_path: Option<&Path>,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
         format!("could not resolve the current ota executable for runtime proof: {error}")
@@ -107526,6 +110013,16 @@ fn spawn_proof_runtime_up_process(
         .current_dir(working_dir)
         .args(proof_runtime_up_args(overrides));
     command.envs(runtime_proof_child_env());
+    match policy_snapshot_path {
+        Some(path) => {
+            command.env("OTA_POLICY", path);
+            command.env_remove(OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV);
+        }
+        None => {
+            command.env_remove("OTA_POLICY");
+            command.env(OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV, "1");
+        }
+    }
     command.env(
         EXECUTION_BOUNDARY_TRACE_PATH_ENV,
         execution_boundary_trace_path,
@@ -107912,14 +110409,18 @@ fn proof_runtime_doctor_report(
     workflow_name: Option<&str>,
     doctor_mode: DoctorMode,
     overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> DoctorReport {
-    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
         contract,
         contract_path,
         doctor_mode,
         overrides.lifecycle,
         workflow_name,
         overrides,
+        replay_input_policy,
+        policy_snapshot,
     )
 }
 
@@ -108938,6 +111439,8 @@ fn proof_runtime_doctor_artifact_json(
     report: &DoctorReport,
     summary: &DoctorSummary,
     likely_cause: Option<&ProofRuntimeLikelyCause>,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> Result<String, String> {
     let rewritten_findings = rewrite_doctor_findings_for_contract(
         &report.findings,
@@ -108973,7 +111476,8 @@ fn proof_runtime_doctor_artifact_json(
         agent: agent_summary,
         execution: execution_summary,
         governance: doctor_required_verification_governance(contract, &refined_findings),
-        claim_assurance: doctor_claim_assurance(contract, contract_path),
+        claim_assurance: doctor_claim_assurance(contract, contract_path, policy_snapshot),
+        replay_input_policy: replay_input_policy.cloned(),
         provisioning: report.provisioning.as_ref().map(|value| &value.plan),
         provisioning_request: report.provisioning.as_ref().map(|value| &value.request),
         adapter_bootstrap: report.adapter_bootstrap.as_ref(),
@@ -109070,6 +111574,8 @@ fn wait_for_proof_runtime_readiness(
     process_label: &str,
     up_log_artifact_path: &Path,
     wait_budget_override: Option<Duration>,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
     let interrupted = proof_runtime_interrupt_flag();
     interrupted.store(false, Ordering::Relaxed);
@@ -109106,6 +111612,8 @@ fn wait_for_proof_runtime_readiness(
                         workflow_name,
                         doctor_mode,
                         overrides.clone(),
+                        replay_input_policy,
+                        policy_snapshot,
                     );
                     let successful_service_run_exit = process_label.starts_with("ota run ")
                         && selected_up_run_task_is_service(contract, workflow_name, overrides)
@@ -109151,6 +111659,8 @@ fn wait_for_proof_runtime_readiness(
                 workflow_name,
                 doctor_mode,
                 overrides.clone(),
+                replay_input_policy,
+                policy_snapshot,
             );
             if latest_report.ok {
                 match up_process.try_wait() {
@@ -109232,6 +111742,8 @@ fn wait_for_proof_runtime_readiness(
                 workflow_name,
                 doctor_mode,
                 overrides.clone(),
+                replay_input_policy,
+                policy_snapshot,
             );
             if latest_report.ok {
                 match up_process.try_wait() {
@@ -109267,6 +111779,8 @@ fn wait_for_proof_runtime_readiness(
                     workflow_name,
                     doctor_mode,
                     overrides.clone(),
+                    replay_input_policy,
+                    policy_snapshot,
                 )
             })
         };
@@ -112207,6 +114721,48 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         }
     }
 
+    if let Some(policy) = receipt.replay_input_policy.as_ref() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Replay Input Policy")
+        ));
+        stdout.push_str(&format!(
+            "\n{} {} `{}`",
+            paint_key("Subject:"),
+            policy.subject.kind,
+            policy.subject.name
+        ));
+        stdout.push_str(&format!("\n{} {}", paint_key("Decision:"), policy.decision));
+        stdout.push_str(&format!("\n{} {}", paint_key("Coverage:"), policy.coverage));
+        for rule in &policy.applicable_rules {
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {})",
+                paint_key("Rule:"),
+                rule.identity,
+                rule.coverage,
+                rule.decision
+            ));
+            for reason in &rule.reasons {
+                stdout.push_str(&format!("\n  {} {reason}", paint_key("Reason:")));
+            }
+        }
+        for input in &policy.inputs {
+            stdout.push_str(&format!(
+                "\n{} task:{} input:{} ({})",
+                paint_key("Input:"),
+                input.task,
+                input.id,
+                input.status
+            ));
+            if let Some(identity) = input.observed_identity.as_deref() {
+                stdout.push_str(&format!(
+                    "\n  {} {identity}",
+                    paint_key("Observed Identity:")
+                ));
+            }
+        }
+    }
+
     if !receipt.witnessed_observations.query_traces.is_empty() {
         stdout.push_str(&format!(
             "\n\n{}",
@@ -114618,7 +117174,7 @@ fn repo_execution_receipt(
     exit_code: Option<i32>,
     next: Option<String>,
 ) -> ExecutionReceipt {
-    repo_execution_receipt_with_overrides(
+    repo_execution_receipt_with_policy_snapshot(
         path,
         contract,
         context,
@@ -114631,6 +117187,37 @@ fn repo_execution_receipt(
         exit_code,
         next,
         None,
+    )
+}
+
+fn repo_execution_receipt_with_policy_snapshot(
+    path: &Path,
+    contract: &Contract,
+    context: PhaseExecutionContext,
+    status: &str,
+    phase: &str,
+    workflow_name: Option<&str>,
+    service: Option<&str>,
+    task: Option<&str>,
+    findings: &[Finding],
+    exit_code: Option<i32>,
+    next: Option<String>,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
+) -> ExecutionReceipt {
+    repo_execution_receipt_with_overrides_and_policy_snapshot(
+        path,
+        contract,
+        context,
+        status,
+        phase,
+        workflow_name,
+        service,
+        task,
+        findings,
+        exit_code,
+        next,
+        None,
+        policy_snapshot,
     )
 }
 
@@ -114647,6 +117234,38 @@ fn repo_execution_receipt_with_overrides(
     exit_code: Option<i32>,
     next: Option<String>,
     execution_overrides: Option<ExecutionOverrides>,
+) -> ExecutionReceipt {
+    repo_execution_receipt_with_overrides_and_policy_snapshot(
+        path,
+        contract,
+        context,
+        status,
+        phase,
+        workflow_name,
+        service,
+        task,
+        findings,
+        exit_code,
+        next,
+        execution_overrides,
+        None,
+    )
+}
+
+fn repo_execution_receipt_with_overrides_and_policy_snapshot(
+    path: &Path,
+    contract: &Contract,
+    context: PhaseExecutionContext,
+    status: &str,
+    phase: &str,
+    workflow_name: Option<&str>,
+    service: Option<&str>,
+    task: Option<&str>,
+    findings: &[Finding],
+    exit_code: Option<i32>,
+    next: Option<String>,
+    execution_overrides: Option<ExecutionOverrides>,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
 ) -> ExecutionReceipt {
     let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
     let effective_task_env = task
@@ -114690,14 +117309,14 @@ fn repo_execution_receipt_with_overrides(
         })
         .unwrap_or_else(|| fallback_toolchain_summaries_for_backend(contract, execution_backend));
     let toolchain_names = toolchain_summary_names(&toolchains);
-    let evaluated_inputs = receipt_evaluated_inputs(
+    let evaluated_inputs = receipt_evaluated_inputs_with_policy_snapshot(
         contract,
         path,
         task.map(|task_name| contract.task_dependency_closure_names([task_name.to_string()]))
             .unwrap_or_else(|| contract.selected_workflow_task_closure_names(workflow_name)),
         execution_overrides.unwrap_or_default(),
+        policy_snapshot,
     );
-
     ExecutionReceipt {
         ok,
         path: path.display().to_string(),
@@ -114711,6 +117330,10 @@ fn repo_execution_receipt_with_overrides(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        // Admission paths attach the evaluation captured before execution. A generic receipt
+        // constructor must not re-read mutable inputs after execution and present that state as
+        // preflight evidence.
+        replay_input_policy: None,
         workspace: None,
         backend: context.backend,
         context: context.context,
@@ -114747,6 +117370,7 @@ fn repo_execution_receipt_with_overrides(
             path,
             execution_backend,
             &toolchain_names,
+            policy_snapshot,
         ),
         dependency_steps: planned_dependency_steps_for_task(contract, task, execution_overrides),
         steps,
@@ -115613,6 +118237,7 @@ fn workspace_up_receipt(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        replay_input_policy: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -115710,6 +118335,7 @@ fn workspace_status_receipt(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        replay_input_policy: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -115811,6 +118437,7 @@ fn workspace_run_receipt(
         witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
         crossing: None,
         refusal: None,
+        replay_input_policy: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -117373,6 +120000,7 @@ fn best_effort_apply_provisioning_request_with_adapter_bootstrap(
     contract_path: &Path,
     request: &crate::policy_pack::ProvisioningBackendRequest,
     target: &ProvisioningExecutionTarget,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
 ) -> bool {
     let working_dir = contract_working_dir(contract_path);
     if apply_provisioning_request_with_target(
@@ -117386,7 +120014,7 @@ fn best_effort_apply_provisioning_request_with_adapter_bootstrap(
         return true;
     }
 
-    let Ok(Some((policy_pack, _))) = load_org_policy_pack_auto(contract_path) else {
+    let Some(loaded_policy) = loaded_policy else {
         return false;
     };
     let mut adapters = request
@@ -117397,7 +120025,9 @@ fn best_effort_apply_provisioning_request_with_adapter_bootstrap(
         .collect::<Vec<_>>();
     adapters.sort_unstable();
     adapters.dedup();
-    let bootstrap_request = policy_pack.adapter_bootstrap_backend_request(&adapters);
+    let bootstrap_request = loaded_policy
+        .pack
+        .adapter_bootstrap_backend_request(&adapters);
     if bootstrap_request.actions.is_empty()
         || apply_provisioning_request_with_target(
             &bootstrap_request,
@@ -118173,6 +120803,7 @@ fn build_up_preview_with_actor(
     }
 }
 
+#[cfg(test)]
 fn preview_receipt(
     contract: &Contract,
     resolved_path: &Path,
@@ -118180,6 +120811,26 @@ fn preview_receipt(
     workflow_name: Option<&str>,
     status: &'static str,
     findings: &[Finding],
+) -> ExecutionReceipt {
+    preview_receipt_with_policy_snapshot(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        status,
+        findings,
+        None,
+    )
+}
+
+fn preview_receipt_with_policy_snapshot(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    status: &'static str,
+    findings: &[Finding],
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
 ) -> ExecutionReceipt {
     let preview_task = selected_up_setup_task_name(contract, workflow_name)
         .or_else(|| selected_up_prepare_task_name(contract, workflow_name))
@@ -118194,7 +120845,7 @@ fn preview_receipt(
             ))
             .unwrap_or(Backend::Native)
         });
-    let mut receipt = repo_execution_receipt_with_overrides(
+    let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
         resolved_path,
         contract,
         if let Some(task_name) = preview_task {
@@ -118211,6 +120862,7 @@ fn preview_receipt(
         None,
         findings.first().map(|finding| finding.next.clone()),
         preview_task.map(|_| overrides),
+        policy_snapshot,
     );
     receipt.toolchains =
         selected_workflow_toolchain_summaries(contract, overrides, workflow_name, preview_backend);
@@ -118219,6 +120871,7 @@ fn preview_receipt(
         resolved_path,
         preview_backend,
         &toolchain_summary_names(&receipt.toolchains),
+        policy_snapshot,
     );
     receipt
 }
@@ -118460,6 +121113,7 @@ fn run_up_task_detached_until_ready(
     policy_env: Option<&BTreeMap<String, String>>,
     ready_timeout: Option<Duration>,
     keep_running: bool,
+    replay_input_preflight: &TaskReplayInputPreflight,
 ) -> Result<CommandRunResult, String> {
     let repo_root = contract_working_dir(resolved_path);
     let artifact_dir = proof_runtime_artifact_dir(repo_root, None, workflow_name);
@@ -118490,6 +121144,8 @@ fn run_up_task_detached_until_ready(
         &format!("ota run {task_name} --stream"),
         &run_log_artifact_path,
         ready_timeout,
+        replay_input_preflight.policy.as_ref(),
+        replay_input_preflight.doctor_policy_snapshot(),
     )?;
 
     if proof_ok {
@@ -120350,9 +123006,9 @@ fn up_remote_execution_blocker(
 
 fn append_up_safe_task_effect_policy_findings(
     contract: &Contract,
-    contract_path: &Path,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
     report: &mut DoctorReport,
 ) {
     let mut task_names = BTreeSet::new();
@@ -120365,9 +123021,9 @@ fn append_up_safe_task_effect_policy_findings(
     for task_name in task_names {
         append_safe_task_effect_policy_findings(
             contract,
-            contract_path,
             &task_name,
             overrides,
+            loaded_policy,
             report,
         );
     }
@@ -120491,23 +123147,66 @@ fn execute_repo_up_with_behavior_with_agent(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
 ) -> Result<RepoUpResult, String> {
-    let captured_replay_inputs = match capture_replay_inputs_before_execution(
+    let replay_input_preflight =
+        workflow_replay_input_preflight(contract, resolved_path, workflow_name);
+    if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
+        return Ok(up_replay_input_policy_unavailable_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            error.clone(),
+        ));
+    }
+    let replay_input_policy = replay_input_preflight.policy.clone();
+    let captured_replay_inputs = match capture_replay_inputs_from_observations(
         contract,
         resolved_path,
         contract.selected_workflow_task_closure_names(workflow_name),
+        &replay_input_preflight.observations,
     ) {
         Ok(inputs) => inputs,
         Err(ReplayInputCaptureError::IdentityMismatch(mismatch)) => {
-            return Ok(up_replay_input_identity_mismatch_result(
+            let mut result = up_replay_input_identity_mismatch_result(
                 contract,
                 resolved_path,
                 workflow_name,
                 overrides,
                 mismatch,
-            ));
+            );
+            result.receipt.replay_input_policy = replay_input_policy;
+            return Ok(result);
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => {
+            if let Some(evaluation) = replay_input_policy
+                .as_ref()
+                .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+                .cloned()
+            {
+                return Ok(up_replay_input_policy_refusal_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    evaluation,
+                ));
+            }
+            return Err(error.to_string());
+        }
     };
+    if let Some(evaluation) = replay_input_policy
+        .as_ref()
+        .filter(|evaluation| matches!(evaluation.decision.as_str(), "deny" | "review"))
+        .cloned()
+    {
+        return Ok(up_replay_input_policy_refusal_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            evaluation,
+        ));
+    }
     let captured_witnessed_observations = if dry_run {
         ExecutionReceiptWitnessedObservations::default()
     } else {
@@ -120537,10 +123236,12 @@ fn execute_repo_up_with_behavior_with_agent(
         mode,
         run_behavior_preference,
         ready_timeout,
+        &replay_input_preflight,
     )?;
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_replay_inputs);
     attach_witnessed_observations(&mut result.receipt, &captured_witnessed_observations);
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_hydration_provenance);
+    result.receipt.replay_input_policy = replay_input_policy;
     Ok(result)
 }
 
@@ -120555,7 +123256,9 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
+    replay_input_preflight: &TaskReplayInputPreflight,
 ) -> Result<RepoUpResult, String> {
+    let replay_input_policy = replay_input_preflight.policy.as_ref();
     let adjusted_contract =
         contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
     let contract = adjusted_contract.as_ref().unwrap_or(contract);
@@ -120577,6 +123280,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             workflow_name,
             overrides,
             run_behavior_preference,
+            replay_input_preflight.doctor_policy_snapshot(),
         )
     {
         return Ok(up_agent_execution_refusal_result(
@@ -120585,6 +123289,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             workflow_name,
             overrides,
             &refusal,
+            replay_input_preflight.doctor_policy_snapshot(),
         ));
     }
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
@@ -120613,13 +123318,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 agent,
             );
             preview.plan = execution_option_refusal_up_preview_plan(&task_name);
-            let receipt = preview_receipt(
+            let receipt = preview_receipt_with_policy_snapshot(
                 contract,
                 resolved_path,
                 overrides,
                 workflow_name,
                 "BLOCKED",
                 &report.findings,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             );
             return Ok(RepoUpResult {
                 ok: false,
@@ -120647,7 +123353,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             agent,
             None,
         );
-        let mut receipt = repo_execution_receipt_with_overrides(
+        let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
             resolved_path,
             contract,
             task_phase_execution_context(contract, resolved_path, &task_name, overrides, None),
@@ -120660,6 +123366,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             None,
             Some(blocker.next.clone()),
             Some(overrides),
+            Some(replay_input_preflight.doctor_policy_snapshot()),
         );
         receipt.blocked.extend(blocked_entries);
         return Ok(RepoUpResult {
@@ -120725,13 +123432,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 &report,
                 agent,
             );
-            let receipt = preview_receipt(
+            let receipt = preview_receipt_with_policy_snapshot(
                 contract,
                 resolved_path,
                 overrides,
                 workflow_name,
                 "BLOCKED",
                 &report.findings,
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             );
             return Ok(RepoUpResult {
                 ok: false,
@@ -120756,7 +123464,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             phase: "preconditions",
             preview: None,
             governance_preflight: Some(derive_preflight(&report, None)),
-            receipt: repo_execution_receipt(
+            receipt: repo_execution_receipt_with_policy_snapshot(
                 resolved_path,
                 contract,
                 doctor_report_execution_context(
@@ -120774,6 +123482,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 &report.findings,
                 None,
                 Some(blocker.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             ),
             report,
             service: None,
@@ -120821,13 +123530,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 &report,
                 agent,
             );
-            let receipt = preview_receipt(
+            let receipt = preview_receipt_with_policy_snapshot(
                 contract,
                 resolved_path,
                 overrides,
                 workflow_name,
                 "BLOCKED",
                 &[blocker],
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             );
             return Ok(RepoUpResult {
                 ok: false,
@@ -120853,7 +123563,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             phase: "preconditions",
             preview: None,
             governance_preflight: Some(derive_preflight(&report, None)),
-            receipt: repo_execution_receipt_with_overrides(
+            receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                 resolved_path,
                 contract,
                 phase_context,
@@ -120866,6 +123576,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 None,
                 report.findings.first().map(|finding| finding.next.clone()),
                 phase_task.as_deref().map(|_| overrides),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             ),
             report,
             service: None,
@@ -120878,18 +123589,21 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         });
     }
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
-        contract,
-        resolved_path,
-        doctor_mode,
-        workflow_name,
-        overrides,
-    );
+    let mut preflight =
+        diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+            contract,
+            resolved_path,
+            doctor_mode,
+            workflow_name,
+            overrides,
+            replay_input_policy,
+            replay_input_preflight.doctor_policy_snapshot(),
+        );
     append_up_safe_task_effect_policy_findings(
         contract,
-        resolved_path,
         workflow_name,
         overrides,
+        replay_input_preflight.loaded_policy.as_ref(),
         &mut preflight,
     );
     if dry_run {
@@ -120904,13 +123618,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         );
         let preview_ok = !doctor_verdict_blocks_preview(preview.summary.verdict);
         let status = doctor_readiness_status_label(preview.summary.verdict);
-        let receipt = preview_receipt(
+        let receipt = preview_receipt_with_policy_snapshot(
             contract,
             resolved_path,
             overrides,
             workflow_name,
             status,
             &preview.blockers,
+            Some(replay_input_preflight.doctor_policy_snapshot()),
         );
         return Ok(RepoUpResult {
             ok: preview_ok,
@@ -120937,7 +123652,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             phase: "preconditions",
             preview: None,
             governance_preflight: Some(derive_preflight(&preflight, None)),
-            receipt: repo_execution_receipt(
+            receipt: repo_execution_receipt_with_policy_snapshot(
                 resolved_path,
                 contract,
                 doctor_report_execution_context(
@@ -120958,6 +123673,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     .findings
                     .first()
                     .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             ),
             report: preflight,
             service: None,
@@ -120982,7 +123698,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     phase: "preconditions",
                     preview: None,
                     governance_preflight: Some(derive_preflight(&preflight, None)),
-                    receipt: repo_execution_receipt(
+                    receipt: repo_execution_receipt_with_policy_snapshot(
                         resolved_path,
                         contract,
                         doctor_report_execution_context(
@@ -121003,6 +123719,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                             .findings
                             .first()
                             .map(|finding| finding.next.clone()),
+                        Some(replay_input_preflight.doctor_policy_snapshot()),
                     ),
                     report: preflight,
                     service: None,
@@ -121042,18 +123759,21 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
                 }
-                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
-                    contract,
-                    resolved_path,
-                    doctor_mode,
-                    workflow_name,
-                    overrides,
-                );
+                preflight =
+                    diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                        contract,
+                        resolved_path,
+                        doctor_mode,
+                        workflow_name,
+                        overrides,
+                        replay_input_policy,
+                        replay_input_preflight.doctor_policy_snapshot(),
+                    );
                 append_up_safe_task_effect_policy_findings(
                     contract,
-                    resolved_path,
                     workflow_name,
                     overrides,
+                    replay_input_preflight.loaded_policy.as_ref(),
                     &mut preflight,
                 );
             }
@@ -121080,7 +123800,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     phase: "provisioning",
                     preview: None,
                     governance_preflight: Some(derive_preflight(&report, None)),
-                    receipt: repo_execution_receipt(
+                    receipt: repo_execution_receipt_with_policy_snapshot(
                         resolved_path,
                         contract,
                         provisioning_phase_execution_context(
@@ -121096,6 +123816,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         &report.findings,
                         Some(exit_code),
                         None,
+                        Some(replay_input_preflight.doctor_policy_snapshot()),
                     ),
                     report,
                     service: None,
@@ -121123,7 +123844,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     phase: "provisioning",
                     preview: None,
                     governance_preflight: Some(derive_preflight(&preflight, None)),
-                    receipt: repo_execution_receipt(
+                    receipt: repo_execution_receipt_with_policy_snapshot(
                         resolved_path,
                         contract,
                         provisioning_phase_execution_context(
@@ -121139,6 +123860,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         &preflight.findings,
                         Some(exit_code),
                         None,
+                        Some(replay_input_preflight.doctor_policy_snapshot()),
                     ),
                     report: preflight,
                     service: None,
@@ -121152,11 +123874,9 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             }
             Err(ProvisioningBackendError::MissingCommand { command }) => {
                 let mut bootstrapped = false;
-                if let Ok(Some((policy_pack, _policy_path))) =
-                    load_org_policy_pack_auto(resolved_path)
-                {
+                if let Some(loaded_policy) = replay_input_preflight.loaded_policy.as_ref() {
                     let bootstrap_request = adapter_bootstrap_request_for_missing_backend(
-                        &policy_pack,
+                        &loaded_policy.pack,
                         &provisioning_request,
                         &command,
                     );
@@ -121207,7 +123927,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                     phase: "provisioning",
                                     preview: None,
                                     governance_preflight: Some(derive_preflight(&report, None)),
-                                    receipt: repo_execution_receipt(
+                                    receipt: repo_execution_receipt_with_policy_snapshot(
                                         resolved_path,
                                         contract,
                                         provisioning_phase_execution_context(
@@ -121223,6 +123943,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                         &report.findings,
                                         Some(exit_code),
                                         None,
+                                        Some(replay_input_preflight.doctor_policy_snapshot()),
                                     ),
                                     report,
                                     service: None,
@@ -121277,12 +123998,14 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                 stderr.push_str(&outcome.stderr);
                             }
                             preflight =
-                                diagnose_preconditions_with_mode_for_workflow_with_overrides(
+                                diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
                                     contract,
                                     resolved_path,
                                     doctor_mode,
                                     workflow_name,
                                     overrides,
+                                    replay_input_policy,
+                                    replay_input_preflight.doctor_policy_snapshot(),
                                 );
                         }
                         Err(ProvisioningBackendError::DiagnosedCommandFailed {
@@ -121308,7 +124031,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                 phase: "provisioning",
                                 preview: None,
                                 governance_preflight: Some(derive_preflight(&report, None)),
-                                receipt: repo_execution_receipt(
+                                receipt: repo_execution_receipt_with_policy_snapshot(
                                     resolved_path,
                                     contract,
                                     provisioning_phase_execution_context(
@@ -121324,6 +124047,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                     &report.findings,
                                     Some(exit_code),
                                     None,
+                                    Some(replay_input_preflight.doctor_policy_snapshot()),
                                 ),
                                 report,
                                 service: None,
@@ -121351,7 +124075,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                 phase: "provisioning",
                                 preview: None,
                                 governance_preflight: Some(derive_preflight(&preflight, None)),
-                                receipt: repo_execution_receipt(
+                                receipt: repo_execution_receipt_with_policy_snapshot(
                                     resolved_path,
                                     contract,
                                     provisioning_phase_execution_context(
@@ -121367,6 +124091,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                     &preflight.findings,
                                     Some(exit_code),
                                     None,
+                                    Some(replay_input_preflight.doctor_policy_snapshot()),
                                 ),
                                 report: preflight,
                                 service: None,
@@ -121465,7 +124190,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         phase: "activation",
                         preview: None,
                         governance_preflight: Some(derive_preflight(&report, None)),
-                        receipt: repo_execution_receipt_with_overrides(
+                        receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                             resolved_path,
                             contract,
                             doctor_report_execution_context(
@@ -121484,6 +124209,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                             Some(outcome.exit_code),
                             Some(finding.next.clone()),
                             None,
+                            Some(replay_input_preflight.doctor_policy_snapshot()),
                         ),
                         report,
                         service: None,
@@ -121499,18 +124225,21 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             }
         }
 
-        preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
-            contract,
-            resolved_path,
-            doctor_mode,
-            workflow_name,
-            overrides,
-        );
+        preflight =
+            diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                contract,
+                resolved_path,
+                doctor_mode,
+                workflow_name,
+                overrides,
+                replay_input_policy,
+                replay_input_preflight.doctor_policy_snapshot(),
+            );
         append_up_safe_task_effect_policy_findings(
             contract,
-            resolved_path,
             workflow_name,
             overrides,
+            replay_input_preflight.loaded_policy.as_ref(),
             &mut preflight,
         );
     }
@@ -121522,7 +124251,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             phase: "preconditions",
             preview: None,
             governance_preflight: Some(derive_preflight(&preflight, None)),
-            receipt: repo_execution_receipt(
+            receipt: repo_execution_receipt_with_policy_snapshot(
                 resolved_path,
                 contract,
                 doctor_report_execution_context(
@@ -121543,6 +124272,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     .findings
                     .first()
                     .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             ),
             report: preflight,
             service: None,
@@ -121572,7 +124302,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             phase: "preconditions",
             preview: None,
             governance_preflight: Some(derive_preflight(&preflight, None)),
-            receipt: repo_execution_receipt(
+            receipt: repo_execution_receipt_with_policy_snapshot(
                 resolved_path,
                 contract,
                 doctor_report_execution_context(
@@ -121593,6 +124323,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     .findings
                     .first()
                     .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
             ),
             report: preflight,
             service: None,
@@ -121663,7 +124394,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt_with_overrides(
+                    receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                         resolved_path,
                         contract,
                         task_phase_execution_context(
@@ -121682,6 +124413,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         Some(outcome.exit_code),
                         None,
                         Some(prepare_overrides),
+                        Some(replay_input_preflight.doctor_policy_snapshot()),
                     ),
                     report: DoctorReport {
                         ok: false,
@@ -121702,18 +124434,21 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             Ok(outcome) => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
-                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
-                    contract,
-                    resolved_path,
-                    doctor_mode,
-                    workflow_name,
-                    overrides,
-                );
+                preflight =
+                    diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                        contract,
+                        resolved_path,
+                        doctor_mode,
+                        workflow_name,
+                        overrides,
+                        replay_input_policy,
+                        replay_input_preflight.doctor_policy_snapshot(),
+                    );
                 append_up_safe_task_effect_policy_findings(
                     contract,
-                    resolved_path,
                     workflow_name,
                     overrides,
+                    replay_input_preflight.loaded_policy.as_ref(),
                     &mut preflight,
                 );
                 if !preflight.ok
@@ -121731,7 +124466,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         phase: "preconditions",
                         preview: None,
                         governance_preflight: Some(derive_preflight(&preflight, None)),
-                        receipt: repo_execution_receipt_with_overrides(
+                        receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                             resolved_path,
                             contract,
                             doctor_report_execution_context(
@@ -121753,6 +124488,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                 .first()
                                 .map(|finding| finding.next.clone()),
                             Some(overrides),
+                            Some(replay_input_preflight.doctor_policy_snapshot()),
                         ),
                         report: preflight,
                         service: None,
@@ -121794,7 +124530,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt(
+                    receipt: repo_execution_receipt_with_policy_snapshot(
                         resolved_path,
                         contract,
                         doctor_report_execution_context(
@@ -121812,6 +124548,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         &[],
                         Some(outcome.exit_code),
                         None,
+                        Some(replay_input_preflight.doctor_policy_snapshot()),
                     ),
                     report: DoctorReport {
                         ok: false,
@@ -121832,18 +124569,21 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             Ok(outcome) => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
-                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
-                    contract,
-                    resolved_path,
-                    doctor_mode,
-                    workflow_name,
-                    overrides,
-                );
+                preflight =
+                    diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                        contract,
+                        resolved_path,
+                        doctor_mode,
+                        workflow_name,
+                        overrides,
+                        replay_input_policy,
+                        replay_input_preflight.doctor_policy_snapshot(),
+                    );
                 append_up_safe_task_effect_policy_findings(
                     contract,
-                    resolved_path,
                     workflow_name,
                     overrides,
+                    replay_input_preflight.loaded_policy.as_ref(),
                     &mut preflight,
                 );
                 if !preflight.ok
@@ -121861,7 +124601,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         phase: "preconditions",
                         preview: None,
                         governance_preflight: Some(derive_preflight(&preflight, None)),
-                        receipt: repo_execution_receipt_with_overrides(
+                        receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                             resolved_path,
                             contract,
                             doctor_report_execution_context(
@@ -121883,6 +124623,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                 .first()
                                 .map(|finding| finding.next.clone()),
                             None,
+                            Some(replay_input_preflight.doctor_policy_snapshot()),
                         ),
                         report: preflight,
                         service: None,
@@ -121964,7 +124705,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt_with_overrides(
+                    receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                         resolved_path,
                         contract,
                         task_phase_execution_context(
@@ -121983,6 +124724,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         Some(outcome.exit_code),
                         None,
                         Some(task_execution_overrides),
+                        Some(replay_input_preflight.doctor_policy_snapshot()),
                     ),
                     report: DoctorReport {
                         ok: false,
@@ -122007,13 +124749,16 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 executed_task_names.extend(outcome.executed_tasks);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
                 if !preflight.ok {
-                    let refreshed = diagnose_preconditions_with_mode_for_workflow_with_overrides(
-                        contract,
-                        resolved_path,
-                        doctor_mode,
-                        workflow_name,
-                        overrides,
-                    );
+                    let refreshed =
+                        diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                            contract,
+                            resolved_path,
+                            doctor_mode,
+                            workflow_name,
+                            overrides,
+                            replay_input_policy,
+                            replay_input_preflight.doctor_policy_snapshot(),
+                        );
                     if !refreshed.ok
                         && !preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
                             &refreshed.findings,
@@ -122028,7 +124773,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                             phase: "provisioning",
                             preview: None,
                             governance_preflight: Some(derive_preflight(&refreshed, None)),
-                            receipt: repo_execution_receipt_with_overrides(
+                            receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
                                 resolved_path,
                                 contract,
                                 doctor_report_execution_context(
@@ -122050,6 +124795,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                                     .first()
                                     .map(|finding| finding.next.clone()),
                                 Some(task_execution_overrides),
+                                Some(replay_input_preflight.doctor_policy_snapshot()),
                             ),
                             report: refreshed,
                             service: None,
@@ -122145,6 +124891,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         policy_env,
                         ready_timeout,
                         keep_running,
+                        replay_input_preflight,
                     )
                     .map_err(|error| RunError::SpawnFailed {
                         task: run_task_name.to_string(),
@@ -122167,7 +124914,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 let exit_code = run_phase_failure_exit_code(&outcome).unwrap_or(1);
-                let mut receipt = repo_execution_receipt_with_overrides(
+                let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
                     resolved_path,
                     contract,
                     task_phase_execution_context(
@@ -122186,6 +124933,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     Some(exit_code),
                     None,
                     Some(task_execution_overrides),
+                    Some(replay_input_preflight.doctor_policy_snapshot()),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
@@ -122252,7 +125000,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     let service_report =
         diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
     if !service_report.ok {
-        let mut receipt = repo_execution_receipt(
+        let mut receipt = repo_execution_receipt_with_policy_snapshot(
             resolved_path,
             contract,
             native_phase_execution_context(),
@@ -122267,6 +125015,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 .findings
                 .first()
                 .map(|finding| finding.next.clone()),
+            Some(replay_input_preflight.doctor_policy_snapshot()),
         );
         receipt.native_prerequisites = selected_up_receipt_native_prerequisites(
             contract,
@@ -122297,14 +125046,17 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     diagnosis_overrides.memory = overrides.memory;
     diagnosis_overrides.skip_deps = overrides.skip_deps;
 
-    let mut report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
-        contract,
-        resolved_path,
-        doctor_mode,
-        diagnosis_overrides.lifecycle,
-        workflow_name,
-        diagnosis_overrides,
-    );
+    let mut report =
+        diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
+            contract,
+            resolved_path,
+            doctor_mode,
+            diagnosis_overrides.lifecycle,
+            workflow_name,
+            diagnosis_overrides,
+            replay_input_policy,
+            replay_input_preflight.doctor_policy_snapshot(),
+        );
     suppress_post_up_resolved_error_findings(
         &mut report,
         &provisioning_actions,
@@ -122339,7 +125091,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 let exit_code = run_phase_failure_exit_code(&outcome).unwrap_or(1);
-                let mut receipt = repo_execution_receipt_with_overrides(
+                let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
                     resolved_path,
                     contract,
                     task_phase_execution_context(
@@ -122358,6 +125110,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     Some(exit_code),
                     None,
                     Some(overrides),
+                    Some(replay_input_preflight.doctor_policy_snapshot()),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
@@ -122404,7 +125157,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         activation_task,
         run_runtime.as_ref(),
     );
-    let mut receipt = repo_execution_receipt(
+    let mut receipt = repo_execution_receipt_with_policy_snapshot(
         resolved_path,
         contract,
         up_success_execution_context(
@@ -122426,6 +125179,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         &report.findings,
         None,
         report.findings.first().map(|finding| finding.next.clone()),
+        Some(replay_input_preflight.doctor_policy_snapshot()),
     );
     receipt.native_prerequisites = selected_up_receipt_native_prerequisites(
         contract,
@@ -126003,6 +128757,7 @@ fn up_agent_execution_refusal_result(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     refusal: &AgentExecutionRefusal,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
 ) -> RepoUpResult {
     let mut command = String::from("ota up");
     append_run_execution_override_flags(&mut command, overrides);
@@ -126011,7 +128766,7 @@ fn up_agent_execution_refusal_result(
     }
     command.push_str(" --agent");
     let finding = agent_execution_refusal_finding(refusal, &command);
-    let receipt = repo_execution_receipt_with_overrides(
+    let receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
         resolved_path,
         contract,
         task_phase_execution_context(
@@ -126030,6 +128785,7 @@ fn up_agent_execution_refusal_result(
         None,
         Some(finding.next.clone()),
         Some(overrides),
+        Some(policy_snapshot),
     );
     let mut receipt = receipt;
     receipt.blocked = vec![format!("agent_execution_refused:{}", refusal.reason)];

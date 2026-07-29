@@ -193,6 +193,30 @@
 - Pattern: A closure-wide sandbox policy can erase legitimate phase differences, and an optional provider flag can become an enforcement bypass.
 - Correction: Preserve an ordered per-step policy graph under the closure identity and resolve an enforcing target automatically or refuse whenever authoritative runtime controls apply.
 - Rule: Never flatten differing phase boundaries, infer policy from provider defaults, or let omission of an execution flag weaken declared enforcement.
+- Pattern: A policy-aware lower-level runner can appear complete while the production command's Doctor gate refuses earlier and drops the typed admission evidence.
+- Correction: Capture one command-scoped observation set before admission, pass its policy projection through Doctor and execution, and emit refusal evidence from the production boundary rather than reconstructing it through a generic receipt command.
+- Rule: Test policy refusals through the real top-level command path; generic readiness receipts must never stand in for admission-produced execution or refusal receipts.
+- Pattern: A policy decision can be known before native provisioning but still be enforced after provisioning, and an unavailable observation can accidentally count as complete coverage.
+- Correction: Order replay admission as observation, hard-pin enforcement, policy enforcement, then ordinary prerequisites, and treat unavailable or unknown observation states as unconditional denial.
+- Rule: No governed replay lane may mutate the host before admission or turn missing preflight evidence into an allow decision.
+- Pattern: Replay-input admission can be complete on ordinary run/up paths while proof wrappers or aggregate Doctor output bypass or discard the same policy truth.
+- Correction: Treat every command that can execute tasks, start services, create proof artifacts, or aggregate member diagnosis as a consumer of the canonical command-scoped replay preflight.
+- Rule: Proof admission must precede every parent and child side effect, and aggregate machine output must retain each member's canonical policy record.
 - Pattern: Agent readiness can report an invisible warning when verdict derivation treats an intentionally empty writable set as a missing boundary despite declared protected paths.
 - Correction: Derive readiness from the same filesystem-boundary semantics used by enforcement: either writable or protected paths establishes a boundary, while neither remains risky.
 - Rule: Every risky Doctor verdict must correspond to actionable visible evidence, and summary derivation must not drift from the runner's boundary model.
+- Pattern: Converting an active policy-load error to `None` makes broken authority indistinguishable from absent authority, while dependency-only admission lets outcome hooks execute outside governance.
+- Correction: Retain policy-load failure as typed fail-closed preflight evidence and derive replay admission from the recursive execution closure, including every outcome-hook edge.
+- Rule: Policy authority must never disappear on load failure, and admission must cover every task the runner can execute before the first process starts.
+- Pattern: Reusing a replay-policy evaluation while Doctor, provisioning, effect findings, or receipts reload the active policy can combine two authorities inside one command; projecting a dependency-only closure can also omit executable hooks already governed by admission.
+- Correction: Retain the loaded policy pack in the command preflight, pass that exact snapshot through every downstream policy consumer, and derive CI projection closure from the same recursive execution-closure helper as admission.
+- Rule: One command consumes one policy snapshot, and every authoritative projected closure must enumerate every task the governed runner can execute.
+- Pattern: Unifying replay-policy consumers is still incomplete when agent admission or claim assurance reloads the same org authority independently, especially across a detached proof child.
+- Correction: Load the complete org-policy pack before any admission decision, pass it through every governance domain, and give internal child execution a private snapshot or explicit absence marker.
+- Rule: Command-scoped authority applies across policy domains and process boundaries; no later consumer may rediscover policy from ambient state.
+- Pattern: A mutating diagnosis command can preserve one policy snapshot during its fix decision but accidentally reload authority when refreshing post-fix observations.
+- Correction: After deterministic fixes, refresh repository observations and re-evaluate them against the original loaded policy and load error; never reconstruct the complete preflight.
+- Rule: One-command policy authority remains immutable across command-owned mutations, including post-fix diagnosis.
+- Pattern: Sharing one policy snapshot does not guarantee safe ordering if a mutating Doctor fix runs after that snapshot has already produced a refusal.
+- Correction: Admit the full selected replay-input closure before any repo-hygiene write or tool activation, and return a zero-applied typed fix summary on refusal.
+- Rule: Every mutating execution surface, including repair commands, must enforce command-scoped policy and hard-pin admission before its first side effect.

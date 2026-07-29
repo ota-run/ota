@@ -1,0 +1,47 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+version: 1
+
+project:
+  name: policy-replay-input-identity
+  type: example
+
+tasks:
+  verify:
+    description: Verify the policy-governed frozen baseline.
+    replay_inputs:
+      - id: baseline
+        kind: static_file
+        path: fixtures/baseline.txt
+        expected_identity: sha256:4f20eb9143fa190c8d2cd8e470db88f27c72e96d05243ff3d1d44913173dfeb8
+    command:
+      exe: sh
+      args:
+        - -c
+        - test -f fixtures/baseline.txt
+    effects:
+      writes: []
+      network: false
+
+agent:
+  default_task: verify
+  safe_tasks:
+    - verify
+  verify_after_changes:
+    - verify
+  writable_paths: []
+  protected_paths:
+    - ota.yaml
+    - .ota/org-policy.yaml
+    - fixtures/baseline.txt

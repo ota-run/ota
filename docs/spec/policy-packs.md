@@ -139,6 +139,14 @@ policies:
           - task_body
           - ci
         on_insufficient: deny
+  replay_inputs:
+    identity:
+      tasks:
+        replay:
+          on_insufficient: deny
+      workflows:
+        offline_replay:
+          on_insufficient: review
   effects:
     mode: strict
     tasks:
@@ -222,6 +230,27 @@ That makes the value visible immediately:
   required coverage, and `on_insufficient: deny|review`. It never changes the underlying assurance
   result: policy consumes `supported`, `contradicted`, or `unknown` after Ota has evaluated it.
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
+- `replay_inputs.identity.tasks.<name>` requires every replay input in that task's dependency
+  closure to declare a matching `expected_identity`.
+- `replay_inputs.identity.workflows.<name>` applies the same requirement to the complete selected
+  workflow closure. Reachable task rules remain cumulative with the workflow rule.
+- each replay-input identity rule declares `on_insufficient: deny|review`. Insufficient coverage
+  means the governed closure has no declared replay inputs or at least one declared input lacks an
+  `expected_identity`.
+- `review` is refusing in the current policy model on human, agent, and CI execution surfaces. It
+  records that authorization is required but does not treat a reason string or audited crossing
+  record as authorization.
+- an unavailable preflight observation and a missing, unreadable, or mismatched declared pin are
+  always denied before native provisioning, dependency hydration, or task startup. Policy cannot
+  weaken the existing `expected_identity` preflight boundary to `review`, and the blocked receipt
+  retains the active policy evidence.
+- task rules apply when their subject is reachable in the selected task or workflow closure, so a
+  parent lane cannot bypass policy on a governed dependency. Unknown selectors remain contextual
+  policy findings in Doctor and block governed execution without changing `ota validate`.
+- each selected contract target loads one policy snapshot before admission. Agent safety, claim
+  assurance, replay policy, Doctor, provisioning, proof, receipts, and CI projection consume that
+  snapshot; detached proof execution receives a private temporary copy instead of rediscovering
+  ambient local or remote policy.
 - `effects.mode` controls the fallback decision when no explicit rule matches:
   `compatibility` falls back to `warn`, `strict` falls back to `deny`.
 - `effects.tasks` governs declared `effects.network` / `effects.network_kind` /

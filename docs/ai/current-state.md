@@ -115,8 +115,36 @@ durable agent workflow belongs in the canonical Ota skill.
   pins validate canonical SHA-256 values, surface missing or mismatched artifacts through Doctor,
   block dry-run/run/up before task startup, and preserve expected plus observed identity in the
   receipt evaluated-input carrier. Bedrock pressure proves matching frozen inputs through Doctor,
-  dry-run, and real native plus container agent-safe execution. V11.20 is planned to add selective
-  policy admission for declared pins; optional pins remain the default until that slice is proven.
+  dry-run, and real native plus container agent-safe execution.
+- active V11.20 policy-governed replay-input identity implementation: the shared
+  `replay_input_policy` evaluator applies cumulative task/workflow rules over their exact selected
+  closures, observes each task-qualified declared input once, and derives `deny > review > allow`.
+  Doctor findings and JSON, dry-run, run, up, proof runtime, proof lifecycle, and
+  admission-produced execution/refusal receipts reuse one command-scoped loaded policy snapshot
+  and observed identity set across agent safety, claim assurance, replay policy,
+  provisioning/effect findings, proof, CI projection, and receipt policy evidence. Runtime proof
+  passes that same admitted authority to its detached child through a private temporary snapshot.
+  Active policy load failures remain typed fail-closed admission evidence, and selected closures
+  include recursive outcome hooks so a governed or mismatched hook cannot execute behind an
+  admitted parent.
+  Aggregate monorepo Doctor JSON retains the policy result for each selected member. Admission
+  refuses before native provisioning, proof artifact creation, dependency hydration, service
+  ownership, assertion execution, or task startup; unavailable observations and unreadable or
+  mismatched declared pins fail closed, and hard-pin refusals retain the active policy evidence.
+  Generic readiness receipts do not reconstruct policy after execution. Runtime proof evaluates
+  its full selected proof closure, including seam observers and its selected negative control,
+  before passing one preflight through every readiness diagnosis and the embedded Doctor artifact;
+  lifecycle proof evaluates its exact prerequisite-plus-assertion closure before beginning a
+  transaction. Missing pin coverage follows the rule's `on_insufficient`. Unknown selectors are
+  contextual policy findings, not contract-validation errors. CI projection carries the exact
+  active policy identity, applicable rule identities, canonical execution closure including
+  recursive outcome hooks, and unresolved selector identities but
+  no render-host observation; the provider checkout recomputes observed replay-input identities. Core
+  unit, real-repo no-execution, JSON-schema, JSON-conformance, and projection
+  checkout-re-evaluation regressions pass; copy-ready Core/external examples, canonical skill, and
+  site reference are aligned.
+  Bedrock plus one independent strict/refusal pressure repo remain required before V11.20 can move
+  from active to complete.
 - completed V11.14 contract-claim assurance: the shared `claim_assurance` domain supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer

@@ -100,6 +100,93 @@
         }
       }
     },
+    "replayInputPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_identity", "subject", "required", "decision", "coverage"],
+      "properties": {
+        "policy_identity": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "enum": ["task", "workflow"] },
+            "name": { "type": "string" }
+          }
+        },
+        "required": { "type": "boolean" },
+        "decision": { "enum": ["allow", "deny", "review"] },
+        "coverage": { "enum": ["not_required", "complete", "insufficient"] },
+        "applicable_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity", "subject", "on_insufficient", "closure_tasks", "input_keys", "coverage", "decision"],
+            "properties": {
+              "identity": { "type": "string" },
+              "subject": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "name"],
+                "properties": {
+                  "kind": { "enum": ["task", "workflow"] },
+                  "name": { "type": "string" }
+                }
+              },
+              "on_insufficient": { "enum": ["deny", "review"] },
+              "closure_tasks": { "type": "array", "items": { "type": "string" } },
+              "input_keys": { "type": "array", "items": { "type": "string" } },
+              "coverage": { "enum": ["complete", "insufficient"] },
+              "decision": { "enum": ["allow", "deny", "review"] },
+              "reasons": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["task", "id", "path", "status"],
+            "properties": {
+              "task": { "type": "string" },
+              "id": { "type": "string" },
+              "path": { "type": "string" },
+              "expected_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "observed_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "status": { "enum": ["matched", "mismatched", "missing", "unpinned", "unpinned_unreadable", "observation_unavailable"] },
+              "error": { "type": "string" }
+            }
+          }
+        },
+        "unknown_selectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity", "subject", "reason"],
+            "properties": {
+              "identity": { "type": "string" },
+              "subject": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "name"],
+                "properties": {
+                  "kind": { "enum": ["task", "workflow"] },
+                  "name": { "type": "string" }
+                }
+              },
+              "reason": { "enum": ["unknown_task_selector", "unknown_workflow_selector"] }
+            }
+          }
+        }
+      }
+    },
     "toolchainSelection": {
       "type": "object",
       "additionalProperties": false,
@@ -232,6 +319,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/claimAssurance" }
     },
+    "replay_input_policy": { "$ref": "#/$defs/replayInputPolicy" },
     "agent": {
       "type": "object",
       "additionalProperties": false,
@@ -400,14 +488,19 @@
         "properties": {
           "member": { "type": "string" },
           "ok": { "type": "boolean" },
+          "workflow": { "$ref": "#/properties/workflow" },
           "toolchains": {
             "type": "array",
             "items": { "$ref": "#/$defs/toolchainSelection" }
           },
+          "replay_input_policy": { "$ref": "#/$defs/replayInputPolicy" },
           "agent": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
+              "posture": {
+                "enum": ["readiness_strict", "contract_authoring", "infra_authoring"]
+              },
               "entrypoint": { "type": "string" },
               "default_task": { "type": "string" },
               "safe_tasks": {

@@ -1419,6 +1419,398 @@ policies:
 }
 
 #[test]
+fn doctor_and_run_share_replay_input_identity_policy_admission() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: replay-input-policy-app
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    run: printf executed > task-ran.txt
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+    );
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("fixture should be written");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+    )
+    .expect("policy should be written");
+
+    let doctor = run_ota_in_dir(&["doctor", "--json"], fixture.path());
+    assert!(!doctor.status.success());
+    let doctor_json = stdout_json_any(&doctor);
+    assert_eq!(doctor_json["replay_input_policy"]["required"], true);
+    assert_eq!(doctor_json["replay_input_policy"]["decision"], "deny");
+    assert_eq!(
+        doctor_json["replay_input_policy"]["inputs"][0]["status"],
+        "unpinned"
+    );
+    assert!(
+        doctor_json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["code"] == "OTA_REPLAY_INPUT_POLICY_DENIED")
+    );
+
+    let run = run_ota_in_dir(&["run", "verify"], fixture.path());
+    assert!(!run.status.success());
+    assert!(!fixture.path().join("task-ran.txt").exists());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("Replay-input identity policy denies"));
+
+    let up = run_ota_in_dir(&["up", "--json"], fixture.path());
+    assert!(!up.status.success());
+    let up_json = stdout_json_any(&up);
+    assert_eq!(
+        up_json["receipt"]["replay_input_policy"]["decision"],
+        "deny"
+    );
+    assert!(!fixture.path().join("task-ran.txt").exists());
+
+    fs::remove_file(fixture.path().join("fixture.txt")).expect("remove replay input");
+    let missing_up = run_ota_in_dir(&["up", "--json"], fixture.path());
+    assert!(!missing_up.status.success());
+    let missing_up_json = stdout_json_any(&missing_up);
+    assert_eq!(
+        missing_up_json["receipt"]["replay_input_policy"]["inputs"][0]["status"],
+        "unpinned_unreadable"
+    );
+    assert_eq!(
+        missing_up_json["receipt"]["failure_origin"],
+        "replay_input_policy_deny"
+    );
+    assert!(!fixture.path().join("task-ran.txt").exists());
+
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("restore replay input");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        missing:
+          on_insufficient: deny
+"#,
+    )
+    .expect("unknown-selector policy should be written");
+    let unknown_run = run_ota_in_dir(&["run", "verify"], fixture.path());
+    assert!(!unknown_run.status.success());
+    assert!(
+        String::from_utf8_lossy(&unknown_run.stderr)
+            .contains("Replay-input policy references unknown task `missing`")
+    );
+    let unknown_up = run_ota_in_dir(&["up", "--json"], fixture.path());
+    assert!(!unknown_up.status.success());
+    let unknown_up_json = stdout_json_any(&unknown_up);
+    assert_eq!(
+        unknown_up_json["receipt"]["replay_input_policy"]["decision"],
+        "deny"
+    );
+    assert_eq!(
+        unknown_up_json["receipt"]["replay_input_policy"]["unknown_selectors"][0]["identity"],
+        "replay_inputs:identity:task:missing"
+    );
+    assert!(!fixture.path().join("task-ran.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn replay_input_policy_refuses_before_native_provisioning() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = TempDir::new().expect("temp dir should be created");
+    let bin_dir = fixture.path().join("bin");
+    let marker = fixture.path().join("provisioning-started");
+    fs::create_dir_all(&bin_dir).expect("bin directory should be created");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
+    fs::write(
+        bin_dir.join("mise"),
+        "#!/bin/sh\ntouch \"$OTA_PROVISION_MARKER\"\nexit 0\n",
+    )
+    .expect("mise shim should be written");
+    fs::set_permissions(bin_dir.join("mise"), fs::Permissions::from_mode(0o755))
+        .expect("mise shim should be executable");
+    fs::write(fixture.path().join("fixture.txt"), "frozen").expect("fixture should be written");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: replay-policy-before-provisioning
+tools:
+  governed-probe:
+    version: "1"
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+    requirements:
+      tools:
+        governed-probe: "1"
+    command:
+      exe: sh
+      args: ["-c", "touch task-ran"]
+"#,
+    );
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  provisioning:
+    governed-probe:
+      source: mise
+      approved_versions: ["1"]
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+"#,
+    )
+    .expect("policy should be written");
+    let mut path_entries = vec![bin_dir];
+    path_entries.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(path_entries).expect("test PATH should join");
+    let path = path.to_string_lossy();
+    let marker_value = marker.to_string_lossy();
+
+    let run = run_ota_with_env_in_dir(
+        &["run", "--receipt", "verify"],
+        [
+            ("PATH", path.as_ref()),
+            ("OTA_PROVISION_MARKER", marker_value.as_ref()),
+        ],
+        fixture.path(),
+    );
+
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("Replay-input identity policy denies"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Failure Origin: replay_input_policy_deny"),
+        "{stderr}"
+    );
+    assert!(!marker.exists(), "policy refusal must precede provisioning");
+    assert!(!fixture.path().join("task-ran").exists());
+}
+
+#[test]
+fn replay_input_policy_load_failure_refuses_every_task_surface() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        "policies:\n  replay_inputs: [invalid\n",
+    )
+    .expect("invalid policy should be written");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: replay-policy-load-failure
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "touch task-ran"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+    );
+
+    let preview = run_ota_in_dir(&["run", "--dry-run", "--json", "verify"], fixture.path());
+    assert!(!preview.status.success());
+    let preview_json: Value =
+        serde_json::from_slice(&preview.stderr).expect("preview failure should be JSON");
+    assert_eq!(preview_json["code"], "replay_input_policy_unavailable");
+    assert_eq!(preview_json["execution_started"], false);
+
+    let run = run_ota_in_dir(&["run", "--receipt", "verify"], fixture.path());
+    assert!(!run.status.success());
+    let run_stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        run_stderr.contains("Replay-input policy could not be loaded"),
+        "{run_stderr}"
+    );
+    assert!(
+        run_stderr.contains("Failure Origin: replay_input_policy_unavailable"),
+        "{run_stderr}"
+    );
+
+    let agent_run = run_ota_in_dir(&["run", "--agent", "verify"], fixture.path());
+    assert!(!agent_run.status.success());
+    let agent_run_stderr = String::from_utf8_lossy(&agent_run.stderr);
+    assert!(
+        agent_run_stderr.contains("Replay-input policy could not be loaded"),
+        "{agent_run_stderr}"
+    );
+    assert!(
+        !agent_run_stderr.contains("requested_task_not_safe"),
+        "policy authority failure must precede safety classification: {agent_run_stderr}"
+    );
+
+    let up = run_ota_in_dir(&["up", "--agent", "--json"], fixture.path());
+    assert!(!up.status.success());
+    let up_json = stdout_json_any(&up);
+    assert_eq!(
+        up_json["receipt"]["failure_origin"],
+        "replay_input_policy_unavailable"
+    );
+    assert!(!fixture.path().join("task-ran").exists());
+}
+
+#[test]
+fn replay_input_review_policy_cannot_weaken_declared_pin_mismatch() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    let expected = "sha256:ffb304816a1090313e833215c08dae3d209cfad1ffd1f674f0909a2ae99e1394";
+    write_contract(
+        fixture.path(),
+        &format!(
+            r#"
+version: 1
+project:
+  name: replay-input-hard-pin-app
+tasks:
+  verify:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {expected}
+    run: printf executed > task-ran.txt
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#
+        ),
+    );
+    fs::write(fixture.path().join("fixture.txt"), "changed").expect("fixture should be written");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: review
+"#,
+    )
+    .expect("policy should be written");
+
+    let run = run_ota_in_dir(&["run", "--receipt", "verify"], fixture.path());
+    assert!(!run.status.success());
+    let run_stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        run_stderr.contains("replay_input_identity_mismatch"),
+        "{run_stderr}"
+    );
+    assert!(run_stderr.contains("Replay Input Policy"), "{run_stderr}");
+    assert!(run_stderr.contains("Decision: deny"), "{run_stderr}");
+    assert!(
+        run_stderr.contains("Execution Started: false"),
+        "{run_stderr}"
+    );
+    assert!(!fixture.path().join("task-ran.txt").exists());
+
+    let up = run_ota_in_dir(&["up", "--json"], fixture.path());
+    assert!(!up.status.success());
+    let up_json = stdout_json_any(&up);
+    assert_eq!(
+        up_json["receipt"]["failure_origin"],
+        "replay_input_identity_mismatch"
+    );
+    assert_eq!(
+        up_json["receipt"]["replay_input_policy"]["decision"],
+        "deny"
+    );
+    assert!(!fixture.path().join("task-ran.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn replay_input_hook_pin_is_admitted_before_parent_execution() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    let expected = "sha256:ffb304816a1090313e833215c08dae3d209cfad1ffd1f674f0909a2ae99e1394";
+    fs::write(fixture.path().join("fixture.txt"), "changed").expect("fixture should be written");
+    write_contract(
+        fixture.path(),
+        &format!(
+            r#"
+version: 1
+project:
+  name: replay-input-hook-pin
+tasks:
+  report:
+    replay_inputs:
+      - id: fixture
+        kind: static_file
+        path: fixture.txt
+        expected_identity: {expected}
+    command:
+      exe: sh
+      args: ["-c", "touch hook-ran"]
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "touch parent-ran"]
+    after_success: [report]
+"#
+        ),
+    );
+
+    let run = run_ota_in_dir(&["run", "--receipt", "verify"], fixture.path());
+
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("replay_input_identity_mismatch"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Failure Origin: replay_input_identity_mismatch"),
+        "{stderr}"
+    );
+    assert!(!fixture.path().join("parent-ran").exists());
+    assert!(!fixture.path().join("hook-ran").exists());
+}
+
+#[test]
 fn doctor_json_contradicts_safe_task_with_undeclared_typed_volume_mutation() {
     let fixture = TempDir::new().expect("temp dir should be created");
     write_contract(

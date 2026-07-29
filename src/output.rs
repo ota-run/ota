@@ -29,6 +29,7 @@ use crate::claim_assurance::ClaimAssuranceRecord;
 use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
+use crate::replay_input_policy::ReplayInputPolicyEvaluation;
 use crate::runner::{
     BackendFulfillmentEvidence, ExecutionOverrides, ResolvedExecutionBackend, ResolvedTaskRuntime,
     SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
@@ -103,6 +104,8 @@ pub struct DoctorSuccess<'a> {
     pub governance: Option<DoctorGovernanceSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub claim_assurance: Vec<ClaimAssuranceRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) replay_input_policy: Option<ReplayInputPolicyEvaluation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<&'a ProvisioningPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -541,6 +544,8 @@ pub struct ExecutionReceipt {
     pub crossing: Option<ExecutionBoundaryCrossing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<GovernanceRefusalRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) replay_input_policy: Option<crate::replay_input_policy::ReplayInputPolicyEvaluation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -993,6 +998,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(refusal) = self.refusal.as_ref() {
             map.serialize_entry("refusal", refusal)?;
+        }
+        if let Some(replay_input_policy) = self.replay_input_policy.as_ref() {
+            map.serialize_entry("replay_input_policy", replay_input_policy)?;
         }
         if let Some(workspace) = self.workspace.as_ref() {
             map.serialize_entry("workspace", workspace)?;
@@ -1489,6 +1497,8 @@ pub struct RunPreviewSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
     pub governance: RunPreviewGovernanceSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) replay_input_policy: Option<ReplayInputPolicyEvaluation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub artifact_routing: Vec<ArtifactRoute>,
     pub plan: RunPreviewPlan,

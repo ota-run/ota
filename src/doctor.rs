@@ -61,6 +61,10 @@ use crate::provisioning::{
     render_provisioning_action_command,
 };
 use crate::replay_baseline::verify_promoted_replay_baseline;
+use crate::replay_input_policy::{
+    ReplayInputPolicyEvaluation, ReplayInputPolicySubject, ReplayInputPolicyUnknownSelector,
+    evaluate_replay_input_policy, replay_input_policy_unknown_selectors,
+};
 use crate::runner::{
     DeclaredEnvSourceStatus, ExecutionOverrides, HttpReadinessRequest, HttpReadinessStatus,
     LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
@@ -4066,6 +4070,12 @@ pub struct PolicyReviewReport {
     pub report: DoctorReport,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct DoctorPolicySnapshot<'a> {
+    pub loaded: Option<&'a LoadedOrgPolicyPack>,
+    pub load_error: Option<&'a str>,
+}
+
 pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
@@ -4075,6 +4085,8 @@ pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorRep
         None,
         None,
         ExecutionOverrides::default(),
+        None,
+        None,
         None,
     )
 }
@@ -4092,6 +4104,8 @@ pub fn diagnose_contract_in_mode(
         None,
         None,
         ExecutionOverrides::default(),
+        None,
+        None,
         None,
     )
 }
@@ -4127,6 +4141,8 @@ pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow(
         workflow_name,
         ExecutionOverrides::default(),
         None,
+        None,
+        None,
     )
 }
 
@@ -4147,6 +4163,32 @@ pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
         workflow_name,
         overrides,
         None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> DoctorReport {
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::All,
+        mode,
+        lifecycle_override,
+        workflow_name,
+        overrides,
+        None,
+        replay_input_policy,
+        Some(policy_snapshot),
     )
 }
 
@@ -4174,6 +4216,11 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
             &mut findings,
         );
         diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
+        append_replay_input_policy_selector_findings(
+            &replay_input_policy_unknown_selectors(contract, &loaded_policy_ref.pack),
+            &loaded_policy_ref.path,
+            &mut findings,
+        );
     }
 
     let report = DoctorReport {
@@ -4235,6 +4282,31 @@ pub fn diagnose_preconditions_with_mode_for_workflow_with_overrides(
         workflow_name,
         overrides,
         None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> DoctorReport {
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+        workflow_name,
+        overrides,
+        None,
+        replay_input_policy,
+        Some(policy_snapshot),
     )
 }
 
@@ -4254,6 +4326,31 @@ pub fn diagnose_preconditions_with_mode_for_task_with_overrides(
         None,
         overrides,
         Some(task_name),
+        None,
+        None,
+    )
+}
+
+pub(crate) fn diagnose_preconditions_with_mode_for_task_with_overrides_and_replay_input_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> DoctorReport {
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+        None,
+        overrides,
+        Some(task_name),
+        replay_input_policy,
+        Some(policy_snapshot),
     )
 }
 
@@ -4275,6 +4372,8 @@ pub fn diagnose_checks_only_for_workflow(
         workflow_name,
         ExecutionOverrides::default(),
         None,
+        None,
+        None,
     )
 }
 
@@ -4295,6 +4394,8 @@ pub fn diagnose_services_only_for_workflow(
         None,
         workflow_name,
         ExecutionOverrides::default(),
+        None,
+        None,
         None,
     )
 }
@@ -4345,6 +4446,8 @@ fn diagnose_contract_with_scope(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     task_name: Option<&str>,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
@@ -4364,7 +4467,9 @@ fn diagnose_contract_with_scope(
         .map(ScopedPreconditionSelection::from)
         .unwrap_or_else(|| scoped_precondition_selection(contract, mode, workflow_name));
     let requirement_surface = precondition_selection.requirement_surface.clone();
-    let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
+    let loaded_policy_from_disk = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions)
+        && policy_snapshot.is_none()
+    {
         match load_org_policy_pack_auto_details(contract_path) {
             Ok(policy) => policy,
             Err(err) => {
@@ -4375,11 +4480,26 @@ fn diagnose_contract_with_scope(
     } else {
         None
     };
+    if let Some(error) = policy_snapshot.and_then(|snapshot| snapshot.load_error) {
+        findings.push(policy_finding(
+            "OTA_POLICY_PACK_INVALID",
+            FindingSeverity::Error,
+            "Invalid org policy pack",
+            error,
+            "repair the active policy source and rerun `ota doctor`",
+        ));
+    }
+    let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
+        policy_snapshot
+            .map(|snapshot| snapshot.loaded)
+            .unwrap_or(loaded_policy_from_disk.as_ref())
+    } else {
+        None
+    };
     let provisioning_actions = if mode == DoctorMode::Remote {
         Vec::new()
     } else {
         loaded_policy
-            .as_ref()
             .map(|loaded| {
                 let policy_requirement_surface = policy_requirement_surface_for_toolchains(
                     contract,
@@ -4396,6 +4516,22 @@ fn diagnose_contract_with_scope(
             })
             .unwrap_or_default()
     };
+    if matches!(scope, DoctorScope::All | DoctorScope::Preconditions)
+        && let Some(loaded_policy) = loaded_policy
+    {
+        let evaluated = replay_input_policy.cloned().or_else(|| {
+            selected_replay_input_policy_evaluation(
+                contract,
+                contract_path,
+                &loaded_policy.pack,
+                workflow_name,
+                task_name,
+            )
+        });
+        if let Some(evaluation) = evaluated.as_ref() {
+            append_replay_input_policy_findings(evaluation, &loaded_policy.path, &mut findings);
+        }
+    }
     if let Some(finding) = detect_missing_ota_state_gitignore(contract_path) {
         findings.push(finding);
     }
@@ -4476,7 +4612,7 @@ fn diagnose_contract_with_scope(
                 remote_probe_contexts = remote_doctor_probe_contexts(
                     contract,
                     contract_path,
-                    loaded_policy.as_ref(),
+                    loaded_policy,
                     workflow_name,
                     &mut findings,
                 );
@@ -4491,7 +4627,7 @@ fn diagnose_contract_with_scope(
                         &remote_probe.requirement_surface.runtimes,
                         &remote_probe.target_os,
                         contract_path,
-                        loaded_policy.as_ref(),
+                        loaded_policy,
                         mode,
                         selected_lifecycle,
                         None,
@@ -4513,7 +4649,7 @@ fn diagnose_contract_with_scope(
                         false,
                         &remote_probe.target_os,
                         contract_path,
-                        loaded_policy.as_ref(),
+                        loaded_policy,
                         mode,
                         selected_lifecycle,
                         None,
@@ -4538,7 +4674,7 @@ fn diagnose_contract_with_scope(
             diagnose_remote_org_policy(
                 contract,
                 contract_path,
-                loaded_policy.as_ref(),
+                loaded_policy,
                 &remote_probe_contexts,
                 &mut findings,
             );
@@ -4631,7 +4767,7 @@ fn diagnose_contract_with_scope(
                     &selection.requirement_surface.runtimes,
                     policy_target_os_for_mode(mode),
                     contract_path,
-                    loaded_policy.as_ref(),
+                    loaded_policy,
                     mode,
                     selected_lifecycle,
                     selection_container_probe.as_ref(),
@@ -4647,7 +4783,7 @@ fn diagnose_contract_with_scope(
                     selection.dependency_hydration_owned,
                     policy_target_os_for_mode(mode),
                     contract_path,
-                    loaded_policy.as_ref(),
+                    loaded_policy,
                     mode,
                     selected_lifecycle,
                     selection_container_probe.as_ref(),
@@ -4680,7 +4816,7 @@ fn diagnose_contract_with_scope(
                 &requirement_surface.runtimes,
                 policy_target_os_for_mode(mode),
                 contract_path,
-                loaded_policy.as_ref(),
+                loaded_policy,
                 mode,
                 selected_lifecycle,
                 container_probe.as_ref(),
@@ -4707,7 +4843,7 @@ fn diagnose_contract_with_scope(
                 precondition_selection.dependency_hydration_owned,
                 policy_target_os_for_mode(mode),
                 contract_path,
-                loaded_policy.as_ref(),
+                loaded_policy,
                 mode,
                 selected_lifecycle,
                 container_probe.as_ref(),
@@ -4826,7 +4962,7 @@ fn diagnose_contract_with_scope(
                     &additional_selection.requirement_surface.runtimes,
                     policy_target_os_for_mode(additional_mode),
                     contract_path,
-                    loaded_policy.as_ref(),
+                    loaded_policy,
                     additional_mode,
                     additional_lifecycle,
                     additional_container_probe.as_ref(),
@@ -4842,7 +4978,7 @@ fn diagnose_contract_with_scope(
                     additional_selection.dependency_hydration_owned,
                     policy_target_os_for_mode(additional_mode),
                     contract_path,
-                    loaded_policy.as_ref(),
+                    loaded_policy,
                     additional_mode,
                     additional_lifecycle,
                     additional_container_probe.as_ref(),
@@ -4904,7 +5040,7 @@ fn diagnose_contract_with_scope(
             provisioning = diagnose_org_policy(
                 contract,
                 contract_path,
-                loaded_policy.as_ref(),
+                loaded_policy,
                 policy_target_os_for_mode(mode),
                 &requirement_surface,
                 &precondition_selection.toolchain_names,
@@ -4931,7 +5067,7 @@ fn diagnose_contract_with_scope(
                 policy_target_os_for_mode(mode),
             );
         }
-        adapter_bootstrap = diagnose_adapter_bootstrap(loaded_policy.as_ref(), &mut findings);
+        adapter_bootstrap = diagnose_adapter_bootstrap(loaded_policy, &mut findings);
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
@@ -5004,6 +5140,132 @@ fn diagnose_contract_with_scope(
         adapter_bootstrap,
         execution_target,
         findings,
+    }
+}
+
+fn selected_replay_input_policy_evaluation(
+    contract: &Contract,
+    contract_path: &Path,
+    policy: &crate::policy_pack::OrgPolicyPack,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+) -> Option<ReplayInputPolicyEvaluation> {
+    let root = contract_working_dir(contract_path);
+    if let Some(task_name) = task_name {
+        return Some(evaluate_replay_input_policy(
+            contract,
+            root,
+            policy,
+            ReplayInputPolicySubject::Task(task_name),
+        ));
+    }
+    if let Some((name, _)) = contract.selected_workflow(workflow_name) {
+        return Some(evaluate_replay_input_policy(
+            contract,
+            root,
+            policy,
+            ReplayInputPolicySubject::Workflow(name),
+        ));
+    }
+    contract.selected_run_task_name_for(None).map(|task_name| {
+        evaluate_replay_input_policy(
+            contract,
+            root,
+            policy,
+            ReplayInputPolicySubject::Task(task_name),
+        )
+    })
+}
+
+fn append_replay_input_policy_findings(
+    evaluation: &ReplayInputPolicyEvaluation,
+    policy_path: &Path,
+    findings: &mut Vec<Finding>,
+) {
+    append_replay_input_policy_selector_findings(
+        &evaluation.unknown_selectors,
+        policy_path,
+        findings,
+    );
+    // The existing immutable-pin finding remains the authoritative blocker for a declared
+    // expected identity. Keep policy evidence structured without replacing that sharper failure.
+    if evaluation.inputs.iter().any(|input| {
+        input.expected_identity.is_some()
+            && matches!(input.status.as_str(), "missing" | "mismatched")
+    }) {
+        return;
+    }
+    if !evaluation.required || evaluation.decision == "allow" {
+        return;
+    }
+
+    let code = if evaluation.decision == "deny" {
+        "OTA_REPLAY_INPUT_POLICY_DENIED"
+    } else {
+        "OTA_REPLAY_INPUT_POLICY_REVIEW_REQUIRED"
+    };
+    let action = if evaluation.decision == "deny" {
+        "denies"
+    } else {
+        "requires review for"
+    };
+    let reasons = evaluation
+        .applicable_rules
+        .iter()
+        .flat_map(|rule| rule.reasons.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(", ");
+    findings.push(Finding::identified(
+        code,
+        "policy",
+        "org_policy",
+        FindingSeverity::Error,
+        format!(
+            "Replay-input identity policy {} selected {} `{}`",
+            action, evaluation.subject.kind, evaluation.subject.name
+        ),
+        format!(
+            "policy coverage is `{}` with decision `{}`; unresolved evidence: {}",
+            evaluation.coverage,
+            evaluation.decision,
+            if reasons.is_empty() {
+                "none recorded"
+            } else {
+                reasons.as_str()
+            }
+        ),
+        String::from(
+            "declare and verify every required replay input identity, then rerun `ota doctor`",
+        ),
+    ));
+}
+
+fn append_replay_input_policy_selector_findings(
+    selectors: &[ReplayInputPolicyUnknownSelector],
+    policy_path: &Path,
+    findings: &mut Vec<Finding>,
+) {
+    for selector in selectors {
+        findings.push(Finding::identified(
+            "OTA_POLICY_REPLAY_INPUT_SELECTOR_UNKNOWN",
+            "policy",
+            "org_policy",
+            FindingSeverity::Error,
+            format!(
+                "Replay-input policy references unknown {} `{}`",
+                selector.subject.kind, selector.subject.name
+            ),
+            format!(
+                "active policy `{}` contains rule `{}`, but the selected contract does not declare that {}",
+                compact_display_path(policy_path),
+                selector.identity,
+                selector.subject.kind
+            ),
+            format!(
+                "correct or remove `{}` in the active policy before governed execution",
+                selector.identity
+            ),
+        ));
     }
 }
 

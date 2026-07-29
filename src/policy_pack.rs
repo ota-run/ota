@@ -30,7 +30,11 @@ use std::process::Command;
 use semver::{Comparator, Op, Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use crate::semantic_identity::semantic_contract_identity;
 use crate::workspace::DEFAULT_WORKSPACE_FILE;
+
+pub(crate) const OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV: &str =
+    "OTA_INTERNAL_POLICY_SNAPSHOT_ABSENT";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadPolicyPackError {
@@ -96,6 +100,93 @@ pub struct PolicyRules {
     pub backend_environment: PolicyBackendEnvironmentRules,
     #[serde(default)]
     pub effects: Option<PolicyEffectsRules>,
+    #[serde(default)]
+    pub replay_inputs: PolicyReplayInputRules,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyReplayInputRules {
+    #[serde(default)]
+    pub identity: PolicyReplayInputIdentityRules,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyReplayInputIdentityRules {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_unique_replay_input_identity_rules"
+    )]
+    pub tasks: BTreeMap<String, PolicyReplayInputIdentityRule>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_unique_replay_input_identity_rules"
+    )]
+    pub workflows: BTreeMap<String, PolicyReplayInputIdentityRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyReplayInputIdentityRule {
+    #[serde(default = "default_replay_input_insufficient_decision")]
+    pub on_insufficient: PolicyReplayInputDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyReplayInputDecision {
+    Deny,
+    Review,
+}
+
+impl PolicyReplayInputDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deny => "deny",
+            Self::Review => "review",
+        }
+    }
+}
+
+fn default_replay_input_insufficient_decision() -> PolicyReplayInputDecision {
+    PolicyReplayInputDecision::Deny
+}
+
+fn deserialize_unique_replay_input_identity_rules<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, PolicyReplayInputIdentityRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct UniqueRuleMapVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for UniqueRuleMapVisitor {
+        type Value = BTreeMap<String, PolicyReplayInputIdentityRule>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a replay-input identity selector map with unique keys")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut rules = BTreeMap::new();
+            while let Some((selector, rule)) =
+                map.next_entry::<String, PolicyReplayInputIdentityRule>()?
+            {
+                if rules.insert(selector.clone(), rule).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate replay-input identity selector `{selector}`"
+                    )));
+                }
+            }
+            Ok(rules)
+        }
+    }
+
+    deserializer.deserialize_map(UniqueRuleMapVisitor)
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -401,6 +492,7 @@ pub struct LoadedOrgPolicyPack {
     pub pack: OrgPolicyPack,
     pub path: PathBuf,
     pub source: PolicyPackSource,
+    pub source_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2625,11 +2717,23 @@ pub fn load_org_policy_pack_auto(
 pub fn load_org_policy_pack_auto_details(
     contract_path: &Path,
 ) -> Result<Option<LoadedOrgPolicyPack>, LoadPolicyPackError> {
+    if env::var_os(OTA_POLICY_COMMAND_SNAPSHOT_ABSENT_ENV).is_some() {
+        return Ok(None);
+    }
+
     fn map_loaded(
         loaded: Option<(OrgPolicyPack, PathBuf)>,
         source: PolicyPackSource,
     ) -> Option<LoadedOrgPolicyPack> {
-        loaded.map(|(pack, path)| LoadedOrgPolicyPack { pack, path, source })
+        loaded.map(|(pack, path)| {
+            let source_identity = semantic_contract_identity(&pack).ok();
+            LoadedOrgPolicyPack {
+                pack,
+                path,
+                source,
+                source_identity,
+            }
+        })
     }
 
     if let Some(policy_path) = env::var_os("OTA_POLICY") {
@@ -2906,6 +3010,27 @@ mod tests {
 
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
+    }
+
+    #[test]
+    fn rejects_duplicate_replay_input_policy_selectors() {
+        let result = serde_yaml::from_str::<OrgPolicyPack>(
+            r#"
+policies:
+  replay_inputs:
+    identity:
+      tasks:
+        verify:
+          on_insufficient: deny
+        verify:
+          on_insufficient: review
+"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "duplicate task selectors must not overwrite"
+        );
     }
 
     #[test]

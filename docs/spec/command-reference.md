@@ -631,6 +631,12 @@ Current behavior:
 
 - requires the selected workflow to declare `proof.lifecycle.services[]`
 - refuses an explicit `--service` outside that declared lifecycle scope
+- evaluates declared replay-input pins and active replay-input policy over the exact workflow
+  prerequisite-plus-assertion closure before creating a lifecycle transaction, running a task,
+  observing or starting a service, or executing the assertion; JSON refusal carries
+  `execution_started: false` plus the hard-pin and policy evidence
+- refuses with `replay_input_policy_unavailable` before lifecycle work when the active policy
+  source cannot be loaded
 - executes the selected workflow's prerequisite closure before acquiring lifecycle ownership
 - refuses a concurrent lifecycle transaction for the same repository before it can observe manager
   state or acquire a cleanup lease
@@ -683,6 +689,12 @@ ota proof runtime --workflow app --negative-control postgres-unavailable [PATH]
 Current behavior:
 
 - validates the contract first
+- evaluates declared replay-input pins and active replay-input policy before creating
+  `.ota/proof`, writing topology or Doctor artifacts, or spawning the child runtime. The evaluated
+  closure includes post-readiness seam observers and the selected negative-control task; JSON
+  refusal carries `execution_started: false` plus the hard-pin and policy evidence
+- refuses with `replay_input_policy_unavailable` before proof artifacts or child execution when
+  the active policy source cannot be loaded
 - when `--member` is set, proves the merged member contract from the monorepo root
 - when `--workflow` is set, proves that selected workflow path; otherwise it uses the effective
   default workflow or the default task path when the repo has no workflows
@@ -1435,6 +1447,13 @@ Current behavior:
   `replay_input_identity_mismatch` preflight result before Ota presents the lane as runnable; real
   execution blocks on the same condition before task startup and retains the expected identity plus
   the observed identity when the input was readable in the receipt's `evaluated_inputs[]`
+- when the active org policy declares `policies.replay_inputs.identity`, dry-run and Doctor also
+  publish the canonical `replay_input_policy` decision. `ota run` and `ota up` refuse before task
+  startup, dependency hydration, or native prerequisite provisioning on `deny` or `review`;
+  receipts retain the same selected subject, applicable rule identities, task-qualified input
+  records, coverage, and reasons. An unavailable observation fails closed. Hard-pin failures remain
+  unconditional and retain the active policy record. Unselected lanes preserve optional-pin
+  behavior.
 - `--dry-run` prints `RUN PREVIEW`, uses the execution-preview vocabulary
   `RUNNABLE` / `RUNNABLE WITH WARNINGS` / `BLOCKED`, and shows `Mode: dry-run (no write)` plus
   the selected execution path, requirements, and planned actions
@@ -1488,6 +1507,10 @@ Current behavior:
 - when `--skip-deps` is used, receipts and run summaries mark the override explicitly and point back to rerunning without it when you need to validate the full declared task flow
 - on success, text output includes the compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
+- when replay-input policy refuses admission, `--receipt` still emits the blocked preconditions receipt with policy decision, coverage, rule identity, typed reasons, and observed input posture; generic `ota receipt` does not reconstruct that earlier decision
+- replay admission includes recursive `after_success`, `after_failure`, and `after_always` hook
+  closures before the parent task starts; an invalid active policy source refuses with typed
+  `replay_input_policy_unavailable` evidence rather than behaving like no policy
 
 Example:
 

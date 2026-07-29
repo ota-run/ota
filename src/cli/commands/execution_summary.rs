@@ -827,6 +827,7 @@ mod tests {
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
             crossing: None,
             refusal: None,
+            replay_input_policy: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),

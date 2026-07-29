@@ -362,6 +362,9 @@
               }
             },
             "refusal": { "$ref": "./tasks.json#/$defs/governanceRefusalRecord" },
+            "replay_input_policy": {
+              "$ref": "./doctor.json#/$defs/replayInputPolicy"
+            },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
             "context": { "type": "string" },

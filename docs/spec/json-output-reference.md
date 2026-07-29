@@ -2282,6 +2282,46 @@ a blocked preconditions receipt with `failure_origin: replay_input_identity_miss
 observed identity when readable, plus `execution_started: false`, and the matching
 `OTA_REPLAY_INPUT_IDENTITY_MISSING` or
 `OTA_REPLAY_INPUT_IDENTITY_MISMATCH` finding.
+When an active org policy requires replay-input identities for the selected lane, Doctor, run
+preview, and admission-produced run/up execution or refusal receipts include additive
+`replay_input_policy`. Generic `ota receipt --json` readiness receipts do not reconstruct a prior
+admission decision after execution. The policy record carries:
+
+- `subject`: the selected task or workflow;
+- `required`, `coverage`, and the derived `decision` (`allow`, `review`, or `deny`);
+- `applicable_rules[]`: every matching task/workflow rule, its own selected closure, coverage,
+  decision, and typed insufficiency reasons;
+- `inputs[]`: one task-qualified record per observed declared input, including expected and
+  observed identities where available; and
+- `unknown_selectors[]`: contextual policy selectors that do not resolve against the loaded
+  contract.
+
+`review` is not an allowed execution result in this slice. Both `review` and `deny` refuse before
+native prerequisite provisioning, dependency hydration, or task startup. An unavailable
+observation fails closed. An unreadable or mismatched declared pin always derives `deny`,
+regardless of a rule's `on_insufficient` value, and its blocked receipt retains the active policy
+record. Agent safety, claim assurance, replay admission, Doctor/provisioning findings, proof, and
+receipt policy evidence consume one loaded policy snapshot for the command. Runtime proof pins the
+same authority for its detached child. CI projection evaluates all governance domains from one
+loaded snapshot and carries only the active semantic policy identity,
+applicable rule identities, the canonical execution closure including recursive outcome hooks,
+and unresolved selector identities; provider execution recomputes observed identities after
+checkout rather than trusting the machine that rendered the projection.
+An active policy source that cannot be loaded refuses as
+`replay_input_policy_unavailable`; it never degrades to absent policy. Task and workflow
+admission includes recursive outcome-hook execution edges, so hook replay inputs and matching task
+rules are observed and enforced before the parent begins.
+`ota proof runtime` captures one replay-input preflight over the full selected proof closure,
+including post-readiness seam observers and the selected negative-control task, and admits it
+before creating proof artifacts or spawning the child runtime. It then reuses that preflight across
+readiness diagnosis and the emitted Doctor artifact; the artifact does not re-read the checkout
+after runtime execution.
+`ota proof lifecycle` evaluates the exact workflow prerequisite-plus-assertion closure before
+creating its transaction or running any task, service command, readiness observation, or
+assertion. Both proof commands emit `execution_started: false` with typed hard-pin and policy
+evidence when admission refuses. Aggregate monorepo Doctor JSON carries the same canonical
+`replay_input_policy` record inside each applicable `members[]` result rather than dropping the
+member's policy identity and observed-input status.
 When an active org policy pack participates in the selected lane, receipt capture also adds
 `kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
 policy/ruleset drift as named input drift instead of leaving governance movement ambient.

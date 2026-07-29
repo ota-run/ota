@@ -454,6 +454,7 @@
         "path": { "type": "string" },
         "dry_run": { "type": "boolean" },
         "status": { "type": "string" },
+        "cause": { "type": "string" },
         "phase": {
           "enum": ["preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
         },
@@ -613,8 +614,14 @@
                 }
               }
             },
+            "contract_snapshot_hash": { "type": "string" },
+            "contract_snapshot_ref": { "type": "string" },
+            "assumption_set_hash": { "type": "string" },
             "evaluated_inputs": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/evaluated_inputs"
+            },
+            "replay_input_policy": {
+              "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/replay_input_policy"
             },
             "crossing": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing"
@@ -649,6 +656,9 @@
             "native_prerequisites": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/native_prerequisites"
             },
+            "dependency_steps": {
+              "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/dependency_steps"
+            },
             "policy": {
               "type": "array",
               "items": { "type": "string" }
@@ -676,6 +686,7 @@
               "type": "array",
               "items": { "type": "string" }
             },
+            "failure_origin": { "type": "string" },
             "summary": {
               "type": "object",
               "additionalProperties": false,

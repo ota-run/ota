@@ -97,6 +97,16 @@ pub(crate) struct CiProjectionGovernance {
     pub agent_admission: CiProjectionAdmission,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_assurance: Option<CiProjectionProofAssurance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_input_policy: Option<CiProjectionReplayInputPolicyRequirement>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CiProjectionReplayInputPolicyRequirement {
+    pub policy_identity: String,
+    pub rule_identities: Vec<String>,
+    pub selected_closure: Vec<String>,
+    pub unknown_selector_identities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -302,6 +312,7 @@ pub(crate) fn build_ci_projection(
                 basis: Vec::new(),
             },
             proof_assurance: None,
+            replay_input_policy: None,
         },
         ownership: CiProjectionOwnership {
             ota_owned: vec![

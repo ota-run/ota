@@ -246,6 +246,30 @@
   validates canonical SHA-256 identities, evaluates them in dry-run and Doctor, blocks `ota run`
   and `ota up` before task startup on missing or mismatched pins, and preserves expected plus
   observed identity in the resulting blocked receipt instead of reducing the failure to text
+- added policy-governed replay-input identity admission through
+  `policies.replay_inputs.identity.tasks|workflows`. One runner-owned preflight observation set now
+  drives Doctor findings and JSON, dry-run, run, up, proof runtime, proof lifecycle, and
+  admission-produced execution/refusal receipts. Replay admission, Doctor/provisioning findings,
+  receipt policy evidence, agent admission, claim assurance, and CI projection now consume one
+  loaded policy snapshot per command instead of independently reloading a changing local or remote
+  authority. Runtime proof passes that admitted authority, including explicit absence, to its
+  detached child through a private temporary snapshot. Governed `deny` and `review`
+  outcomes refuse
+  before native provisioning, proof artifact creation, dependency hydration, service ownership,
+  assertion execution, or task startup. Unavailable observations and unreadable or mismatched
+  declared pins fail closed, and hard-pin refusals retain the active policy evidence. Generic
+  readiness receipts do not reconstruct policy after execution. Runtime proof evaluates the full
+  selected proof closure, including seam observers and its selected negative control, and reuses
+  that preflight for both readiness findings and the embedded Doctor artifact; lifecycle
+  proof evaluates the exact prerequisite-plus-assertion closure before beginning its transaction.
+  Active policy sources that fail to load now refuse with typed
+  `replay_input_policy_unavailable` evidence instead of disappearing as absent policy. Replay
+  observation, policy selection, and hard-pin capture also include recursive `after_success`,
+  `after_failure`, and `after_always` execution edges before the parent starts.
+  Aggregate monorepo Doctor JSON retains each member's canonical policy result. CI projection binds
+  the active policy identity, applicable rules, canonical execution closure including recursive
+  outcome hooks, and unresolved selector identities while each provider checkout evaluates its
+  own observed replay-input identities.
 
 - added native virtualenv provenance to the V11.16 `execution_boundary` carrier in
   `ota proof runtime --json` and archived runtime proofs. Ota now records a repo-local

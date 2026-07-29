@@ -2,69 +2,91 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dist.ota.run/spec/json-schemas/latest/proof-lifecycle.json",
   "title": "ota proof lifecycle --json",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "ok",
-    "proof_verdict",
-    "path",
-    "mode",
-    "workflow",
-    "phase",
-    "stage_family",
-    "proof_scope",
-    "transaction_id",
-    "services",
-    "finalization",
-    "not_proved"
-  ],
-  "properties": {
-    "ok": { "type": "boolean" },
-    "proof_verdict": {
-      "type": "string",
-      "enum": ["passed_with_unproven_boundaries", "failed"]
-    },
-    "path": { "type": "string" },
-    "mode": { "const": "lifecycle-proof" },
-    "workflow": { "type": "string" },
-    "phase": { "const": "lifecycle" },
-    "stage_family": { "const": "proof" },
-    "proof_scope": { "$ref": "#/$defs/proofScope" },
-    "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "services": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/serviceRecord" }
-    },
-    "finalization": { "$ref": "#/$defs/finalization" },
-    "assertion": { "$ref": "#/$defs/assertion" },
-    "not_proved": {
-      "type": "array",
-      "minItems": 2,
-      "items": { "$ref": "#/$defs/proofNotProved" }
-    },
-    "archive": { "$ref": "#/$defs/archive" },
-    "error": { "type": "string" }
-  },
-  "allOf": [
+  "oneOf": [
     {
-      "if": { "properties": { "proof_verdict": { "const": "passed_with_unproven_boundaries" } }, "required": ["proof_verdict"] },
-      "then": {
-        "properties": {
-          "ok": { "const": true },
-          "services": { "minItems": 1 },
-          "finalization": { "properties": { "state": { "enum": ["completed", "completed_after_interruption"] } }, "required": ["state"] }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "proof_verdict",
+        "path",
+        "mode",
+        "workflow",
+        "phase",
+        "stage_family",
+        "proof_scope",
+        "transaction_id",
+        "services",
+        "finalization",
+        "not_proved"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "proof_verdict": {
+          "type": "string",
+          "enum": ["passed_with_unproven_boundaries", "failed"]
+        },
+        "path": { "type": "string" },
+        "mode": { "const": "lifecycle-proof" },
+        "workflow": { "type": "string" },
+        "phase": { "const": "lifecycle" },
+        "stage_family": { "const": "proof" },
+        "proof_scope": { "$ref": "#/$defs/proofScope" },
+        "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/serviceRecord" }
+        },
+        "finalization": { "$ref": "#/$defs/finalization" },
+        "assertion": { "$ref": "#/$defs/assertion" },
+        "not_proved": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/proofNotProved" }
+        },
+        "archive": { "$ref": "#/$defs/archive" },
+        "error": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "proof_verdict": { "const": "passed_with_unproven_boundaries" } }, "required": ["proof_verdict"] },
+          "then": {
+            "properties": {
+              "ok": { "const": true },
+              "services": { "minItems": 1 },
+              "finalization": { "properties": { "state": { "enum": ["completed", "completed_after_interruption"] } }, "required": ["state"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "proof_verdict": { "const": "failed" } }, "required": ["proof_verdict"] },
+          "then": {
+            "required": ["error"],
+            "properties": { "ok": { "const": false } }
+          }
+        },
+        { "properties": { "not_proved": { "contains": { "properties": { "kind": { "const": "application_output_not_proved" } }, "required": ["kind"] } } } },
+        { "properties": { "not_proved": { "contains": { "properties": { "kind": { "const": "broader_repo_completion_not_proved" } }, "required": ["kind"] } } } }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "code", "error", "execution_started"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "code": { "type": "string" },
+        "error": { "type": "string" },
+        "execution_started": { "const": false },
+        "preflight": {
+          "$ref": "./run-preview.json#/$defs/replayInputIdentityFailure/properties/preflight"
+        },
+        "replay_input_policy": {
+          "$ref": "./doctor.json#/$defs/replayInputPolicy"
         }
       }
-    },
-    {
-      "if": { "properties": { "proof_verdict": { "const": "failed" } }, "required": ["proof_verdict"] },
-      "then": {
-        "required": ["error"],
-        "properties": { "ok": { "const": false } }
-      }
-    },
-    { "properties": { "not_proved": { "contains": { "properties": { "kind": { "const": "application_output_not_proved" } }, "required": ["kind"] } } } },
-    { "properties": { "not_proved": { "contains": { "properties": { "kind": { "const": "broader_repo_completion_not_proved" } }, "required": ["kind"] } } } }
+    }
   ],
   "$defs": {
     "archive": {
