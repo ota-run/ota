@@ -20,11 +20,11 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-#[cfg(unix)]
-use std::{env, os::unix::fs::PermissionsExt};
+use std::{env, fs};
 
 use jsonschema::{Draft, JSONSchema};
 use serde_json::Value;
@@ -3250,6 +3250,36 @@ tasks:
 #[test]
 fn run_dry_run_json_admits_native_docker_compose_host_port_projection() {
     let fixture = TempDir::new().expect("fixture");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("fake Docker bin directory");
+    let docker_path = if cfg!(windows) {
+        bin_dir.join("docker.cmd")
+    } else {
+        bin_dir.join("docker")
+    };
+    fs::write(
+        &docker_path,
+        if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" echo Docker version 26.1.0\r\nif \"%1\"==\"compose\" if \"%2\"==\"version\" echo Docker Compose version v2.27.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'Docker version 26.1.0'; fi\nif [ \"$1\" = \"compose\" ] && [ \"$2\" = \"version\" ]; then echo 'Docker Compose version v2.27.0'; fi\nexit 0\n"
+        },
+    )
+    .expect("fake Docker executable");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&docker_path)
+            .expect("fake Docker metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).expect("fake Docker permissions");
+    }
+    let mut path_entries = vec![bin_dir];
+    if let Some(existing) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing));
+    }
+    let joined_path = env::join_paths(path_entries).expect("join fake Docker PATH");
+
     write_contract(
         &fixture,
         r#"
@@ -3299,7 +3329,7 @@ tasks:
     )
     .expect("compose fixture");
 
-    let json = run_ota(
+    let json = run_ota_with_env(
         &[
             "run",
             "dev",
@@ -3310,6 +3340,8 @@ tasks:
             fixture.path().to_str().unwrap(),
         ],
         fixture.path(),
+        &[("PATH", joined_path.to_str().expect("UTF-8 test PATH"))],
+        true,
     );
 
     assert_matches_schema("run-preview.json", &json);
