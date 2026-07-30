@@ -33,8 +33,37 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `1.6.25-implementation`
-- released baseline: `v1.6.24`
+- branch: `1.6.26-implementation`
+- released baseline: `v1.6.25`
+- active implementation slice: V11.21 enforced sandbox policy application. Core now derives one
+  provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
+  applies only identified monotonic policy restrictions, and fails closed before preparation when
+  the first `oci_local` provider cannot enforce an authoritative selected-lane control. Compatible
+  explicit-platform ephemeral container lanes receive read-only repository mounts, existing
+  writable carve-outs, bounded external-network denial, pre-mutation cleanup leases, distinct
+  per-invocation boundaries, initial and terminal engine inspection, engine-confirmed removal, and
+  runner-authored receipt evidence. Engine inspection rejects every mount outside the exact
+  repository-root and declared carve-out set. Those receipts are archived automatically with the
+  normalized contract snapshot and any identified policy-authority snapshot; archive reads
+  re-derive canonical policy and authority-owned overlays, reconcile completed segments with
+  archived task outcomes, and reject unbound overlay, segment, edge, capability, or application
+  identities. Dry-run performs no provider-backed runtime/tool probes, while real OCI precondition
+  probes execute as separately identified, cleanup-confirmed `precondition_probe` invocations
+  bound to the exact admitted requirement-owning segment inside the registered sandbox application
+  transaction; blocking probes retain that evidence in the refusal receipt and cannot substitute
+  for task-execution evidence. Declared Linux OCI `container.platform` is canonical for
+  target-specific variants, inputs, environment, requirements, and ordinary/provider-enforced
+  container creation, including persistent-container reconciliation. Reusing one task identity
+  across multiple phases refuses rather than collapsing separate invocations. Managed isolated
+  paths refuse until their durable provider resources have transaction-bound creation, retention,
+  and failure-cleanup evidence.
+  The first adapter admits finite command bodies only; typed task bodies, requirements, services,
+  conditional checks, and authoritative lifecycle-proof closures refuse rather than execute
+  outside the evidenced boundary. Ota-owned `run` flags, including `--sandbox-target`, remain
+  command flags when written after the task and before task inputs. `codex_local` remains compiled
+  guidance, targeted egress remains unsupported by stock OCI, and raw shell outside Ota remains
+  outside this enforcement boundary. Core fixture proof is green; two independent hosted pressure
+  repositories remain the completion gate.
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
@@ -157,8 +186,6 @@ durable agent workflow belongs in the canonical Ota skill.
   the same source. Bedrock live
   recording/promotion, Kylrix long-running runtime surfaces, and undeclared ambient inputs remain
   outside this bounded policy proof. No new Ota platform gap was exposed.
-- next planned slice: V11.21 enforced sandbox policy application is unblocked but remains inactive
-  until explicitly activated. No V11.21 implementation is part of the V11.20 completion batch.
 - completed V11.14 contract-claim assurance: the shared `claim_assurance` domain supplies the
   first additive `ota doctor --json` carrier for declared agent-safe tasks and workflow proof
   claims. It keeps maintainer
@@ -527,19 +554,18 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.20/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
+`docs/planning/v11.21/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
 `ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
-V11.20 is implemented and pressure-proven within the boundaries recorded above. Bedrock proves
-strict matching admission across native and container replay; Kylrix proves ordinary unpinned
-compatibility and strict refusal before setup mutation. Neither matrix proves undeclared ambient
-inputs, long-running Kylrix runtime behavior, or repo-global readiness.
+V11.21 Core implementation is active. The local real-OCI fixture proves a generated-output
+writable carve-out, protected worktree refusal, external-network denial, conditional hook
+segmentation, terminal inspection, cleanup, automatic receipt archive, and snapshot-backed archive
+reconciliation. This is selected-boundary proof only.
 
-The remaining release work is reconciliation, not product widening: commit and push the
-first-party alignment batch, rerun Core plus connected first-party workflows from the exact
-contract-owned candidate source, and cut `v1.6.25` only after those checks are green. Do not
-activate V11.21 until the V11.20 release is complete. After release, replace unreleased
-`git_rev` bootstrap pins with `version: v1.6.25` where released proof is intended.
+The public example, canonical skill, and site reference are carried. The remaining completion work
+is pressure and release reconciliation: prove one independent generated-output repo and one
+independent network-denial or targeted-egress-refusal repo on the exact branch source, then run the
+full Core and first-party release gates. Do not call V11.21 complete from the local fixture alone.
 
 ## Working Rules
 

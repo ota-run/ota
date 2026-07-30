@@ -789,7 +789,8 @@ Current planning state:
 - V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
 - V6 archive: [docs/planning/v6/plan.md](docs/planning/v6/plan.md)
 - Active branch and implementation handoff: [docs/ai/current-state.md](docs/ai/current-state.md)
-- Next planned, inactive slice: [docs/planning/v11.21/plan.md](docs/planning/v11.21/plan.md)
+- Active V11.21 sandbox-enforcement slice:
+  [docs/planning/v11.21/plan.md](docs/planning/v11.21/plan.md)
 - Each version plan retains its own explicit status; version order does not imply completion.
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
 - V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)

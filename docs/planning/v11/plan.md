@@ -180,11 +180,11 @@ The completed policy-governance slice is:
 - [V11.20: policy-governed replay input identity](../v11.20/plan.md) - implementation and
   Bedrock/Kylrix pressure complete.
 
-The next planned sandbox-enforcement slice is:
+The active sandbox-enforcement slice is:
 
-- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - planned, unblocked, and
-  inactive until explicitly activated. It consumes V11.8's shipped `runtime_boundary` and
-  capability-profile foundation;
+- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - active on
+  `1.6.26-implementation`. Its first implementation boundary is the provider-neutral canonical
+  policy envelope. It consumes V11.8's shipped `runtime_boundary` and capability-profile foundation;
   it does not reopen or replace that contract model.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:

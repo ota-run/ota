@@ -24,8 +24,7 @@
 
 # V11.21: Enforced Sandbox Policy Application
 
-Status: planned and inactive. V11.20 is complete; V11.21 is now unblocked but must not begin
-implementation until it is explicitly activated as the next slice.
+Status: active. V11.20 is complete and V11.21 is the current `1.6.26-implementation` slice.
 
 Source direction:
 
@@ -195,6 +194,27 @@ The closure policy identity binds the graph topology and every ordered segment i
 not flatten differing segment policies into a union that under-restricts one step or an intersection
 that prevents another from running.
 
+The graph must preserve conditional execution rather than pretending every reachable task runs in
+one linear sequence. Edges are typed as:
+
+- `unconditional`
+- `on_success`
+- `on_failure`
+- `always`
+
+Dependency, aggregate, prepare, setup, run, and attach ordering use unconditional edges.
+`after_success`, `after_failure`, and `after_always` retain their matching edge type recursively.
+Every reachable branch must be compiled and admitted before the first segment starts, because a
+failure hook is still executable policy surface even when the green path does not select it. At
+runtime, Ota records only the edges selected by the observed task outcome and must not claim that
+an unselected branch was applied or exercised.
+
+Every edge identity binds its source segment, destination segment, condition, and ordering
+relationship. A segment with multiple incoming conditions retains those distinct edges; the graph
+must not deduplicate them into one weaker reachability statement. Archive verification re-derives
+the complete graph from the contract snapshot, then verifies the observed selected path against
+the recorded task outcomes.
+
 Adjacent segments with identical effective policy may share one boundary. Segments with different
 effective policy require either:
 
@@ -224,10 +244,12 @@ V11.21 must keep five objects separate:
 Each object needs its own semantic identity and source. Capability must never become policy, and
 observed application must never be written back as declaration.
 
-An explicit restriction overlay may narrow execution. It must come from a contract-referenced
-policy pack or an authenticated hosted-policy authority that is authorized for the selected repo
-and lane. A provider default is not policy authority and Ota must never convert it into an overlay.
-If a provider would impose undeclared behavior, Ota must refuse with a typed
+An explicit restriction overlay may narrow execution. It must come from the same command-scoped
+`LoadedOrgPolicyPack` authority already used by admission and Doctor, or from an authenticated
+hosted-policy authority represented through that canonical loaded-policy boundary and authorized
+for the selected repo and lane. V11.21 must not reload policy independently or invent a second
+contract reference. A provider default is not policy authority and Ota must never convert it into
+an overlay. If a provider would impose undeclared behavior, Ota must refuse with a typed
 provider-policy mismatch.
 
 ### Restriction algebra
@@ -250,16 +272,18 @@ The initial algebra is:
   destinations or add constraints but never add reachability;
 - destination constraints: logical conjunction using the control's canonical typed form; an
   unrepresentable or contradictory conjunction becomes denial or typed refusal, never broad access;
-- secret bindings: an overlay may remove a binding or narrow its exposure but never introduce a
-  new secret source;
-- process, lifecycle, and isolation controls: use an explicit control-specific partial order;
-  incomparable postures produce typed refusal;
 - effects and external state: an overlay may require stronger review or denial but may not authorize
   an effect absent from canonical repo truth.
 
 An omitted field in an overlay is neutral, not an empty set. Overlay order must not affect the
 result, and the effective-policy identity must bind the canonical identity, every authorized
 overlay identity, and the derived result for each segment.
+
+The initial implementation may evaluate only control families already represented by the shipped
+`runtime_boundary`, effects, execution context, and lifecycle model. Secret exposure, process
+controls, or other future families must not be inferred from provider configuration. If a later
+contract version declares them, each family needs an explicit partial order and tests before it can
+participate in restriction algebra.
 
 ## Provider adapter contract
 
@@ -358,7 +382,7 @@ JSON refusal must identify:
 
 ## Applied-policy handshake
 
-Before any provider mutation or child process starts:
+Before any provider mutation or selected-lane child process starts:
 
 1. Ota resolves the selected closure, target platform, and canonical segment graph.
 2. Ota resolves every authorized restriction overlay and derives the effective segment graph.
@@ -372,6 +396,18 @@ Before any provider mutation or child process starts:
 9. Ota verifies that the applied policy, boundary lease, target platform, and capability set match
    the admitted segment plan.
 10. Only then may hydration, setup, services, or task execution begin.
+
+Non-mutating provider capability inspection may run before the lease is acquired, but it must not
+create, start, attach to, or otherwise mutate a provider boundary. Dry-run may use only that
+non-mutating inspection posture. Provider-backed runtime/tool probes for real execution must run
+inside the registered application transaction so their boundary creation and cleanup are covered
+by the same evidence as the selected lane. Each such boundary is recorded as a
+`precondition_probe` invocation of the exact admitted segment whose requirement caused the probe;
+image/platform similarity is not sufficient ownership. It has its own generation, pre-mutation
+cleanup lease, applied-policy identity, terminal inspection, and confirmed cleanup. A blocking
+probe carries that terminal evidence in the refusal receipt even when no task starts. It cannot
+satisfy the `task_execution` invocation required by an entered execution edge or archived task
+outcome.
 
 If provider application creates any partial state and then fails, Ota must invoke the registered
 finalizer. The terminal record must distinguish confirmed cleanup, incomplete cleanup, and unknown
@@ -425,6 +461,10 @@ mis-scoped, or unverifiable attestations are refused. Archives must retain the c
 attestation, verification result, and trust-root snapshot needed to re-verify the claim without
 treating an internally consistent provider document as proof.
 
+This protocol is a mandatory adapter contract, not a requirement to ship an external provider in
+the first local-OCI implementation. Until one external adapter implements and proves this protocol,
+external targets remain `unsupported` and cannot emit enforcement evidence.
+
 ### Enforcement lifetime
 
 Initial application is not enough for a completion receipt.
@@ -466,6 +506,17 @@ The first target must prove only what its runtime can enforce:
 - external IP-network connectivity denial
 - isolated process and cleanup lifecycle
 
+The initial `oci_local` adapter admits finite `run`, `script`, and `command` task segments only.
+It refuses typed prepare, action, Compose, launch, and attach bodies, plus task requirements,
+required services, conditional checks, or other materialization that the current runner would
+perform before creating that segment's OCI boundary. The provider-neutral graph still preserves
+those phases so later adapters can implement them; the first adapter must not call them enforced
+until their work occurs inside a witnessed provider boundary.
+
+`ota proof lifecycle --agent` also refuses a selected closure with authoritative sandbox controls
+until lifecycle proof can carry the same provider application evidence. A lifecycle receipt cannot
+borrow enforcement from an adjacent `ota run` or `ota up` invocation.
+
 For the reference OCI target, external IP-network denial means:
 
 - no provider bridge, host network, inherited service network, external route, or DNS path;
@@ -482,6 +533,20 @@ must reject:
 - writable hardlink aliases to protected files;
 - nested or overlapping mounts that expose protected content through a writable mount; and
 - provider-added writable paths absent from effective segment policy.
+
+The adapter must also prove that every declared protected path is representable before creating the
+boundary. A read-only repository root already protects descendants except explicit writable
+carve-outs. Under a writable root or writable ancestor, an existing protected file or directory may
+be covered by an exact read-only mount only when canonical path and inode checks exclude aliases.
+An absent protected path under a writable ancestor is unsupported for the stock OCI adapter unless
+the runtime exposes a stronger path-denial primitive; Ota must refuse rather than create a
+placeholder or claim that future creation is blocked.
+
+The first `oci_local` adapter must refuse `attachments.isolated_paths`. Those paths require
+provider-owned files or named volumes that can outlive one ephemeral container. Ota may admit them
+only after their creation, reuse, intended retention, and failure cleanup are registered beneath
+the same pre-mutation transaction and carried in application evidence. A writable carve-out does
+not make an unevidenced managed volume safe.
 
 Stock OCI/container networking does not by itself prove host/domain or destination allowlists. The
 reference adapter must therefore:
@@ -563,8 +628,10 @@ The exact schema may follow existing receipt conventions, but these invariants a
   advisory, unsupported, missing initial application evidence, or missing terminal finalization;
 - application-owned obligations remain separate and cannot be promoted by sandbox status;
 - the archive embeds or references the contract snapshot needed to re-derive the canonical policy;
-- archive verification re-derives the selected closure, canonical policy, restriction overlays,
-  ordered segment graph, target platform, and effective policy identity;
+- archive verification re-derives the selected closure, canonical policy, and ordered segment graph
+  from the archived contract snapshot, derives restriction overlays only from an identified
+  archived policy-authority snapshot, and then re-derives target platform and effective policy
+  identity;
 - archive verification checks applied-policy linkage without trusting human-readable summaries;
 - archive verification rejects missing, reordered, or unbound segment-transition evidence;
 - external-provider archives verify issuer authority, nonce, freshness-at-acceptance, signature or
@@ -621,7 +688,8 @@ Core regressions must prove:
 - target OS, architecture, and applicable platform identity participate in canonical policy
   identity;
 - task and workflow dependency closures produce ordered segment policies without flattening
-  differing phase boundaries;
+  differing phase boundaries; one task identity reached in multiple phases refuses until the
+  contract gives those invocations distinct identities;
 - differing concurrent segment policies require separate boundaries or refuse;
 - a policy transition cannot admit the next segment until the previous segment has terminated and
   the next effective policy has been applied and witnessed;
@@ -636,14 +704,19 @@ Core regressions must prove:
 - application-owned controls remain separate obligations and are never reported as provider
   enforcement;
 - dry-run and real execution return the same admission decision;
+- dry-run never creates or starts a provider boundary for precondition probing;
+- provider-backed precondition probes for real execution run only after the sandbox application
+  transaction exists and are finalized through that transaction;
 - a read-only repo rejects writes outside declared writable paths;
 - declared writable paths remain writable;
 - protected paths remain unwritable even when a broader parent path is writable;
 - the reference target denies external IP-network connectivity without claiming loopback or
   filesystem-socket absence;
 - symlink, hardlink, and nested-mount aliases cannot make protected content writable;
-- inherited service networks and mounted runtime-control sockets cannot bypass the bounded network
-  claim;
+- managed isolated paths refuse until their provider resources have transaction-bound creation,
+  retention, and cleanup evidence;
+- inherited service networks, image-declared volumes, undeclared mounts, and mounted
+  runtime-control sockets cannot bypass the bounded network/filesystem claim;
 - targeted egress refuses when the reference target lacks a cooperating enforcement adapter;
 - provider output cannot widen or omit canonical controls;
 - provider application is verified through control-specific inspection or a runner-owned canary,
@@ -656,8 +729,8 @@ Core regressions must prove:
   lease;
 - partial provider application finalizes through cleanup authority registered before the first
   mutation, even when no user task starts;
-- external attestations reject untrusted issuers, invalid signatures or channels, stale or replayed
-  nonces, revoked trust, and transaction mismatches;
+- when an external adapter is implemented, its attestations reject untrusted issuers, invalid
+  signatures or channels, stale or replayed nonces, revoked trust, and transaction mismatches;
 - missing terminal inspection, replacement boundary identity, or enforcement loss cannot become
   `enforced_through_completion`.
 
@@ -739,7 +812,8 @@ V11.21 is complete only when:
 - explicit restriction overlays use the canonical control-family algebra and provider defaults
   never become policy;
 - partial provider application is finalized through cleanup authority acquired before mutation;
-- external provider attestations are issuer-authenticated, challenge-bound, fresh, and replay-safe;
+- every shipped external provider attestation is issuer-authenticated, challenge-bound, fresh, and
+  replay-safe; V11.21 does not require an external adapter to ship alongside the local OCI target;
 - dry-run, run, up, receipts, archives, schemas, docs, examples, skills, and public site references
   agree on the same semantics;
 - canonical-policy, target-platform, segment, restriction-overlay, effective-policy, provider,

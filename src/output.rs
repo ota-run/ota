@@ -35,7 +35,7 @@ use crate::runner::{
     SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
     effective_task_execution, env_resolution_source_label, load_declared_env_sources,
     load_policy_env_overlay, orchestrator_execution_preview, resolve_declared_env_source_value,
-    resolve_execution_backend_with_contract_path,
+    resolve_execution_backend_with_contract_path, target_os_for_declared_backend,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, GeneratedArtifactSpec,
@@ -355,6 +355,14 @@ pub struct ExecutionReceiptStep {
     pub stage_family: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_relation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
@@ -635,11 +643,17 @@ pub struct ExecutionReceiptWitnessedObservations {
     /// Ota-recorded references from a producer receipt to replay-baseline evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replay_baseline_recordings: Vec<ExecutionReceiptReplayBaselineRecording>,
+    /// Runner-authored evidence that a cooperating provider applied and finalized the selected
+    /// sandbox policy. This proves only the selected execution boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sandbox_application: Option<crate::sandbox_policy::SandboxApplicationEvidence>,
 }
 
 impl ExecutionReceiptWitnessedObservations {
     pub fn is_empty(&self) -> bool {
-        self.query_traces.is_empty() && self.replay_baseline_recordings.is_empty()
+        self.query_traces.is_empty()
+            && self.replay_baseline_recordings.is_empty()
+            && self.sandbox_application.is_none()
     }
 }
 
@@ -1348,6 +1362,8 @@ pub struct GovernancePreflightEvidenceClasses {
 pub struct GovernancePreflightEvaluation {
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_admission: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub review_required: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declared_safe_for_agent: Option<bool>,
@@ -1497,6 +1513,8 @@ pub struct RunPreviewSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
     pub governance: RunPreviewGovernanceSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_admission: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) replay_input_policy: Option<ReplayInputPolicyEvaluation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3424,6 +3442,8 @@ pub struct UpPreviewStatus<'a> {
     pub execution: UpPreviewExecution,
     pub plan: UpPreviewPlan,
     pub governance: GovernanceEvaluation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_admission: Option<&'a serde_json::Value>,
     #[serde(skip_serializing_if = "<[Finding]>::is_empty")]
     pub blockers: &'a [Finding],
 }
@@ -4076,10 +4096,20 @@ impl<'a> WorkflowSummary<'a> {
             run_task_launch: workflow
                 .run
                 .as_ref()
-                .and_then(|phase| contract.tasks.get(phase.task.as_str()))
-                .and_then(|task| {
-                    let backend = task.workflow_backend(contract.execution.as_ref());
-                    task.resolved_execution_for_backend(backend, current_os())
+                .and_then(|phase| {
+                    contract.tasks.get(phase.task.as_str()).and_then(|task| {
+                        let effective = effective_task_execution(
+                            contract,
+                            phase.task.as_str(),
+                            ExecutionOverrides::default(),
+                        );
+                        let target_os = target_os_for_declared_backend(
+                            effective.backend,
+                            effective.container,
+                            current_os(),
+                        );
+                        task.resolved_execution_for_backend(effective.backend, target_os)
+                    })
                 })
                 .and_then(|execution| summarize_task_launch(execution.launch())),
             declared_safe_for_agent: workflow_safety.declared_safe,
@@ -4614,23 +4644,25 @@ impl<'a> TaskSummary<'a> {
             crate::cli::task_effective_safety_with_overrides(contract, name, overrides);
         let effective = effective_task_execution(contract, name, overrides);
         let selected_backend = effective.backend;
+        let target_os =
+            target_os_for_declared_backend(selected_backend, effective.container, current_os);
         let resolved_execution = task
-            .resolved_execution_for_backend(selected_backend, current_os)
+            .resolved_execution_for_backend(selected_backend, target_os)
             .expect("validated task must resolve to a default or variant execution");
         let effective_env = task.env_for_backend_with_context_name_for_os(
             contract.execution.as_ref(),
             selected_backend,
             effective.context_name,
-            current_os,
+            target_os,
         );
-        let effective_env_files = task.env_files_for_backend_for_os(selected_backend, current_os);
+        let effective_env_files = task.env_files_for_backend_for_os(selected_backend, target_os);
         let effective_adapter_inputs =
-            effective_task_adapter_inputs_summary(task, selected_backend, current_os);
-        let inputs = task.inputs_for_os(current_os);
+            effective_task_adapter_inputs_summary(task, selected_backend, target_os);
+        let inputs = task.inputs_for_os(target_os);
         let preview =
-            effective_task_execution_preview(contract, name, task, selected_backend, current_os);
+            effective_task_execution_preview(contract, name, task, selected_backend, target_os);
         let launch_preview =
-            effective_task_launch_preview(contract, name, task, selected_backend, current_os);
+            effective_task_launch_preview(contract, name, task, selected_backend, target_os);
         let modes: Vec<TaskModeView<'a>> = task
             .execution
             .as_ref()
@@ -4683,13 +4715,26 @@ impl<'a> TaskSummary<'a> {
                 .mode_execution_branch(crate::schema::Backend::Native)
                 .is_none()
             && task.resolved_execution(current_os).is_some();
+        let container_effective = effective_task_execution(
+            contract,
+            name,
+            ExecutionOverrides {
+                backend: Some(crate::schema::Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        );
+        let container_target_os = target_os_for_declared_backend(
+            crate::schema::Backend::Container,
+            container_effective.container,
+            current_os,
+        );
         let mode_platform_availability = [
             (
                 "container",
                 contract.task_active_for_backend_on_os(
                     task,
                     crate::schema::Backend::Container,
-                    current_os,
+                    container_target_os,
                 ),
             ),
             (
@@ -7284,6 +7329,46 @@ tasks:
             native.agent.command.as_deref(),
             Some("ota run build --native --agent")
         );
+    }
+
+    #[test]
+    fn container_task_summary_uses_declared_target_os_instead_of_host_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: alpine:3.22
+      platform: linux/amd64
+tasks:
+  verify:
+    command:
+      exe: echo
+      args: [host]
+    variants:
+      - when:
+          os: linux
+        command:
+          exe: echo
+          args: [linux]
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "verify",
+            contract.tasks.get("verify").expect("task should exist"),
+            "macos",
+            &contract,
+        );
+
+        assert_eq!(summary.preview, "echo linux");
     }
 
     #[test]

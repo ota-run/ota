@@ -70,6 +70,8 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy,
     diagnose_policy_review, diagnose_preconditions,
+    diagnose_preconditions_non_mutating_with_mode_for_task_with_overrides_and_replay_input_policy,
+    diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy,
     diagnose_preconditions_with_mode_for_task_with_overrides_and_replay_input_policy,
     diagnose_preconditions_with_mode_for_workflow_with_overrides,
     diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy,
@@ -3274,6 +3276,36 @@ pub fn proof_lifecycle(
             ),
             2,
         );
+    }
+    if agent {
+        match resolve_workflow_sandbox_admission(
+            &contract,
+            &target.contract_path,
+            Some(workflow_key),
+            overrides,
+            true,
+            None,
+            replay_input_preflight.loaded_policy.as_ref(),
+        ) {
+            Ok(Some(_)) => {
+                return CommandOutput::failure_with_code(
+                    format!(
+                        "lifecycle proof agent admission refused workflow `{workflow_key}` before prerequisite or service execution: the selected closure requires provider-enforced runtime controls, but `ota proof lifecycle` does not yet carry sandbox application evidence"
+                    ),
+                    2,
+                );
+            }
+            Err(error) => {
+                return CommandOutput::failure_with_code(
+                    format!(
+                        "lifecycle proof sandbox admission refused workflow `{workflow_key}` before prerequisite or service execution: {}",
+                        error.message
+                    ),
+                    2,
+                );
+            }
+            Ok(None) => {}
+        }
     }
 
     let transaction_id = match proof_runtime_seam_marker() {
@@ -14369,13 +14401,20 @@ fn build_env_report_with_overrides(
                 }
                 .to_string());
             };
-            let backend = effective_task_execution(contract, task_name, overrides).backend;
+            let effective = effective_task_execution(contract, task_name, overrides);
+            let backend = effective.backend;
+            let target_os = crate::runner::target_os_for_declared_backend(
+                backend,
+                effective.container,
+                current_os(),
+            );
             let planned_env_files =
                 planned_env_file_outputs_for_task_closure(contract, task_name, backend);
             ensure_task_env_files_ready_with_planned_outputs(
                 task_name,
                 task,
                 backend,
+                target_os,
                 contract_working_dir(contract_path),
                 &planned_env_files,
             )
@@ -15480,6 +15519,7 @@ fn harness_preflight_for_task(
         } else {
             String::from("allowed")
         },
+        sandbox_admission: None,
         review_required,
         declared_safe_for_agent: Some(task.safe_for_agent),
         effective_safe_for_agent: Some(task.effective_safe_for_agent),
@@ -16104,6 +16144,7 @@ fn harness_preflight_for_workflow(
         } else {
             String::from("allowed")
         },
+        sandbox_admission: None,
         review_required,
         declared_safe_for_agent: workflow.declared_safe_for_agent,
         effective_safe_for_agent: workflow.effective_safe_for_agent,
@@ -18044,6 +18085,7 @@ pub fn run_command(
         false,
         false,
         None,
+        None,
         dry_run,
         debug,
         show_receipt,
@@ -18081,6 +18123,7 @@ pub(crate) fn run_command_with_agent(
         agent,
         false,
         None,
+        None,
         dry_run,
         debug,
         show_receipt,
@@ -18101,6 +18144,7 @@ pub(crate) fn run_command_with_agent_reason(
     agent: bool,
     expect_refusal: bool,
     reason: Option<&str>,
+    sandbox_target: Option<&str>,
     dry_run: bool,
     debug: bool,
     show_receipt: bool,
@@ -18200,6 +18244,9 @@ pub(crate) fn run_command_with_agent_reason(
     if let Some(reason) = reason {
         debug_lines.push(format!("DEBUG reason={reason}"));
     }
+    if let Some(target) = sandbox_target {
+        debug_lines.push(format!("DEBUG sandbox_target={target}"));
+    }
     if normalized_task_inputs != task_inputs {
         debug_lines.push(format!(
             "DEBUG task_inputs={}",
@@ -18248,6 +18295,7 @@ pub(crate) fn run_command_with_agent_reason(
                     overrides,
                     members,
                     agent,
+                    sandbox_target,
                     format,
                     persist_logs,
                 )
@@ -18259,6 +18307,7 @@ pub(crate) fn run_command_with_agent_reason(
                     members,
                     &normalized_task_inputs,
                     agent,
+                    sandbox_target,
                     reason,
                     show_receipt,
                     stream,
@@ -18373,6 +18422,7 @@ fn run_preview_command(
     overrides: ExecutionOverrides,
     members: &[String],
     agent: bool,
+    sandbox_target: Option<&str>,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
@@ -18385,6 +18435,7 @@ fn run_preview_command(
                 None,
                 target,
                 agent,
+                sandbox_target,
                 format,
                 persist_logs,
             ),
@@ -18422,6 +18473,7 @@ fn run_preview_command(
             Some(member.as_str()),
             target,
             agent,
+            sandbox_target,
             format,
             persist_logs,
         );
@@ -18562,6 +18614,37 @@ fn render_run_preview_contract_problem(
 }
 
 fn run_preview_preconditions_report(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    replay_input_preflight: &TaskReplayInputPreflight,
+) -> DoctorReport {
+    let mode = doctor_mode_from_backend(Some(format_backend(
+        effective_task_execution(contract, task_name, overrides).backend,
+    )))
+    .unwrap_or(DoctorMode::Native);
+    let mut report =
+        diagnose_preconditions_non_mutating_with_mode_for_task_with_overrides_and_replay_input_policy(
+            contract,
+            contract_path,
+            mode,
+            task_name,
+            overrides,
+            replay_input_preflight.policy.as_ref(),
+            replay_input_preflight.doctor_policy_snapshot(),
+        );
+    append_safe_task_effect_policy_findings(
+        contract,
+        task_name,
+        overrides,
+        replay_input_preflight.loaded_policy.as_ref(),
+        &mut report,
+    );
+    report
+}
+
+fn run_execution_preconditions_report(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
@@ -20204,6 +20287,7 @@ fn render_run_preview_target(
     member: Option<&str>,
     mut target: LoadedContractTarget,
     agent: bool,
+    sandbox_target: Option<&str>,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
@@ -20228,7 +20312,6 @@ fn render_run_preview_target(
             )),
         };
     };
-
     let replay_input_preflight =
         task_replay_input_preflight(&target.contract, &target.contract_path, task_name.as_str());
     if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
@@ -20256,6 +20339,28 @@ fn render_run_preview_target(
             replay_input_policy,
         );
     }
+    let sandbox_admission = match resolve_task_sandbox_admission(
+        &target.contract,
+        &target.contract_path,
+        task_name.as_str(),
+        overrides,
+        agent,
+        sandbox_target,
+        replay_input_preflight.loaded_policy.as_ref(),
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return render_sandbox_admission_command_output(
+                "run --dry-run",
+                format,
+                &target.contract_path,
+                member,
+                Some(task_name.as_str()),
+                true,
+                &error,
+            );
+        }
+    };
 
     let path_display = target.contract_path.display().to_string();
     let text_path_display =
@@ -20268,10 +20373,17 @@ fn render_run_preview_target(
         (!required_env_names.is_empty()).then_some(&required_env_names),
     );
     let applied_overrides = execution_plan_overrides(overrides);
+    let requested_effective =
+        effective_task_execution(&target.contract, task_name.as_str(), overrides);
+    let requested_target_os = crate::runner::target_os_for_declared_backend(
+        requested_effective.backend,
+        requested_effective.container,
+        current_os(),
+    );
     let requested_task = TaskSummary::from_spec_with_overrides(
         task_name.as_str(),
         task,
-        current_os(),
+        requested_target_os,
         &target.contract,
         overrides,
     );
@@ -20400,10 +20512,20 @@ fn render_run_preview_target(
                     } else {
                         overrides
                     };
+                    let governance_effective = effective_task_execution(
+                        &target.contract,
+                        task_name.as_str(),
+                        governance_overrides,
+                    );
+                    let governance_target_os = crate::runner::target_os_for_declared_backend(
+                        governance_effective.backend,
+                        governance_effective.container,
+                        current_os(),
+                    );
                     let governance_task = TaskSummary::from_spec_with_overrides(
                         task_name.as_str(),
                         task,
-                        current_os(),
+                        governance_target_os,
                         &target.contract,
                         governance_overrides,
                     );
@@ -20455,6 +20577,9 @@ fn render_run_preview_target(
                             provisioning: None,
                             provisioning_request: None,
                             governance,
+                            sandbox_admission: sandbox_admission
+                                .as_ref()
+                                .map(sandbox_admission_json),
                             replay_input_policy: replay_input_policy.clone(),
                             artifact_routing,
                             plan,
@@ -20466,6 +20591,7 @@ fn render_run_preview_target(
             };
         }
     };
+    let _ = sandbox_admission;
 
     let toolchains =
         selected_task_toolchain_summaries(&target.contract, task_name.as_str(), overrides);
@@ -20539,7 +20665,7 @@ fn render_run_preview_target(
     } else {
         0
     };
-    let text = render_run_preview_text(
+    let mut text = render_run_preview_text(
         task_name.as_str(),
         &text_path_display,
         &summary,
@@ -20554,6 +20680,9 @@ fn render_run_preview_target(
         &plan,
         persist_logs,
     );
+    if let Some(admission) = sandbox_admission.as_ref() {
+        text.push_str(&render_sandbox_admission_preview(admission));
+    }
 
     match format {
         OutputFormat::Text => CommandOutput {
@@ -20607,6 +20736,7 @@ fn render_run_preview_target(
                     agent,
                     refusal.as_ref(),
                 ),
+                sandbox_admission: sandbox_admission.as_ref().map(sandbox_admission_json),
                 replay_input_policy,
                 artifact_routing,
                 plan,
@@ -20760,13 +20890,14 @@ fn run_preview_summary(
     let activation_surface =
         selected_task_closure_activation_requirement_surface(contract, task_name, overrides)
             .unwrap_or_default();
-    let activation_actions = requirement_surface_activation_actions(
-        &activation_surface,
-        requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        ),
-        effective_task_execution(contract, task_name, overrides).backend,
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
     );
+    let activation_actions =
+        requirement_surface_activation_actions(&activation_surface, target_os, effective.backend);
     let mut summary = doctor_preview_summary_for_resolution(
         preconditions_report,
         DoctorVerdict::Ready,
@@ -21089,10 +21220,12 @@ fn build_run_preview_plan(
         .get(task_name)
         .map(|task| task.depends_on_for_backend(effective_execution.backend))
         .unwrap_or_default();
-    let target_os = requirement_target_os_for_backend(effective_execution.backend);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective_execution.backend,
+        effective_execution.container,
+        current_os(),
+    );
     let mut plan = RunPreviewPlan::default();
-    let closure_toolchain_names =
-        selected_task_closure_toolchain_names(contract, task_name, overrides);
     let requested_backend_source = contract
         .tasks
         .get(task_name)
@@ -21149,10 +21282,10 @@ fn build_run_preview_plan(
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    for toolchain_line in selected_task_toolchain_preview_actions(
+    for toolchain_line in selected_task_closure_toolchain_preview_actions(
         contract,
-        &closure_toolchain_names,
-        target_os,
+        task_name,
+        overrides,
         &required_tool_names,
     ) {
         plan.requirement_lines.push(toolchain_line);
@@ -21581,12 +21714,17 @@ fn run_preview_task_execution_action(
     };
     if let Some(task_spec) = contract.tasks.get(task_name) {
         let effective = effective_task_execution(contract, task_name, overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
         if let Some(preview) = crate::runner::orchestrator_execution_preview(
             contract,
             task_name,
             task_spec,
             effective.backend,
-            current_os(),
+            target_os,
         ) {
             if task.launch.is_some() {
                 return format!("would launch `{preview}`{backend_detail}");
@@ -21887,10 +22025,16 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let task = contract.tasks.get(task_name)?;
-    let scoped = contract.resolved_task_requirement_surface_for_execution(
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
+    let scoped = contract.resolved_task_requirement_surface_for_execution_for_os(
         task,
         effective.backend,
         effective.context_name,
+        target_os,
     );
     let mut selected_tool_names = scoped.tools.keys().cloned().collect::<BTreeSet<_>>();
     let mut surface = scoped;
@@ -21911,10 +22055,11 @@ fn selected_task_requirement_surface(
     }
     if !matches!(effective.backend, Backend::Native)
         && contract
-            .resolved_task_requirement_surface_for_execution(
+            .resolved_task_requirement_surface_for_execution_for_os(
                 task,
                 effective.backend,
                 effective.context_name,
+                target_os,
             )
             .tools
             .is_empty()
@@ -21924,7 +22069,7 @@ fn selected_task_requirement_surface(
         }
     }
     if let Some(exe) =
-        task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+        task.effective_command_launch_executable_for_backend(effective.backend, target_os)
     {
         selected_tool_names.insert(exe.clone());
         surface
@@ -21946,10 +22091,9 @@ fn selected_task_requirement_surface(
     if matches!(effective.backend, Backend::Native) {
         let scoped_native = task
             .scoped_native_requirements_for_execution(effective.backend, effective.context_name);
-        surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
-            scoped_native,
-            requirement_target_os_for_backend(effective.backend),
-        ));
+        surface.merge(
+            &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
+        );
     }
     for tool_name in &selected_tool_names {
         if let Some(requirement) = surface.tools.get_mut(tool_name) {
@@ -21957,21 +22101,12 @@ fn selected_task_requirement_surface(
         }
     }
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
-    let mut toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides)
-        .into_iter()
-        .collect::<Vec<_>>();
-    if toolchain_names.is_empty() {
-        toolchain_names = contract
-            .task_required_toolchain_names(task_name)
-            .into_iter()
-            .collect::<Vec<_>>();
-    }
-    let toolchain_names = toolchain_names.into_iter().collect();
+    let toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides);
     surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
         contract,
         &surface,
         &toolchain_names,
-        requirement_target_os_for_backend(effective.backend),
+        target_os,
         Some(&required_tool_names),
     );
     Some(surface)
@@ -22020,6 +22155,7 @@ fn selected_task_closure_requirement_surface(
             .map(|plan| plan.steps.as_slice())
             .unwrap_or(&[]),
         effective.backend,
+        overrides,
     )
     .or_else(|| selected_task_requirement_surface(contract, task_name, overrides))
 }
@@ -22036,32 +22172,41 @@ fn selected_task_closure_activation_requirement_surface(
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let effective_backend = effective_task_execution(contract, task_name, overrides).backend;
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
+    let targets = run_plan
+        .as_ref()
+        .map(|plan| toolchain_targets_for_run_plan_steps(contract, &plan.steps, overrides))
+        .unwrap_or_default();
+    if !targets.is_empty() {
+        let mut surface = requirement_surface;
+        for (toolchain_name, target_os) in targets {
+            surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                contract,
+                &surface,
+                &BTreeSet::from([toolchain_name]),
+                target_os.as_str(),
+                Some(&required_tool_names),
+            );
+        }
+        return Some(surface);
+    }
+
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
     Some(
         requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &requirement_surface,
-            &selected_task_closure_toolchain_names(contract, task_name, overrides),
-            requirement_target_os_for_backend(effective_backend),
+            &selected_task_scoped_toolchain_names(contract, task_name, overrides),
+            target_os,
             Some(&required_tool_names),
         ),
     )
-}
-
-fn selected_task_closure_toolchain_names(
-    contract: &Contract,
-    task_name: &str,
-    overrides: ExecutionOverrides,
-) -> BTreeSet<String> {
-    let run_plan =
-        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
-    if let Some(plan) = run_plan.as_ref() {
-        let names = toolchain_names_for_run_plan_steps(contract, &plan.steps);
-        if !names.is_empty() {
-            return names;
-        }
-    }
-    selected_task_scoped_toolchain_names(contract, task_name, overrides)
 }
 
 fn selected_task_native_activation_actions(
@@ -22120,6 +22265,7 @@ fn requirement_surface_for_run_plan_steps(
     contract: &Contract,
     steps: &[crate::runner::RunPlanStep],
     requested_backend: Backend,
+    overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
     if steps.is_empty() {
         return None;
@@ -22131,10 +22277,24 @@ fn requirement_surface_for_run_plan_steps(
         let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
-        let scoped = contract.resolved_task_requirement_surface_for_execution(
+        let effective = effective_task_execution(
+            contract,
+            step.task.as_str(),
+            ExecutionOverrides {
+                backend: Some(step.backend),
+                ..overrides
+            },
+        );
+        let target_os = crate::runner::target_os_for_declared_backend(
+            step.backend,
+            effective.container,
+            current_os(),
+        );
+        let scoped = contract.resolved_task_requirement_surface_for_execution_for_os(
             task,
             step.backend,
             step.context.as_deref(),
+            target_os,
         );
         if matches!(step.backend, Backend::Native) && scoped.tools.is_empty() {
             retains_global_tool_fallback = true;
@@ -22152,7 +22312,7 @@ fn requirement_surface_for_run_plan_steps(
             );
         }
         if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(step.backend, current_os())
+            task.effective_command_launch_executable_for_backend(step.backend, target_os)
         {
             let requirement = contract
                 .tools
@@ -22173,8 +22333,7 @@ fn requirement_surface_for_run_plan_steps(
             let scoped_native = task
                 .scoped_native_requirements_for_execution(step.backend, step.context.as_deref());
             surface.merge(
-                &contract
-                    .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
+                &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
             );
         }
     }
@@ -22264,22 +22423,91 @@ fn add_node_package_manager_requirement(surface: &mut RequirementSurface, manage
         .or_insert_with(|| crate::schema::ToolRequirement::Simple(String::from("*")));
 }
 
-fn toolchain_names_for_run_plan_steps(
+fn target_os_for_run_plan_step(
+    contract: &Contract,
+    step: &crate::runner::RunPlanStep,
+    overrides: ExecutionOverrides,
+) -> String {
+    let effective = effective_task_execution(
+        contract,
+        step.task.as_str(),
+        ExecutionOverrides {
+            backend: Some(step.backend),
+            ..overrides
+        },
+    );
+    crate::runner::target_os_for_declared_backend(step.backend, effective.container, current_os())
+        .to_string()
+}
+
+fn toolchain_targets_for_run_plan_steps(
     contract: &Contract,
     steps: &[crate::runner::RunPlanStep],
-) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
+    overrides: ExecutionOverrides,
+) -> BTreeSet<(String, String)> {
+    let mut targets = BTreeSet::new();
     for step in steps {
         let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
-        names.extend(contract.task_toolchain_names_for_execution(
-            task,
-            step.backend,
-            step.context.as_deref(),
-        ));
+        let target_os = target_os_for_run_plan_step(contract, step, overrides);
+        targets.extend(
+            contract
+                .task_toolchain_names_for_execution_for_os(
+                    task,
+                    step.backend,
+                    step.context.as_deref(),
+                    target_os.as_str(),
+                )
+                .into_iter()
+                .map(|name| (name, target_os.clone())),
+        );
     }
-    names
+    targets
+}
+
+fn selected_task_closure_toolchain_preview_actions(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    required_tool_names: &BTreeSet<String>,
+) -> Vec<String> {
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
+    let targets = run_plan
+        .as_ref()
+        .map(|plan| toolchain_targets_for_run_plan_steps(contract, &plan.steps, overrides))
+        .unwrap_or_default();
+    if !targets.is_empty() {
+        let mut actions = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (toolchain_name, target_os) in targets {
+            for action in selected_task_toolchain_preview_actions(
+                contract,
+                &BTreeSet::from([toolchain_name]),
+                target_os.as_str(),
+                required_tool_names,
+            ) {
+                if seen.insert(action.clone()) {
+                    actions.push(action);
+                }
+            }
+        }
+        return actions;
+    }
+
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
+    selected_task_toolchain_preview_actions(
+        contract,
+        &selected_task_scoped_toolchain_names(contract, task_name, overrides),
+        target_os,
+        required_tool_names,
+    )
 }
 
 fn native_activation_actions_for_run_plan_steps(
@@ -22329,8 +22557,18 @@ fn selected_task_scoped_toolchain_names(
         return BTreeSet::new();
     };
     let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
     contract
-        .task_toolchain_names_for_execution(task, effective.backend, effective.context_name)
+        .task_toolchain_names_for_execution_for_os(
+            task,
+            effective.backend,
+            effective.context_name,
+            target_os,
+        )
         .into_iter()
         .collect()
 }
@@ -30704,6 +30942,7 @@ pub fn up(
         false,
         false,
         None,
+        None,
         format,
         debug,
         dry_run,
@@ -30744,6 +30983,7 @@ pub(crate) fn up_with_agent(
         agent,
         false,
         None,
+        None,
         format,
         debug,
         dry_run,
@@ -30766,6 +31006,7 @@ pub(crate) fn up_with_agent_reason(
     agent: bool,
     expect_refusal: bool,
     reason: Option<&str>,
+    sandbox_target: Option<&str>,
     format: OutputFormat,
     debug: bool,
     dry_run: bool,
@@ -31005,6 +31246,7 @@ pub(crate) fn up_with_agent_reason(
                             overrides,
                             workflow_name,
                             agent,
+                            sandbox_target,
                             None,
                             dry_run,
                             execution_mode,
@@ -31084,6 +31326,7 @@ pub(crate) fn up_with_agent_reason(
                                         overrides,
                                         workflow_name,
                                         agent,
+                                        sandbox_target,
                                         None,
                                         dry_run,
                                         execution_mode,
@@ -31157,6 +31400,7 @@ pub(crate) fn up_with_agent_reason(
                             overrides,
                             workflow_name,
                             agent,
+                            sandbox_target,
                             None,
                             dry_run,
                             execution_mode,
@@ -31273,6 +31517,7 @@ pub(crate) fn up_with_agent_reason(
                             overrides,
                             workflow_name,
                             agent,
+                            sandbox_target,
                             None,
                             dry_run,
                             execution_mode,
@@ -37697,11 +37942,50 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
             compact_path(path, ".")
         ));
     }
-    Ok(RepoReceiptArchiveRecord {
+    let record = RepoReceiptArchiveRecord {
         archive_path: path.to_path_buf(),
         archived_at: repo_receipt_archive_timestamp(path),
         payload,
-    })
+    };
+    if let Some(evidence) = record
+        .payload
+        .receipt
+        .witnessed_observations
+        .sandbox_application
+        .as_ref()
+    {
+        let (snapshot, _) = archived_repo_receipt_snapshot_with_path(&record)?
+            .ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` carries sandbox enforcement evidence without an archived contract snapshot",
+                    compact_path(path, ".")
+                )
+            })?;
+        let contract = serde_json::from_value::<Contract>(snapshot).map_err(|error| {
+            format!(
+                "receipt archive `{}` contains a contract snapshot that cannot re-derive sandbox policy: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        crate::sandbox_policy::validate_application_evidence_against_contract(
+            &contract,
+            evidence,
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains unreconciled sandbox application evidence: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        validate_sandbox_application_against_receipt_steps(evidence, &record.payload.receipt.steps)
+            .map_err(|error| {
+                format!(
+                    "receipt archive `{}` contains sandbox path evidence that does not match archived task outcomes: {error}",
+                    compact_path(path, ".")
+                )
+            })?;
+    }
+    Ok(record)
 }
 
 fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, String> {
@@ -41861,6 +42145,7 @@ tasks:
             ExecutionOverrides::default(),
             None,
             false,
+            None,
             None,
             true,
             super::RepoExecutionMode::Capture,
@@ -48279,6 +48564,7 @@ fn governance_evaluation_for_task_preview(
                 refusal,
             )
             .to_string(),
+            sandbox_admission: None,
             review_required,
             declared_safe_for_agent: Some(task.safe_for_agent),
             effective_safe_for_agent: Some(task.effective_safe_for_agent),
@@ -48407,6 +48693,7 @@ fn governance_evaluation_for_workflow_preview(
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
                 .to_string(),
+            sandbox_admission: None,
             review_required,
             declared_safe_for_agent: safety.declared_safe,
             effective_safe_for_agent: safety.effective_safe,
@@ -49368,6 +49655,7 @@ fn governance_evaluation_for_up_result(
         .cloned()
         .unwrap_or(crate::output::GovernancePreflightEvaluation {
             state: preflight_state.to_string(),
+            sandbox_admission: None,
             review_required: None,
             declared_safe_for_agent: None,
             effective_safe_for_agent: None,
@@ -56524,6 +56812,7 @@ fn render_up_result(
             &preview.execution,
             &preview.plan,
             &preview.governance,
+            preview.sandbox_admission.as_ref(),
             &preview.blockers,
             result.ok,
             format,
@@ -56570,6 +56859,11 @@ fn render_up_result(
                 exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
             }
         }
+        OutputFormat::Json if result.preview.is_some() => CommandOutput {
+            stdout: to_json_value(up_result_json_value(path, &result)),
+            stderr: None,
+            exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+        },
         OutputFormat::Json => render_up(
             path,
             Path::new(result.receipt.contract.as_str()),
@@ -56777,16 +57071,24 @@ fn render_up_preview_result(
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
     governance: &crate::output::GovernanceEvaluation,
+    sandbox_admission: Option<&JsonValue>,
     blockers: &[Finding],
     ready: bool,
     format: OutputFormat,
 ) -> CommandOutput {
     match format {
-        OutputFormat::Text => CommandOutput {
-            stdout: render_up_preview_text(text_path, summary, contract_identity, execution, plan),
-            stderr: None,
-            exit_code: if ready { 0 } else { 1 },
-        },
+        OutputFormat::Text => {
+            let mut stdout =
+                render_up_preview_text(text_path, summary, contract_identity, execution, plan);
+            if let Some(admission) = sandbox_admission {
+                stdout.push_str(&render_sandbox_admission_json_preview(admission));
+            }
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if ready { 0 } else { 1 },
+            }
+        }
         OutputFormat::Json => CommandOutput {
             stdout: to_json(&UpPreviewStatus {
                 ok: ready,
@@ -56801,6 +57103,7 @@ fn render_up_preview_result(
                 execution: execution.clone(),
                 plan: plan.clone(),
                 governance: governance.clone(),
+                sandbox_admission,
                 blockers,
             }),
             stderr: None,
@@ -56824,6 +57127,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "execution": preview.execution,
             "plan": preview.plan,
             "governance": preview.governance,
+            "sandbox_admission": preview.sandbox_admission,
             "blockers": preview.blockers,
         })
     } else {
@@ -56882,6 +57186,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "execution": preview.execution,
             "plan": preview.plan,
             "governance": preview.governance,
+            "sandbox_admission": preview.sandbox_admission,
             "blockers": preview.blockers,
         })
     } else {
@@ -57400,7 +57705,7 @@ agent:
             "ubuntu-latest",
             Some("native"),
             "linux",
-            OutputFormat::Json,
+            OutputFormat::Text,
             false,
         );
         assert_eq!(render.exit_code, 0);
@@ -68995,6 +69300,7 @@ agent:
             true,
             true,
             None,
+            None,
             false,
             false,
             false,
@@ -69049,6 +69355,7 @@ agent:
             &[],
             true,
             true,
+            None,
             None,
             false,
             false,
@@ -69112,6 +69419,7 @@ policies:
             true,
             true,
             None,
+            None,
             false,
             false,
             false,
@@ -69154,7 +69462,6 @@ agent:
 "#,
         )
         .expect("write contract");
-
         let output = super::up_with_agent_reason(
             Some(repo.path()),
             None,
@@ -69164,6 +69471,7 @@ agent:
             Some("release"),
             true,
             true,
+            None,
             None,
             OutputFormat::Json,
             false,
@@ -69183,6 +69491,330 @@ agent:
         assert_eq!(json["canary"]["target"], "release");
         assert_eq!(json["canary"]["execution_started"], false);
         assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn agent_run_dry_run_refuses_native_sandbox_policy_without_starting_execution() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-native
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default())
+                .expect("sandbox refusal json");
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(json["sandbox_admission"]["kind"], "sandbox_policy_refused");
+        assert!(
+            json["sandbox_admission"]["refusals"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| {
+                    entry["control"] == "execution.backend" && entry["capability"] == "unsupported"
+                }))
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn explicit_sandbox_target_refuses_when_contract_declares_no_runtime_policy() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-undeclared
+tasks:
+  verify:
+    command: { exe: sh, args: ["-c", "true"] }
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            None,
+            Some("oci_local"),
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default())
+                .expect("sandbox refusal json");
+        assert_eq!(
+            json["sandbox_admission"]["kind"],
+            "sandbox_policy_not_declared"
+        );
+    }
+
+    #[test]
+    fn agent_run_dry_run_auto_selects_oci_for_compatible_authoritative_policy() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("coverage")).expect("writable carveout");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-container
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: node, args: ["-e", "process.exit(0)"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [coverage]
+      network:
+        default: deny
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("sandbox preview json");
+        assert_eq!(json["sandbox_admission"]["decision"], "admitted", "{json}");
+        assert_eq!(json["sandbox_admission"]["resolution"], "automatic");
+        assert_eq!(
+            json["sandbox_admission"]["provider_target"],
+            crate::sandbox_policy::OCI_LOCAL_TARGET
+        );
+        assert_eq!(
+            json["sandbox_admission"]["canonical_policy"]["target_platform"]["platform"],
+            "linux/amd64"
+        );
+    }
+
+    #[test]
+    fn agent_run_refuses_managed_isolated_paths_before_provider_mutation() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("node_modules")).expect("isolated path");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-isolated
+execution:
+  default_context: verify
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+      platform: linux/amd64
+  contexts:
+    verify:
+      backend: container
+      lifecycle: ephemeral
+      attachments:
+        isolated_paths: [node_modules]
+tasks:
+  verify:
+    context: verify
+    safe_for_agent: true
+    command: { exe: sh, args: ["-c", "touch should-not-exist"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [node_modules]
+      network:
+        default: deny
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout: {}\nstderr: {}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        assert!(
+            rendered.contains("pre-mutation cleanup transaction"),
+            "{rendered}"
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/managed-engines").exists());
+    }
+
+    #[test]
+    fn agent_up_dry_run_carries_the_same_sandbox_admission_truth() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("coverage")).expect("writable carveout");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-workflow
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: node, args: ["-e", "process.exit(0)"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [coverage]
+      network:
+        default: deny
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+        let output = super::up_with_agent_reason(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            Some("verify"),
+            true,
+            false,
+            None,
+            None,
+            OutputFormat::Json,
+            false,
+            true,
+            false,
+            false,
+            None,
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("sandbox up preview json");
+        assert_eq!(json["sandbox_admission"]["decision"], "admitted", "{json}");
+        assert_eq!(json["sandbox_admission"]["resolution"], "automatic");
+        assert_eq!(
+            json["sandbox_admission"]["provider_target"],
+            crate::sandbox_policy::OCI_LOCAL_TARGET
+        );
     }
 
     #[test]
@@ -70718,6 +71350,7 @@ policies:
             super::finalize_governance_evaluation(crate::output::GovernanceEvaluation {
                 preflight: crate::output::GovernancePreflightEvaluation {
                     state: String::from("refused"),
+                    sandbox_admission: None,
                     review_required: Some(true),
                     declared_safe_for_agent: Some(false),
                     effective_safe_for_agent: Some(false),
@@ -71739,6 +72372,167 @@ tasks:
                 .expect("helm requirement")
                 .required_for_os(super::current_os())
         );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_uses_declared_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  preferred: container
+  backends:
+    container:
+      image: nanoserver
+      platform: windows/amd64
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "exit 1"]
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: powershell
+          args: ["-Command", "exit 0"]
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("selected task surface");
+
+        assert!(surface.tools.contains_key("powershell"));
+        assert!(!surface.tools.contains_key("sh"));
+    }
+
+    #[test]
+    fn selected_workflow_requirement_surface_uses_declared_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  preferred: container
+  backends:
+    container:
+      image: nanoserver
+      platform: windows/amd64
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "exit 1"]
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: powershell
+          args: ["-Command", "exit 0"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_workflow_task_requirement_surface(
+            &contract,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            Some("verify"),
+        )
+        .expect("selected workflow surface");
+
+        assert!(surface.tools.contains_key("powershell"));
+        assert!(!surface.tools.contains_key("sh"));
+    }
+
+    #[test]
+    fn dry_run_toolchain_targets_preserve_each_container_steps_declared_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    linux:
+      backend: container
+      container:
+        image: node:24-bookworm
+        platform: linux/amd64
+    windows:
+      backend: container
+      container:
+        image: nanoserver
+        platform: windows/amd64
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    platforms:
+      windows:
+        version: "22"
+tasks:
+  prepare:
+    context: windows
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+  verify:
+    context: linux
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+"#,
+        )
+        .expect("contract should parse");
+        let steps = vec![
+            crate::runner::RunPlanStep {
+                task: String::from("prepare"),
+                parent: Some(String::from("verify")),
+                backend: Backend::Container,
+                context: Some(String::from("windows")),
+                backend_selection_source: String::from("task"),
+            },
+            crate::runner::RunPlanStep {
+                task: String::from("verify"),
+                parent: None,
+                backend: Backend::Container,
+                context: Some(String::from("linux")),
+                backend_selection_source: String::from("task"),
+            },
+        ];
+
+        let targets = super::toolchain_targets_for_run_plan_steps(
+            &contract,
+            &steps,
+            ExecutionOverrides::default(),
+        );
+
+        assert!(targets.contains(&(String::from("node"), String::from("windows"))));
+        assert!(targets.contains(&(String::from("node"), String::from("linux"))));
     }
 
     #[test]
@@ -72849,22 +73643,25 @@ tasks:
     }
 
     #[test]
-    fn run_dry_run_blocks_when_selected_container_toolchain_owned_tool_is_missing() {
+    fn run_dry_run_does_not_start_container_precondition_probes() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
         let bin_dir = repo.path().join("bin");
+        let provider_mutation_log = repo.path().join("provider-mutation.log");
         fs::create_dir_all(&bin_dir).expect("create fake bin");
         let docker_body = if cfg!(windows) {
             format!(
-                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'uv'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo run>>\"{mutation_log}\"\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'uv'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
                 started = "__OTA_CONTAINER_PROBE_STARTED__",
                 path = "__OTA_RESOLVED_PATH__",
+                mutation_log = provider_mutation_log.display(),
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n    *\"command -v 'uv'\"*) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'run\\n' >> '{mutation_log}'\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n    *\"command -v 'uv'\"*) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
                 started = "__OTA_CONTAINER_PROBE_STARTED__",
                 path = "__OTA_RESOLVED_PATH__",
+                mutation_log = provider_mutation_log.display(),
             )
         };
         write_executable_script(&fake_command_path(&bin_dir, "docker"), &docker_body);
@@ -72933,15 +73730,15 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.exit_code, 0);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["ok"], false);
-        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(json["resolved"]["backend"], "container");
-        assert_eq!(
-            json["summary"]["primary_blocker"]["summary"],
-            "Tool probe failed: uv"
+        assert!(
+            !provider_mutation_log.exists(),
+            "dry-run must not execute a provider-backed container probe"
         );
     }
 
@@ -76990,6 +77787,7 @@ tasks:
             preview: None,
             governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
                 state: String::from("warning_only"),
+                sandbox_admission: None,
                 review_required: Some(true),
                 declared_safe_for_agent: Some(true),
                 effective_safe_for_agent: Some(false),
@@ -77274,6 +78072,7 @@ tasks:
             preview: None,
             governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
                 state: String::from("warning_only"),
+                sandbox_admission: None,
                 review_required: Some(true),
                 declared_safe_for_agent: Some(false),
                 effective_safe_for_agent: Some(false),
@@ -77449,6 +78248,7 @@ tasks:
                 governance: crate::output::GovernanceEvaluation {
                     preflight: crate::output::GovernancePreflightEvaluation {
                         state: String::from("blocked"),
+                        sandbox_admission: None,
                         review_required: None,
                         declared_safe_for_agent: None,
                         effective_safe_for_agent: None,
@@ -77537,6 +78337,7 @@ tasks:
                     sandbox_policy: None,
                     crossing: None,
                 },
+                sandbox_admission: None,
                 blockers: Vec::new(),
             }),
             governance_preflight: None,
@@ -80681,6 +81482,118 @@ workflows:
 
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0].tool_name, "pnpm");
+    }
+
+    #[test]
+    fn selected_up_activation_actions_preserve_each_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    linux:
+      backend: container
+      container:
+        image: node:24-bookworm
+        platform: linux/amd64
+    windows:
+      backend: container
+      container:
+        image: nanoserver
+        platform: windows/amd64
+tools:
+  prepare-cli:
+    version: "*"
+    platforms:
+      linux:
+        acquisition:
+          provider: command
+          shell: sh
+          run: install-prepare-linux
+      windows:
+        acquisition:
+          provider: command
+          shell: pwsh
+          run: Install-PrepareWindows
+  verify-cli:
+    version: "*"
+    platforms:
+      linux:
+        acquisition:
+          provider: command
+          shell: sh
+          run: install-verify-linux
+      windows:
+        acquisition:
+          provider: command
+          shell: pwsh
+          run: Install-VerifyWindows
+tasks:
+  prepare:
+    context: windows
+    run: prepare-cli install
+    requirements:
+      tools:
+        prepare-cli: "*"
+  verify:
+    context: linux
+    run: verify-cli test
+    depends_on: [prepare]
+    requirements:
+      tools:
+        verify-cli: "*"
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("contract should parse");
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![
+                Finding {
+                    identity: None,
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing tool: prepare-cli"),
+                    why: String::from("prepare-cli is missing from the Windows container"),
+                    next: String::from("activate prepare-cli"),
+                },
+                Finding {
+                    identity: None,
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing tool: verify-cli"),
+                    why: String::from("verify-cli is missing from the Linux container"),
+                    next: String::from("activate verify-cli"),
+                },
+            ],
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 2, "{actions:?}");
+        assert!(actions.iter().any(|action| {
+            action.backend == Backend::Container
+                && action.tool_name == "prepare-cli"
+                && action.acquisition.run.as_deref() == Some("Install-PrepareWindows")
+        }));
+        assert!(actions.iter().any(|action| {
+            action.backend == Backend::Container
+                && action.tool_name == "verify-cli"
+                && action.acquisition.run.as_deref() == Some("install-verify-linux")
+        }));
     }
 
     #[test]
@@ -84884,6 +85797,7 @@ execution:
             Path::new("/tmp/ota.yaml"),
             &ProvisioningExecutionTarget::Container {
                 image: String::from("ghcr.io/ota/dev:latest"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -87798,6 +88712,7 @@ tasks:
         let outcome = super::CommandRunResult {
             exit_code: 42,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -87815,6 +88730,7 @@ tasks:
         let outcome = super::CommandRunResult {
             exit_code: 0,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: Some(String::from("ota-persistent-app")),
@@ -90242,6 +91158,89 @@ workflows:
                 "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`)",
             )
         }));
+    }
+
+    #[test]
+    fn up_toolchain_targets_do_not_reassign_dependency_truth_to_the_parent_os() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    linux:
+      backend: container
+      container:
+        image: node:24-bookworm
+        platform: linux/amd64
+    windows:
+      backend: container
+      container:
+        image: nanoserver
+        platform: windows/amd64
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    platforms:
+      windows:
+        version: "22"
+tasks:
+  prepare:
+    context: windows
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+  verify:
+    context: linux
+    run: echo verify
+    depends_on:
+      - prepare
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("contract should parse");
+
+        let targets = super::selected_workflow_toolchain_targets(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            Backend::Container,
+        );
+        assert_eq!(
+            targets,
+            BTreeSet::from([(String::from("node"), String::from("windows"))])
+        );
+        assert_eq!(
+            super::selected_toolchain_target_os_for_task(
+                &contract,
+                "prepare",
+                ExecutionOverrides::default(),
+            ),
+            "windows"
+        );
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            Backend::Container,
+        );
+        assert!(
+            actions.iter().any(|action| action.contains("version `22`")),
+            "{actions:?}"
+        );
+        assert!(
+            !actions.iter().any(|action| action.contains("version `24`")),
+            "{actions:?}"
+        );
     }
 
     #[test]
@@ -96315,6 +97314,88 @@ workflows:
 
     #[cfg(unix)]
     #[test]
+    fn proof_lifecycle_agent_refuses_authoritative_sandbox_before_execution() {
+        let fixture = TempDir::new().unwrap();
+        let task_marker = fixture.path().join("task-ran");
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: lifecycle-sandbox
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: alpine:3.22
+      platform: linux/amd64
+      engines: [docker]
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-sandbox
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch '{}'"]
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+      network:
+        default: deny
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: verify
+    proof:
+      lifecycle:
+        services: [database]
+agent:
+  safe_tasks: [verify]
+"#,
+                task_marker.display()
+            ),
+        )
+        .unwrap();
+
+        let output = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            true,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Text,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 2, "{}", output.stdout);
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        assert!(
+            rendered.contains("does not yet carry sandbox application evidence"),
+            "{rendered}"
+        );
+        assert!(!task_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proof_lifecycle_leases_inactive_compose_service_and_finalizes_it() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -99226,6 +100307,7 @@ fn run_contract_targets(
     members: &[String],
     task_inputs: &[String],
     agent: bool,
+    sandbox_target: Option<&str>,
     reason: Option<&str>,
     show_receipt: bool,
     force_stream: bool,
@@ -99243,6 +100325,7 @@ fn run_contract_targets(
             target,
             task_inputs,
             agent,
+            sandbox_target,
             reason,
             show_receipt,
             force_stream,
@@ -99269,6 +100352,7 @@ fn run_contract_targets(
             target,
             task_inputs,
             agent,
+            sandbox_target,
             reason,
             show_receipt,
             force_stream,
@@ -99287,6 +100371,7 @@ fn run_single_contract_target(
     target: LoadedContractTarget,
     task_inputs: &[String],
     agent: bool,
+    sandbox_target: Option<&str>,
     reason: Option<&str>,
     show_receipt: bool,
     force_stream: bool,
@@ -99322,6 +100407,28 @@ fn run_single_contract_target(
     {
         return Err(failure);
     }
+    let sandbox_admission = resolve_task_sandbox_admission(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+        overrides,
+        agent,
+        sandbox_target,
+        replay_input_preflight.loaded_policy.as_ref(),
+    )
+    .map_err(|error| {
+        sandbox_admission_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+            &error,
+        )
+    })?;
 
     // Closure-wide interaction preflight: refuse before any dependency or task execution when
     // any task in the full dependency closure has `interaction: required` and no interactive
@@ -99340,7 +100447,10 @@ fn run_single_contract_target(
         let Some(posture) = task_command_interaction_posture_for_backend(
             &target.contract,
             closure_task,
-            step.backend,
+            ExecutionOverrides {
+                backend: Some(step.backend),
+                ..overrides
+            },
         ) else {
             continue;
         };
@@ -99405,55 +100515,611 @@ fn run_single_contract_target(
         }
     }
 
-    if let Some(failure) = run_selected_precondition_failure(
-        selected_task_name.as_str(),
-        overrides,
-        member,
-        &target.contract,
-        &target.contract_path,
-        show_receipt,
-        &replay_input_preflight,
-    ) {
-        return Err(failure);
-    }
-
     let use_terminal_passthrough =
         should_use_command_terminal_passthrough(closure_allows_terminal_passthrough);
 
-    if stream_output
-        || use_terminal_passthrough
-        || task_requires_interactive_stream(&target.contract, task_name, overrides)
-    {
-        return run_single_contract_target_streaming(
-            task_name,
-            overrides,
-            member,
-            target,
-            task_inputs,
-            agent,
-            reason,
-            show_receipt,
-            &details_footer,
-            persist_logs,
-            use_terminal_passthrough,
-            replay_input_preflight,
-        );
-    }
-
-    run_single_contract_target_captured(
-        task_name,
-        overrides,
-        member,
-        target,
-        task_inputs,
-        agent,
-        reason,
-        show_receipt,
-        &details_footer,
-        persist_logs,
-        replay_input_preflight,
+    crate::runner::with_oci_local_application_plan(
+        sandbox_admission
+            .as_ref()
+            .and_then(|admission| admission.plan.as_ref()),
+        || {
+            if let Some(failure) = run_selected_precondition_failure(
+                selected_task_name.as_str(),
+                overrides,
+                member,
+                &target.contract,
+                &target.contract_path,
+                show_receipt,
+                &replay_input_preflight,
+            ) {
+                return Err(failure);
+            }
+            if stream_output
+                || use_terminal_passthrough
+                || task_requires_interactive_stream(&target.contract, task_name, overrides)
+            {
+                run_single_contract_target_streaming(
+                    task_name,
+                    overrides,
+                    member,
+                    target,
+                    task_inputs,
+                    agent,
+                    reason,
+                    show_receipt,
+                    &details_footer,
+                    persist_logs,
+                    use_terminal_passthrough,
+                    replay_input_preflight,
+                )
+            } else {
+                run_single_contract_target_captured(
+                    task_name,
+                    overrides,
+                    member,
+                    target,
+                    task_inputs,
+                    agent,
+                    reason,
+                    show_receipt,
+                    &details_footer,
+                    persist_logs,
+                    replay_input_preflight,
+                )
+                .map(|result| result.output)
+            }
+        },
     )
-    .map(|result| result.output)
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSandboxAdmission {
+    policy: crate::sandbox_policy::SandboxPolicy,
+    effective: crate::sandbox_policy::EffectiveSandboxPolicy,
+    evaluation: crate::sandbox_policy::ProviderApplicationEvaluation,
+    plan: Option<crate::sandbox_policy::OciLocalApplicationPlan>,
+    resolution: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxAdmissionError {
+    kind: &'static str,
+    requested_target: Option<String>,
+    resolved_target: Option<String>,
+    canonical_policy_identity: Option<String>,
+    restriction_overlay_identities: Vec<String>,
+    effective_policy_identity: Option<String>,
+    refusals: Vec<crate::sandbox_policy::SandboxAdmissionRefusal>,
+    supported_alternatives: Vec<String>,
+    message: String,
+}
+
+fn sandbox_admission_json(admission: &ResolvedSandboxAdmission) -> JsonValue {
+    json!({
+        "decision": "admitted",
+        "resolution": admission.resolution,
+        "provider_target": admission.evaluation.provider_target,
+        "canonical_policy": admission.policy,
+        "restriction_overlay_identities": admission.effective.restriction_overlay_identities,
+        "effective_policy": admission.effective,
+        "provider_evaluation": admission.evaluation,
+        "application_plan_identity": admission.plan.as_ref().map(|plan| plan.identity.as_str()),
+    })
+}
+
+fn render_sandbox_admission_preview(admission: &ResolvedSandboxAdmission) -> String {
+    format!(
+        "\n\n{}\n{}\n{}\n{}\n{}",
+        paint_section_title("Sandbox Admission"),
+        detail_list_row(&paint_key("Decision:"), "admitted"),
+        detail_list_row(
+            &paint_key("Target:"),
+            &paint_backticked_code(admission.evaluation.provider_target.as_str()),
+        ),
+        detail_list_row(&paint_key("Resolution:"), admission.resolution,),
+        detail_list_row(
+            &paint_key("Policy:"),
+            &paint_backticked_code(admission.effective.identity.as_str()),
+        ),
+    )
+}
+
+fn render_sandbox_admission_json_preview(admission: &JsonValue) -> String {
+    let decision = admission
+        .get("decision")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    let target = admission
+        .get("provider_target")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unresolved");
+    let resolution = admission
+        .get("resolution")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    let policy = admission
+        .pointer("/effective_policy/identity")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unavailable");
+    format!(
+        "\n\n{}\n{}\n{}\n{}\n{}",
+        paint_section_title("Sandbox Admission"),
+        detail_list_row(&paint_key("Decision:"), decision),
+        detail_list_row(&paint_key("Target:"), &paint_backticked_code(target)),
+        detail_list_row(&paint_key("Resolution:"), resolution),
+        detail_list_row(&paint_key("Policy:"), &paint_backticked_code(policy)),
+    )
+}
+
+fn resolve_task_sandbox_admission(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    requested_target: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
+    let requested_target = requested_target
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if requested_target.is_some_and(|target| target != crate::sandbox_policy::OCI_LOCAL_TARGET) {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_target_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: vec![crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()],
+            message: format!(
+                "sandbox target `{}` is not available; the first enforcing target is `{}`",
+                requested_target.unwrap_or_default(),
+                crate::sandbox_policy::OCI_LOCAL_TARGET
+            ),
+        });
+    }
+    if !agent && requested_target.is_none() {
+        return Ok(None);
+    }
+    let task_has_runtime_boundary = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.runtime_boundary.as_ref())
+        .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .task_execution_closure_names([task_name.to_string()])
+            .iter()
+            .any(|closure_task| {
+                contract
+                    .tasks
+                    .get(closure_task)
+                    .and_then(|task| task.runtime_boundary.as_ref())
+                    .is_some_and(|boundary| !boundary.is_empty())
+            });
+    let policy_has_runtime_boundary = loaded_policy
+        .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
+        .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some());
+    if !task_has_runtime_boundary && !policy_has_runtime_boundary {
+        if requested_target.is_some() {
+            return Err(SandboxAdmissionError {
+                kind: "sandbox_policy_not_declared",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: None,
+                canonical_policy_identity: None,
+                restriction_overlay_identities: Vec::new(),
+                effective_policy_identity: None,
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message: String::from(
+                    "the selected lane and loaded policy do not declare an authoritative runtime boundary; Ota will not convert provider defaults into policy",
+                ),
+            });
+        }
+        return Ok(None);
+    }
+    let policy = crate::sandbox_policy::sandbox_policy_for_task(contract, task_name, overrides)
+        .map_err(|message| SandboxAdmissionError {
+            kind: "sandbox_policy_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: Vec::new(),
+            message,
+        })?;
+    resolve_sandbox_policy_admission(
+        policy,
+        contract_path,
+        overrides,
+        agent,
+        requested_target,
+        loaded_policy,
+    )
+}
+
+fn resolve_workflow_sandbox_admission(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    requested_target: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
+    let requested_target = requested_target
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if requested_target.is_some_and(|target| target != crate::sandbox_policy::OCI_LOCAL_TARGET) {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_target_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: vec![crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()],
+            message: format!(
+                "sandbox target `{}` is not available; the first enforcing target is `{}`",
+                requested_target.unwrap_or_default(),
+                crate::sandbox_policy::OCI_LOCAL_TARGET
+            ),
+        });
+    }
+    let workflow_has_runtime_boundary = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.runtime_boundary.as_ref())
+        .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.runtime_boundary.as_ref())
+            .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .task_execution_closure_names(
+                contract.selected_workflow_task_closure_names(workflow_name),
+            )
+            .iter()
+            .map(String::as_str)
+            .chain(contract.selected_attach_task_name_for(workflow_name))
+            .any(|task_name| {
+                contract
+                    .tasks
+                    .get(task_name)
+                    .and_then(|task| task.runtime_boundary.as_ref())
+                    .is_some_and(|boundary| !boundary.is_empty())
+            });
+    let policy_has_runtime_boundary = loaded_policy
+        .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
+        .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some());
+    if requested_target.is_none() && !workflow_has_runtime_boundary && !policy_has_runtime_boundary
+    {
+        return Ok(None);
+    }
+    let policy =
+        crate::sandbox_policy::sandbox_policy_for_workflow(contract, workflow_name, overrides)
+            .map_err(|message| SandboxAdmissionError {
+                kind: "sandbox_policy_unavailable",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: None,
+                canonical_policy_identity: None,
+                restriction_overlay_identities: Vec::new(),
+                effective_policy_identity: None,
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message,
+            })?;
+    resolve_sandbox_policy_admission(
+        policy,
+        contract_path,
+        overrides,
+        agent,
+        requested_target,
+        loaded_policy,
+    )
+}
+
+fn resolve_sandbox_policy_admission(
+    policy: crate::sandbox_policy::SandboxPolicy,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    requested_target: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
+    let restriction_authority = crate::sandbox_policy::restriction_authority_from_loaded_policy(
+        loaded_policy,
+    )
+    .map_err(|message| SandboxAdmissionError {
+        kind: "sandbox_policy_authority_unavailable",
+        requested_target: requested_target.map(str::to_string),
+        resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+        canonical_policy_identity: Some(policy.identity.clone()),
+        restriction_overlay_identities: Vec::new(),
+        effective_policy_identity: None,
+        refusals: Vec::new(),
+        supported_alternatives: Vec::new(),
+        message,
+    })?;
+    let overlays = crate::sandbox_policy::restriction_overlays_from_loaded_policy(loaded_policy)
+        .map_err(|message| SandboxAdmissionError {
+            kind: "sandbox_policy_authority_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+            canonical_policy_identity: Some(policy.identity.clone()),
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: Vec::new(),
+            message,
+        })?;
+    let effective =
+        crate::sandbox_policy::effective_sandbox_policy(&policy, &overlays).map_err(|message| {
+            SandboxAdmissionError {
+                kind: "sandbox_policy_conflict",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+                canonical_policy_identity: Some(policy.identity.clone()),
+                restriction_overlay_identities: Vec::new(),
+                effective_policy_identity: None,
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message,
+            }
+        })?;
+    let has_authoritative_controls =
+        crate::sandbox_policy::policy_has_authoritative_runtime_controls(&policy)
+            || crate::sandbox_policy::effective_policy_has_authoritative_runtime_controls(
+                &effective,
+            );
+    if !has_authoritative_controls {
+        if requested_target.is_some() {
+            return Err(SandboxAdmissionError {
+                kind: "sandbox_policy_not_declared",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: None,
+                canonical_policy_identity: Some(policy.identity),
+                restriction_overlay_identities: effective.restriction_overlay_identities,
+                effective_policy_identity: Some(effective.identity),
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message: String::from(
+                    "the selected lane and loaded policy do not declare an authoritative runtime boundary; Ota will not convert provider defaults into policy",
+                ),
+            });
+        }
+        return Ok(None);
+    }
+    if !agent && requested_target.is_none() {
+        return Ok(None);
+    }
+    let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let (evaluation, plan) = crate::sandbox_policy::evaluate_oci_local_application(
+        &policy,
+        &effective,
+        restriction_authority.as_ref(),
+        repo_root,
+        overrides,
+    )
+    .map_err(|message| SandboxAdmissionError {
+        kind: "sandbox_provider_evaluation_failed",
+        requested_target: requested_target.map(str::to_string),
+        resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+        canonical_policy_identity: Some(policy.identity.clone()),
+        restriction_overlay_identities: effective.restriction_overlay_identities.clone(),
+        effective_policy_identity: Some(effective.identity.clone()),
+        refusals: Vec::new(),
+        supported_alternatives: Vec::new(),
+        message,
+    })?;
+    if !evaluation.admitted {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_policy_refused",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+            canonical_policy_identity: Some(policy.identity.clone()),
+            restriction_overlay_identities: effective.restriction_overlay_identities.clone(),
+            effective_policy_identity: Some(effective.identity.clone()),
+            refusals: evaluation.refusals.clone(),
+            supported_alternatives: Vec::new(),
+            message: evaluation
+                .refusals
+                .first()
+                .map(|refusal| refusal.reason.clone())
+                .unwrap_or_else(|| String::from("sandbox provider refused the selected policy")),
+        });
+    }
+    Ok(Some(ResolvedSandboxAdmission {
+        policy,
+        effective,
+        evaluation,
+        plan,
+        resolution: if requested_target.is_some() {
+            "explicit"
+        } else {
+            "automatic"
+        },
+    }))
+}
+
+fn render_sandbox_admission_command_output(
+    command: &str,
+    format: OutputFormat,
+    contract_path: &Path,
+    member: Option<&str>,
+    task: Option<&str>,
+    dry_run: bool,
+    error: &SandboxAdmissionError,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            &format!("ota {}", command.to_ascii_lowercase()),
+            &format!(
+                "{}\nWhere: {}\nNext: declare a compatible ephemeral container lane or remove the unsupported sandbox request",
+                error.message,
+                display_contract_target(&compact_contract_path(contract_path), member)
+            ),
+        )),
+        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+            "ok": false,
+            "command": command.to_ascii_lowercase(),
+            "path": contract_path.display().to_string(),
+            "member": member,
+            "task": task,
+            "dry_run": dry_run,
+            "execution_started": false,
+            "sandbox_admission": error,
+        }))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sandbox_admission_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    agent: bool,
+    reason: Option<&str>,
+    error: &SandboxAdmissionError,
+) -> RunCommandFailure {
+    let mut receipt = run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        None,
+        overrides,
+        task_name,
+        member,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        &[],
+        None,
+        1,
+        false,
+        None,
+        None,
+        Some(String::from(
+            "declare a compatible ephemeral container lane or remove the unsupported sandbox request",
+        )),
+    );
+    receipt.blocked.push(format!(
+        "OTA_SANDBOX_POLICY_REFUSED:{}:{}",
+        error
+            .refusals
+            .first()
+            .map(|refusal| refusal.segment_id.as_str())
+            .unwrap_or(task_name),
+        error.message
+    ));
+    attach_task_crossing_to_receipt(&mut receipt, contract, task_name, overrides, agent, reason);
+    refresh_execution_receipt_status(&mut receipt);
+    let summary = render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+    RunCommandFailure {
+        message: stylize_text_failure("ota run", &error.message),
+        summary: Some(summary),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+fn sandbox_admission_up_result(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    dry_run: bool,
+    agent: bool,
+    run_behavior_preference: UpRunBehaviorPreference,
+    error: SandboxAdmissionError,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> RepoUpResult {
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_SANDBOX_POLICY_REFUSED"),
+            category: String::from("execution_governance"),
+            owner: String::from("ota_runner"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Selected sandbox policy cannot be enforced"),
+        why: format!(
+            "{}; canonical_policy={}; effective_policy={}; target={}",
+            error.message,
+            error
+                .canonical_policy_identity
+                .as_deref()
+                .unwrap_or("unavailable"),
+            error
+                .effective_policy_identity
+                .as_deref()
+                .unwrap_or("unavailable"),
+            error.resolved_target.as_deref().unwrap_or("unresolved"),
+        ),
+        next: String::from(
+            "declare a compatible ephemeral container lane or remove the unsupported sandbox request",
+        ),
+    };
+    let report = DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![finding.clone()],
+    };
+    let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+        contract_path,
+        contract,
+        PhaseExecutionContext::default(),
+        "BLOCKED",
+        if dry_run { "preview" } else { "preconditions" },
+        workflow_name,
+        None,
+        None,
+        &report.findings,
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+        Some(policy_snapshot),
+    );
+    receipt
+        .blocked
+        .push(format!("OTA_SANDBOX_POLICY_REFUSED:{}", error.message));
+    let mut governance_preflight = up_result_preflight_evaluation(
+        contract,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+        &report,
+        agent,
+        None,
+    );
+    governance_preflight.state = String::from("refused");
+    governance_preflight.sandbox_admission = serde_json::to_value(&error).ok();
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: if dry_run { "preview" } else { "preconditions" },
+        report,
+        preview: None,
+        governance_preflight: Some(governance_preflight),
+        receipt,
+        service: None,
+        service_command: None,
+        task: None,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
 }
 
 fn should_use_command_terminal_passthrough(closure_allows_terminal_passthrough: bool) -> bool {
@@ -99463,10 +101129,16 @@ fn should_use_command_terminal_passthrough(closure_allows_terminal_passthrough: 
 fn task_command_interaction_posture_for_backend(
     contract: &Contract,
     task_name: &str,
-    backend: Backend,
+    overrides: ExecutionOverrides,
 ) -> Option<CommandInteractionPosture> {
     contract.tasks.get(task_name).and_then(|task| {
-        task.resolved_execution_for_backend(backend, current_os())
+        let effective = effective_task_execution(contract, task_name, overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
+        task.resolved_execution_for_backend(effective.backend, target_os)
             .and_then(|execution| {
                 execution
                     .command()
@@ -99482,7 +101154,7 @@ fn run_preview_interaction_summary(
     agent: bool,
 ) -> Option<crate::output::RunPreviewInteractionSummary> {
     let backend = effective_task_execution(contract, task_name, overrides).backend;
-    let posture = task_command_interaction_posture_for_backend(contract, task_name, backend)?;
+    let posture = task_command_interaction_posture_for_backend(contract, task_name, overrides)?;
     let terminal_available =
         resolve_command_terminal_passthrough(posture, agent, backend == Backend::Native);
     let resolution = match posture {
@@ -99519,7 +101191,10 @@ fn up_required_command_interaction_blocker(
             let Some(posture) = task_command_interaction_posture_for_backend(
                 contract,
                 step.task.as_str(),
-                step.backend,
+                ExecutionOverrides {
+                    backend: Some(step.backend),
+                    ..overrides
+                },
             ) else {
                 continue;
             };
@@ -99561,8 +101236,13 @@ fn task_requires_interactive_stream(
     let Some(task) = contract.tasks.get(task_name.as_str()) else {
         return false;
     };
-    let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-    task.resolved_execution_for_backend(backend, current_os())
+    let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
+    task.resolved_execution_for_backend(effective.backend, target_os)
         .and_then(|execution| execution.compose())
         .is_some_and(|compose| {
             compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Attach
@@ -99608,7 +101288,7 @@ fn run_selected_precondition_failure(
         overrides,
     )
     .ok()?;
-    let preconditions_report = run_preview_preconditions_report(
+    let preconditions_report = run_execution_preconditions_report(
         contract,
         contract_path,
         task_name.as_str(),
@@ -99644,7 +101324,7 @@ fn run_selected_precondition_failure(
                 &ProvisioningExecutionTarget::Native,
                 replay_input_preflight.loaded_policy.as_ref(),
             ) {
-                let refreshed_report = run_preview_preconditions_report(
+                let refreshed_report = run_execution_preconditions_report(
                     contract,
                     contract_path,
                     task_name.as_str(),
@@ -99708,6 +101388,51 @@ fn run_selected_precondition_failure(
         .map(str::to_string)
         .collect::<Vec<_>>();
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+    let blocker_finding = Finding {
+        identity: primary_blocker.code.as_ref().map(|code| FindingIdentity {
+            code: code.clone(),
+            category: String::from("preconditions"),
+            owner: String::from("ota_runner"),
+        }),
+        severity: primary_blocker.severity,
+        summary: primary_blocker.summary.clone(),
+        why: primary_blocker.why.clone(),
+        next: primary_blocker.next.clone(),
+    };
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            contract_path,
+            task_name.as_str(),
+            overrides,
+            member.map(str::to_string),
+        ),
+        "BLOCKED",
+        "preconditions",
+        None,
+        member,
+        Some(task_name.as_str()),
+        std::slice::from_ref(&blocker_finding),
+        None,
+        Some(rewritten_next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(
+        primary_blocker
+            .code
+            .clone()
+            .unwrap_or_else(|| String::from("precondition_blocked")),
+    );
+    receipt.blocked = vec![primary_blocker.summary.clone()];
+    receipt.replay_input_policy = replay_input_preflight.policy.clone();
+    if let Some(evidence) = crate::runner::current_oci_local_application_evidence() {
+        receipt.witnessed_observations.sandbox_application = Some(evidence);
+    }
+    refresh_execution_receipt_status(&mut receipt);
+    let receipt_summary =
+        render_execution_receipt_summary_block(&receipt, Some(task_name.as_str()), "RUN SUMMARY");
 
     if let Some(message) = render_run_version_mismatch_precondition_text(
         &text_path_display,
@@ -99720,9 +101445,9 @@ fn run_selected_precondition_failure(
     ) {
         return Some(RunCommandFailure {
             message,
-            summary: None,
+            summary: Some(receipt_summary),
             exit_code: 1,
-            receipt: None,
+            receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
         });
     }
 
@@ -99743,9 +101468,9 @@ fn run_selected_precondition_failure(
 
     Some(RunCommandFailure {
         message,
-        summary: None,
+        summary: Some(receipt_summary),
         exit_code: 1,
-        receipt: None,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
     })
 }
 
@@ -100176,6 +101901,7 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -100228,11 +101954,7 @@ fn run_single_contract_target_streaming(
                 outcome.target.clone(),
                 outcome.runtime.clone(),
                 Some(format!(
-                    "{}; {}",
-                    format!(
-                        "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
-                    ),
-                    details_footer
+                    "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`; {details_footer}"
                 )),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
@@ -100263,6 +101985,7 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -100311,9 +102034,7 @@ fn run_single_contract_target_streaming(
                     member, task, listener, kind, overrides,
                 ),
                 _ => format!(
-                    "{}; {}",
-                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                    details_footer
+                    "repair task `{task_name}` and rerun `ota run {task_name}`; {details_footer}"
                 ),
             };
             let error_target = match &error {
@@ -100370,6 +102091,7 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -100547,6 +102269,7 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -100636,6 +102359,7 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -100684,9 +102408,7 @@ fn run_single_contract_target_captured(
                     member, task, listener, kind, overrides,
                 ),
                 _ => format!(
-                    "{}; {}",
-                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                    details_footer
+                    "repair task `{task_name}` and rerun `ota run {task_name}`; {details_footer}"
                 ),
             };
             let error_target = match &error {
@@ -100743,6 +102465,7 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -103295,9 +105018,14 @@ fn selected_toolchain_target_os_for_task(
     contract: &Contract,
     task_name: &str,
     overrides: ExecutionOverrides,
-) -> &'static str {
-    let backend = effective_task_execution(contract, task_name, overrides).backend;
-    requirement_target_os_for_backend(backend)
+) -> String {
+    let effective = effective_task_execution(contract, task_name, overrides);
+    crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    )
+    .to_string()
 }
 
 fn toolchain_summary_backend_for_mode(mode: DoctorMode) -> Backend {
@@ -103417,18 +105145,15 @@ fn selected_toolchain_summaries_for_task_names(
     }
 
     for task_name in task_names {
-        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-        let target_os = requirement_target_os_for_backend(backend);
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name.as_str())
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let backend = effective.backend;
+        let target_os = crate::runner::target_os_for_declared_backend(
+            backend,
+            effective.container,
+            current_os(),
+        );
+        let toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides);
 
         for toolchain_name in toolchain_names {
             let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
@@ -103471,9 +105196,13 @@ fn selected_task_toolchain_summaries(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<ToolchainSelectionSummary> {
+    let task_names =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+            .map(|plan| plan.tasks)
+            .unwrap_or_else(|_| vec![task_name.to_string()]);
     selected_toolchain_summaries_for_task_names(
         contract,
-        &[task_name.to_string()],
+        &task_names,
         overrides,
         effective_task_execution(contract, task_name, overrides).backend,
     )
@@ -103954,7 +105683,7 @@ fn render_run_structured_error_text(
             let summary = resolved_toolchain_fulfillment_attempt_summary(
                 contract,
                 toolchain.as_str(),
-                target_os,
+                target_os.as_str(),
             );
             let provider = summary.provider_label.as_str();
             (
@@ -105956,6 +107685,7 @@ fn capture_witnessed_observations_before_execution(
     Ok(ExecutionReceiptWitnessedObservations {
         query_traces: query_traces.into_values().collect(),
         replay_baseline_recordings: Vec::new(),
+        sandbox_application: None,
     })
 }
 
@@ -106354,6 +108084,153 @@ fn attach_witnessed_observations(
         .witnessed_observations
         .query_traces
         .dedup_by(|left, right| left.id == right.id);
+    if let Some(evidence) = crate::runner::current_oci_local_application_evidence() {
+        receipt.witnessed_observations.sandbox_application = Some(evidence);
+    }
+}
+
+fn archive_sandbox_execution_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    receipt: &mut ExecutionReceipt,
+) -> Result<Option<PathBuf>, String> {
+    let Some(application) = receipt.witnessed_observations.sandbox_application.as_ref() else {
+        return Ok(None);
+    };
+    crate::sandbox_policy::validate_application_evidence_against_contract(contract, application)?;
+    validate_sandbox_application_against_receipt_steps(application, &receipt.steps)?;
+    let root = contract_working_dir(contract_path);
+    let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
+    let normalized_snapshot = normalized_contract_snapshot_value(contract)?;
+    receipt.contract_snapshot_hash = Some(snapshot.hash);
+    receipt.contract_snapshot_ref = snapshot
+        .archive_path
+        .as_deref()
+        .map(receipt_storage_path_display);
+    receipt.assumption_set_hash = Some(assumption_set_hash_from_snapshot(&normalized_snapshot)?);
+    let archive_path = next_receipt_archive_path(root, "repo-receipt")?;
+    let archive_path_display = receipt_storage_path_display(&archive_path);
+    let path_display = compact_path(contract_path, ".");
+    let workflow = (application.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow)
+        .then_some(application.lane.name.as_str());
+    let findings = Vec::<Finding>::new();
+    let payload = ReceiptSuccess {
+        ok: receipt.ok,
+        path: path_display.as_str(),
+        mode: "receipt",
+        workflow,
+        summary: receipt.summary,
+        receipt: receipt.clone(),
+        archive_path: Some(archive_path_display.as_str()),
+        promoted_baseline: None,
+        artifact_routing: receipt_artifact_routing(
+            contract_path,
+            workflow,
+            receipt,
+            Some(archive_path_display.as_str()),
+        ),
+        findings: &findings,
+    };
+    write_receipt_archive(&archive_path, &payload)?;
+    prune_receipt_archives(root, "repo-receipt", RECEIPT_ARCHIVE_LIMIT, None)?;
+    Ok(Some(archive_path))
+}
+
+fn validate_sandbox_application_against_receipt_steps(
+    application: &crate::sandbox_policy::SandboxApplicationEvidence,
+    steps: &[ExecutionReceiptStep],
+) -> Result<(), String> {
+    if application.status
+        == crate::sandbox_policy::SandboxApplicationStatus::EnforcedThroughCompletion
+    {
+        for segment in application.segments.iter().filter(|segment| {
+            segment.purpose
+                == crate::sandbox_policy::SandboxSegmentApplicationPurpose::TaskExecution
+        }) {
+            let task = segment.segment_id.strip_prefix("task:").ok_or_else(|| {
+                String::from("sandbox application segment has an invalid task identity")
+            })?;
+            if !steps.iter().any(|step| {
+                step.task.as_deref() == Some(task)
+                    && step.generation == Some(segment.invocation_generation)
+                    && step.exit_code.is_some()
+            }) {
+                return Err(format!(
+                    "completed sandbox segment `{task}` generation {} has no matching archived execution outcome",
+                    segment.invocation_generation
+                ));
+            }
+        }
+        for step in steps.iter().filter(|step| {
+            step.task.is_some() && step.generation.is_some() && step.exit_code.is_some()
+        }) {
+            let segment_id = format!("task:{}", step.task.as_deref().unwrap_or_default());
+            if !application.segments.iter().any(|segment| {
+                segment.segment_id == segment_id
+                    && segment.purpose
+                        == crate::sandbox_policy::SandboxSegmentApplicationPurpose::TaskExecution
+                    && Some(segment.invocation_generation) == step.generation
+            }) {
+                return Err(format!(
+                    "archived task outcome `{}` generation {} has no matching completed sandbox segment",
+                    step.task.as_deref().unwrap_or_default(),
+                    step.generation.unwrap_or_default()
+                ));
+            }
+        }
+    }
+    for edge in &application.selected_edges {
+        let executed_task = edge.executed_segment.strip_prefix("task:").ok_or_else(|| {
+            String::from("selected sandbox edge has an invalid executed-segment identity")
+        })?;
+        if edge.state == crate::sandbox_policy::SandboxSelectedEdgeState::Entered
+            && !steps.iter().any(|step| {
+                step.task.as_deref() == Some(executed_task)
+                    && step.generation == Some(edge.generation)
+                    && step.exit_code.is_some()
+            })
+        {
+            return Err(format!(
+                "entered sandbox edge for `{executed_task}` generation {} has no matching archived execution outcome",
+                edge.generation
+            ));
+        }
+        if let (Some(source_exit_code), Some(source_generation)) =
+            (edge.source_exit_code, edge.source_generation)
+        {
+            let source_task = edge.source.strip_prefix("task:").ok_or_else(|| {
+                String::from("selected sandbox edge has an invalid source-segment identity")
+            })?;
+            if !steps.iter().any(|step| {
+                step.task.as_deref() == Some(source_task)
+                    && step.generation == Some(source_generation)
+                    && step.exit_code == Some(source_exit_code)
+            }) {
+                return Err(format!(
+                    "conditional sandbox edge source `{source_task}` generation {source_generation} does not match an archived execution outcome"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn archive_sandbox_run_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    receipt: &mut ExecutionReceipt,
+) -> Result<(), RunCommandFailure> {
+    archive_sandbox_execution_receipt(contract, contract_path, receipt)
+        .map(|_| ())
+        .map_err(|message| RunCommandFailure {
+            message: stylize_text_failure(
+                "ota run",
+                &format!("sandbox enforcement evidence could not be archived: {message}"),
+            ),
+            summary: None,
+            exit_code: 1,
+            receipt: Some(render_execution_receipt_text(receipt)),
+        })
 }
 
 // Generated artifacts are contract lineage, not freshness proof. Capture the exact declaration
@@ -106992,6 +108869,11 @@ fn run_execution_receipt_with_shared(
                 Some(step.exit_code),
             );
             receipt_step.stage_family = String::from("verify");
+            receipt_step.task = Some(step.name.clone());
+            receipt_step.generation = Some(step.generation);
+            let (relation, parent) = execution_receipt_step_relation(&step.relation);
+            receipt_step.execution_relation = Some(relation.to_string());
+            receipt_step.execution_parent = parent.map(str::to_string);
             if let Some(step_resolutions) = step_target_resolutions.get(index)
                 && !step_resolutions.is_empty()
             {
@@ -107188,6 +109070,21 @@ fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) 
     }
 
     relation_detail
+}
+
+fn execution_receipt_step_relation(
+    relation: &TaskExecutionRelation,
+) -> (&'static str, Option<&str>) {
+    match relation {
+        TaskExecutionRelation::Requested => ("requested", None),
+        TaskExecutionRelation::DependsOn { parent } => ("depends_on", Some(parent.as_str())),
+        TaskExecutionRelation::AggregateMember { parent } => {
+            ("aggregate_member", Some(parent.as_str()))
+        }
+        TaskExecutionRelation::AfterSuccess { parent } => ("after_success", Some(parent.as_str())),
+        TaskExecutionRelation::AfterFailure { parent } => ("after_failure", Some(parent.as_str())),
+        TaskExecutionRelation::AfterAlways { parent } => ("after_always", Some(parent.as_str())),
+    }
 }
 
 struct RunCommandFailure {
@@ -114837,6 +116734,59 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         }
     }
 
+    if let Some(application) = receipt.witnessed_observations.sandbox_application.as_ref() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Sandbox Enforcement Evidence")
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Status:"),
+            serde_json::to_value(application.status)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"))
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Target:"),
+            paint_code(&application.provider_target)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Policy:"),
+            paint_code(&application.effective_policy_identity)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {} of {} admitted",
+            paint_key("Selected Edges:"),
+            application.selected_edges.len(),
+            application.admitted_edge_identities.len()
+        ));
+        for segment in &application.segments {
+            let status = serde_json::to_value(segment.status)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"));
+            let cleanup = serde_json::to_value(segment.cleanup.state)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"));
+            let purpose = serde_json::to_value(segment.purpose)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"));
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {}, cleanup: {})",
+                paint_key(&segment.segment_id),
+                paint_code(&segment.boundary_identity),
+                purpose,
+                status,
+                cleanup
+            ));
+        }
+    }
+
     if let Some(runtime) = receipt.runtime.as_ref() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime")));
         append_runtime_listener_lines(&mut stdout, runtime, "");
@@ -116416,6 +118366,7 @@ struct RepoUpPreview {
     execution: UpPreviewExecution,
     plan: UpPreviewPlan,
     governance: crate::output::GovernanceEvaluation,
+    sandbox_admission: Option<JsonValue>,
     blockers: Vec<Finding>,
 }
 
@@ -116547,6 +118498,7 @@ enum UpRunBehavior {
 struct CommandRunResult {
     exit_code: i32,
     executed_tasks: Vec<String>,
+    task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
     target: Option<String>,
@@ -116554,6 +118506,30 @@ struct CommandRunResult {
     service_termination: Option<ServiceTermination>,
     fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     host_service_cleanup: Vec<crate::runner::HostServiceCleanupEvidence>,
+}
+
+fn append_up_executed_task_steps(receipt: &mut ExecutionReceipt, task_steps: &[ExecutedTaskStep]) {
+    for task_step in task_steps {
+        let mut receipt_step = execution_receipt_step(
+            receipt.steps.len() + 1,
+            task_step.name.clone(),
+            if task_step.exit_code == 0 {
+                String::from("READY")
+            } else {
+                String::from("FAILED")
+            },
+            execution_receipt_step_detail(task_step, task_step.name.as_str()),
+            Some(task_step.exit_code),
+        );
+        receipt_step.stage_family = String::from("execution");
+        receipt_step.task = Some(task_step.name.clone());
+        receipt_step.generation = Some(task_step.generation);
+        let (relation, parent) = execution_receipt_step_relation(&task_step.relation);
+        receipt_step.execution_relation = Some(relation.to_string());
+        receipt_step.execution_parent = parent.map(str::to_string);
+        receipt.steps.push(receipt_step);
+    }
+    receipt.summary.step_count = receipt.steps.len();
 }
 
 #[derive(Debug, Clone, Default)]
@@ -116642,6 +118618,8 @@ struct ArchivedRepoReceiptData {
     evaluated_inputs: Vec<ExecutionReceiptEvaluatedInput>,
     #[serde(default)]
     witnessed_observations: ExecutionReceiptWitnessedObservations,
+    #[serde(default)]
+    steps: Vec<ExecutionReceiptStep>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -116948,6 +118926,10 @@ fn execution_receipt_step(
         stage_family: canonical_execution_stage_family_key(&label).to_string(),
         label,
         status: status.into(),
+        task: None,
+        execution_relation: None,
+        execution_parent: None,
+        generation: None,
         detail,
         exit_code,
         target_resolutions: Vec::new(),
@@ -118709,6 +120691,7 @@ fn acquire_workspace_repo(
         return Ok(CommandRunResult {
             exit_code: 0,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -118749,6 +120732,7 @@ fn acquire_workspace_repo(
         return Ok(CommandRunResult {
             exit_code: clone.exit_code,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -118773,6 +120757,7 @@ fn acquire_workspace_repo(
             return Ok(CommandRunResult {
                 exit_code: checkout.exit_code,
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -118787,6 +120772,7 @@ fn acquire_workspace_repo(
     Ok(CommandRunResult {
         exit_code: 0,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout,
         stderr,
         target: None,
@@ -118814,6 +120800,7 @@ fn run_git_command(
             Ok(CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -118828,6 +120815,7 @@ fn run_git_command(
             Ok(CommandRunResult {
                 exit_code: status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::new(),
                 stderr: String::new(),
                 target: None,
@@ -118870,6 +120858,7 @@ fn resolve_provisioning_execution_target(
     match resolve_execution_backend(contract, task_name, overrides) {
         Ok(ResolvedExecutionBackend::Container {
             image,
+            platform,
             engine,
             lifecycle,
             ..
@@ -118890,6 +120879,7 @@ fn resolve_provisioning_execution_target(
             }
             Ok(ProvisioningExecutionTarget::Container {
                 image,
+                platform,
                 engine,
                 lifecycle,
                 container_name: None,
@@ -119057,11 +121047,17 @@ fn selected_workflow_task_requirement_surface(
     let retains_global_tool_fallback = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            let target_os = crate::runner::target_os_for_declared_backend(
+                effective.backend,
+                effective.container,
+                current_os(),
+            );
             contract
-                .resolved_task_requirement_surface_for_execution(
+                .resolved_task_requirement_surface_for_execution_for_os(
                     task,
                     effective.backend,
                     effective.context_name,
+                    target_os,
                 )
                 .tools
                 .is_empty()
@@ -119074,10 +121070,16 @@ fn selected_workflow_task_requirement_surface(
             continue;
         };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-        let scoped = contract.resolved_task_requirement_surface_for_execution(
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
+        let scoped = contract.resolved_task_requirement_surface_for_execution_for_os(
             task,
             effective.backend,
             effective.context_name,
+            target_os,
         );
         if !scoped.runtimes.is_empty() {
             scoped_runtimes = true;
@@ -119099,7 +121101,7 @@ fn selected_workflow_task_requirement_surface(
             );
         }
         if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+            task.effective_command_launch_executable_for_backend(effective.backend, target_os)
         {
             selected_tool_names.insert(exe.clone());
             surface
@@ -119116,14 +121118,14 @@ fn selected_workflow_task_requirement_surface(
             surface.merge(&contract.resolved_context_requirement_surface(context));
         }
         if matches!(effective.backend, Backend::Native) {
-            let scoped_native = task.scoped_native_requirements_for_execution(
+            let scoped_native = task.scoped_native_requirements_for_execution_for_os(
                 effective.backend,
                 effective.context_name,
+                target_os,
             );
-            surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
-                scoped_native,
-                requirement_target_os_for_backend(effective.backend),
-            ));
+            surface.merge(
+                &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
+            );
         }
     }
 
@@ -119148,27 +121150,17 @@ fn selected_workflow_task_requirement_surface(
     }
 
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
-    for task_name in &task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-        let toolchain_names = toolchain_names.into_iter().collect();
+    for (toolchain_name, target_os) in selected_workflow_toolchain_targets(
+        contract,
+        overrides,
+        workflow_name,
+        effective_execution(contract, overrides).0,
+    ) {
         surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &surface,
-            &toolchain_names,
-            target_os,
+            &BTreeSet::from([toolchain_name]),
+            target_os.as_str(),
             Some(&required_tool_names),
         );
     }
@@ -119216,27 +121208,17 @@ fn up_policy_requirement_surface(
         );
     }
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-        let toolchain_names = toolchain_names.into_iter().collect();
+    for (toolchain_name, target_os) in selected_workflow_toolchain_targets(
+        contract,
+        overrides,
+        workflow_name,
+        effective_execution(contract, overrides).0,
+    ) {
         surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
             contract,
             &surface,
-            &toolchain_names,
-            target_os,
+            &BTreeSet::from([toolchain_name]),
+            target_os.as_str(),
             Some(&required_tool_names),
         );
     }
@@ -119468,17 +121450,15 @@ fn selected_activation_actions_for_mode(
     preflight: &DoctorReport,
     mode: DoctorMode,
 ) -> Vec<RequirementActivationAction> {
-    let requirement_surface = up_activation_requirement_surface(contract, overrides, workflow_name);
-    let activation_backend = match mode {
+    let fallback_backend = match mode {
         DoctorMode::Container => Backend::Container,
         DoctorMode::Native => Backend::Native,
         DoctorMode::Remote => Backend::Remote,
     };
-    let target_os = requirement_target_os_for_backend(activation_backend);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
-    requirement_surface_activation_actions(&requirement_surface, target_os, activation_backend)
+    selected_workflow_activation_candidates(contract, overrides, workflow_name, fallback_backend)
         .into_iter()
         .filter(|action| {
             !policy_provisioned_tools.contains(action.tool_name.as_str())
@@ -119490,6 +121470,47 @@ fn selected_activation_actions_for_mode(
                     || activation_action_needs_local_bootstrap(action))
         })
         .collect()
+}
+
+fn selected_workflow_activation_candidates(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> Vec<RequirementActivationAction> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return requirement_surface_activation_actions(
+            &up_activation_requirement_surface(contract, overrides, workflow_name),
+            requirement_target_os_for_backend(fallback_backend),
+            fallback_backend,
+        );
+    }
+
+    let mut actions = Vec::new();
+    for task_name in task_names {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
+        let Some(requirement_surface) =
+            selected_task_requirement_surface(contract, task_name.as_str(), overrides)
+        else {
+            continue;
+        };
+        for action in requirement_surface_activation_actions(
+            &requirement_surface,
+            target_os,
+            effective.backend,
+        ) {
+            if !actions.contains(&action) {
+                actions.push(action);
+            }
+        }
+    }
+    actions
 }
 
 fn corepack_activation_is_required_for_native_execution(
@@ -119542,25 +121563,17 @@ fn up_activation_requirement_surface(
 
     let mut surface = requirement_surface;
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let effective_backend = effective_task_execution(contract, task_name, overrides).backend;
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-        let toolchain_names = toolchain_names.into_iter().collect();
+    for (toolchain_name, target_os) in selected_workflow_toolchain_targets(
+        contract,
+        overrides,
+        workflow_name,
+        effective_execution(contract, overrides).0,
+    ) {
         surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &surface,
-            &toolchain_names,
-            requirement_target_os_for_backend(effective_backend),
+            &BTreeSet::from([toolchain_name]),
+            target_os.as_str(),
             Some(&required_tool_names),
         );
     }
@@ -119581,6 +121594,40 @@ fn requirement_target_os_for_backend(backend: Backend) -> &'static str {
         Backend::Container => "linux",
         Backend::Native | Backend::Remote => current_requirement_platform(),
     }
+}
+
+fn selected_workflow_toolchain_targets(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> BTreeSet<(String, String)> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        let target_os = requirement_target_os_for_backend(fallback_backend).to_string();
+        return contract
+            .selected_workflow_required_toolchain_names(workflow_name)
+            .into_iter()
+            .map(|name| (name, target_os.clone()))
+            .collect();
+    }
+
+    let mut targets = BTreeSet::new();
+    for task_name in task_names {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        )
+        .to_string();
+        targets.extend(
+            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides)
+                .into_iter()
+                .map(|name| (name, target_os.clone())),
+        );
+    }
+    targets
 }
 
 fn selected_up_toolchain_preview_actions(
@@ -119624,37 +121671,23 @@ fn selected_up_toolchain_preview_actions(
         return actions;
     }
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
+    for (toolchain_name, target_os) in
+        selected_workflow_toolchain_targets(contract, overrides, workflow_name, fallback_backend)
+    {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if !toolchain.active_for_os(target_os.as_str()) {
+            continue;
         }
-        for toolchain_name in toolchain_names {
-            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-                continue;
-            };
-            if !toolchain.active_for_os(target_os) {
-                continue;
-            }
-            let action = declared_toolchain_preview_action_for_required_tools(
-                toolchain_name.as_str(),
-                toolchain,
-                target_os,
-                &required_tool_names,
-            );
-            if seen.insert(action.clone()) {
-                actions.push(action);
-            }
+        let action = declared_toolchain_preview_action_for_required_tools(
+            toolchain_name.as_str(),
+            toolchain,
+            target_os.as_str(),
+            &required_tool_names,
+        );
+        if seen.insert(action.clone()) {
+            actions.push(action);
         }
     }
 
@@ -119689,35 +121722,21 @@ fn selected_up_toolchain_run_fulfillment_targets(
         return targets.into_iter().collect();
     }
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
+    for (toolchain_name, target_os) in
+        selected_workflow_toolchain_targets(contract, overrides, workflow_name, fallback_backend)
+    {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if toolchain.fulfillment_mode() != crate::schema::ToolchainFulfillmentMode::Run
+            || !toolchain.active_for_os(target_os.as_str())
+        {
+            continue;
         }
-        for toolchain_name in toolchain_names {
-            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-                continue;
-            };
-            if toolchain.fulfillment_mode() != crate::schema::ToolchainFulfillmentMode::Run
-                || !toolchain.active_for_os(target_os)
-            {
-                continue;
-            }
-            targets.insert(ToolchainRunFulfillmentTarget {
-                toolchain_name,
-                target_os: target_os.to_string(),
-            });
-        }
+        targets.insert(ToolchainRunFulfillmentTarget {
+            toolchain_name,
+            target_os,
+        });
     }
 
     targets.into_iter().collect()
@@ -120417,7 +122436,13 @@ fn append_up_preview_service_actions_for_workflow(
 
     if let Some(run_task) = activation_task {
         let requested_task = contract.tasks.get(run_task).map(|task| {
-            TaskSummary::from_spec_with_overrides(run_task, task, current_os(), contract, overrides)
+            let effective = effective_task_execution(contract, run_task, overrides);
+            let target_os = crate::runner::target_os_for_declared_backend(
+                effective.backend,
+                effective.container,
+                current_os(),
+            );
+            TaskSummary::from_spec_with_overrides(run_task, task, target_os, contract, overrides)
         });
         let execution_plan =
             resolve_execution_plan_for_task(contract, contract_path, run_task, overrides).ok();
@@ -120708,22 +122733,23 @@ fn build_up_preview_with_actor(
             render_up_preview_native_activation_action(&action),
         );
     }
-    for action in requirement_surface_activation_actions(
-        &up_activation_requirement_surface(contract, overrides, workflow_name),
-        current_os(),
-        match up_doctor_mode(contract, overrides, workflow_name) {
-            DoctorMode::Container => Backend::Container,
-            DoctorMode::Native => Backend::Native,
-            DoctorMode::Remote => Backend::Remote,
-        },
+    let fallback_backend = match up_doctor_mode(contract, overrides, workflow_name) {
+        DoctorMode::Container => Backend::Container,
+        DoctorMode::Native => Backend::Native,
+        DoctorMode::Remote => Backend::Remote,
+    };
+    let mut seen_skipped_activation = BTreeSet::new();
+    for action in selected_workflow_activation_candidates(
+        contract,
+        overrides,
+        workflow_name,
+        fallback_backend,
     ) {
-        if policy_provisioned_tools.contains(action.tool_name.as_str()) {
-            push_preview_plan_action(
-                &mut skipped,
-                &mut staged_skipped,
-                "setup",
-                render_up_preview_skipped_activation_action(&action),
-            );
+        let rendered = render_up_preview_skipped_activation_action(&action);
+        if policy_provisioned_tools.contains(action.tool_name.as_str())
+            && seen_skipped_activation.insert(rendered.clone())
+        {
+            push_preview_plan_action(&mut skipped, &mut staged_skipped, "setup", rendered);
         }
     }
 
@@ -120795,6 +122821,7 @@ fn build_up_preview_with_actor(
             agent,
             None,
         ),
+        sandbox_admission: None,
         blockers: preflight
             .findings
             .iter()
@@ -120907,7 +122934,10 @@ fn run_up_task(
                             let Some(posture) = task_command_interaction_posture_for_backend(
                                 contract,
                                 step.task.as_str(),
-                                step.backend,
+                                ExecutionOverrides {
+                                    backend: Some(step.backend),
+                                    ..overrides
+                                },
                             ) else {
                                 return false;
                             };
@@ -120934,6 +122964,7 @@ fn run_up_task(
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
             executed_tasks: outcome.executed_tasks,
+            task_steps: outcome.task_steps,
             stdout: String::new(),
             stderr: String::new(),
             target: outcome.target,
@@ -120954,6 +122985,7 @@ fn run_up_task(
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
             executed_tasks: outcome.executed_tasks,
+            task_steps: outcome.task_steps,
             stdout: outcome.stdout,
             stderr: outcome.stderr,
             target: outcome.target,
@@ -121179,6 +123211,7 @@ fn run_up_task_detached_until_ready(
         return Ok(CommandRunResult {
             exit_code: 0,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -121220,6 +123253,7 @@ fn run_up_task_detached_until_ready(
     Ok(CommandRunResult {
         exit_code: 1,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout: String::new(),
         stderr: render_detached_run_failure_output(
             &failure,
@@ -122646,6 +124680,7 @@ fn run_activation_action(
                 return Ok(CommandRunResult {
                     exit_code: 0,
                     executed_tasks: Vec::new(),
+                    task_steps: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -122693,6 +124728,7 @@ fn run_corepack_activation_action(
             return Ok(CommandRunResult {
                 exit_code: bootstrap.exit_code,
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -122717,6 +124753,7 @@ fn run_corepack_activation_action(
         return Ok(CommandRunResult {
             exit_code: enable.exit_code,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -122749,6 +124786,7 @@ fn run_corepack_activation_action(
     Ok(CommandRunResult {
         exit_code: prepare.exit_code,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout: format!("{stdout}{}", prepare.stdout),
         stderr: format!("{stderr}{}", prepare.stderr),
         target: None,
@@ -122837,6 +124875,7 @@ fn run_process_command(
             Ok(output) => CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -122852,6 +124891,7 @@ fn run_process_command(
                 Ok(exit_code) => CommandRunResult {
                     exit_code,
                     executed_tasks: Vec::new(),
+                    task_steps: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -122882,6 +124922,7 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
     CommandRunResult {
         exit_code,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout: String::new(),
         stderr: format!("failed to execute `{command_label}`: {error}\n"),
         target: None,
@@ -123139,6 +125180,7 @@ fn execute_repo_up_with_behavior(
         overrides,
         workflow_name,
         false,
+        None,
         policy_env,
         dry_run,
         mode,
@@ -123153,6 +125195,7 @@ fn execute_repo_up_with_behavior_with_agent(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
     agent: bool,
+    sandbox_target: Option<&str>,
     policy_env: Option<&BTreeMap<String, String>>,
     dry_run: bool,
     mode: RepoExecutionMode,
@@ -123237,23 +125280,75 @@ fn execute_repo_up_with_behavior_with_agent(
             contract.selected_workflow_task_closure_names(workflow_name),
         )
     };
-    let mut result = execute_repo_up_with_behavior_with_agent_inner(
+    let sandbox_admission = resolve_workflow_sandbox_admission(
         contract,
         resolved_path,
-        overrides,
         workflow_name,
+        overrides,
         agent,
-        policy_env,
-        dry_run,
-        mode,
-        run_behavior_preference,
-        ready_timeout,
-        &replay_input_preflight,
-    )?;
+        sandbox_target,
+        replay_input_preflight.loaded_policy.as_ref(),
+    );
+    let sandbox_admission = match sandbox_admission {
+        Ok(admission) => admission,
+        Err(error) => {
+            return Ok(sandbox_admission_up_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                dry_run,
+                agent,
+                run_behavior_preference,
+                error,
+                replay_input_preflight.doctor_policy_snapshot(),
+            ));
+        }
+    };
+    let (result, sandbox_application) = crate::runner::with_oci_local_application_plan(
+        sandbox_admission
+            .as_ref()
+            .and_then(|admission| admission.plan.as_ref()),
+        || {
+            let result = execute_repo_up_with_behavior_with_agent_inner(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                agent,
+                sandbox_target,
+                policy_env,
+                dry_run,
+                mode,
+                run_behavior_preference,
+                ready_timeout,
+                &replay_input_preflight,
+            );
+            (
+                result,
+                crate::runner::current_oci_local_application_evidence(),
+            )
+        },
+    );
+    let mut result = result?;
+    let sandbox_admission_json = sandbox_admission.as_ref().map(sandbox_admission_json);
+    if let Some(preview) = result.preview.as_mut() {
+        preview.sandbox_admission = sandbox_admission_json.clone();
+        preview.governance.preflight.sandbox_admission = sandbox_admission_json.clone();
+    }
+    if let Some(preflight) = result.governance_preflight.as_mut() {
+        preflight.sandbox_admission = sandbox_admission_json;
+    }
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_replay_inputs);
     attach_witnessed_observations(&mut result.receipt, &captured_witnessed_observations);
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_hydration_provenance);
     result.receipt.replay_input_policy = replay_input_policy;
+    if !dry_run {
+        result.receipt.witnessed_observations.sandbox_application = sandbox_application;
+        archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt).map_err(
+            |error| format!("sandbox enforcement evidence could not be archived: {error}"),
+        )?;
+    }
     Ok(result)
 }
 
@@ -123263,6 +125358,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
     agent: bool,
+    sandbox_target: Option<&str>,
     policy_env: Option<&BTreeMap<String, String>>,
     dry_run: bool,
     mode: RepoExecutionMode,
@@ -123516,6 +125612,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let mut executed_task_names = BTreeSet::<String>::new();
+    let mut executed_task_steps = Vec::<ExecutedTaskStep>::new();
     let mut fulfilled_toolchains = Vec::<ToolchainFulfillmentEvidence>::new();
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
@@ -123601,7 +125698,17 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         });
     }
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight =
+    let mut preflight = if dry_run {
+        diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+            contract,
+            resolved_path,
+            doctor_mode,
+            workflow_name,
+            overrides,
+            replay_input_policy,
+            replay_input_preflight.doctor_policy_snapshot(),
+        )
+    } else {
         diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
             contract,
             resolved_path,
@@ -123610,7 +125717,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             overrides,
             replay_input_policy,
             replay_input_preflight.doctor_policy_snapshot(),
-        );
+        )
+    };
     append_up_safe_task_effect_policy_findings(
         contract,
         workflow_name,
@@ -124357,6 +126465,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             overrides,
             Some(prerequisite_selector.as_str()),
             agent,
+            sandbox_target,
             policy_env,
             false,
             mode,
@@ -124391,6 +126500,28 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+                    resolved_path,
+                    contract,
+                    task_phase_execution_context(
+                        contract,
+                        resolved_path,
+                        prepare_task_name,
+                        prepare_overrides,
+                        outcome.target.clone(),
+                    ),
+                    "PREPARE FAILED",
+                    "prepare",
+                    workflow_name,
+                    None,
+                    Some(prepare_task_name),
+                    &[],
+                    Some(outcome.exit_code),
+                    None,
+                    Some(prepare_overrides),
+                    Some(replay_input_preflight.doctor_policy_snapshot()),
+                );
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "PREPARE FAILED",
@@ -124406,27 +126537,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
-                        resolved_path,
-                        contract,
-                        task_phase_execution_context(
-                            contract,
-                            resolved_path,
-                            prepare_task_name,
-                            prepare_overrides,
-                            outcome.target.clone(),
-                        ),
-                        "PREPARE FAILED",
-                        "prepare",
-                        workflow_name,
-                        None,
-                        Some(prepare_task_name),
-                        &[],
-                        Some(outcome.exit_code),
-                        None,
-                        Some(prepare_overrides),
-                        Some(replay_input_preflight.doctor_policy_snapshot()),
-                    ),
+                    receipt,
                     report: DoctorReport {
                         ok: false,
                         provisioning: None,
@@ -124702,6 +126813,28 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+                    resolved_path,
+                    contract,
+                    task_phase_execution_context(
+                        contract,
+                        resolved_path,
+                        setup_task_name,
+                        task_execution_overrides,
+                        outcome.target.clone(),
+                    ),
+                    "SETUP FAILED",
+                    "setup",
+                    workflow_name,
+                    None,
+                    Some(setup_task_name),
+                    &[],
+                    Some(outcome.exit_code),
+                    None,
+                    Some(task_execution_overrides),
+                    Some(replay_input_preflight.doctor_policy_snapshot()),
+                );
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "SETUP FAILED",
@@ -124717,27 +126850,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
-                        resolved_path,
-                        contract,
-                        task_phase_execution_context(
-                            contract,
-                            resolved_path,
-                            setup_task_name,
-                            task_execution_overrides,
-                            outcome.target.clone(),
-                        ),
-                        "SETUP FAILED",
-                        "setup",
-                        workflow_name,
-                        None,
-                        Some(setup_task_name),
-                        &[],
-                        Some(outcome.exit_code),
-                        None,
-                        Some(task_execution_overrides),
-                        Some(replay_input_preflight.doctor_policy_snapshot()),
-                    ),
+                    receipt,
                     report: DoctorReport {
                         ok: false,
                         provisioning: None,
@@ -124759,6 +126872,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
                 executed_task_names.extend(outcome.executed_tasks);
+                executed_task_steps.extend(outcome.task_steps);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
                 if !preflight.ok {
                     let refreshed =
@@ -124779,36 +126893,38 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                             &toolchain_fulfillment_targets,
                         )
                     {
+                        let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+                            resolved_path,
+                            contract,
+                            doctor_report_execution_context(
+                                contract,
+                                resolved_path,
+                                doctor_mode,
+                                overrides.lifecycle,
+                                &refreshed,
+                            ),
+                            "BLOCKED",
+                            "provisioning",
+                            workflow_name,
+                            None,
+                            None,
+                            &refreshed.findings,
+                            None,
+                            refreshed
+                                .findings
+                                .first()
+                                .map(|finding| finding.next.clone()),
+                            Some(task_execution_overrides),
+                            Some(replay_input_preflight.doctor_policy_snapshot()),
+                        );
+                        append_up_executed_task_steps(&mut receipt, &executed_task_steps);
                         return Ok(RepoUpResult {
                             ok: false,
                             status: "BLOCKED",
                             phase: "provisioning",
                             preview: None,
                             governance_preflight: Some(derive_preflight(&refreshed, None)),
-                            receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
-                                resolved_path,
-                                contract,
-                                doctor_report_execution_context(
-                                    contract,
-                                    resolved_path,
-                                    doctor_mode,
-                                    overrides.lifecycle,
-                                    &refreshed,
-                                ),
-                                "BLOCKED",
-                                "provisioning",
-                                workflow_name,
-                                None,
-                                None,
-                                &refreshed.findings,
-                                None,
-                                refreshed
-                                    .findings
-                                    .first()
-                                    .map(|finding| finding.next.clone()),
-                                Some(task_execution_overrides),
-                                Some(replay_input_preflight.doctor_policy_snapshot()),
-                            ),
+                            receipt,
                             report: refreshed,
                             service: None,
                             service_command: None,
@@ -124949,6 +127065,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "RUN FAILED",
@@ -124986,6 +127103,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stderr.push_str(&outcome.stderr);
                 run_runtime = outcome.runtime;
                 executed_task_names.extend(outcome.executed_tasks);
+                executed_task_steps.extend(outcome.task_steps);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Err(error) => {
@@ -125035,6 +127153,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             workflow_name,
             Some(&executed_task_names),
         );
+        append_up_executed_task_steps(&mut receipt, &executed_task_steps);
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
@@ -125097,6 +127216,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 executed_task_names.extend(outcome.executed_tasks);
+                executed_task_steps.extend(outcome.task_steps);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Ok(outcome) => {
@@ -125126,6 +127246,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "ATTACH FAILED",
@@ -125199,6 +127320,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         workflow_name,
         Some(&executed_task_names),
     );
+    append_up_executed_task_steps(&mut receipt, &executed_task_steps);
     apply_toolchain_fulfillment_evidence(&mut receipt.toolchains, &fulfilled_toolchains);
     receipt.workloads = workloads;
     Ok(RepoUpResult {
@@ -127602,6 +129724,7 @@ fn run_workspace_repo_refresh_command(
             return Ok(CommandRunResult {
                 exit_code: fetch.exit_code,
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -127621,6 +129744,7 @@ fn run_workspace_repo_refresh_command(
         return Ok(CommandRunResult {
             exit_code: reset.exit_code,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -128140,6 +130264,7 @@ fn run_workspace_repo_task(
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
                         executed_tasks: Vec::new(),
+                        task_steps: result.task_steps,
                         stdout: result.stdout,
                         stderr: result.stderr,
                         target: result.target,
@@ -128165,6 +130290,7 @@ fn run_workspace_repo_task(
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
                         executed_tasks: Vec::new(),
+                        task_steps: result.task_steps,
                         stdout: String::new(),
                         stderr: String::new(),
                         target: result.target,
@@ -128933,6 +131059,7 @@ fn run_shell_command(
                 .map(|exit_code| CommandRunResult {
                     exit_code,
                     executed_tasks: Vec::new(),
+                    task_steps: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -128953,6 +131080,7 @@ fn run_shell_command(
             .map(|output| CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -129754,7 +131882,7 @@ fn render_up_run_error(
             let summary = resolved_toolchain_fulfillment_attempt_summary(
                 &contract,
                 toolchain.as_str(),
-                target_os,
+                target_os.as_str(),
             );
             let provider = summary.provider_label.as_str();
             render_field_error_with_tail(

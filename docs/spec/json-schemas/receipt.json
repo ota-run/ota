@@ -2,6 +2,172 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dist.ota.run/spec/json-schemas/latest/receipt.json",
   "title": "ota receipt --json",
+  "$defs": {
+    "sha256Identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "sandboxControlApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "application"],
+      "properties": {
+        "required": { "type": "string", "minLength": 1 },
+        "application": {
+          "enum": ["pending", "enforced", "not_required", "not_proved", "contradicted"]
+        },
+        "evidence_identity": { "$ref": "#/$defs/sha256Identity" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "application": { "const": "enforced" } },
+            "required": ["application"]
+          },
+          "then": { "required": ["evidence_identity"] }
+        }
+      ]
+    },
+    "sandboxRestrictionOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": { "type": "string", "minLength": 1 },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo_root_mode": { "enum": ["read_only", "read_write"] },
+            "writable_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "protected_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": { "enum": ["allow", "deny"] },
+            "outbound_targets": {
+              "type": "array",
+              "items": {
+                "$ref": "contract.json#/$defs/runtimeBoundaryOutboundTarget"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sandboxRestrictionAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source", "source_identity", "rules"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": {
+          "enum": ["OTA_POLICY", "repo policy", "workspace policy"]
+        },
+        "source_identity": { "$ref": "#/$defs/sha256Identity" },
+        "rules": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "filesystem": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repo_root_mode": { "enum": ["read_only", "read_write"] },
+                "writable_paths": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "protected_paths": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            },
+            "network": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "default": { "enum": ["allow", "deny"] },
+                "outbound_targets": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "contract.json#/$defs/runtimeBoundaryOutboundTarget"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ociLocalSegmentPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segment_id",
+        "segment_policy_identity",
+        "task",
+        "declared_image",
+        "read_only_repo_root",
+        "writable_paths",
+        "protected_paths",
+        "isolated_paths",
+        "execution_kind",
+        "deny_external_network"
+      ],
+      "properties": {
+        "segment_id": { "type": "string", "minLength": 1 },
+        "segment_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+        "task": { "type": "string", "minLength": 1 },
+        "declared_image": { "type": "string", "minLength": 1 },
+        "read_only_repo_root": { "type": "boolean" },
+        "writable_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "isolated_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pre_boundary_actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_kind": { "type": "string", "minLength": 1 },
+        "deny_external_network": { "type": "boolean" },
+        "platform": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sandboxPolicyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source", "destination", "condition", "order"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "minLength": 1 },
+        "condition": {
+          "enum": ["unconditional", "on_success", "on_failure", "always"]
+        },
+        "order": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
   "oneOf": [
     {
       "type": "object",
@@ -190,6 +356,416 @@
                       "evidence_class": { "const": "attested" }
                     }
                   }
+                },
+                "sandbox_application": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schema_version",
+                    "lane",
+                    "execution_selection",
+                    "canonical_policy_identity",
+                    "restriction_overlays",
+                    "restriction_overlay_identities",
+                    "effective_policy_identity",
+                    "target_platform",
+                    "provider_target",
+                    "provider_adapter_version",
+                    "capability_identity",
+                    "application_plan_identity",
+                    "runner_transaction_identity",
+                    "started_at",
+                    "attestation",
+                    "status",
+                    "admitted_edge_identities",
+                    "admitted_segments",
+                    "admitted_edges",
+                    "selected_edges",
+                    "segments"
+                  ],
+                  "properties": {
+                    "schema_version": { "const": 1 },
+                    "lane": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "name"],
+                      "properties": {
+                        "kind": { "enum": ["task", "workflow"] },
+                        "name": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "execution_selection": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["skip_dependencies"],
+                      "properties": {
+                        "backend": { "enum": ["native", "container", "remote"] },
+                        "lifecycle": { "enum": ["ephemeral", "persistent"] },
+                        "skip_dependencies": { "type": "boolean" }
+                      }
+                    },
+                    "canonical_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "restriction_authority": {
+                      "$ref": "#/$defs/sandboxRestrictionAuthority"
+                    },
+                    "restriction_overlays": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/sandboxRestrictionOverlay" }
+                    },
+                    "restriction_overlay_identities": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/sha256Identity" }
+                    },
+                    "effective_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "target_platform": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["os", "architecture"],
+                      "properties": {
+                        "os": { "type": "string", "minLength": 1 },
+                        "architecture": { "type": "string", "minLength": 1 },
+                        "platform": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "provider_target": { "const": "oci_local" },
+                    "provider_adapter_version": { "type": "string", "minLength": 1 },
+                    "capability_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "application_plan_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "runner_transaction_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "started_at": { "type": "string", "format": "date-time" },
+                    "attestation": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["issuer", "trust", "challenge_identity", "verifier"],
+                      "properties": {
+                        "issuer": { "const": "ota_runner" },
+                        "trust": { "const": "runner_owned_runtime_inspection" },
+                        "challenge_identity": { "$ref": "#/$defs/sha256Identity" },
+                        "verifier": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "status": {
+                      "enum": [
+                        "not_started",
+                        "enforced_through_completion",
+                        "enforcement_lost",
+                        "enforcement_unknown_after_interruption"
+                      ]
+                    },
+                    "admitted_edge_identities": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": { "$ref": "#/$defs/sha256Identity" }
+                    },
+                    "admitted_segments": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/ociLocalSegmentPlan" }
+                    },
+                    "admitted_edges": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/sandboxPolicyEdge" }
+                    },
+                    "selected_edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "identity",
+                          "edge_identity",
+                          "source",
+                          "destination",
+                          "executed_segment",
+                          "condition",
+                          "edge_order",
+                          "generation",
+                          "state"
+                        ],
+                        "properties": {
+                          "identity": { "$ref": "#/$defs/sha256Identity" },
+                          "edge_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "source": { "type": "string", "minLength": 1 },
+                          "destination": { "type": "string", "minLength": 1 },
+                          "executed_segment": { "type": "string", "minLength": 1 },
+                          "condition": {
+                            "enum": ["unconditional", "on_success", "on_failure", "always"]
+                          },
+                          "edge_order": { "type": "integer", "minimum": 0 },
+                          "generation": { "type": "integer", "minimum": 0 },
+                          "state": { "enum": ["entered", "skipped", "reused"] },
+                          "source_exit_code": { "type": "integer" },
+                          "source_generation": { "type": "integer", "minimum": 0 }
+                        },
+                        "allOf": [
+                          {
+                            "if": {
+                              "properties": {
+                                "condition": {
+                                  "enum": ["on_success", "on_failure", "always"]
+                                }
+                              },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "required": ["source_exit_code", "source_generation"]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": { "condition": { "const": "unconditional" } },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "allOf": [
+                                { "not": { "required": ["source_exit_code"] } },
+                                { "not": { "required": ["source_generation"] } }
+                              ]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": { "condition": { "const": "on_success" } },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "properties": { "source_exit_code": { "const": 0 } }
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": { "condition": { "const": "on_failure" } },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "properties": {
+                                "source_exit_code": {
+                                  "not": { "const": 0 }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "segments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "segment_id",
+                          "segment_policy_identity",
+                          "purpose",
+                          "invocation_generation",
+                          "cleanup_lease_identity",
+                          "boundary_identity",
+                          "declared_image",
+                          "rendered_policy_identity",
+                          "writable_mounts",
+                          "filesystem",
+                          "network",
+                          "cleanup",
+                          "status"
+                        ],
+                        "properties": {
+                          "segment_id": { "type": "string", "minLength": 1 },
+                          "segment_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "purpose": {
+                            "type": "string",
+                            "enum": ["task_execution", "precondition_probe"]
+                          },
+                          "invocation_generation": { "type": "integer", "minimum": 0 },
+                          "cleanup_lease_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "boundary_identity": {
+                            "type": "string",
+                            "pattern": "^container:(docker|podman):.+$"
+                          },
+                          "declared_image": { "type": "string", "minLength": 1 },
+                          "resolved_image_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "resolved_platform": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$"
+                          },
+                          "rendered_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "applied_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "terminal_application_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "terminal_observation_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "writable_mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": ["path", "source_identity"],
+                              "properties": {
+                                "path": { "type": "string", "minLength": 1 },
+                                "source_identity": { "$ref": "#/$defs/sha256Identity" }
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "restriction_overlays": { "minItems": 1 }
+                        },
+                        "required": ["restriction_overlays"]
+                      },
+                      "then": { "required": ["restriction_authority"] }
+                    },
+                    {
+                      "if": { "required": ["restriction_authority"] },
+                      "then": {
+                        "properties": {
+                          "restriction_overlays": { "minItems": 1 },
+                          "restriction_overlay_identities": { "minItems": 1 }
+                        }
+                      }
+                    }
+                  ]
+                },
+                          "filesystem": { "$ref": "#/$defs/sandboxControlApplication" },
+                          "network": { "$ref": "#/$defs/sandboxControlApplication" },
+                          "cleanup": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["authority", "state"],
+                            "properties": {
+                              "authority": { "const": "ota_runner" },
+                              "state": {
+                                "enum": ["registered", "confirmed", "incomplete", "unknown"]
+                              },
+                              "terminal_identity": { "$ref": "#/$defs/sha256Identity" }
+                            }
+                          },
+                          "status": {
+                            "enum": [
+                              "lease_registered",
+                              "applied",
+                              "enforcement_lost",
+                              "enforcement_unknown_after_interruption",
+                              "enforced_through_completion"
+                            ]
+                          }
+                        },
+                        "allOf": [
+                          {
+                            "if": {
+                              "properties": {
+                                "status": {
+                                  "enum": ["applied", "enforced_through_completion"]
+                                }
+                              },
+                              "required": ["status"]
+                            },
+                            "then": {
+                              "required": [
+                                "resolved_image_identity",
+                                "resolved_platform",
+                                "applied_policy_identity"
+                              ]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": {
+                                "status": { "const": "enforced_through_completion" }
+                              },
+                              "required": ["status"]
+                            },
+                            "then": {
+                              "required": [
+                                "terminal_application_identity",
+                                "terminal_observation_identity"
+                              ],
+                              "properties": {
+                                "filesystem": {
+                                  "properties": {
+                                    "required": {
+                                      "const": "repo_root_read_only_with_declared_writable_carveouts"
+                                    },
+                                    "application": { "const": "enforced" }
+                                  }
+                                },
+                                "network": {
+                                  "properties": {
+                                    "required": {
+                                      "enum": [
+                                        "external_ip_connectivity_denied",
+                                        "no_authoritative_network_control"
+                                      ]
+                                    },
+                                    "application": {
+                                      "enum": ["enforced", "not_required"]
+                                    }
+                                  },
+                                  "allOf": [
+                                    {
+                                      "if": {
+                                        "properties": {
+                                          "required": {
+                                            "const": "external_ip_connectivity_denied"
+                                          }
+                                        },
+                                        "required": ["required"]
+                                      },
+                                      "then": {
+                                        "properties": {
+                                          "application": { "const": "enforced" }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "if": {
+                                        "properties": {
+                                          "required": {
+                                            "const": "no_authoritative_network_control"
+                                          }
+                                        },
+                                        "required": ["required"]
+                                      },
+                                      "then": {
+                                        "properties": {
+                                          "application": { "const": "not_required" }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                "cleanup": {
+                                  "properties": {
+                                    "state": { "const": "confirmed" }
+                                  },
+                                  "required": ["terminal_identity"]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "status": { "const": "enforced_through_completion" }
+                        },
+                        "required": ["status"]
+                      },
+                      "then": {
+                        "properties": {
+                          "segments": {
+                            "minItems": 1,
+                            "items": {
+                              "properties": {
+                                "status": { "const": "enforced_through_completion" }
+                              },
+                              "required": ["status"]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -563,6 +1139,19 @@
                     "enum": ["prepare", "setup", "verify", "proof", "receipt"]
                   },
                   "status": { "type": "string" },
+                  "task": { "type": "string" },
+                  "execution_relation": {
+                    "enum": [
+                      "requested",
+                      "depends_on",
+                      "aggregate_member",
+                      "after_success",
+                      "after_failure",
+                      "after_always"
+                    ]
+                  },
+                  "execution_parent": { "type": "string" },
+                  "generation": { "type": "integer", "minimum": 0 },
                   "detail": { "type": "string" },
                   "exit_code": { "type": "integer" }
                 }

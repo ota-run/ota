@@ -26,6 +26,39 @@
 
 ## Unreleased
 
+- added V11.21 enforced sandbox policy application. Agent execution now compiles the selected
+  task/workflow closure into a provider-neutral, target-platform-bound segment graph; applies
+  policy-pack restrictions only as identified monotonic overlays; and negotiates the first
+  `oci_local` provider without changing declared execution mode. Authoritative controls fail closed
+  before preparation when the selected path is not an explicit ephemeral container platform, when
+  writable/protected paths cannot be represented safely, or when stock OCI cannot enforce targeted
+  egress. Provider-backed runs use a read-only repository mount, declared writable carve-outs,
+  external-network denial where requested, pre-mutation cleanup leases, initial and terminal engine
+  inspection, and per-invocation boundary evidence. Completed sandbox receipts are archived
+  automatically with the normalized contract snapshot; archive reads re-derive canonical and
+  effective policy from the contract plus an identified policy-authority snapshot, reconcile
+  completed segments with archived task outcomes, and reject unbound segment, edge, overlay,
+  capability, or application identity. Engine inspection rejects every undeclared mount, including
+  image volumes and runtime sockets outside the exact repository-root/carve-out set. Reusing one
+  task identity across multiple execution phases refuses instead of collapsing distinct
+  invocations. Managed isolated paths also refuse because their durable files or named volumes do
+  not yet have transaction-bound creation, retention, and failure-cleanup evidence. The first OCI
+  adapter admits finite
+  command bodies only and refuses typed task bodies, requirements, services, conditional checks,
+  and lifecycle-proof paths that would otherwise execute outside an evidenced provider boundary.
+  `ota doctor` reports selected boundaries that have no compatible enforcing target. This proves
+  only the selected cooperating execution boundary, never application output, repository-wide
+  security, or raw shell outside Ota. Container `platform` is now canonical across ordinary and
+  provider-enforced execution: Ota uses the declared Linux OCI target for variants, inputs,
+  environment, service bindings, requirements, and every execution-backend container creation
+  path; persistent containers reconcile when that target changes. Dry-run does not start
+  provider-backed runtime/tool probe containers, while real OCI precondition probes bind to their
+  exact admitted requirement-owning segment and run as separately identified, cleanup-confirmed
+  invocations inside the registered sandbox application transaction. Blocking probes retain
+  refusal-receipt evidence and cannot substitute for task execution.
+- fixed `ota run <task> --agent --sandbox-target oci_local` and other Ota-owned run flags after
+  the task name so the task-input boundary rewriter no longer misclassifies them as task inputs
+
 ## 1.6.25
 
 - fixed Doctor agent-readiness derivation for intentionally read-only agent boundaries. A contract

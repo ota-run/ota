@@ -204,7 +204,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -214,6 +214,9 @@ enum Commands {
         /// Enforce the declared agent-safe task boundary for this execution.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Apply the selected lane's authoritative runtime boundary through an enforcing provider.
+        #[arg(long = "sandbox-target", value_name = "TARGET")]
+        sandbox_target: Option<String>,
         /// Assert that the contract-declared task refusal canary is refused by agent execution.
         #[arg(long, action = ArgAction::SetTrue, requires = "agent", conflicts_with_all = ["dry_run", "stream", "receipt", "log"])]
         expect_refusal: bool,
@@ -539,6 +542,9 @@ enum Commands {
         /// Enforce the declared agent-safe task boundary for this workflow execution.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Apply the selected workflow's authoritative runtime boundaries through an enforcing provider.
+        #[arg(long = "sandbox-target", value_name = "TARGET")]
+        sandbox_target: Option<String>,
         /// Assert that the contract-declared workflow refusal canary is refused by agent execution.
         #[arg(long, action = ArgAction::SetTrue, requires = "agent", requires = "workflow", conflicts_with_all = ["dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member"])]
         expect_refusal: bool,
@@ -3713,9 +3719,11 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Enum(LIFECYCLES),
         }),
-        "--member" | "--file" => Some(RunFlagSpec {
+        "--member" | "--file" | "--sandbox-target" | "--reason" => Some(RunFlagSpec {
             canonical: match name {
                 "--member" => "member",
+                "--sandbox-target" => "sandbox-target",
+                "--reason" => "reason",
                 _ => "file",
             },
             takes_value: true,
@@ -3726,28 +3734,31 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--agent" | "--json" | "--dry-run" | "--native" | "--container" | "--remote"
-        | "--ephemeral" | "--persistent" | "--skip-deps" | "--receipt" | "--stream" | "--log"
-        | "--debug" | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
-            canonical: match name {
-                "--agent" => "agent",
-                "--json" => "json",
-                "--dry-run" => "dry-run",
-                "--native" | "--container" | "--remote" => "mode",
-                "--ephemeral" | "--persistent" => "lifecycle",
-                "--skip-deps" => "skip-deps",
-                "--receipt" => "receipt",
-                "--stream" => "stream",
-                "--log" => "log",
-                "--debug" => "debug",
-                "--plain" => "plain",
-                "--concise" => "concise",
-                "--verbose" => "verbose",
-                _ => unreachable!("matched repo run switch"),
-            },
-            takes_value: false,
-            value_kind: RunFlagValueKind::Any,
-        }),
+        "--agent" | "--expect-refusal" | "--json" | "--dry-run" | "--native" | "--container"
+        | "--remote" | "--ephemeral" | "--persistent" | "--skip-deps" | "--receipt"
+        | "--stream" | "--log" | "--debug" | "--plain" | "--concise" | "--verbose" => {
+            Some(RunFlagSpec {
+                canonical: match name {
+                    "--agent" => "agent",
+                    "--expect-refusal" => "expect-refusal",
+                    "--json" => "json",
+                    "--dry-run" => "dry-run",
+                    "--native" | "--container" | "--remote" => "mode",
+                    "--ephemeral" | "--persistent" => "lifecycle",
+                    "--skip-deps" => "skip-deps",
+                    "--receipt" => "receipt",
+                    "--stream" => "stream",
+                    "--log" => "log",
+                    "--debug" => "debug",
+                    "--plain" => "plain",
+                    "--concise" => "concise",
+                    "--verbose" => "verbose",
+                    _ => unreachable!("matched repo run switch"),
+                },
+                takes_value: false,
+                value_kind: RunFlagValueKind::Any,
+            })
+        }
         _ => None,
     }
 }
@@ -5389,6 +5400,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Run {
             task,
             agent,
+            sandbox_target,
             expect_refusal,
             json,
             dry_run,
@@ -5432,6 +5444,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     reason.as_deref(),
+                    sandbox_target.as_deref(),
                     dry_run,
                     debug,
                     receipt,
@@ -5451,6 +5464,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     false,
                     false,
                     reason.as_deref(),
+                    sandbox_target.as_deref(),
                     dry_run,
                     debug,
                     receipt,
@@ -5579,6 +5593,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Up {
             json,
             agent,
+            sandbox_target,
             expect_refusal,
             dry_run,
             stream,
@@ -5620,6 +5635,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     reason.as_deref(),
+                    sandbox_target.as_deref(),
                     format,
                     debug,
                     dry_run,
@@ -5641,6 +5657,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     false,
                     false,
                     reason.as_deref(),
+                    sandbox_target.as_deref(),
                     format,
                     debug,
                     dry_run,
@@ -18163,6 +18180,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                sandbox_target: None,
                 path: None,
                 inputs: Vec::new(),
             },
@@ -18205,6 +18223,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                sandbox_target: None,
                 path: None,
                 inputs: Vec::new(),
             },
@@ -19204,6 +19223,7 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            sandbox_target: None,
             workflow: None,
         }));
     }
@@ -19233,6 +19253,7 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            sandbox_target: None,
             workflow: None,
         }));
     }
@@ -19294,6 +19315,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                sandbox_target: None,
                 workflow: None,
             },
         };
@@ -19329,6 +19351,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                sandbox_target: None,
                 workflow: None,
             }),
             Some("Preparing environment...")
@@ -19403,6 +19426,7 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            sandbox_target: None,
             path: None,
             inputs: Vec::new(),
         }));
@@ -19790,6 +19814,7 @@ tasks:
                     member: Vec::new(),
                     effect_override: Vec::new(),
                     reason: None,
+                    sandbox_target: None,
                     workflow: None,
                     path: None,
                 },
@@ -28382,6 +28407,54 @@ policies:
     }
 
     #[test]
+    fn run_sandbox_flags_after_task_are_not_rewritten_as_task_inputs() {
+        let args = [
+            "ota",
+            "run",
+            "verify",
+            "--agent",
+            "--sandbox-target",
+            "oci_local",
+            "--dry-run",
+            "--json",
+            ".",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        let rewritten = super::rewrite_task_input_path_hint(args);
+        let cli = try_parse_cli_on_test_stack(
+            &rewritten
+                .iter()
+                .map(|value| value.to_str().expect("test argument should be UTF-8"))
+                .collect::<Vec<_>>(),
+        )
+        .expect("sandbox flags after the task should remain Ota command flags");
+
+        match cli.command {
+            Commands::Run {
+                task,
+                agent,
+                sandbox_target,
+                dry_run,
+                json,
+                path,
+                inputs,
+                ..
+            } => {
+                assert_eq!(task, "verify");
+                assert!(agent);
+                assert_eq!(sandbox_target.as_deref(), Some("oci_local"));
+                assert!(dry_run);
+                assert!(json);
+                assert_eq!(path.as_deref(), Some(Path::new(".")));
+                assert!(inputs.is_empty());
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
     fn run_effect_override_is_classified_as_repo_run_value_flag() {
         let occurrence = super::parse_run_flag_occurrence(
             &[
@@ -28428,6 +28501,7 @@ policies:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            sandbox_target: None,
             path: None,
             inputs: Vec::new(),
         };

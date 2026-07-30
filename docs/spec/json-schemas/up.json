@@ -148,6 +148,12 @@
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
                 },
+                "sandbox_admission": {
+                  "oneOf": [
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                  ]
+                },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },
                 "effective_safe_for_agent": { "type": "boolean" },
@@ -216,6 +222,12 @@
             },
             "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
           }
+        },
+        "sandbox_admission": {
+          "oneOf": [
+            { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+            { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+          ]
         },
         "blockers": {
           "type": "array",
@@ -364,10 +376,16 @@
                     "additionalProperties": false,
                     "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
                     "properties": {
-                      "state": {
-                        "enum": ["allowed", "refused", "blocked", "warning_only"]
-                      },
-                      "review_required": { "type": "boolean" },
+                    "state": {
+                      "enum": ["allowed", "refused", "blocked", "warning_only"]
+                    },
+                    "sandbox_admission": {
+                      "oneOf": [
+                        { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                        { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                      ]
+                    },
+                    "review_required": { "type": "boolean" },
                       "declared_safe_for_agent": { "type": "boolean" },
                       "effective_safe_for_agent": { "type": "boolean" },
                       "unsafe_closure_tasks": {
@@ -436,6 +454,12 @@
                 "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
               }
             },
+              "sandbox_admission": {
+                "oneOf": [
+                  { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                  { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                ]
+              },
               "blockers": {
                 "type": "array",
                 "items": { "$ref": "./shared.json#/$defs/finding" }
@@ -478,6 +502,12 @@
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
+                },
+                "sandbox_admission": {
+                  "oneOf": [
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                  ]
                 },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },

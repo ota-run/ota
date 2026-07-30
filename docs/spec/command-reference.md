@@ -1402,6 +1402,7 @@ ota run <task> --skip-deps [PATH]
 ota run <task> --effect-override network:broad=allow [PATH]
 ota run <task> --memory 4GiB [PATH]
 ota run <task> --agent [PATH]
+ota run <task> --agent --sandbox-target oci_local [PATH]
 ota run <task> --reason "release requested" [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
@@ -1423,6 +1424,40 @@ Current behavior:
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure
+- when an agent-selected lane declares authoritative `runtime_boundary` controls, Ota
+  automatically resolves the compatible enforcing target or refuses before dependencies,
+  hydration, setup, or task startup. `--sandbox-target oci_local` makes the same provider request
+  explicit; it never converts a native or remote task into container execution
+- the first `oci_local` target requires an explicitly platform-pinned ephemeral container lane. It
+  enforces a read-only repository root, existing declared writable carve-outs, protected-path
+  isolation, bounded external-IP network denial, and cleanup ownership. Targeted host/domain or
+  destination egress remains unsupported without a cooperating network-policy adapter
+- `container.platform` is ordinary container execution truth, not a sandbox-only hint. The current
+  backend accepts Linux OCI targets only. Ota passes the pin to every ephemeral, persistent,
+  closure-session, fulfillment, and lifecycle-proof execution-backend container it creates;
+  persistent reuse is invalidated when the declared platform changes. Task variants, environment
+  files, inputs, requirements, and command selection also resolve against that target OS rather
+  than the host OS
+- the first target admits finite `run`, `script`, and `command` bodies only. It refuses typed
+  prepare/action/Compose/launch/attach bodies and any task closure whose requirements, services, or
+  conditional checks would execute before the OCI segment boundary
+- the first target also refuses `attachments.isolated_paths`. Their files or named volumes are
+  durable provider resources, and Ota will not create or reuse them under an enforced lane until
+  their lifecycle is registered and evidenced by the same pre-mutation transaction
+- provider-backed completion receipts are archived automatically under `.ota/receipts` with a
+  content-addressed normalized contract snapshot. Archive verification re-derives the selected
+  policy graph and reconciles completed segment invocations with archived task outcomes. When an
+  organization policy narrows the lane, the receipt carries its identified restriction-authority
+  snapshot and archive verification derives overlays from that snapshot instead of trusting
+  embedded overlay output
+- engine inspection admits only the exact repository-root mount plus declared host-backed writable
+  carve-outs. Managed isolated paths, image-declared volumes, runtime sockets, and any other
+  undeclared mount refuse even when the engine reports them read-only
+- when one task identity is reachable in multiple execution phases, such as both a dependency and
+  a success hook, enforcing admission refuses and asks the contract author to split the invocations
+  into distinct task identities; it never collapses both executions into one segment
+- `ota proof lifecycle --agent` refuses authoritative sandbox-controlled closures until lifecycle
+  proof can emit the same provider application evidence; it does not borrow a prior run's boundary
 - `--reason <text>` attaches operator intent when the selected task path crosses a heavier
   audited execution boundary; the current shipped slice records that reason only when ota derives
   `crossing_required` for the selected lane instead of attaching free-form narration to every run
@@ -1442,6 +1477,13 @@ Current behavior:
 - `--dry-run` is the read-only repo run preview surface: it resolves the selected task path,
   env, toolchains, native prerequisites, dependencies, and execution plan without running setup,
   dependencies, task processes, or containers
+- container runtime/tool availability that requires starting a provider boundary is intentionally
+  deferred during dry-run. Real sandbox-enforced execution performs those probes only inside the
+  registered provider application transaction, where each probe has its own pre-mutation cleanup
+  lease, applied-policy evidence, terminal inspection, and confirmed cleanup. Receipt JSON labels
+  those boundaries `purpose: precondition_probe`, binds them to the exact admitted segment that
+  owns the requirement, and retains terminal evidence on a blocking refusal; they cannot satisfy a
+  selected `task_execution` outcome
 - dry-run also evaluates declared replay-input identity pins. A missing or mismatched
   `expected_identity` returns the typed `replay_input_identity_missing` or
   `replay_input_identity_mismatch` preflight result before Ota presents the lane as runnable; real
@@ -2204,6 +2246,7 @@ ota up --workflow verify --replay-baseline promoted [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ota up --agent [PATH]
+ota up --workflow verify --agent --sandbox-target oci_local [PATH]
 ota up --reason "release approved" [PATH]
 ```
 
@@ -2214,6 +2257,11 @@ Current behavior:
 - when `--member` is set, prepares the merged member contract
 - repeated `--member` values prepare those members in the provided order
 - `--agent` enforces the declared agent-safe task boundary before setup or workflow execution starts; ota refuses the selected workflow path when any selected prepare/setup/run/attach task sits outside the safe set or reaches an unsafe task closure
+- authoritative selected-workflow runtime boundaries use the same fail-closed sandbox admission as
+  `ota run`. Every reachable task and conditional hook is admitted before preparation; each
+  executed segment receives provider evidence, and differing segment policies use distinct
+  boundaries. A workflow-owned direct prepare action cannot be placed inside the task-scoped
+  `oci_local` boundary and is refused when authoritative sandbox enforcement is required
 - `--reason <text>` attaches operator intent when the selected workflow crosses a heavier audited
   execution boundary; repo-target `ota up --json` mirrors the resulting ota-authored crossing
   record at both `governance.crossing` and `receipt.crossing`

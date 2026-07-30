@@ -505,6 +505,11 @@ Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 - `execution.preferred: container` requires `execution.backends.container.image`
+- `execution.backends.container.platform` may pin the Linux OCI target as `linux/arch` or
+  `linux/arch/variant` (for example `linux/amd64`). Ota applies the pin to every execution-backend
+  container it creates, and changing it invalidates persistent-container reuse. The current
+  container backend does not claim Windows-container execution. The `oci_local` enforcing target
+  requires this field instead of inferring the target from the runner host.
 - `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, ota falls back to `docker`
 - `execution.preferred: remote` requires `execution.backends.remote.provider`
 - `execution.preferred: remote` requires `execution.backends.remote.target`
@@ -2529,6 +2534,18 @@ tasks:
 - `execution.runtime_boundary` is the repo baseline for that task lane; task-local
   `runtime_boundary` can narrow or replace it for the selected task instead of leaving sandbox
   posture split across agent metadata and shell conventions
+- runtime-boundary declaration and runtime enforcement remain separate truths. In agent execution,
+  authoritative selected-lane controls must be applied by a compatible provider or Ota refuses
+  before preparation. The first enforcing provider, `oci_local`, only applies to already-declared
+  ephemeral container lanes with an explicit `container.platform`; provider selection cannot
+  change task mode, lifecycle, command, or context
+- `oci_local` requires writable carve-outs to exist before admission and rejects symlink, hardlink,
+  writable/protected overlap, inherited-network, runtime-socket, and targeted-egress shapes it
+  cannot prove safely. These are provider capability boundaries, not reasons to weaken the
+  contract declaration
+- its first implementation admits finite `run`, `script`, and `command` task bodies only. Typed
+  prepare/action/Compose/launch/attach bodies, task requirements, required services, and
+  conditional checks remain explicit unsupported pre-boundary work and cause refusal
 - `modes.<mode>.depends_on` replaces the task-level dependency list for that mode; omit it when the task-level `depends_on` already matches the selected execution plane
 - use `modes.<mode>.depends_on` when one task keeps the same identity but needs different preflight on host vs container instead of cloning tasks like `build:host`
 - use `env_files` for task-process dotenv overlays; use `adapter_inputs.overlays.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body

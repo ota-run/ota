@@ -367,6 +367,10 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "image": { "type": "string" },
+        "platform": {
+          "type": "string",
+          "pattern": "^linux/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$"
+        },
         "engines": { "$ref": "#/$defs/stringArray" },
         "resources": { "$ref": "#/$defs/containerResources" }
       }

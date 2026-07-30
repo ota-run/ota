@@ -37,7 +37,7 @@ use crate::policy_pack::{
 };
 use crate::runner::{
     ResolvedExecutionBackend, StreamPhaseLoader, StreamPhaseLoaderPolicy, join_stream_reader,
-    persistent_container_name, run_backend_command_captured, stream_reader_to_sink,
+    persistent_container_name_for_seed, run_backend_command_captured, stream_reader_to_sink,
 };
 use crate::schema::Lifecycle;
 
@@ -52,6 +52,7 @@ pub enum ProvisioningExecutionTarget {
     Native,
     Container {
         image: String,
+        platform: Option<String>,
         engine: String,
         lifecycle: Lifecycle,
         container_name: Option<String>,
@@ -171,7 +172,7 @@ fn parse_release_asset_source_config(
     })
 }
 
-fn release_asset_target_os(target: &ProvisioningExecutionTarget) -> &'static str {
+fn release_asset_target_os(target: &ProvisioningExecutionTarget) -> &str {
     match target {
         ProvisioningExecutionTarget::Native => {
             if cfg!(target_os = "windows") {
@@ -182,7 +183,11 @@ fn release_asset_target_os(target: &ProvisioningExecutionTarget) -> &'static str
                 "linux"
             }
         }
-        ProvisioningExecutionTarget::Container { .. } => "linux",
+        ProvisioningExecutionTarget::Container { platform, .. } => platform
+            .as_deref()
+            .and_then(|platform| platform.split('/').next())
+            .filter(|os| !os.is_empty())
+            .unwrap_or("linux"),
         ProvisioningExecutionTarget::Remote { .. } => {
             if cfg!(target_os = "windows") {
                 "windows"
@@ -195,12 +200,31 @@ fn release_asset_target_os(target: &ProvisioningExecutionTarget) -> &'static str
     }
 }
 
-fn release_asset_target_arch() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        "arm64" => "aarch64",
+fn normalize_release_asset_arch(arch: &str) -> &str {
+    match arch {
+        "amd64" | "x86_64" => "x86_64",
+        "arm64" | "aarch64" => "aarch64",
         other => other,
+    }
+}
+
+fn release_asset_target_arch(target: &ProvisioningExecutionTarget) -> String {
+    match target {
+        ProvisioningExecutionTarget::Container {
+            platform: Some(platform),
+            ..
+        } => platform
+            .split('/')
+            .nth(1)
+            .filter(|arch| !arch.is_empty())
+            .map(normalize_release_asset_arch)
+            .unwrap_or_else(|| normalize_release_asset_arch(std::env::consts::ARCH))
+            .to_string(),
+        ProvisioningExecutionTarget::Native
+        | ProvisioningExecutionTarget::Container { platform: None, .. }
+        | ProvisioningExecutionTarget::Remote { .. } => {
+            normalize_release_asset_arch(std::env::consts::ARCH).to_string()
+        }
     }
 }
 
@@ -208,7 +232,7 @@ fn release_asset_platform_key(target: &ProvisioningExecutionTarget) -> String {
     format!(
         "{}_{}",
         release_asset_target_os(target),
-        release_asset_target_arch()
+        release_asset_target_arch(target)
     )
 }
 
@@ -4626,6 +4650,7 @@ fn container_command_output(
 fn run_container_command(
     engine: &str,
     image: &str,
+    platform: Option<&str>,
     lifecycle: Lifecycle,
     container_name: Option<&str>,
     working_dir: &Path,
@@ -4638,30 +4663,28 @@ fn run_container_command(
     let workspace = format!("{}:/workspace", working_dir.display());
 
     match lifecycle {
-        Lifecycle::Ephemeral => container_command_output(
-            engine,
-            &[
-                "run",
-                "--rm",
-                "-i",
+        Lifecycle::Ephemeral => {
+            let mut args = vec!["run", "--rm", "-i"];
+            if let Some(platform) = platform {
+                args.extend(["--platform", platform]);
+            }
+            args.extend([
                 "--entrypoint",
                 "sh",
                 "-v",
-                &workspace,
+                workspace.as_str(),
                 "-w",
                 "/workspace",
                 image,
                 "-lc",
-                &shell,
-            ],
-            working_dir,
-            mode,
-            loader_label,
-        ),
+                shell.as_str(),
+            ]);
+            container_command_output(engine, &args, working_dir, mode, loader_label)
+        }
         Lifecycle::Persistent => {
-            let container_name = container_name
-                .map(str::to_string)
-                .unwrap_or_else(|| persistent_container_name(working_dir, image, engine));
+            let container_name = container_name.map(str::to_string).unwrap_or_else(|| {
+                persistent_container_name_for_seed(working_dir, image, engine, platform)
+            });
             let inspect = container_command_output(
                 engine,
                 &["inspect", &container_name],
@@ -4670,23 +4693,26 @@ fn run_container_command(
                 None,
             )?;
             if inspect.exit_code != 0 {
+                let mut args = vec!["run", "-d"];
+                if let Some(platform) = platform {
+                    args.extend(["--platform", platform]);
+                }
+                args.extend([
+                    "--name",
+                    container_name.as_str(),
+                    "--entrypoint",
+                    "sh",
+                    "-v",
+                    workspace.as_str(),
+                    "-w",
+                    "/workspace",
+                    image,
+                    "-lc",
+                    "while true; do sleep 3600; done",
+                ]);
                 let status = container_command_output(
                     engine,
-                    &[
-                        "run",
-                        "-d",
-                        "--name",
-                        &container_name,
-                        "--entrypoint",
-                        "sh",
-                        "-v",
-                        &workspace,
-                        "-w",
-                        "/workspace",
-                        image,
-                        "-lc",
-                        "while true; do sleep 3600; done",
-                    ],
+                    &args,
                     working_dir,
                     ProvisioningOutputMode::Capture,
                     None,
@@ -4736,12 +4762,14 @@ fn execute_provisioning_command(
         ),
         ProvisioningExecutionTarget::Container {
             image,
+            platform,
             engine,
             lifecycle,
             container_name,
         } => run_container_command(
             engine,
             image,
+            platform.as_deref(),
             *lifecycle,
             container_name.as_deref(),
             working_dir,
@@ -5123,6 +5151,7 @@ mod tests {
         assert_eq!(
             provisioning_loader_label(&ProvisioningExecutionTarget::Container {
                 image: String::from("maven:3.9.14-eclipse-temurin-21-noble"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Persistent,
                 container_name: None,
@@ -5183,6 +5212,7 @@ mod tests {
 
         let target = ProvisioningExecutionTarget::Container {
             image: "ghcr.io/ota/test:latest".to_string(),
+            platform: Some(String::from("linux/amd64")),
             engine: "docker".to_string(),
             lifecycle: Lifecycle::Ephemeral,
             container_name: None,
@@ -5199,6 +5229,7 @@ mod tests {
         assert!(result.stderr.is_empty());
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("run"));
+        assert!(log_contents.contains("--platform\nlinux/amd64"));
         assert!(log_contents.contains("sh"));
         assert!(log_contents.contains("mise"));
         assert!(log_contents.contains("java@22"));
@@ -5206,6 +5237,27 @@ mod tests {
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[test]
+    fn container_release_asset_platform_uses_declared_target_architecture() {
+        let amd64 = ProvisioningExecutionTarget::Container {
+            image: String::from("debian:bookworm-slim"),
+            platform: Some(String::from("linux/amd64")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            container_name: None,
+        };
+        let arm64 = ProvisioningExecutionTarget::Container {
+            image: String::from("debian:bookworm-slim"),
+            platform: Some(String::from("linux/arm64/v8")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            container_name: None,
+        };
+
+        assert_eq!(release_asset_platform_key(&amd64), "linux_x86_64");
+        assert_eq!(release_asset_platform_key(&arm64), "linux_aarch64");
     }
 
     #[test]
@@ -6176,6 +6228,7 @@ mod tests {
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "debian:bookworm-slim".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6306,6 +6359,7 @@ version_args:
             workdir.path(),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6426,6 +6480,7 @@ version_args:
             workdir.path(),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6546,6 +6601,7 @@ version_args:
             workdir.path(),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6631,6 +6687,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6692,6 +6749,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "debian:bookworm-slim".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6752,6 +6810,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "linuxbrew/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6812,6 +6871,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "fedora/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6872,6 +6932,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "archlinux/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6932,6 +6993,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "windows/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -6989,6 +7051,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "windows/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -7046,6 +7109,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "windows/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -7103,6 +7167,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -7160,6 +7225,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -7217,6 +7283,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -7274,6 +7341,7 @@ version_args:
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
                 image: "premium/test:latest".to_string(),
+                platform: None,
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,

@@ -3080,6 +3080,114 @@ tasks:
 }
 
 #[test]
+fn sandbox_run_preview_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    fs::create_dir(fixture.path().join("reports")).expect("sandbox writable path");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: sandbox-preview
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: debian:bookworm-slim
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: bash, args: ["-c", "true"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [reports]
+      network:
+        default: deny
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "run",
+            "verify",
+            "--agent",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["sandbox_admission"]["decision"], "admitted");
+    assert_eq!(
+        json["sandbox_admission"]["canonical_policy"]["segments"][0]["execution_kind"],
+        "command"
+    );
+}
+
+#[test]
+fn sandbox_up_preview_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    fs::create_dir(fixture.path().join("reports")).expect("sandbox writable path");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: sandbox-up-preview
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: debian:bookworm-slim
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: bash, args: ["-c", "true"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [reports]
+      network:
+        default: deny
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "up",
+            "--workflow",
+            "verify",
+            "--agent",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &json);
+    assert_eq!(json["sandbox_admission"]["decision"], "admitted");
+    assert_eq!(
+        json["governance"]["preflight"]["sandbox_admission"]["decision"],
+        "admitted"
+    );
+}
+
+#[test]
 fn run_dry_run_json_keeps_governance_on_the_admitted_lane_when_mode_is_rejected() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

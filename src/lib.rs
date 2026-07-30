@@ -44,6 +44,7 @@ pub(crate) mod replay_baseline;
 pub(crate) mod replay_input_policy;
 pub(crate) mod replay_inputs;
 pub mod runner;
+pub(crate) mod sandbox_policy;
 pub mod schema;
 pub(crate) mod semantic_identity;
 pub(crate) mod terminal;

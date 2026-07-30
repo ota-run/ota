@@ -1016,6 +1016,7 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
 
     let target = ProvisioningExecutionTarget::Container {
         image: String::from("rust:1.94-bookworm"),
+        platform: None,
         engine: String::from("docker"),
         lifecycle: ota::schema::Lifecycle::Persistent,
         container_name: None,
@@ -1067,6 +1068,452 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
     let prepared = fs::read_to_string(fixture.path().join("prepared.txt")).expect("prepared file");
     assert!(prepared.contains("pv 1.6.20 - Copyright 2015 Andrew Wood <andrew.wood@ivarch.com>"));
     assert!(prepared.contains("Artistic License 2.0"));
+}
+
+#[cfg(unix)]
+#[test]
+fn sandbox_policy_is_applied_and_attested_by_real_oci_execution() {
+    if !Command::new("docker")
+        .arg("info")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("skipping real OCI sandbox test: docker daemon unavailable");
+        return;
+    }
+
+    let fixture = copy_fixture_to_temp("sandbox-oci");
+    let pull = Command::new("docker")
+        .args(["pull", "debian:bookworm-slim"])
+        .output()
+        .expect("docker should pull the sandbox fixture image");
+    assert!(
+        pull.status.success(),
+        "docker pull failed: {}",
+        String::from_utf8_lossy(&pull.stderr)
+    );
+    let platform = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "-f",
+            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
+            "debian:bookworm-slim",
+        ])
+        .output()
+        .expect("docker should inspect the sandbox fixture image");
+    assert!(platform.status.success());
+    let platform = String::from_utf8(platform.stdout)
+        .expect("platform should be UTF-8")
+        .trim()
+        .to_string();
+    let contract_path = fixture.path().join("ota.yaml");
+    let contract = fs::read_to_string(&contract_path)
+        .expect("sandbox fixture contract should be readable")
+        .replace("platform: linux/amd64", &format!("platform: {platform}"));
+    fs::write(&contract_path, contract).expect("sandbox fixture platform should be selected");
+    let output = run_ota_in_dir(
+        &["--plain", "run", "--agent", "--receipt", "verify"],
+        fixture.path(),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let rendered = format!("{stdout}\n{stderr}");
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\n\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("reports/result.txt")).unwrap(),
+        "verified"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("reports/hook.txt")).unwrap(),
+        "hook"
+    );
+    assert!(!fixture.path().join("forbidden.txt").exists());
+    assert!(rendered.contains("Sandbox Enforcement Evidence"));
+    assert!(rendered.contains("enforced_through_completion"));
+    assert!(rendered.contains("1 of 1 admitted"));
+
+    let boundary_names = rendered
+        .split_whitespace()
+        .filter_map(|word| {
+            word.strip_prefix("container:docker:")
+                .map(|name| {
+                    name.trim_matches(|character: char| {
+                        !character.is_ascii_alphanumeric() && character != '-' && character != '_'
+                    })
+                })
+                .filter(|name| !name.is_empty())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        boundary_names.len(),
+        3,
+        "receipt should name the exact-owner precondition probe and both task boundaries:\n{rendered}"
+    );
+    let containers = Command::new("docker")
+        .args(["ps", "-a", "--format", "{{.Names}}"])
+        .output()
+        .expect("docker should list containers");
+    let containers = String::from_utf8_lossy(&containers.stdout);
+    for boundary in boundary_names {
+        assert!(
+            !containers.lines().any(|name| name == boundary),
+            "sandbox boundary `{boundary}` should be absent after runner cleanup"
+        );
+    }
+    let history = run_ota_in_dir(&["receipt", "--history", "--json"], fixture.path());
+    let history_json = stdout_json(&history);
+    assert!(
+        history.status.success(),
+        "sandbox receipt archive should re-derive from its archived contract snapshot: {}",
+        String::from_utf8_lossy(&history.stderr)
+    );
+    assert_eq!(history_json["summary"]["archive_count"], 1);
+    assert_eq!(history_json["summary"]["invalid_archive_count"], 0);
+
+    let archive_path = fs::read_dir(fixture.path().join(".ota/receipts"))
+        .expect("sandbox receipt archive directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .expect("sandbox receipt archive");
+    let mut archive: Value =
+        serde_json::from_slice(&fs::read(&archive_path).expect("sandbox receipt archive bytes"))
+            .expect("sandbox receipt archive json");
+    let application = &archive["receipt"]["witnessed_observations"]["sandbox_application"];
+    assert_eq!(application["status"], "enforced_through_completion");
+    assert_eq!(
+        application["restriction_authority"]["source"],
+        "repo policy"
+    );
+    assert!(
+        application["restriction_authority"]["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert_eq!(
+        application["restriction_authority"]["rules"]["network"]["default"],
+        "deny"
+    );
+    assert_eq!(
+        application["restriction_overlays"][0]["source"]
+            .as_str()
+            .map(|source| source.contains(
+                application["restriction_authority"]["identity"]
+                    .as_str()
+                    .unwrap()
+            )),
+        Some(true)
+    );
+    assert!(
+        application["segments"]
+            .as_array()
+            .is_some_and(|segments| segments.iter().all(|segment| {
+                segment["terminal_observation_identity"] == segment["applied_policy_identity"]
+                    && segment["cleanup"]["state"] == "confirmed"
+                    && segment["writable_mounts"]
+                        .as_array()
+                        .is_some_and(|mounts| !mounts.is_empty())
+            })),
+        "{application}"
+    );
+    assert!(
+        application["segments"]
+            .as_array()
+            .is_some_and(|segments| segments
+                .iter()
+                .any(|segment| segment["purpose"] == "precondition_probe")),
+        "{application}"
+    );
+    let application_segments = application["segments"]
+        .as_array()
+        .expect("sandbox application segments");
+    let verify_segment = application_segments
+        .iter()
+        .find(|segment| {
+            segment["segment_id"] == "task:verify" && segment["purpose"] == "task_execution"
+        })
+        .expect("verify sandbox segment");
+    let verify_probe = application_segments
+        .iter()
+        .find(|segment| {
+            segment["segment_id"] == "task:verify" && segment["purpose"] == "precondition_probe"
+        })
+        .expect("verify precondition probe");
+    assert_eq!(
+        verify_probe["segment_policy_identity"],
+        verify_segment["segment_policy_identity"]
+    );
+    assert_eq!(
+        verify_segment["network"]["required"],
+        "external_ip_connectivity_denied"
+    );
+    assert_eq!(verify_segment["network"]["application"], "enforced");
+    let record_segment = application_segments
+        .iter()
+        .find(|segment| {
+            segment["segment_id"] == "task:record" && segment["purpose"] == "task_execution"
+        })
+        .expect("record sandbox segment");
+    assert_eq!(
+        record_segment["network"]["required"],
+        "external_ip_connectivity_denied"
+    );
+    assert_eq!(record_segment["network"]["application"], "enforced");
+    assert!(
+        archive["receipt"]["steps"]
+            .as_array()
+            .is_some_and(|steps| steps.iter().all(|step| {
+                step["task"].is_string()
+                    && step["execution_relation"].is_string()
+                    && step["generation"].is_number()
+            })),
+        "{}",
+        archive["receipt"]["steps"]
+    );
+
+    let original_archive = archive.clone();
+    let task_execution_segment =
+        archive["receipt"]["witnessed_observations"]["sandbox_application"]["segments"]
+            .as_array_mut()
+            .and_then(|segments| {
+                segments.iter_mut().find(|segment| {
+                    segment["segment_id"] == "task:verify" && segment["purpose"] == "task_execution"
+                })
+            })
+            .expect("archived sandbox task-execution segment");
+    task_execution_segment["purpose"] = Value::from("precondition_probe");
+    fs::write(
+        &archive_path,
+        serde_json::to_vec_pretty(&archive).expect("purpose-tampered archive json"),
+    )
+    .expect("purpose-tampered sandbox archive");
+    let purpose_tampered_history =
+        run_ota_in_dir(&["receipt", "--history", "--json"], fixture.path());
+    let purpose_tampered_json = stdout_json(&purpose_tampered_history);
+    assert_eq!(purpose_tampered_json["summary"]["archive_count"], 0);
+    assert_eq!(purpose_tampered_json["summary"]["invalid_archive_count"], 1);
+
+    archive = original_archive;
+    let archived_task_step = archive["receipt"]["steps"]
+        .as_array_mut()
+        .and_then(|steps| steps.iter_mut().find(|step| step["task"].is_string()))
+        .expect("archived sandbox task step");
+    archived_task_step["generation"] = Value::from(99);
+    fs::write(
+        &archive_path,
+        serde_json::to_vec_pretty(&archive).expect("tampered archive json"),
+    )
+    .expect("tampered sandbox archive");
+    let tampered_history = run_ota_in_dir(&["receipt", "--history", "--json"], fixture.path());
+    let tampered_json = stdout_json(&tampered_history);
+    assert_eq!(tampered_json["summary"]["archive_count"], 0);
+    assert_eq!(tampered_json["summary"]["invalid_archive_count"], 1);
+
+    let workflow_fixture = copy_fixture_to_temp("sandbox-oci");
+    let workflow_contract_path = workflow_fixture.path().join("ota.yaml");
+    let workflow_contract = fs::read_to_string(&workflow_contract_path)
+        .expect("sandbox workflow fixture contract should be readable")
+        .replace("platform: linux/amd64", &format!("platform: {platform}"));
+    fs::write(&workflow_contract_path, workflow_contract)
+        .expect("sandbox workflow fixture platform should be selected");
+    let up = run_ota_in_dir(
+        &["--plain", "up", "--agent", "--json"],
+        workflow_fixture.path(),
+    );
+    let up_json = stdout_json(&up);
+    assert!(
+        up.status.success(),
+        "workflow stdout:\n{}\n\nworkflow stderr:\n{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    let workflow_application = &up_json["receipt"]["witnessed_observations"]["sandbox_application"];
+    assert_eq!(
+        workflow_application["status"],
+        "enforced_through_completion"
+    );
+    assert_eq!(
+        workflow_application["segments"].as_array().map(|segments| {
+            segments
+                .iter()
+                .filter(|segment| segment["purpose"] == "task_execution")
+                .count()
+        }),
+        Some(2)
+    );
+    assert!(
+        workflow_application["segments"]
+            .as_array()
+            .is_some_and(|segments| segments
+                .iter()
+                .any(|segment| segment["purpose"] == "precondition_probe"))
+    );
+    assert_eq!(
+        up_json["receipt"]["steps"]
+            .as_array()
+            .map(|steps| { steps.iter().filter(|step| step["task"].is_string()).count() }),
+        Some(2)
+    );
+    let workflow_history =
+        run_ota_in_dir(&["receipt", "--history", "--json"], workflow_fixture.path());
+    let workflow_history_json = stdout_json(&workflow_history);
+    assert!(workflow_history.status.success());
+    assert_eq!(workflow_history_json["summary"]["archive_count"], 1);
+    assert_eq!(workflow_history_json["summary"]["invalid_archive_count"], 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn sandbox_precondition_refusal_preserves_confirmed_probe_cleanup_evidence() {
+    if !Command::new("docker")
+        .arg("info")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("skipping real OCI precondition-refusal test: docker daemon unavailable");
+        return;
+    }
+
+    let fixture = copy_fixture_to_temp("sandbox-oci");
+    let pull = Command::new("docker")
+        .args(["pull", "debian:bookworm-slim"])
+        .output()
+        .expect("docker should pull the sandbox fixture image");
+    assert!(
+        pull.status.success(),
+        "docker pull failed: {}",
+        String::from_utf8_lossy(&pull.stderr)
+    );
+    let platform = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "-f",
+            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
+            "debian:bookworm-slim",
+        ])
+        .output()
+        .expect("docker should inspect the sandbox fixture image");
+    assert!(platform.status.success());
+    let platform = String::from_utf8(platform.stdout)
+        .expect("platform should be UTF-8")
+        .trim()
+        .to_string();
+    let contract_path = fixture.path().join("ota.yaml");
+    let contract = fs::read_to_string(&contract_path)
+        .expect("sandbox fixture contract should be readable")
+        .replace("platform: linux/amd64", &format!("platform: {platform}"))
+        .replace(
+            "\ntasks:\n  verify:",
+            "\nruntimes:\n  python: \">=99\"\n\ntasks:\n  verify:",
+        );
+    fs::write(&contract_path, contract).expect("sandbox refusal contract should be selected");
+
+    let output = run_ota_in_dir(
+        &["--plain", "run", "--agent", "--receipt", "verify"],
+        fixture.path(),
+    );
+    let rendered = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "{rendered}");
+    assert!(!fixture.path().join("reports/result.txt").exists());
+    assert!(
+        rendered.contains("Sandbox Enforcement Evidence"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("precondition_probe"), "{rendered}");
+    assert!(rendered.contains("cleanup: confirmed"), "{rendered}");
+    assert!(!rendered.contains("(task_execution,"), "{rendered}");
+}
+
+#[cfg(unix)]
+#[test]
+fn sandbox_policy_refuses_image_declared_mount_outside_the_contract_boundary() {
+    if !Command::new("docker")
+        .arg("info")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("skipping real OCI mount-admission test: docker daemon unavailable");
+        return;
+    }
+
+    let fixture = copy_fixture_to_temp("sandbox-oci");
+    let image = format!("ota-sandbox-undeclared-mount:{}", std::process::id());
+    fs::write(
+        fixture.path().join("Dockerfile.undeclared-mount"),
+        "FROM debian:bookworm-slim\nVOLUME [\"/image-cache\"]\n",
+    )
+    .expect("sandbox mount fixture Dockerfile");
+    let build = Command::new("docker")
+        .args([
+            "build",
+            "--quiet",
+            "--tag",
+            image.as_str(),
+            "--file",
+            "Dockerfile.undeclared-mount",
+            ".",
+        ])
+        .current_dir(fixture.path())
+        .output()
+        .expect("docker should build the sandbox mount fixture image");
+    assert!(
+        build.status.success(),
+        "docker build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let platform = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "-f",
+            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
+            image.as_str(),
+        ])
+        .output()
+        .expect("docker should inspect the sandbox mount fixture image");
+    assert!(platform.status.success());
+    let platform = String::from_utf8(platform.stdout)
+        .expect("platform should be UTF-8")
+        .trim()
+        .to_string();
+    let contract_path = fixture.path().join("ota.yaml");
+    let contract = fs::read_to_string(&contract_path)
+        .expect("sandbox fixture contract should be readable")
+        .replace("image: debian:bookworm-slim", &format!("image: {image}"))
+        .replace("platform: linux/amd64", &format!("platform: {platform}"));
+    fs::write(&contract_path, contract).expect("sandbox fixture image should be selected");
+
+    let output = run_ota_in_dir(
+        &["--plain", "run", "--agent", "--receipt", "verify"],
+        fixture.path(),
+    );
+    let rendered = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = Command::new("docker")
+        .args(["image", "rm", "--force", image.as_str()])
+        .output();
+
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        rendered.contains("undeclared mount") && rendered.contains("/image-cache"),
+        "{rendered}"
+    );
+    assert!(!fixture.path().join("reports/result.txt").exists());
 }
 
 #[cfg(unix)]

@@ -2420,6 +2420,41 @@ Each task capability entry carries:
   destination constraints can carry stronger app/runtime enforcement truth than the coarse lane
   default
 
+V11.21 adds execution admission and runner-authored application evidence without relabeling the
+older `codex_local` profile as enforcement:
+
+- task/workflow dry-run JSON carries `sandbox_admission` with the canonical policy, explicit
+  restriction-overlay identities, effective policy, provider capability decision, and typed
+  refusals
+- `oci_local` admission is valid only for an explicit ephemeral container platform whose
+  authoritative filesystem/network controls the provider can enforce without widening
+- canonical segments expose `execution_kind` and any `pre_boundary_actions`. The first OCI adapter
+  refuses typed bodies, requirements, services, or conditional checks that would run outside the
+  segment boundary instead of omitting them from the policy identity
+- completed execution receipts carry
+  `witnessed_observations.sandbox_application`, including the selected lane, execution selection,
+  admitted segment/edge graph, per-invocation purpose (`task_execution` or
+  `precondition_probe`), boundary identities, initial/terminal application identities, the
+  complete admitted mount-set identity, canonical writable-mount source identities, and cleanup
+  state. Provider-backed precondition probes are separate evidenced invocations of the exact
+  admitted segment that owns the requirement. Blocking probes retain terminal cleanup evidence in
+  the refusal receipt and cannot stand in for the matching task execution outcome.
+- when an organization policy narrows the lane, `restriction_authority` carries the identified
+  command-scoped policy source, the re-derivable semantic identity of its exact sandbox rules, and
+  those rules as an immutable snapshot. The
+  `restriction_overlays[]` projection must derive from that snapshot; an overlay without matching
+  authority is invalid
+- `enforced_through_completion` is derived only when every started boundary retained its admitted
+  controls through terminal engine inspection and engine-confirmed removal
+- provider-backed receipts are archived with their normalized contract snapshot. Receipt-history
+  loading re-derives canonical policy from that snapshot and restriction overlays from the
+  archived policy-authority snapshot, then rejects mismatched effective policy, segment order,
+  conditional edges, capability identity, application-plan identity, or completed segment
+  invocations that do not match archived task outcomes
+- this record proves only the selected cooperating runtime boundary. It does not prove application
+  output, merge eligibility, host-wide isolation, or execution performed through raw shell outside
+  Ota
+
 Refused task capability entries may also carry additive `blocked_task` and `closure_path` when a
 declared-safe task is refused because its reachable closure leaves the safe surface.
 
