@@ -778,11 +778,21 @@ Current pressure evidence:
   dry-run admission, real `run` and workflow-backed `up`, terminal cleanup, and archive
   reconciliation. It does not prove Caddy's build, tests, lifecycle, signing, release, publication,
   or downstream image-dispatch lanes.
+- Buzz run
+  [30559160264](https://github.com/bobaikato/buzz/actions/runs/30559160264) is supplementary
+  unsupported-capability pressure against Core `8de7d34db7c74def6944712d356ddcb4ab0e9ab2`. Its
+  real `just test-integration` closure declares Docker Compose services, migrations, persistent
+  volumes, dependency hydration, and external state. Stock `oci_local` refuses before execution;
+  the matrix records no Buzz container, network, volume, worktree, dependency, or compiler-output
+  mutation. It also names two boundaries rather than overclaiming them: clean-host Doctor remains
+  blocked on the declared missing `just` tool, and a pre-boundary sandbox refusal is inline output
+  rather than a durable archived refusal record.
 
-Both repos advertise only the stock `oci_local` Linux/amd64 pressure lane and prove that exact
-provider/target matrix on Ubuntu. Each committed pressure inventory classifies the remaining
-material behavior explicitly. These runs satisfy the pressure bar without becoming repo-global
-sandbox claims.
+The create-chrome-extension and Caddy completion pair advertises only the stock `oci_local`
+Linux/amd64 pressure lane and proves that exact provider/target matrix on Ubuntu. Buzz provides
+additional refusal-only evidence for the same bounded target. Each committed pressure inventory
+classifies the remaining material behavior explicitly. These runs satisfy the pressure bar without
+becoming repo-global sandbox claims.
 
 ## Explicit non-goals and boundaries
 

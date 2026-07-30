@@ -78,6 +78,19 @@ durable agent workflow belongs in the canonical Ota skill.
   terminal cleanup, archive reconciliation, and an explicit uncovered-material-behavior
   inventory. They prove only their selected Linux/amd64 `oci_local` lanes. The full Core and
   first-party release gate is green, so V11.21 is complete.
+- supplementary V11.21 pressure: Buzz run
+  [30559160264](https://github.com/bobaikato/buzz/actions/runs/30559160264) confirms that the
+  stock adapter refuses a real Compose, migration, persistent-volume, hydration, and external-state
+  integration closure before Buzz provider or worktree mutation. This does not widen V11.21. It
+  records two explicit boundaries: the clean host remains Doctor-blocked on the declared missing
+  `just` tool, and pre-boundary sandbox refusal is inline receipt evidence rather than a durable
+  refusal archive.
+- next planned slice: V11.22 contract creation and quality UX. It is planning-only and inactive.
+  It will make `init`/`detect` candidates source-bound and reviewable, reuse V11.14's assurance
+  truth only for its existing claim families, and add deterministic review-gated contract upgrades
+  without hosted or LLM dependency. V11.7 reusable grant authority remains explicitly deferred;
+  V11.22 does not consume crossing records as approval authority. See
+  [V11.22](../planning/v11.22/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
@@ -568,7 +581,7 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.21/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
+`docs/planning/v11.22/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
 `ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
 V11.21 is complete. The local real-OCI
@@ -581,8 +594,9 @@ completion, targeted egress, managed isolated paths, typed preparation, services
 or raw-shell governance.
 
 The public example, canonical skill, and site reference are carried, and the full Core/first-party
-release gate is green. Do not reopen V11.21 or widen its bounded claims; activate a separately
-planned slice before further implementation.
+release gate is green. Do not reopen V11.21 or widen its bounded claims. V11.22 is planned but
+inactive: review and explicitly activate its source-bound candidate and upgrade model before any
+implementation begins.
 
 ## Working Rules
 

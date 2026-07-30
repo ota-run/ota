@@ -27,6 +27,10 @@
 Status: partially implemented. Boundary crossing records and provenance are shipped; reusable
 grant authority, crossing-time liveness/scope checks, and authorizer binding remain open.
 
+Deferral: this remaining grant-authority work is explicitly deferred. It is not approval authority
+for any active execution or contract-authoring slice, and no later slice may consume a crossing
+record as a reusable grant until this plan is resumed and its acceptance bar is completed.
+
 Release target:
 
 - partially implemented continuation after `v11.6`; reusable grant authority remains open

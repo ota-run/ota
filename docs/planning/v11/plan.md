@@ -59,6 +59,7 @@ Source direction:
 - [V11.19 plan](../v11.19/plan.md)
 - [V11.20 plan](../v11.20/plan.md)
 - [V11.21 plan](../v11.21/plan.md)
+- [V11.22 plan](../v11.22/plan.md)
 
 V11 theme:
 
@@ -131,7 +132,8 @@ The following governance slice has open acceptance work and must not be represen
 until its stated pressure or implementation bars close:
 
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;
-  reusable grant authority and crossing-time liveness remain open.
+  reusable grant authority and crossing-time liveness remain open and explicitly deferred. No
+  later slice may treat a crossing record as reusable approval authority.
 
 The completed trust/product follow-ons are:
 
@@ -180,12 +182,17 @@ The completed policy-governance slice is:
 - [V11.20: policy-governed replay input identity](../v11.20/plan.md) - implementation and
   Bedrock/Kylrix pressure complete.
 
-The active sandbox-enforcement slice is:
+The completed sandbox-enforcement slice is:
 
-- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - active on
-  `1.6.26-implementation`. Its first implementation boundary is the provider-neutral canonical
-  policy envelope. It consumes V11.8's shipped `runtime_boundary` and capability-profile foundation;
-  it does not reopen or replace that contract model.
+- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - completed on
+  `1.6.26-implementation`. It applies the provider-neutral canonical policy envelope through the
+  bounded stock OCI subset and refuses unsupported authoritative controls before work begins.
+
+The next planned OSS authoring slice is:
+
+- [V11.22: contract creation and quality UX](../v11.22/plan.md) - planned and inactive. It makes
+  deterministic, source-bound contract candidates and existing V11.14 assurance legible without
+  inventing a second claim model or hosted intelligence dependency.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
