@@ -35,7 +35,7 @@ durable agent workflow belongs in the canonical Ota skill.
 
 - branch: `1.6.26-implementation`
 - released baseline: `v1.6.25`
-- active implementation slice: V11.21 enforced sandbox policy application. Core now derives one
+- completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
   the first `oci_local` provider cannot enforce an authoritative selected-lane control. Compatible
@@ -67,8 +67,17 @@ durable agent workflow belongs in the canonical Ota skill.
   outside the evidenced boundary. Ota-owned `run` flags, including `--sandbox-target`, remain
   command flags when written after the task and before task inputs. `codex_local` remains compiled
   guidance, targeted egress remains unsupported by stock OCI, and raw shell outside Ota remains
-  outside this enforcement boundary. Core fixture proof is green; two independent hosted pressure
-  repositories remain the completion gate.
+  outside this enforcement boundary. Core fixture proof is green. Independent hosted pressure is
+  also green against exact Core `d796f28e5556c0f1315052e8782ed774e9156922`:
+  create-chrome-extension run
+  [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
+  proves generated output inside one writable carve-out, and Caddy run
+  [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898) independently proves
+  a source-manifest artifact under external-network denial. Both runs include protected
+  `ota.yaml` write refusal, discovery JSON, dry-run admission, real task and workflow execution,
+  terminal cleanup, archive reconciliation, and an explicit uncovered-material-behavior
+  inventory. They prove only their selected Linux/amd64 `oci_local` lanes. The full Core and
+  first-party release gate is green, so V11.21 is complete.
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
@@ -562,15 +571,18 @@ Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
 `docs/planning/v11.21/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
 `ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
-V11.21 Core implementation is active. The local real-OCI fixture proves a generated-output
-writable carve-out, protected worktree refusal, external-network denial, conditional hook
-segmentation, terminal inspection, cleanup, automatic receipt archive, and snapshot-backed archive
-reconciliation. This is selected-boundary proof only.
+V11.21 is complete. The local real-OCI
+fixture plus create-chrome-extension run
+[30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
+and Caddy run [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898)
+prove the bounded stock-OCI subset against exact Core
+`d796f28e5556c0f1315052e8782ed774e9156922`. They do not prove application output, broader repo
+completion, targeted egress, managed isolated paths, typed preparation, services, lifecycle proof,
+or raw-shell governance.
 
-The public example, canonical skill, and site reference are carried. The remaining completion work
-is pressure and release reconciliation: prove one independent generated-output repo and one
-independent network-denial or targeted-egress-refusal repo on the exact branch source, then run the
-full Core and first-party release gates. Do not call V11.21 complete from the local fixture alone.
+The public example, canonical skill, and site reference are carried, and the full Core/first-party
+release gate is green. Do not reopen V11.21 or widen its bounded claims; activate a separately
+planned slice before further implementation.
 
 ## Working Rules
 

@@ -62,6 +62,9 @@
   report is accepted only after the full declared platform was applied during successful creation.
 - fixed `ota run <task> --agent --sandbox-target oci_local` and other Ota-owned run flags after
   the task name so the task-input boundary rewriter no longer misclassifies them as task inputs
+- preserved receipt-history and receipt-diff compatibility with archived receipts created before
+  execution stage-family metadata was added. New receipts keep publishing the richer stage truth;
+  older archives remain inspectable instead of being silently classified as invalid.
 
 ## 1.6.25
 

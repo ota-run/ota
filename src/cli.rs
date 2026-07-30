@@ -12684,7 +12684,11 @@ env:
 
                 let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
 
-                assert_eq!(output.exit_code, 0);
+                assert_eq!(
+                    output.exit_code, 0,
+                    "stdout:\n{}\nstderr:\n{:?}",
+                    output.stdout, output.stderr
+                );
                 let stdout = strip_ansi(&output.stdout);
                 assert!(stdout.contains("RECEIPT DIFF"));
                 assert!(stdout.contains("Compare:"));
@@ -12765,7 +12769,11 @@ tasks:
 
                 let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
 
-                assert_eq!(output.exit_code, 0);
+                assert_eq!(
+                    output.exit_code, 0,
+                    "stdout:\n{}\nstderr:\n{:?}",
+                    output.stdout, output.stderr
+                );
                 let stdout = strip_ansi(&output.stdout);
                 assert!(stdout.contains("Baseline:"), "{stdout}");
                 assert!(stdout.contains("Current:"), "{stdout}");
@@ -12870,7 +12878,11 @@ env:
 
                 assert_eq!(output.exit_code, 1);
                 let stdout = strip_ansi(&output.stdout);
-                assert!(stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"));
+                assert!(
+                    stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"),
+                    "stdout:\n{stdout}\nstderr:\n{:?}",
+                    output.stderr
+                );
                 assert!(stdout.contains("Blocker: Missing environment variable: OTA_BASELINE_REQUIRED"));
                 assert!(stdout.contains("Provenance: repo contract"));
                 assert!(stdout.contains(
@@ -37889,7 +37901,7 @@ workflows:
 
     #[cfg(not(windows))]
     #[test]
-    fn up_dry_run_container_preview_reports_image_and_preview_rerun() {
+    fn up_dry_run_container_preview_avoids_provider_probe_and_reports_plan() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -37931,25 +37943,31 @@ tools:
 
         let output = run_with(["ota", "up", "--dry-run", "--mode", "container", "."]);
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
         let stdout = strip_ansi(&output.stdout);
-        assert!(
-            stdout.contains("Primary Blocker Cargo is missing from the configured container image")
-        );
+        assert!(!stdout.contains("Primary Blocker"));
         assert!(!stdout.contains("Blocked by"));
         assert!(stdout.contains("Contract"));
         assert!(stdout.contains("Project: ota"));
         assert!(stdout.contains(
             "Execution: preferred=container, lifecycle=ephemeral, image=rust:1.94-bookworm"
         ));
-        assert!(stdout.contains("Why:\n  » `cargo` is declared in the contract"));
-        assert!(stdout.contains("  » it is not available in the configured container image"));
-        assert!(stdout.contains("  » `execution.backends.container.image = rust:1.94-bookworm`"));
-        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(stdout.contains("Dry run only"));
+        let probe_state = bin_dir.join(".ota-container-probe-state");
+        let created_probe = probe_state.is_dir()
+            && fs::read_dir(probe_state)
+                .expect("read fake container probe state")
+                .filter_map(Result::ok)
+                .any(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|value| value == "tool")
+                });
         assert!(
-            normalized.contains("rerun `ota up --dry-run --mode container --lifecycle ephemeral`")
+            !created_probe,
+            "dry-run must not create a provider-backed tool probe"
         );
-        assert!(!stdout.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
     }
 
     #[test]

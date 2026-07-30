@@ -352,6 +352,7 @@ pub struct ExecutionReceiptSummary {
 pub struct ExecutionReceiptStep {
     pub order: usize,
     pub label: String,
+    #[serde(default)]
     pub stage_family: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]

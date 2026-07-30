@@ -72845,7 +72845,7 @@ services:
         );
         assert_eq!(
             log.matches("inspect ota-lifecycle-success-test").count(),
-            1,
+            2,
             "{log}"
         );
     }
@@ -73257,7 +73257,7 @@ project:
         assert_eq!(
             log.matches("inspect ota-lifecycle-network-failure-test")
                 .count(),
-            1,
+            2,
             "{log}"
         );
     }

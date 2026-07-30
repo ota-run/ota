@@ -24,7 +24,8 @@
 
 # V11.21: Enforced Sandbox Policy Application
 
-Status: active. V11.20 is complete and V11.21 is the current `1.6.26-implementation` slice.
+Status: complete on `1.6.26-implementation`. Core implementation, two-repository hosted pressure,
+and the full Core/first-party release gate are green.
 
 Source direction:
 
@@ -759,6 +760,29 @@ Each repo must prove:
 - an uncovered-material-behavior inventory
 
 A green provider-backed task is not repo-global sandbox proof.
+
+Current pressure evidence:
+
+- create-chrome-extension run
+  [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
+  pins Core `d796f28e5556c0f1315052e8782ed774e9156922` and proves one existing repository
+  script generating a bounded artifact inside the declared writable carve-out. The same selected
+  boundary confirms protected `ota.yaml` write refusal, external-network denial, discovery JSON,
+  dry-run admission, real `run` and workflow-backed `up`, terminal cleanup, and archive
+  reconciliation. It does not prove the extension build, browser checks, contributor workflow, or
+  publication lanes.
+- Caddy run
+  [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898) pins the same
+  Core revision and independently proves a bounded `go.mod` source-manifest artifact under the
+  declared read-only root, protected-path refusal, external-network denial, discovery JSON,
+  dry-run admission, real `run` and workflow-backed `up`, terminal cleanup, and archive
+  reconciliation. It does not prove Caddy's build, tests, lifecycle, signing, release, publication,
+  or downstream image-dispatch lanes.
+
+Both repos advertise only the stock `oci_local` Linux/amd64 pressure lane and prove that exact
+provider/target matrix on Ubuntu. Each committed pressure inventory classifies the remaining
+material behavior explicitly. These runs satisfy the pressure bar without becoming repo-global
+sandbox claims.
 
 ## Explicit non-goals and boundaries
 

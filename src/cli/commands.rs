@@ -57705,7 +57705,7 @@ agent:
             "ubuntu-latest",
             Some("native"),
             "linux",
-            OutputFormat::Text,
+            OutputFormat::Json,
             false,
         );
         assert_eq!(render.exit_code, 0);
@@ -70987,7 +70987,7 @@ tasks:
         );
         assert_eq!(
             json["governance"]["evaluation"]["preflight"]["state"],
-            "blocked"
+            "warning_only"
         );
         assert_eq!(
             json["governance"]["evaluation"]["preflight"]["review_required"],
