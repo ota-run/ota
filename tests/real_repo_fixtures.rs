@@ -1092,26 +1092,6 @@ fn sandbox_policy_is_applied_and_attested_by_real_oci_execution() {
         "docker pull failed: {}",
         String::from_utf8_lossy(&pull.stderr)
     );
-    let platform = Command::new("docker")
-        .args([
-            "image",
-            "inspect",
-            "-f",
-            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
-            "debian:bookworm-slim",
-        ])
-        .output()
-        .expect("docker should inspect the sandbox fixture image");
-    assert!(platform.status.success());
-    let platform = String::from_utf8(platform.stdout)
-        .expect("platform should be UTF-8")
-        .trim()
-        .to_string();
-    let contract_path = fixture.path().join("ota.yaml");
-    let contract = fs::read_to_string(&contract_path)
-        .expect("sandbox fixture contract should be readable")
-        .replace("platform: linux/amd64", &format!("platform: {platform}"));
-    fs::write(&contract_path, contract).expect("sandbox fixture platform should be selected");
     let output = run_ota_in_dir(
         &["--plain", "run", "--agent", "--receipt", "verify"],
         fixture.path(),
@@ -1317,12 +1297,6 @@ fn sandbox_policy_is_applied_and_attested_by_real_oci_execution() {
     assert_eq!(tampered_json["summary"]["invalid_archive_count"], 1);
 
     let workflow_fixture = copy_fixture_to_temp("sandbox-oci");
-    let workflow_contract_path = workflow_fixture.path().join("ota.yaml");
-    let workflow_contract = fs::read_to_string(&workflow_contract_path)
-        .expect("sandbox workflow fixture contract should be readable")
-        .replace("platform: linux/amd64", &format!("platform: {platform}"));
-    fs::write(&workflow_contract_path, workflow_contract)
-        .expect("sandbox workflow fixture platform should be selected");
     let up = run_ota_in_dir(
         &["--plain", "up", "--agent", "--json"],
         workflow_fixture.path(),
@@ -1391,25 +1365,9 @@ fn sandbox_precondition_refusal_preserves_confirmed_probe_cleanup_evidence() {
         "docker pull failed: {}",
         String::from_utf8_lossy(&pull.stderr)
     );
-    let platform = Command::new("docker")
-        .args([
-            "image",
-            "inspect",
-            "-f",
-            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
-            "debian:bookworm-slim",
-        ])
-        .output()
-        .expect("docker should inspect the sandbox fixture image");
-    assert!(platform.status.success());
-    let platform = String::from_utf8(platform.stdout)
-        .expect("platform should be UTF-8")
-        .trim()
-        .to_string();
     let contract_path = fixture.path().join("ota.yaml");
     let contract = fs::read_to_string(&contract_path)
         .expect("sandbox fixture contract should be readable")
-        .replace("platform: linux/amd64", &format!("platform: {platform}"))
         .replace(
             "\ntasks:\n  verify:",
             "\nruntimes:\n  python: \">=99\"\n\ntasks:\n  verify:",
@@ -1459,6 +1417,8 @@ fn sandbox_policy_refuses_image_declared_mount_outside_the_contract_boundary() {
         .args([
             "build",
             "--quiet",
+            "--platform",
+            "linux/amd64",
             "--tag",
             image.as_str(),
             "--file",
@@ -1473,26 +1433,10 @@ fn sandbox_policy_refuses_image_declared_mount_outside_the_contract_boundary() {
         "docker build failed: {}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let platform = Command::new("docker")
-        .args([
-            "image",
-            "inspect",
-            "-f",
-            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
-            image.as_str(),
-        ])
-        .output()
-        .expect("docker should inspect the sandbox mount fixture image");
-    assert!(platform.status.success());
-    let platform = String::from_utf8(platform.stdout)
-        .expect("platform should be UTF-8")
-        .trim()
-        .to_string();
     let contract_path = fixture.path().join("ota.yaml");
     let contract = fs::read_to_string(&contract_path)
         .expect("sandbox fixture contract should be readable")
-        .replace("image: debian:bookworm-slim", &format!("image: {image}"))
-        .replace("platform: linux/amd64", &format!("platform: {platform}"));
+        .replace("image: debian:bookworm-slim", &format!("image: {image}"));
     fs::write(&contract_path, contract).expect("sandbox fixture image should be selected");
 
     let output = run_ota_in_dir(

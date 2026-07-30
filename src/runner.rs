@@ -1893,18 +1893,6 @@ fn verify_oci_local_boundary_application(
             ),
         });
     }
-    let platform = container_command_output(
-        engine,
-        &[
-            "image",
-            "inspect",
-            "-f",
-            "{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}",
-            image.stdout.trim(),
-        ],
-        None,
-        task_name,
-    )?;
     let expected_platform = segment_plan.platform.as_deref().ok_or_else(|| {
         RunError::SandboxPolicyApplicationFailed {
             task: task_name.to_string(),
@@ -1913,15 +1901,20 @@ fn verify_oci_local_boundary_application(
             ),
         }
     })?;
-    if platform.exit_code != 0 || platform.stdout.trim() != expected_platform {
-        return Err(RunError::SandboxPolicyApplicationFailed {
-            task: task_name.to_string(),
-            details: format!(
-                "oci_local expected image platform `{expected_platform}` but engine inspection observed `{}`",
-                platform.stdout.trim()
-            ),
-        });
-    }
+    let container_platform = container_command_output(
+        engine,
+        &["inspect", "-f", "{{.Platform}}", container_name],
+        None,
+        task_name,
+    )?;
+    let resolved_platform = resolve_oci_local_platform_evidence(
+        expected_platform,
+        (container_platform.exit_code == 0).then(|| container_platform.stdout.trim()),
+    )
+    .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+        task: task_name.to_string(),
+        details,
+    })?;
     let network = container_command_output(
         engine,
         &[
@@ -2205,7 +2198,7 @@ fn verify_oci_local_boundary_application(
         let initial_network_identity = evidence.network.evidence_identity.clone();
         let initial_writable_mounts = evidence.writable_mounts.clone();
         evidence.resolved_image_identity = Some(image.stdout.trim().to_string());
-        evidence.resolved_platform = Some(platform.stdout.trim().to_string());
+        evidence.resolved_platform = Some(resolved_platform);
         evidence.filesystem.application =
             crate::sandbox_policy::SandboxControlApplicationState::Enforced;
         evidence.filesystem.evidence_identity = Some(filesystem_evidence_identity);
@@ -2259,6 +2252,40 @@ fn verify_oci_local_boundary_application(
         evidence.status = crate::sandbox_policy::SandboxSegmentApplicationStatus::Applied;
         Ok(applied_policy_identity)
     })
+}
+
+fn resolve_oci_local_platform_evidence(
+    expected_platform: &str,
+    observed_container_platform: Option<&str>,
+) -> Result<String, String> {
+    let mut expected_parts = expected_platform.split('/');
+    let expected_os = expected_parts.next().unwrap_or_default();
+    let expected_architecture = expected_parts.next().unwrap_or_default();
+    if expected_os.is_empty() || expected_architecture.is_empty() {
+        return Err(format!(
+            "oci_local expected platform `{expected_platform}` is missing its OS or architecture"
+        ));
+    }
+    let observed = observed_container_platform.unwrap_or_default();
+    let mut observed_parts = observed.split('/');
+    let observed_os = observed_parts.next().unwrap_or_default();
+    let observed_architecture = observed_parts.next().unwrap_or_default();
+    if observed_os != expected_os {
+        return Err(format!(
+            "oci_local expected platform `{expected_platform}` but provider inspection observed `{observed}`"
+        ));
+    }
+    if !observed_architecture.is_empty() && observed != expected_platform {
+        return Err(format!(
+            "oci_local expected platform `{expected_platform}` but provider inspection observed `{observed}`"
+        ));
+    }
+
+    // Docker's container inspection currently reports only the OS even though
+    // `docker create --platform` applies the full requested target. Successful provider creation
+    // plus inspection of the exact created container preserves provider-owned platform truth
+    // without substituting the host-native variant exposed by multi-platform image metadata.
+    Ok(expected_platform.to_string())
 }
 
 fn oci_local_boundary_task_for_terminal_inspection(
@@ -53763,6 +53790,29 @@ tasks:
             !linux_selected.contains(&String::from("python")),
             "{linux_selected:?}"
         );
+    }
+
+    #[test]
+    fn oci_platform_evidence_accepts_complete_provider_metadata() {
+        let resolved =
+            super::resolve_oci_local_platform_evidence("linux/amd64", Some("linux/amd64"))
+                .expect("matching provider metadata should resolve");
+        assert_eq!(resolved, "linux/amd64");
+
+        let error = super::resolve_oci_local_platform_evidence("linux/amd64", Some("linux/arm64"))
+            .expect_err("complete mismatched provider metadata must refuse");
+        assert!(error.contains("linux/arm64"));
+    }
+
+    #[test]
+    fn oci_platform_evidence_accepts_docker_os_only_container_metadata() {
+        let resolved = super::resolve_oci_local_platform_evidence("linux/amd64", Some("linux"))
+            .expect("provider-applied platform plus matching container OS should resolve");
+        assert_eq!(resolved, "linux/amd64");
+
+        let error = super::resolve_oci_local_platform_evidence("linux/amd64", Some("windows"))
+            .expect_err("mismatched container OS must refuse");
+        assert!(error.contains("provider inspection observed `windows`"));
     }
 
     #[test]

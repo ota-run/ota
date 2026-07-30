@@ -55,7 +55,11 @@
   provider-backed runtime/tool probe containers, while real OCI precondition probes bind to their
   exact admitted requirement-owning segment and run as separately identified, cleanup-confirmed
   invocations inside the registered sandbox application transaction. Blocking probes retain
-  refusal-receipt evidence and cannot substitute for task execution.
+  refusal-receipt evidence and cannot substitute for task execution. OCI platform inspection now
+  binds the exact provider-applied `create --platform` request to the created container's platform
+  evidence instead of reading a host-native variant from multi-platform image metadata. A provider
+  that reports a full mismatched container platform still refuses; Docker's OS-only container
+  report is accepted only after the full declared platform was applied during successful creation.
 - fixed `ota run <task> --agent --sandbox-target oci_local` and other Ota-owned run flags after
   the task name so the task-input boundary rewriter no longer misclassifies them as task inputs
 

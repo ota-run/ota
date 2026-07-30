@@ -56,7 +56,12 @@ durable agent workflow belongs in the canonical Ota skill.
   container creation, including persistent-container reconciliation. Reusing one task identity
   across multiple phases refuses rather than collapsing separate invocations. Managed isolated
   paths refuse until their durable provider resources have transaction-bound creation, retention,
-  and failure-cleanup evidence.
+  and failure-cleanup evidence. Initial independent pressure exposed Docker Desktop's
+  multi-platform image metadata as the wrong platform witness: image inspection can report the
+  host-native variant even after `create --platform` selected another target. Ota now binds the
+  exact provider-applied create request to the created container's platform evidence, requires an
+  exact match when the provider reports OS and architecture, and accepts Docker's OS-only
+  container report only after successful creation with the full declared platform.
   The first adapter admits finite command bodies only; typed task bodies, requirements, services,
   conditional checks, and authoritative lifecycle-proof closures refuse rather than execute
   outside the evidenced boundary. Ota-owned `run` flags, including `--sandbox-target`, remain
