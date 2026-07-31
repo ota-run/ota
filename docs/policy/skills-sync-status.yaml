@@ -25,10 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "e269af6253445e29033fc40f5cc0e5da4c1c6ce4"
-consumer_commit: "7f1a1ed73ad59591f91809d18bd3fe06a50696ed"
+reviewed_ota_commit: "ed027c740d271beb368e138643c95440bd9d069f"
+consumer_commit: "d7a4294c0059bd129674727a6db97d5487f81c31"
 waiver_reason: ""
 notes: >
-  Synced audited-crossing authority guidance, including bounded prebound-file authority posture,
-  terminal transaction evidence, and refusal scope issuance without task-input or trust-material
-  disclosure.
+  Synced audited-crossing authority guidance, including task-preview and workflow-refusal scope
+  issuance without task-input or trust-material disclosure.

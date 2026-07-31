@@ -25,10 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "e269af6253445e29033fc40f5cc0e5da4c1c6ce4"
-consumer_commit: "98e9ef54178fd8e38d261d2041259d657e53f001"
+reviewed_ota_commit: "ed027c740d271beb368e138643c95440bd9d069f"
+consumer_commit: "bdbfdd914c3cef44ea38d3d833e36ca468b70152"
 waiver_reason: ""
 notes: >
-  Synced the archive-reference boundary: authority-bearing execution archives bind canonical
-  selected-invocation scope, while snapshot-less historical entries remain inspectable only as
-  legacy_unverified.
+  Synced workflow-refusal scope issuance and phase-accurate receipt-backed refusal evidence for
+  external grant review without workflow-side semantic reconstruction.
