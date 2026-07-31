@@ -16210,17 +16210,18 @@ fn evaluate_selected_crossing_grant(
         }
         Some(true) => {}
     }
-    let grant = grant.ok_or_else(|| {
-        GrantAdmissionError::new(
-            "crossing_grant_required",
-            "the selected execution closure crosses a governed boundary and requires `--grant <id>`",
-        )
-    })?;
     let scope = scope.map_err(|details| {
         GrantAdmissionError::new(
             "crossing_scope_unavailable",
             format!("failed to derive the canonical crossing scope: {details}"),
         )
+    })?;
+    let grant = grant.ok_or_else(|| {
+        GrantAdmissionError::new(
+            "crossing_grant_required",
+            "the selected execution closure crosses a governed boundary and requires `--grant <id>`",
+        )
+        .with_scope(scope.clone())
     })?;
     let boundary_family = requirement
         .boundary_family
@@ -16251,6 +16252,7 @@ fn evaluate_selected_crossing_grant(
         OffsetDateTime::now_utc(),
     )
     .map(Some)
+    .map_err(|error| error.with_scope(scope))
 }
 
 fn build_task_crossing_record(
@@ -21359,6 +21361,10 @@ fn render_crossing_grant_preview_refusal(
                 "requested_grant_id": grant,
                 "reason_family": error.reason,
                 "details": error.details,
+                "scope_identity": error.semantic_scope.as_ref().map(|scope| scope.identity.as_str()),
+                "contract_identity": error.semantic_scope.as_ref().map(|scope| scope.contract_identity.as_str()),
+                "boundary_family": error.semantic_scope.as_ref().map(|scope| scope.boundary_family.as_str()),
+                "classification": error.semantic_scope.as_ref().map(|scope| scope.classification.as_str()),
                 "execution_started": false,
             },
         }))),

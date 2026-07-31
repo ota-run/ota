@@ -71,6 +71,24 @@ tasks:
         preview["crossing_grant_admission"]["authority_id"],
         "release-authority"
     );
+    assert!(
+        preview["crossing_grant_admission"]["scope_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(
+        preview["crossing_grant_admission"]["contract_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["boundary_family"],
+        "unsafe_task"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["classification"],
+        "escalated"
+    );
     assert_eq!(
         preview["crossing_grant_admission"]["execution_started"],
         false

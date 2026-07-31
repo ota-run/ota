@@ -820,6 +820,10 @@
             "requested_grant_id": { "type": ["string", "null"] },
             "reason_family": { "type": "string", "minLength": 1 },
             "details": { "type": "string", "minLength": 1 },
+            "scope_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+            "boundary_family": { "type": "string", "minLength": 1 },
+            "classification": { "type": "string", "minLength": 1 },
             "execution_started": { "const": false }
           }
         }

@@ -160,6 +160,9 @@ human text output:
   refusal instead returns `execution_started: false` plus
   `crossing_grant_admission.decision: refused`, `authority_source: prebound_file`, the configured
   authority and requested grant when present, a stable `reason_family`, and evaluation details.
+  When the runner derived a complete scope before refusal, it also includes the scope identity,
+  contract identity, boundary family, and classification needed by an external issuer to create
+  an exact reviewable grant. It never includes task-input values or trust material.
   Admission-produced `ota up --json` refusal receipts carry the same evidence under
   `receipt.refusal` and never carry `receipt.crossing`. Mutating repo-level `ota run` remains a
   text execution surface; `ota run --receipt` renders the same typed refusal fields rather than

@@ -181,6 +181,7 @@ pub(crate) struct GrantAdmissionEvidence {
 pub(crate) struct GrantAdmissionError {
     pub reason: &'static str,
     pub details: String,
+    pub semantic_scope: Option<CrossingSemanticScope>,
 }
 
 impl std::fmt::Display for GrantAdmissionError {
@@ -194,7 +195,13 @@ impl GrantAdmissionError {
         Self {
             reason,
             details: details.into(),
+            semantic_scope: None,
         }
+    }
+
+    pub(crate) fn with_scope(mut self, semantic_scope: CrossingSemanticScope) -> Self {
+        self.semantic_scope = Some(semantic_scope);
+        self
     }
 }
 
@@ -967,6 +974,7 @@ fn error(reason: &'static str, details: impl Into<String>) -> GrantAdmissionErro
     GrantAdmissionError {
         reason,
         details: details.into(),
+        semantic_scope: None,
     }
 }
 

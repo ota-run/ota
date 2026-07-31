@@ -1477,7 +1477,11 @@ Current behavior:
   `crossing_grant_admission.decision: admissible_not_consumed` without creating a crossing
   transaction or crossing record; refusal JSON and admission-produced refusal receipts carry the
   fixed authority source, configured authority/requested grant when present, typed reason,
-  evaluation detail, and `execution_started: false`, and likewise carry no crossing record
+  evaluation detail, and `execution_started: false`. When Ota derived an exact scope before
+  refusal, it also publishes its scope identity, contract identity, boundary family, and
+  classification so an external authority can issue a reviewable exact grant without
+  reconstructing Ota semantics. It never publishes task-input values or authority material, and
+  likewise carries no crossing record
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:container_image_hydration`,
