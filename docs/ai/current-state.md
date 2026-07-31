@@ -108,9 +108,11 @@ durable agent workflow belongs in the canonical Ota skill.
   The first local transaction carrier is explicitly `runner_local_content_addressed`: it is
   runner-authored, locked, and internally reconciled, but not independently authenticated against
   same-user state tampering. Refusal and dry-run emit no crossing record; successful dry-run
-  publishes only `admissible_not_consumed`, while refusal carries typed `prebound_file`
-  authority-source, authority/grant selection, reason, and `execution_started: false` evidence.
-  Existing contracts
+  publishes only `admissible_not_consumed`, while task dry-run refusal additionally carries its
+  derived scope/contract identities, boundary family, and classification alongside typed
+  `prebound_file` authority-source, authority/grant selection, reason, and
+  `execution_started: false` evidence. That issuance surface never exposes task inputs or trust
+  material and avoids workflow-side reconstruction of Ota semantics. Existing contracts
   remain compatible until they opt into crossing authority, and grants never bypass V11.3 agent
   refusal. Core regression proof covers exact admission, mutation, revocation, sequence rollback,
   selected-graph expansion, missing-grant refusal, dry-run parity, pending-journal recovery, and

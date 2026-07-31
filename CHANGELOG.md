@@ -61,7 +61,10 @@
   Grant refusal and dry-run never emit a crossing record; successful dry-run publishes only
   `admissible_not_consumed`. Refused dry-run and admission-produced execution receipts instead
   carry typed `prebound_file` authority-source, authority/grant selection, reason, and
-  `execution_started: false` evidence without minting crossing authority. Existing contracts
+  `execution_started: false` evidence without minting crossing authority. When task dry-run has
+  derived the complete scope, its refusal also carries scope and contract identities, boundary
+  family, and classification so an external issuer can create an exact grant without
+  reconstructing Ota semantics or receiving task inputs or trust material. Existing contracts
   remain unchanged until they opt in, and no grant bypasses agent-safe refusal. Broker-backed
   one-use work-unit authority remains an explicit open V11.7 boundary.
 - added V11.21 enforced sandbox policy application. Agent execution now compiles the selected
