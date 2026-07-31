@@ -1480,8 +1480,9 @@ Current behavior:
   evaluation detail, and `execution_started: false`. When Ota derived an exact scope before
   refusal, it also publishes its scope identity, contract identity, boundary family, and
   classification so an external authority can issue a reviewable exact grant without
-  reconstructing Ota semantics. It never publishes task-input values or authority material, and
-  likewise carries no crossing record
+  reconstructing Ota semantics. `ota up --dry-run --json` carries the same derived scope binding
+  under `receipt.refusal`, preserving its distinct refusal boundary family. Neither surface
+  publishes task-input values or authority material, and neither carries a crossing record
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:container_image_hydration`,

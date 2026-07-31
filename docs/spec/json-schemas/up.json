@@ -486,7 +486,7 @@
         "status": { "type": "string" },
         "cause": { "type": "string" },
         "phase": {
-          "enum": ["preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
+          "enum": ["preview", "preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
         },
         "findings": {
           "type": "array",

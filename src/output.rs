@@ -1378,6 +1378,14 @@ pub struct GovernanceRefusalRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_grant_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_boundary_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluation_details: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_started: Option<bool>,

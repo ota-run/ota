@@ -763,6 +763,10 @@
         "authority_source": { "const": "prebound_file" },
         "authority_id": { "type": "string", "minLength": 1 },
         "requested_grant_id": { "type": "string", "minLength": 1 },
+        "scope_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "scope_boundary_family": { "type": "string", "minLength": 1 },
+        "scope_classification": { "type": "string", "minLength": 1 },
         "evaluation_details": { "type": "string", "minLength": 1 },
         "execution_started": { "const": false }
       },

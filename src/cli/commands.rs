@@ -19196,6 +19196,10 @@ impl AgentExecutionRefusal {
             authority_source: None,
             authority_id: None,
             requested_grant_id: None,
+            scope_identity: None,
+            contract_identity: None,
+            scope_boundary_family: None,
+            scope_classification: None,
             evaluation_details: None,
             execution_started: None,
         }
@@ -50435,13 +50439,16 @@ fn reconcile_post_execution_replay(
     let proof_present = parsed.proof_present.unwrap_or(false);
     let refusal_reason_family = parsed.refusal_reason_family.as_deref();
     let expected_decision_owner = expected_post_execution_decision_owner(receipt_present);
-    let expected_state = if execution_attempted && proof_expected && !proof_present {
-        "evidence_missing"
-    } else if execution_attempted {
-        "evidence_satisfied"
-    } else {
-        "not_run"
-    };
+    let expected_state =
+        if !execution_attempted && receipt_present && refusal_reason_family.is_some() {
+            "refused"
+        } else if execution_attempted && proof_expected && !proof_present {
+            "evidence_missing"
+        } else if execution_attempted {
+            "evidence_satisfied"
+        } else {
+            "not_run"
+        };
     let expected_basis = governance_post_execution_decision_basis(
         refusal_reason_family,
         receipt_present,
@@ -72978,6 +72985,10 @@ policies:
                         authority_source: None,
                         authority_id: None,
                         requested_grant_id: None,
+                        scope_identity: None,
+                        contract_identity: None,
+                        scope_boundary_family: None,
+                        scope_classification: None,
                         evaluation_details: None,
                         execution_started: None,
                     }),
@@ -102902,6 +102913,22 @@ fn crossing_grant_refusal_record(
             .as_ref()
             .map(|authority| authority.authority_id.clone()),
         requested_grant_id: grant.map(str::to_string),
+        scope_identity: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.identity.clone()),
+        contract_identity: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.contract_identity.clone()),
+        scope_boundary_family: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.boundary_family.clone()),
+        scope_classification: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.classification.clone()),
         evaluation_details: Some(error.details.clone()),
         execution_started: Some(false),
     }

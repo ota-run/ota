@@ -123,7 +123,7 @@ workflows:
     .expect("contract");
 
     let refusal = run_ota_json_output(
-        &["up", "--workflow", "release", "--json", "--receipt"],
+        &["up", "--workflow", "release", "--dry-run", "--json"],
         fixture.path(),
     );
     assert_matches_schema("up.json", &refusal);
@@ -143,6 +143,24 @@ workflows:
     assert_eq!(
         refusal["receipt"]["refusal"]["reason_family"],
         "crossing_grant_required"
+    );
+    assert!(
+        refusal["receipt"]["refusal"]["scope_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(
+        refusal["receipt"]["refusal"]["contract_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["scope_boundary_family"],
+        "heavier_workflow"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["scope_classification"],
+        "escalated"
     );
     assert_eq!(refusal["receipt"]["refusal"]["execution_started"], false);
 }

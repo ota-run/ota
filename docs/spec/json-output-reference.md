@@ -163,8 +163,10 @@ human text output:
   When the runner derived a complete scope before refusal, it also includes the scope identity,
   contract identity, boundary family, and classification needed by an external issuer to create
   an exact reviewable grant. It never includes task-input values or trust material.
-  Admission-produced `ota up --json` refusal receipts carry the same evidence under
-  `receipt.refusal` and never carry `receipt.crossing`. Mutating repo-level `ota run` remains a
+  Admission-produced `ota up --json` refusal receipts carry the same scope binding under
+  `receipt.refusal` and never carry `receipt.crossing`; its `boundary_family` remains the refusal
+  boundary, while `scope_boundary_family` and `scope_classification` describe the selected lane.
+  Mutating repo-level `ota run` remains a
   text execution surface; `ota run --receipt` renders the same typed refusal fields rather than
   inventing a mutating run JSON contract
 - `ota run <task> --dry-run --json` and `ota up --json`: inspect additive
