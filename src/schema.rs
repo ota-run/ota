@@ -181,10 +181,31 @@ pub struct Contract {
     pub exports: BTreeMap<String, serde_yaml::Value>,
     #[serde(default)]
     pub policies: BTreeMap<String, serde_yaml::Value>,
+    #[serde(default, skip_serializing_if = "GovernanceSpec::is_empty")]
+    pub governance: GovernanceSpec,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_yaml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GovernanceSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crossing_authority: Option<CrossingAuthoritySpec>,
+}
+
+impl GovernanceSpec {
+    pub fn is_empty(&self) -> bool {
+        self.crossing_authority.is_none()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CrossingAuthoritySpec {
+    pub authority_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

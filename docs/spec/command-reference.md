@@ -1404,6 +1404,7 @@ ota run <task> --memory 4GiB [PATH]
 ota run <task> --agent [PATH]
 ota run <task> --agent --sandbox-target oci_local [PATH]
 ota run <task> --reason "release requested" [PATH]
+ota run <task> --grant approved-release [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
@@ -1461,6 +1462,22 @@ Current behavior:
 - `--reason <text>` attaches operator intent when the selected task path crosses a heavier
   audited execution boundary; the current shipped slice records that reason only when ota derives
   `crossing_required` for the selected lane instead of attaching free-form narration to every run
+- when the contract declares `governance.crossing_authority`, a non-agent invocation of a heavier task
+  closure requires `--grant <id>`. Ota derives the exact semantic closure first, verifies the
+  selected grant through the fixed system-bound authority, and refuses before sandbox admission,
+  dependencies, setup, or child execution when authority, signature, freshness, revocation, or
+  scope evidence does not reconcile. After admission, real execution creates a durable
+  runner-owned crossing transaction before selected-lane side effects and finalizes it for every
+  terminal outcome. The initial transaction is explicitly
+  `runner_local_content_addressed`: it is locked and internally reconciled, but is not independent
+  same-user tamper attestation. A grant never bypasses `--agent` safety refusal
+- supplying `--grant` to a contract without a crossing authority, or to a selected closure that
+  does not require a crossing, is an input error rather than ignored intent
+- `--dry-run` uses the same grant-admission decision. Successful preview JSON carries
+  `crossing_grant_admission.decision: admissible_not_consumed` without creating a crossing
+  transaction or crossing record; refusal JSON and admission-produced refusal receipts carry the
+  fixed authority source, configured authority/requested grant when present, typed reason,
+  evaluation detail, and `execution_started: false`, and likewise carry no crossing record
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:container_image_hydration`,
@@ -2157,9 +2174,23 @@ Current behavior:
 - receipt JSON also includes an additive `receipt.assumption_set_hash` derived from the canonical
   extracted assumption map, so automation can fingerprint semantic contract meaning separately
   from whole-snapshot identity
-- `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
+- `--archive` writes the JSON receipt to `.ota/receipts` with both the normalized snapshot
+  reference and its content identity, and keeps the newest 50 archives. Receipt history verifies
+  only that archived pair; a snapshot-less or hash-mismatched archive is unverifiable rather than
+  falling back to the current `ota.yaml`
+- authority-bearing execution archives use archive-context schema v2. It carries the canonical
+  selected-invocation scope and identity: lane, ordered closure graph and hooks, target platform,
+  backend/lifecycle, workflow run behavior, sandbox target, and effect overrides. History
+  re-derives that scope from the archived contract before deciding whether a grant was required.
+  A changed lane label, mode, or scope identity therefore refuses instead of downgrading a
+  governed archive. This is local content-addressed integrity, not protection against a caller
+  who can rewrite both the archive and its local storage.
 - `--archive --promote-baseline` also writes `.ota/receipts/repo-baseline.json`, pointing at the archived receipt as the repo's explicit promoted baseline
-- `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- `--history` lists valid archived repo receipts from `.ota/receipts` newest first without loading
+  or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- archives created before normalized snapshot references are retained under `invalid_archives[]`
+  with `posture: legacy_unverified`. They remain inspectable, but cannot be selected as a latest or
+  promoted baseline, proof input, or crossing-authority record
 - `--baseline promoted` compares the current receipt against the explicit promoted baseline pointer under `.ota/receipts/repo-baseline.json`
 - `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file
@@ -2248,6 +2279,7 @@ ota up --member api --member web [PATH]
 ota up --agent [PATH]
 ota up --workflow verify --agent --sandbox-target oci_local [PATH]
 ota up --reason "release approved" [PATH]
+ota up --workflow release --grant approved-release [PATH]
 ```
 
 Current behavior:
@@ -2265,6 +2297,12 @@ Current behavior:
 - `--reason <text>` attaches operator intent when the selected workflow crosses a heavier audited
   execution boundary; repo-target `ota up --json` mirrors the resulting ota-authored crossing
   record at both `governance.crossing` and `receipt.crossing`
+- `--grant <id>` applies the same fixed-authority, exact-closure admission used by `ota run`.
+  Missing, stale, revoked, or out-of-scope authority refuses before workflow preparation,
+  provisioning, services, or task execution. Existing contracts retain their current behavior
+  until they declare `governance.crossing_authority`. Dry-run publishes only
+  `crossing_grant_admission: admissible_not_consumed`; it does not create a transaction or crossing
+  record
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`

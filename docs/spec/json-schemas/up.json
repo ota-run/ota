@@ -229,6 +229,9 @@
             { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
           ]
         },
+        "crossing_grant_admission": {
+          "$ref": "./run-preview.json#/$defs/crossingGrantAdmission"
+        },
         "blockers": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }
@@ -460,6 +463,9 @@
                   { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
                 ]
               },
+              "crossing_grant_admission": {
+                "$ref": "./run-preview.json#/$defs/crossingGrantAdmission"
+              },
               "blockers": {
                 "type": "array",
                 "items": { "$ref": "./shared.json#/$defs/finding" }
@@ -655,6 +661,9 @@
             },
             "crossing": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing"
+            },
+            "refusal": {
+              "$ref": "./tasks.json#/$defs/governanceRefusalRecord"
             },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },

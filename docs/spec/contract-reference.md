@@ -4511,6 +4511,56 @@ Authoring ergonomics:
   `bootstrap.ota.source` over raw shell strings, keep deterministic proof on `version` or
   `git_rev`, and use `branch` only for active pressure lanes
 
+## `governance.crossing_authority`
+
+Optional. Use this only when a platform-installed authority must approve human execution of
+contract-derived heavier task or workflow closures.
+
+```yaml
+governance:
+  crossing_authority:
+    authority_id: platform-release-authority
+```
+
+The contract names an authority; it does not contain trust material. The first `prebound_file`
+adapter resolves that identifier from a fixed protected system store:
+
+- macOS: `/Library/Application Support/Ota/crossing-authorities.json`
+- Linux: `/etc/ota/crossing-authorities.json`
+
+The system binding owns the issuer, Ed25519 key, signed-bundle path, protected monotonic sequence
+state, accepted contract identities, and freshness bounds. Ota has no environment, CLI,
+repository, workspace, or `OTA_POLICY` override for these paths. The trust store, bundle, sequence
+state, and their parent directories must be root-owned and not group/world writable. This protects
+against Ota's current unprivileged process only; it does not prove that the invoking job lacks
+`sudo`, capabilities, or namespace control. `prebound_file` therefore emits
+`authority_separation_posture: current_process_filesystem_guarded` and is not a provider-attested
+privilege-separation claim. Windows refuses this carrier until Ota can verify an equivalent ACL
+boundary.
+The independently managed platform-authority process advances the signed bundle and sequence state;
+Ota reads and verifies them but does not run as root or mutate authority state.
+
+When configured:
+
+- routine agent-safe closures run normally without a grant;
+- non-agent execution of a derived heavier closure requires `--grant <id>`;
+- `--grant` must match the exact semantic contract and selected execution graph;
+- unresolved free-form task-input identity refuses instead of hashing or exposing secret values;
+- authority attribution is runner-observed as `agent` or `non_agent`; Core does not infer human
+  identity merely because `--agent` was omitted;
+- grant admission happens before provider, dependency, setup, service, or child-process mutation;
+- real execution persists a runner-owned per-scope crossing transaction before selected-lane
+  mutation, finalizes it on every terminal path, and uses that transaction identity as the fresh
+  crossing-record identity;
+- admitted authority and terminal transaction evidence are archived with the normalized contract
+  snapshot for later re-derivation;
+- a grant never weakens `ota run --agent` or `ota up --agent` refusal.
+
+The signed-file carrier uses short calendar validity and protected sequence/clock high-water
+evidence. It is bounded offline authority, not an online approval system. V11.7 remains open for a
+separately pre-bound broker adapter that can issue and atomically consume runner-nonce-bound
+one-use work-unit leases.
+
 ## `metadata`
 
 Optional.

@@ -28,6 +28,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
@@ -15496,7 +15497,7 @@ fn harness_preflight_for_task(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             Some(task.effective_safe_for_agent),
-            refusal,
+            refusal.is_some(),
             &task.unsafe_closure_tasks,
             "task",
         );
@@ -15565,32 +15566,13 @@ fn harness_preflight_for_task(
     evaluation
 }
 
-fn crossing_preflight_posture(
-    effective_safe_for_agent: Option<bool>,
-    refusal: Option<&AgentExecutionRefusal>,
-    unsafe_closure_tasks: &[String],
-    lane_kind: &str,
-) -> (Option<bool>, Option<String>, Option<String>) {
-    if refusal.is_some() {
-        return (None, None, None);
-    }
-    match effective_safe_for_agent {
-        Some(true) => (Some(false), Some(String::from("routine")), None),
-        Some(false) => {
-            let boundary_family = if lane_kind == "task" || !unsafe_closure_tasks.is_empty() {
-                String::from("unsafe_task")
-            } else {
-                String::from("heavier_workflow")
-            };
-            (
-                Some(true),
-                Some(String::from("escalated")),
-                Some(boundary_family),
-            )
-        }
-        None => (None, None, None),
-    }
-}
+use crate::crossing::{
+    crossing_preflight_posture, crossing_scope_for_task, crossing_scope_for_workflow,
+    evaluate_crossing_requirement,
+};
+use crate::crossing_authority::{
+    GrantAdmissionError, GrantAdmissionEvidence, admit_prebound_file_grant,
+};
 
 fn governance_preflight_decision_basis(
     declared_safe_for_agent: Option<bool>,
@@ -15827,10 +15809,17 @@ fn parse_doctor_verdict_label(value: &str) -> Option<DoctorVerdict> {
 }
 
 fn actor_mode_label(agent: bool) -> &'static str {
-    if agent { "agent" } else { "human" }
+    if agent { "agent" } else { "non_agent" }
+}
+
+fn grant_actor_mode_label(agent: bool) -> &'static str {
+    if agent { "agent" } else { "non_agent" }
 }
 
 fn new_crossing_id() -> String {
+    if let Some(transaction) = active_crossing_transaction_evidence() {
+        return transaction.transaction_id;
+    }
     format!(
         "crossing-{}",
         OffsetDateTime::now_utc().unix_timestamp_nanos()
@@ -15862,6 +15851,408 @@ fn crossing_evidence_classes(
     }
 }
 
+thread_local! {
+    static ACTIVE_CROSSING_GRANT_ADMISSION: RefCell<Option<GrantAdmissionEvidence>> =
+        const { RefCell::new(None) };
+    static ACTIVE_CROSSING_TRANSACTION:
+        RefCell<Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>> =
+        const { RefCell::new(None) };
+}
+
+struct ActiveCrossingGrantGuard {
+    previous: Option<GrantAdmissionEvidence>,
+}
+
+impl ActiveCrossingGrantGuard {
+    fn activate(admission: Option<GrantAdmissionEvidence>) -> Self {
+        let previous = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.replace(admission));
+        Self { previous }
+    }
+}
+
+impl Drop for ActiveCrossingGrantGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| {
+            active.replace(previous);
+        });
+    }
+}
+
+fn active_crossing_grant_authority() -> Option<crate::output::ExecutionBoundaryCrossingAuthority> {
+    ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| {
+        let admission = active.borrow();
+        let admission = admission.as_ref()?;
+        let transaction = active_crossing_transaction_evidence()?;
+        Some(crossing_grant_authority_output_with_transaction(
+            admission,
+            Some(transaction),
+        ))
+    })
+}
+
+fn active_crossing_grant_preview() -> Option<crate::output::CrossingGrantAdmissionPreview> {
+    ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .map(|admission| crate::output::CrossingGrantAdmissionPreview {
+                decision: String::from("admissible_not_consumed"),
+                authority_id: admission.authority_id.clone(),
+                authority_binding_identity: admission.authority_binding_identity.clone(),
+                issuer_id: admission.issuer_id.clone(),
+                key_id: admission.key_id.clone(),
+                key_fingerprint: admission.key_fingerprint.clone(),
+                bundle_id: admission.bundle_id.clone(),
+                bundle_identity: admission.bundle_identity.clone(),
+                bundle_sequence: admission.bundle_sequence,
+                grant_id: admission.grant_id.clone(),
+                grant_identity: admission.grant_identity.clone(),
+                scope_identity: admission.scope_identity.clone(),
+                contract_identity: admission.contract_identity.clone(),
+                boundary_family: admission.boundary_family.clone(),
+                classification: admission.classification.clone(),
+                actor_mode: admission.actor_mode.clone(),
+                environment_posture: admission.environment_posture.clone(),
+                expiry_kind: admission.expiry_kind.clone(),
+                issued_at: admission.issued_at.clone(),
+                not_before: admission.not_before.clone(),
+                next_update: admission.next_update.clone(),
+                expires_at: admission.expires_at.clone(),
+                clock_evidence: admission.clock_evidence.clone(),
+                sequence_evidence: admission.sequence_evidence.clone(),
+                revocation_evidence: admission.revocation_evidence.clone(),
+                admitted_at: admission.admitted_at.clone(),
+            })
+    })
+}
+
+struct ActiveCrossingTransactionGuard {
+    previous: Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>,
+}
+
+impl ActiveCrossingTransactionGuard {
+    fn activate(
+        repo_root: &Path,
+        admission: Option<&GrantAdmissionEvidence>,
+    ) -> Result<Option<Self>, String> {
+        let Some(admission) = admission else {
+            return Ok(None);
+        };
+        let transaction = Rc::new(RefCell::new(
+            crate::crossing_transaction::CrossingTransactionGuard::begin(repo_root, admission)?,
+        ));
+        let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
+        Ok(Some(Self { previous }))
+    }
+}
+
+impl Drop for ActiveCrossingTransactionGuard {
+    fn drop(&mut self) {
+        ACTIVE_CROSSING_TRANSACTION.with(|active| {
+            active.replace(self.previous.take());
+        });
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct ArchivedCrossingGrantEvidence {
+    admission: GrantAdmissionEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+}
+
+fn active_crossing_transaction_evidence()
+-> Option<crate::crossing_transaction::CrossingTransactionEvidence> {
+    ACTIVE_CROSSING_TRANSACTION.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .map(|transaction| transaction.borrow().evidence())
+    })
+}
+
+fn active_crossing_transaction_is_pending() -> bool {
+    active_crossing_transaction_evidence().is_some_and(|evidence| evidence.state == "pending")
+}
+
+fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<(), String> {
+    ACTIVE_CROSSING_TRANSACTION.with(|active| {
+        let Some(transaction) = active.borrow().as_ref().cloned() else {
+            return Ok(());
+        };
+        let state = if receipt.ok {
+            "completed"
+        } else if receipt.status.as_deref() == Some("interrupted") {
+            "interrupted"
+        } else {
+            "failed"
+        };
+        transaction
+            .borrow_mut()
+            .finalize(state, receipt.status.as_deref())
+    })
+}
+
+fn finalize_and_attach_active_crossing_transaction(
+    receipt: &mut ExecutionReceipt,
+) -> Result<(), String> {
+    if active_crossing_transaction_evidence().is_none() {
+        return Ok(());
+    }
+    finalize_active_crossing_transaction(receipt)?;
+    let authority = active_crossing_grant_authority().ok_or_else(|| {
+        String::from("active crossing transaction has no matching verified grant admission")
+    })?;
+    let crossing = receipt.crossing.as_mut().ok_or_else(|| {
+        String::from("active crossing transaction cannot be attached without a crossing record")
+    })?;
+    let transaction_id = authority
+        .transaction
+        .as_ref()
+        .and_then(|transaction| transaction.get("transaction_id"))
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| {
+            String::from("terminal crossing transaction is missing its transaction identity")
+        })?;
+    if crossing.id != transaction_id {
+        return Err(String::from(
+            "crossing record identity does not match the active crossing transaction",
+        ));
+    }
+    crossing.authority = Some(authority);
+    Ok(())
+}
+
+fn crossing_grant_authority_output_with_transaction(
+    admission: &GrantAdmissionEvidence,
+    transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+) -> crate::output::ExecutionBoundaryCrossingAuthority {
+    crate::output::ExecutionBoundaryCrossingAuthority {
+        decision: admission.decision.clone(),
+        authority_id: admission.authority_id.clone(),
+        authority_separation_posture: String::from("current_process_filesystem_guarded"),
+        authority_binding_identity: admission.authority_binding_identity.clone(),
+        issuer_id: admission.issuer_id.clone(),
+        key_id: admission.key_id.clone(),
+        key_fingerprint: admission.key_fingerprint.clone(),
+        bundle_id: admission.bundle_id.clone(),
+        bundle_identity: admission.bundle_identity.clone(),
+        bundle_sequence: admission.bundle_sequence,
+        grant_id: admission.grant_id.clone(),
+        grant_identity: admission.grant_identity.clone(),
+        scope_identity: admission.scope_identity.clone(),
+        contract_identity: admission.contract_identity.clone(),
+        boundary_family: admission.boundary_family.clone(),
+        classification: admission.classification.clone(),
+        actor_mode: admission.actor_mode.clone(),
+        environment_posture: admission.environment_posture.clone(),
+        expiry_kind: admission.expiry_kind.clone(),
+        issued_at: admission.issued_at.clone(),
+        not_before: admission.not_before.clone(),
+        next_update: admission.next_update.clone(),
+        expires_at: admission.expires_at.clone(),
+        clock_evidence: admission.clock_evidence.clone(),
+        sequence_evidence: admission.sequence_evidence.clone(),
+        revocation_evidence: admission.revocation_evidence.clone(),
+        admitted_at: admission.admitted_at.clone(),
+        transaction: transaction
+            .as_ref()
+            .map(|evidence| serde_json::to_value(evidence).expect("transaction should serialize")),
+        archive_evidence: serde_json::to_value(ArchivedCrossingGrantEvidence {
+            admission: admission.clone(),
+            transaction,
+        })
+        .expect("verified crossing grant admission should serialize"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_task_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    effect_overrides: &[String],
+    agent: bool,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
+) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+    let authority_configured = contract.governance.crossing_authority.is_some();
+    if !authority_configured {
+        return match grant {
+            Some(_) => Err(GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "`--grant` requires `governance.crossing_authority.authority_id` in the selected contract",
+            )),
+            None => Ok(None),
+        };
+    }
+
+    let task_name = canonical_declared_task_name(contract, task_name);
+    let safety = task_effective_safety_with_overrides(contract, task_name.as_str(), overrides);
+    let requirement = evaluate_crossing_requirement(
+        Some(safety.effective_safe),
+        false,
+        &safety.unsafe_closure_tasks,
+        "task",
+    );
+    evaluate_selected_crossing_grant(
+        contract,
+        contract_path,
+        crossing_scope_for_task(
+            contract,
+            task_name.as_str(),
+            overrides,
+            task_inputs,
+            effect_overrides,
+            sandbox_target,
+            requirement
+                .boundary_family
+                .map(|family| family.label())
+                .unwrap_or("unknown"),
+            requirement
+                .classification
+                .map(|classification| classification.label())
+                .unwrap_or("unknown"),
+        ),
+        requirement,
+        agent,
+        grant,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_workflow_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    run_behavior_preference: UpRunBehaviorPreference,
+    agent: bool,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
+) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+    let authority_configured = contract.governance.crossing_authority.is_some();
+    if !authority_configured {
+        return match grant {
+            Some(_) => Err(GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "`--grant` requires `governance.crossing_authority.authority_id` in the selected contract",
+            )),
+            None => Ok(None),
+        };
+    }
+
+    let safety =
+        selected_up_workflow_effective_safety(contract, workflow_name, run_behavior_preference);
+    let requirement = evaluate_crossing_requirement(
+        safety.effective_safe,
+        false,
+        &safety.unsafe_closure_tasks,
+        "workflow",
+    );
+    if agent && requirement.required == Some(true) {
+        // V11.3 agent safety is a harder boundary than a human crossing grant.
+        // The existing agent refusal path remains authoritative and a grant cannot bypass it.
+        return Ok(None);
+    }
+    evaluate_selected_crossing_grant(
+        contract,
+        contract_path,
+        crossing_scope_for_workflow(
+            contract,
+            workflow_name,
+            overrides,
+            effect_overrides,
+            sandbox_target,
+            up_run_behavior_preference_label(run_behavior_preference),
+            requirement
+                .boundary_family
+                .map(|family| family.label())
+                .unwrap_or("unknown"),
+            requirement
+                .classification
+                .map(|classification| classification.label())
+                .unwrap_or("unknown"),
+        ),
+        requirement,
+        agent,
+        grant,
+    )
+}
+
+fn evaluate_selected_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    scope: Result<crate::crossing::CrossingSemanticScope, String>,
+    requirement: crate::crossing::CrossingRequirement,
+    agent: bool,
+    grant: Option<&str>,
+) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+    match requirement.required {
+        Some(false) => {
+            return match grant {
+                Some(_) => Err(GrantAdmissionError::new(
+                    "crossing_grant_inapplicable",
+                    "the selected execution closure does not cross a governed boundary",
+                )),
+                None => Ok(None),
+            };
+        }
+        None => {
+            return Err(GrantAdmissionError::new(
+                "crossing_requirement_unknown",
+                "Ota cannot derive whether the selected closure requires an authority grant",
+            ));
+        }
+        Some(true) => {}
+    }
+    let grant = grant.ok_or_else(|| {
+        GrantAdmissionError::new(
+            "crossing_grant_required",
+            "the selected execution closure crosses a governed boundary and requires `--grant <id>`",
+        )
+    })?;
+    let scope = scope.map_err(|details| {
+        GrantAdmissionError::new(
+            "crossing_scope_unavailable",
+            format!("failed to derive the canonical crossing scope: {details}"),
+        )
+    })?;
+    let boundary_family = requirement
+        .boundary_family
+        .map(|family| family.label())
+        .ok_or_else(|| {
+            GrantAdmissionError::new(
+                "crossing_requirement_invalid",
+                "a required crossing is missing its derived boundary family",
+            )
+        })?;
+    let classification = requirement
+        .classification
+        .map(|classification| classification.label())
+        .ok_or_else(|| {
+            GrantAdmissionError::new(
+                "crossing_requirement_invalid",
+                "a required crossing is missing its derived classification",
+            )
+        })?;
+    admit_prebound_file_grant(
+        contract,
+        contract_working_dir(contract_path),
+        &scope,
+        grant,
+        boundary_family,
+        classification,
+        grant_actor_mode_label(agent),
+        OffsetDateTime::now_utc(),
+    )
+    .map(Some)
+}
+
 fn build_task_crossing_record(
     contract: &Contract,
     task_name: &str,
@@ -15874,7 +16265,7 @@ fn build_task_crossing_record(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             Some(safety.effective_safe),
-            None,
+            false,
             &safety.unsafe_closure_tasks,
             "task",
         );
@@ -15902,6 +16293,7 @@ fn build_task_crossing_record(
         reason: reason.map(str::to_string),
         evidence_attachment_state: String::from("receipt_attached"),
         evidence_classes: crossing_evidence_classes(reason.is_some()),
+        authority: active_crossing_grant_authority(),
     })
 }
 
@@ -15918,7 +16310,7 @@ fn build_workflow_crossing_record(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             safety.effective_safe,
-            None,
+            false,
             &safety.unsafe_closure_tasks,
             "workflow",
         );
@@ -15946,6 +16338,7 @@ fn build_workflow_crossing_record(
         reason: reason.map(str::to_string),
         evidence_attachment_state: String::from("receipt_attached"),
         evidence_classes: crossing_evidence_classes(reason.is_some()),
+        authority: active_crossing_grant_authority(),
     })
 }
 
@@ -15957,7 +16350,8 @@ fn attach_task_crossing_to_receipt(
     agent: bool,
     reason: Option<&str>,
 ) {
-    receipt.crossing = build_task_crossing_record(contract, task_name, overrides, agent, reason);
+    receipt.crossing =
+        build_task_crossing_record(contract, task_name, overrides, agent, reason).map(Box::new);
 }
 
 fn attach_workflow_crossing_to_receipt(
@@ -15969,7 +16363,11 @@ fn attach_workflow_crossing_to_receipt(
     agent: bool,
     reason: Option<&str>,
 ) {
-    receipt.crossing = build_workflow_crossing_record(
+    let existing_authority = receipt
+        .crossing
+        .as_ref()
+        .and_then(|crossing| crossing.authority.clone());
+    let mut crossing = build_workflow_crossing_record(
         contract,
         workflow_name,
         overrides,
@@ -15977,6 +16375,12 @@ fn attach_workflow_crossing_to_receipt(
         agent,
         reason,
     );
+    if let Some(crossing) = crossing.as_mut()
+        && crossing.authority.is_none()
+    {
+        crossing.authority = existing_authority;
+    }
+    receipt.crossing = crossing.map(Box::new);
 }
 
 fn up_lane_proof_expected(
@@ -16115,7 +16519,7 @@ fn harness_preflight_for_workflow(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             workflow.effective_safe_for_agent,
-            refusal,
+            refusal.is_some(),
             &workflow.unsafe_closure_tasks,
             "workflow",
         );
@@ -18151,6 +18555,48 @@ pub(crate) fn run_command_with_agent_reason(
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
+    run_command_with_agent_reason_and_grant(
+        task_name,
+        path,
+        file_override,
+        format,
+        overrides,
+        effect_overrides,
+        members,
+        task_inputs,
+        agent,
+        expect_refusal,
+        reason,
+        None,
+        sandbox_target,
+        dry_run,
+        debug,
+        show_receipt,
+        stream,
+        persist_logs,
+    )
+}
+
+pub(crate) fn run_command_with_agent_reason_and_grant(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    task_inputs: &[String],
+    agent: bool,
+    expect_refusal: bool,
+    reason: Option<&str>,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
+    dry_run: bool,
+    debug: bool,
+    show_receipt: bool,
+    stream: bool,
+    persist_logs: bool,
+) -> CommandOutput {
     activate_mise_paths_for_current_process();
     if dry_run && stream {
         return finalize_debug(
@@ -18244,6 +18690,9 @@ pub(crate) fn run_command_with_agent_reason(
     if let Some(reason) = reason {
         debug_lines.push(format!("DEBUG reason={reason}"));
     }
+    if let Some(grant) = grant {
+        debug_lines.push(format!("DEBUG grant={grant}"));
+    }
     if let Some(target) = sandbox_target {
         debug_lines.push(format!("DEBUG sandbox_target={target}"));
     }
@@ -18295,6 +18744,9 @@ pub(crate) fn run_command_with_agent_reason(
                     overrides,
                     members,
                     agent,
+                    grant,
+                    &normalized_task_inputs,
+                    effect_overrides,
                     sandbox_target,
                     format,
                     persist_logs,
@@ -18306,7 +18758,9 @@ pub(crate) fn run_command_with_agent_reason(
                     overrides,
                     members,
                     &normalized_task_inputs,
+                    effect_overrides,
                     agent,
+                    grant,
                     sandbox_target,
                     reason,
                     show_receipt,
@@ -18422,6 +18876,9 @@ fn run_preview_command(
     overrides: ExecutionOverrides,
     members: &[String],
     agent: bool,
+    grant: Option<&str>,
+    task_inputs: &[String],
+    effect_overrides: &[String],
     sandbox_target: Option<&str>,
     format: OutputFormat,
     persist_logs: bool,
@@ -18435,6 +18892,9 @@ fn run_preview_command(
                 None,
                 target,
                 agent,
+                grant,
+                task_inputs,
+                effect_overrides,
                 sandbox_target,
                 format,
                 persist_logs,
@@ -18473,6 +18933,9 @@ fn run_preview_command(
             Some(member.as_str()),
             target,
             agent,
+            grant,
+            task_inputs,
+            effect_overrides,
             sandbox_target,
             format,
             persist_logs,
@@ -18728,6 +19191,11 @@ impl AgentExecutionRefusal {
             blocked_task: self.blocked_task.clone(),
             closure_path: self.path.clone(),
             evidence_class: String::from("derived"),
+            authority_source: None,
+            authority_id: None,
+            requested_grant_id: None,
+            evaluation_details: None,
+            execution_started: None,
         }
     }
 }
@@ -20287,6 +20755,9 @@ fn render_run_preview_target(
     member: Option<&str>,
     mut target: LoadedContractTarget,
     agent: bool,
+    grant: Option<&str>,
+    task_inputs: &[String],
+    effect_overrides: &[String],
     sandbox_target: Option<&str>,
     format: OutputFormat,
     persist_logs: bool,
@@ -20339,6 +20810,45 @@ fn render_run_preview_target(
             replay_input_policy,
         );
     }
+    let refusal = if agent {
+        agent_execution_refusal_with_policy(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+            replay_input_preflight.doctor_policy_snapshot(),
+        )
+    } else {
+        None
+    };
+    let grant_admission = if refusal.is_none() {
+        match evaluate_task_crossing_grant(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+            task_inputs,
+            effect_overrides,
+            agent,
+            grant,
+            sandbox_target,
+        ) {
+            Ok(admission) => admission,
+            Err(error) => {
+                return render_crossing_grant_preview_refusal(
+                    format,
+                    &target.contract,
+                    &target.contract_path,
+                    member,
+                    task_name.as_str(),
+                    grant,
+                    &error,
+                );
+            }
+        }
+    } else {
+        None
+    };
     let sandbox_admission = match resolve_task_sandbox_admission(
         &target.contract,
         &target.contract_path,
@@ -20580,6 +21090,7 @@ fn render_run_preview_target(
                             sandbox_admission: sandbox_admission
                                 .as_ref()
                                 .map(sandbox_admission_json),
+                            crossing_grant_admission: active_crossing_grant_preview(),
                             replay_input_policy: replay_input_policy.clone(),
                             artifact_routing,
                             plan,
@@ -20627,17 +21138,7 @@ fn render_run_preview_target(
         &preconditions_report,
         overrides,
     );
-    let refusal = if agent {
-        agent_execution_refusal_with_policy(
-            &target.contract,
-            &target.contract_path,
-            task_name.as_str(),
-            overrides,
-            replay_input_preflight.doctor_policy_snapshot(),
-        )
-    } else {
-        None
-    };
+    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate(grant_admission);
     if let Some(refusal) = refusal.as_ref() {
         summary.verdict = DoctorVerdict::AgentBlocked;
         summary.agent_verdict = DoctorVerdict::AgentBlocked;
@@ -20682,6 +21183,12 @@ fn render_run_preview_target(
     );
     if let Some(admission) = sandbox_admission.as_ref() {
         text.push_str(&render_sandbox_admission_preview(admission));
+    }
+    if let Some(authority) = active_crossing_grant_preview() {
+        text.push_str(&format!(
+            "\n\nCrossing Grant: admitted `{}` from authority `{}`\nScope: `{}`",
+            authority.grant_id, authority.authority_id, authority.scope_identity
+        ));
     }
 
     match format {
@@ -20737,6 +21244,7 @@ fn render_run_preview_target(
                     refusal.as_ref(),
                 ),
                 sandbox_admission: sandbox_admission.as_ref().map(sandbox_admission_json),
+                crossing_grant_admission: active_crossing_grant_preview(),
                 replay_input_policy,
                 artifact_routing,
                 plan,
@@ -20817,6 +21325,43 @@ fn render_replay_input_preflight_failure(
                 ))
             }
         },
+    }
+}
+
+fn render_crossing_grant_preview_refusal(
+    format: OutputFormat,
+    contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            "ota run",
+            &format!(
+                "Crossing grant admission refused: {error}\nWhere: {}\nNext: supply an exact live grant from the contract-bound authority, or select a closure that does not require a crossing",
+                display_contract_target(&compact_contract_path(contract_path), member)
+            ),
+        )),
+        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+            "ok": false,
+            "path": contract_path.display().to_string(),
+            "member": member,
+            "task": task_name,
+            "dry_run": true,
+            "execution_started": false,
+            "crossing_grant_admission": {
+                "decision": "refused",
+                "authority_source": "prebound_file",
+                "authority_id": contract.governance.crossing_authority.as_ref().map(|authority| authority.authority_id.as_str()),
+                "requested_grant_id": grant,
+                "reason_family": error.reason,
+                "details": error.details,
+                "execution_started": false,
+            },
+        }))),
     }
 }
 
@@ -29039,6 +29584,13 @@ pub fn receipt(
                         summary: receipt.summary,
                         receipt: receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
+                        archive_context: Some(crate::output::ReceiptArchiveContext {
+                            schema_version: 1,
+                            kind: String::from("readiness"),
+                            lane_kind: None,
+                            lane_name: None,
+                            semantic_scope: None,
+                        }),
                         promoted_baseline: None,
                         artifact_routing: receipt_artifact_routing(
                             &target.contract_path,
@@ -31017,6 +31569,53 @@ pub(crate) fn up_with_agent_reason(
     detach: bool,
     ready_timeout: Option<&str>,
 ) -> CommandOutput {
+    up_with_agent_reason_and_grant(
+        path,
+        file_override,
+        overrides,
+        effect_overrides,
+        members,
+        workflow_name,
+        agent,
+        expect_refusal,
+        reason,
+        None,
+        sandbox_target,
+        format,
+        debug,
+        dry_run,
+        stream,
+        show_receipt,
+        replay_baseline,
+        attach,
+        detach,
+        ready_timeout,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn up_with_agent_reason_and_grant(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    workflow_name: Option<&str>,
+    agent: bool,
+    expect_refusal: bool,
+    reason: Option<&str>,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
+    format: OutputFormat,
+    debug: bool,
+    dry_run: bool,
+    stream: bool,
+    show_receipt: bool,
+    replay_baseline: Option<&str>,
+    attach: bool,
+    detach: bool,
+    ready_timeout: Option<&str>,
+) -> CommandOutput {
     activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -31168,6 +31767,9 @@ pub(crate) fn up_with_agent_reason(
     if let Some(reason) = reason {
         debug_lines.push(format!("DEBUG reason={reason}"));
     }
+    if let Some(grant) = grant {
+        debug_lines.push(format!("DEBUG grant={grant}"));
+    }
     if let Some(baseline) = replay_baseline {
         debug_lines.push(format!("DEBUG replay_baseline={baseline}"));
     }
@@ -31240,22 +31842,26 @@ pub(crate) fn up_with_agent_reason(
                                 2,
                             );
                         }
-                        let mut root_result = match execute_repo_up_with_behavior_with_agent(
-                            &target.contract,
-                            &target.contract_path,
-                            overrides,
-                            workflow_name,
-                            agent,
-                            sandbox_target,
-                            None,
-                            dry_run,
-                            execution_mode,
-                            run_behavior_preference,
-                            ready_timeout,
-                        ) {
-                            Ok(result) => result,
-                            Err(error) => return CommandOutput::failure(error),
-                        };
+                        let mut root_result =
+                            match execute_repo_up_with_behavior_with_agent_and_grant(
+                                &target.contract,
+                                &target.contract_path,
+                                overrides,
+                                workflow_name,
+                                effect_overrides,
+                                agent,
+                                grant,
+                                reason,
+                                sandbox_target,
+                                None,
+                                dry_run,
+                                execution_mode,
+                                run_behavior_preference,
+                                ready_timeout,
+                            ) {
+                                Ok(result) => result,
+                                Err(error) => return CommandOutput::failure(error),
+                            };
                         attach_crossing_to_up_result(
                             &mut root_result,
                             &target.contract,
@@ -31320,12 +31926,15 @@ pub(crate) fn up_with_agent_reason(
                                         }
                                     };
                                 let mut member_result =
-                                    match execute_repo_up_with_behavior_with_agent(
+                                    match execute_repo_up_with_behavior_with_agent_and_grant(
                                         &member_target.contract,
                                         &member_target.contract_path,
                                         overrides,
                                         workflow_name,
+                                        effect_overrides,
                                         agent,
+                                        grant,
+                                        reason,
                                         sandbox_target,
                                         None,
                                         dry_run,
@@ -31394,12 +32003,15 @@ pub(crate) fn up_with_agent_reason(
                             }
                             None => None,
                         };
-                        match execute_repo_up_with_behavior_with_agent(
+                        match execute_repo_up_with_behavior_with_agent_and_grant(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            effect_overrides,
                             agent,
+                            grant,
+                            reason,
                             sandbox_target,
                             None,
                             dry_run,
@@ -31511,12 +32123,15 @@ pub(crate) fn up_with_agent_reason(
                                     };
                                 }
                             };
-                        let mut result = match execute_repo_up_with_behavior_with_agent(
+                        let mut result = match execute_repo_up_with_behavior_with_agent_and_grant(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            effect_overrides,
                             agent,
+                            grant,
+                            reason,
                             sandbox_target,
                             None,
                             dry_run,
@@ -37947,6 +38562,15 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
         archived_at: repo_receipt_archive_timestamp(path),
         payload,
     };
+    // Receipt history is archive-only verification. Do not consult the mutable worktree contract:
+    // every archived repo receipt must carry the exact normalized snapshot it was issued from.
+    let (crossing_snapshot, _) = required_archived_repo_receipt_snapshot_with_path(&record)?;
+    let crossing_contract = serde_json::from_value::<Contract>(crossing_snapshot).map_err(|error| {
+        format!(
+            "receipt archive `{}` contains a contract snapshot that cannot re-derive crossing authority: {error}",
+            compact_path(path, ".")
+        )
+    })?;
     if let Some(evidence) = record
         .payload
         .receipt
@@ -37954,21 +38578,8 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
         .sandbox_application
         .as_ref()
     {
-        let (snapshot, _) = archived_repo_receipt_snapshot_with_path(&record)?
-            .ok_or_else(|| {
-                format!(
-                    "receipt archive `{}` carries sandbox enforcement evidence without an archived contract snapshot",
-                    compact_path(path, ".")
-                )
-            })?;
-        let contract = serde_json::from_value::<Contract>(snapshot).map_err(|error| {
-            format!(
-                "receipt archive `{}` contains a contract snapshot that cannot re-derive sandbox policy: {error}",
-                compact_path(path, ".")
-            )
-        })?;
         crate::sandbox_policy::validate_application_evidence_against_contract(
-            &contract,
+            &crossing_contract,
             evidence,
         )
         .map_err(|error| {
@@ -37984,8 +38595,461 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                     compact_path(path, ".")
                 )
             })?;
+        if let Some(scope) = record
+            .payload
+            .archive_context
+            .as_ref()
+            .and_then(|context| context.semantic_scope.as_ref())
+        {
+            let scope_lane_kind = match scope.lane.kind {
+                crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+            };
+            if scope_lane_kind
+                != match evidence.lane.kind {
+                    crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                    crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                }
+                || scope.lane.name != evidence.lane.name
+                || scope.target_platform != evidence.target_platform
+                || scope.execution_selection.backend != evidence.execution_selection.backend
+                || scope.execution_selection.lifecycle != evidence.execution_selection.lifecycle
+                || scope.execution_selection.skip_dependencies
+                    != evidence.execution_selection.skip_dependencies
+                || scope.execution_graph_identity != evidence.canonical_policy_identity
+            {
+                return Err(format!(
+                    "receipt archive `{}` selected-invocation scope does not match its runner-attested sandbox application",
+                    compact_path(path, ".")
+                ));
+            }
+        }
+    }
+    let crossing = record.payload.receipt.crossing.as_ref();
+    let archived_authority_configured = crossing_contract.governance.crossing_authority.is_some();
+    let crossing_required = archived_receipt_crossing_required(
+        &crossing_contract,
+        record.payload.archive_context.as_ref(),
+        archived_authority_configured,
+        path,
+    )?;
+    match (crossing_required, crossing) {
+        (true, None) => {
+            return Err(format!(
+                "receipt archive `{}` omits required crossing evidence for its archived execution lane",
+                compact_path(path, ".")
+            ));
+        }
+        (true, Some(crossing)) if archived_authority_configured && crossing.authority.is_none() => {
+            return Err(format!(
+                "receipt archive `{}` omits required crossing authority and terminal transaction evidence",
+                compact_path(path, ".")
+            ));
+        }
+        (false, Some(_)) if record.payload.archive_context.is_some() => {
+            return Err(format!(
+                "receipt archive `{}` carries a crossing for an archived lane that does not require one",
+                compact_path(path, ".")
+            ));
+        }
+        (false, Some(crossing)) if crossing.authority.is_some() => {
+            return Err(format!(
+                "receipt archive `{}` carries crossing authority not declared by its archived contract",
+                compact_path(path, ".")
+            ));
+        }
+        _ => {}
+    }
+    if let Some(authority) = crossing.and_then(|crossing| crossing.authority.as_ref()) {
+        let archived = serde_json::from_value::<ArchivedCrossingGrantEvidence>(
+            authority.archive_evidence.clone(),
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains malformed crossing authority evidence: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        let transaction = archived.transaction.as_ref().ok_or_else(|| {
+            format!(
+                "receipt archive `{}` carries crossing authority without terminal transaction evidence",
+                compact_path(path, ".")
+            )
+        })?;
+        let archive_scope = record
+            .payload
+            .archive_context
+            .as_ref()
+            .and_then(|context| context.semantic_scope.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` carries crossing authority without a canonical selected-invocation scope",
+                    compact_path(path, ".")
+                )
+            })?;
+        if archive_scope != &archived.admission.semantic_scope {
+            return Err(format!(
+                "receipt archive `{}` selected-invocation scope does not match its signed crossing admission",
+                compact_path(path, ".")
+            ));
+        }
+        let expected = crossing_grant_authority_output_with_transaction(
+            &archived.admission,
+            Some(transaction.clone()),
+        );
+        if &expected != authority {
+            return Err(format!(
+                "receipt archive `{}` contains crossing authority fields that do not match its signed archive evidence",
+                compact_path(path, ".")
+            ));
+        }
+        crate::crossing_authority::verify_archived_grant_admission(
+            &crossing_contract,
+            repo_root_from_archive_path(path).ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` is not under the canonical repo archive root",
+                    compact_path(path, ".")
+                )
+            })?,
+            &archived.admission,
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains unreconciled crossing authority evidence: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        crate::crossing_transaction::verify_crossing_transaction_evidence(
+            transaction,
+            &archived.admission,
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains unreconciled crossing transaction evidence: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        let crossing = record.payload.receipt.crossing.as_ref().ok_or_else(|| {
+            format!(
+                "receipt archive `{}` carries crossing authority without a crossing record",
+                compact_path(path, ".")
+            )
+        })?;
+        verify_archived_crossing_record(crossing, &archived.admission).map_err(|error| {
+            format!(
+                "receipt archive `{}` contains a crossing record that does not match its admitted semantic scope: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        crate::crossing_transaction::verify_crossing_transaction_outcome(
+            transaction,
+            crossing.id.as_str(),
+            record.payload.ok,
+            record.payload.receipt.status.as_deref(),
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains crossing transaction evidence that does not match the archived outcome: {error}",
+                compact_path(path, ".")
+            )
+        })?;
     }
     Ok(record)
+}
+
+fn archived_receipt_crossing_required(
+    contract: &Contract,
+    archive_context: Option<&crate::output::ReceiptArchiveContext>,
+    authority_configured: bool,
+    path: &Path,
+) -> Result<bool, String> {
+    let Some(context) = archive_context else {
+        if authority_configured {
+            return Err(format!(
+                "receipt archive `{}` cannot re-derive crossing authority because it omits immutable archive lane context",
+                compact_path(path, ".")
+            ));
+        }
+        // Context predates V11.7. It carries no authority claim, so retain ordinary archival
+        // inspection while excluding snapshot-less records as legacy below.
+        return Ok(false);
+    };
+    match context.kind.as_str() {
+        "readiness" => {
+            if context.lane_kind.is_some()
+                || context.lane_name.is_some()
+                || context.semantic_scope.is_some()
+            {
+                return Err(format!(
+                    "receipt archive `{}` has readiness context with an execution lane",
+                    compact_path(path, ".")
+                ));
+            }
+            if context.schema_version != 1 {
+                return Err(format!(
+                    "receipt archive `{}` has unsupported readiness archive context schema version `{}`",
+                    compact_path(path, "."),
+                    context.schema_version
+                ));
+            }
+            Ok(false)
+        }
+        "execution" => {
+            if context.schema_version == 2 {
+                let scope = context.semantic_scope.as_ref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits canonical selected-invocation scope",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits execution lane kind from archive context",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits execution lane name from archive context",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let scope_lane_kind = match scope.lane.kind {
+                    crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                    crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                };
+                if lane_kind != scope_lane_kind || lane_name != scope.lane.name {
+                    return Err(format!(
+                        "receipt archive `{}` has lane context that does not match its canonical selected-invocation scope",
+                        compact_path(path, ".")
+                    ));
+                }
+                return rederive_archived_crossing_scope(contract, scope, path);
+            }
+            if context.schema_version != 1 {
+                return Err(format!(
+                    "receipt archive `{}` has unsupported archive lane context schema version `{}`",
+                    compact_path(path, "."),
+                    context.schema_version
+                ));
+            }
+            if authority_configured {
+                return Err(format!(
+                    "receipt archive `{}` omits canonical selected-invocation scope required by its archived crossing authority",
+                    compact_path(path, ".")
+                ));
+            }
+            if context.semantic_scope.is_some() {
+                return Err(format!(
+                    "receipt archive `{}` has a V1 execution context with an unsupported semantic scope",
+                    compact_path(path, ".")
+                ));
+            }
+            let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` omits execution lane kind from archive context",
+                    compact_path(path, ".")
+                )
+            })?;
+            let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` omits execution lane name from archive context",
+                    compact_path(path, ".")
+                )
+            })?;
+            match lane_kind {
+                "task" => {
+                    let safety = task_effective_safety(contract, lane_name);
+                    Ok(!safety.effective_safe)
+                }
+                "workflow" => {
+                    let workflow_name = (lane_name != "default").then_some(lane_name);
+                    let safety = selected_up_workflow_effective_safety(
+                        contract,
+                        workflow_name,
+                        UpRunBehaviorPreference::Auto,
+                    );
+                    Ok(safety.effective_safe == Some(false))
+                }
+                _ => Err(format!(
+                    "receipt archive `{}` has unsupported execution lane kind `{lane_kind}`",
+                    compact_path(path, ".")
+                )),
+            }
+        }
+        _ => Err(format!(
+            "receipt archive `{}` has unsupported archive context kind `{}`",
+            compact_path(path, "."),
+            context.kind
+        )),
+    }
+}
+
+fn rederive_archived_crossing_scope(
+    contract: &Contract,
+    scope: &crate::crossing::CrossingSemanticScope,
+    path: &Path,
+) -> Result<bool, String> {
+    let mut unsigned_scope = scope.clone();
+    unsigned_scope.identity.clear();
+    let expected_identity = crate::semantic_identity::semantic_contract_identity(&unsigned_scope)
+        .map_err(|error| {
+        format!(
+            "receipt archive `{}` cannot verify selected-invocation scope identity: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    if scope.identity != expected_identity {
+        return Err(format!(
+            "receipt archive `{}` has a selected-invocation scope identity that does not match its content",
+            compact_path(path, ".")
+        ));
+    }
+
+    let selection = &scope.execution_selection;
+    let overrides = ExecutionOverrides {
+        backend: selection.backend,
+        lifecycle: selection.lifecycle,
+        host_port: selection.host_port,
+        memory: selection.memory,
+        skip_deps: selection.skip_dependencies,
+    };
+    let (requirement, rederived_scope) = match scope.lane.kind {
+        crate::sandbox_policy::SandboxLaneKind::Task => {
+            let safety =
+                task_effective_safety_with_overrides(contract, scope.lane.name.as_str(), overrides);
+            let requirement = evaluate_crossing_requirement(
+                Some(safety.effective_safe),
+                false,
+                &safety.unsafe_closure_tasks,
+                "task",
+            );
+            let task_inputs = if scope.input_identity_posture == "not_applicable" {
+                Vec::new()
+            } else {
+                vec![String::from("archived-input-presence")]
+            };
+            let rederived_scope = crossing_scope_for_task(
+                contract,
+                scope.lane.name.as_str(),
+                overrides,
+                &task_inputs,
+                &selection.effect_overrides,
+                selection.sandbox_target.as_deref(),
+                requirement
+                    .boundary_family
+                    .map(|family| family.label())
+                    .unwrap_or("none"),
+                requirement
+                    .classification
+                    .map(|classification| classification.label())
+                    .unwrap_or("unknown"),
+            );
+            (requirement, rederived_scope)
+        }
+        crate::sandbox_policy::SandboxLaneKind::Workflow => {
+            let run_behavior = selection.run_behavior.as_deref().ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` omits workflow run behavior from its selected-invocation scope",
+                    compact_path(path, ".")
+                )
+            })?;
+            let run_behavior =
+                archived_up_run_behavior_preference(run_behavior).map_err(|error| {
+                    format!(
+                        "receipt archive `{}` has invalid selected-invocation scope: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+            let safety = selected_up_workflow_effective_safety(
+                contract,
+                Some(scope.lane.name.as_str()),
+                run_behavior,
+            );
+            let requirement = evaluate_crossing_requirement(
+                safety.effective_safe,
+                false,
+                &safety.unsafe_closure_tasks,
+                "workflow",
+            );
+            let rederived_scope = crossing_scope_for_workflow(
+                contract,
+                Some(scope.lane.name.as_str()),
+                overrides,
+                &selection.effect_overrides,
+                selection.sandbox_target.as_deref(),
+                up_run_behavior_preference_label(run_behavior),
+                requirement
+                    .boundary_family
+                    .map(|family| family.label())
+                    .unwrap_or("none"),
+                requirement
+                    .classification
+                    .map(|classification| classification.label())
+                    .unwrap_or("unknown"),
+            );
+            (requirement, rederived_scope)
+        }
+    };
+    let rederived_scope = rederived_scope.map_err(|error| {
+        format!(
+            "receipt archive `{}` cannot re-derive selected-invocation scope: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    if &rederived_scope != scope {
+        return Err(format!(
+            "receipt archive `{}` selected-invocation scope does not match its archived contract",
+            compact_path(path, ".")
+        ));
+    }
+    requirement.required.ok_or_else(|| {
+        format!(
+            "receipt archive `{}` cannot derive whether its selected invocation crossed a governed boundary",
+            compact_path(path, ".")
+        )
+    })
+}
+
+fn verify_archived_crossing_record(
+    crossing: &crate::output::ExecutionBoundaryCrossing,
+    admission: &GrantAdmissionEvidence,
+) -> Result<(), String> {
+    let lane_kind = match admission.semantic_scope.lane.kind {
+        crate::sandbox_policy::SandboxLaneKind::Task => "task",
+        crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+    };
+    let lane_id = format!("{lane_kind}:{}", admission.semantic_scope.lane.name);
+    let actor_mode = match crossing.actor_mode.as_str() {
+        "agent" | "non_agent" => crossing.actor_mode.as_str(),
+        _ => {
+            return Err(String::from(
+                "crossing record carries an unsupported actor mode",
+            ));
+        }
+    };
+    if crossing.lane_kind != lane_kind
+        || crossing.lane_id != lane_id
+        || crossing.boundary_family != admission.boundary_family
+        || crossing.classification != admission.classification
+        || actor_mode != admission.actor_mode
+        || crossing.requirement_source != "derived"
+        || crossing.principal_attribution_state != "runner_mode_only"
+        || crossing.evidence_attachment_state != "receipt_attached"
+        || crossing.reason_present != crossing.reason.is_some()
+        || crossing.intent_source
+            != if crossing.reason_present {
+                "caller_supplied"
+            } else {
+                "runner_defaulted"
+            }
+        || crossing.evidence_classes != crossing_evidence_classes(crossing.reason_present)
+    {
+        return Err(String::from(
+            "crossing record lane, classification, actor, or reason posture does not reconcile",
+        ));
+    }
+    Ok(())
 }
 
 fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, String> {
@@ -38024,6 +39088,7 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
             Ok(record) => archives.push(record),
             Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
                 archive_path: receipt_storage_path_display(&path),
+                posture: receipt_history_invalid_archive_posture(&path),
                 error,
             }),
         }
@@ -38033,6 +39098,30 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
         archives,
         invalid_archives,
     })
+}
+
+fn receipt_history_invalid_archive_posture(path: &Path) -> String {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return String::from("invalid");
+    };
+    let Ok(payload) = serde_json::from_str::<ArchivedRepoReceiptEnvelope>(&contents) else {
+        return String::from("invalid");
+    };
+    if payload
+        .receipt
+        .contract_snapshot_ref
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+        && payload
+            .receipt
+            .contract_snapshot_hash
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        String::from("legacy_unverified")
+    } else {
+        String::from("invalid")
+    }
 }
 
 fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, String> {
@@ -38432,6 +39521,61 @@ fn archived_repo_receipt_snapshot_with_path(
         )
     })?;
     Ok(Some((snapshot, snapshot_path)))
+}
+
+fn required_archived_repo_receipt_snapshot_with_path(
+    record: &RepoReceiptArchiveRecord,
+) -> Result<(JsonValue, PathBuf), String> {
+    let snapshot_ref = record
+        .payload
+        .receipt
+        .contract_snapshot_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "receipt archive `{}` is unverifiable because it omits immutable `receipt.contract_snapshot_ref`",
+                compact_path(&record.archive_path, ".")
+            )
+        })?;
+    let expected_hash = record
+        .payload
+        .receipt
+        .contract_snapshot_hash
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "receipt archive `{}` is unverifiable because it omits immutable `receipt.contract_snapshot_hash`",
+                compact_path(&record.archive_path, ".")
+            )
+        })?;
+    let snapshot_path = resolve_diff_snapshot_ref(&record.archive_path, snapshot_ref);
+    let contents = fs::read(&snapshot_path).map_err(|error| {
+        format!(
+            "failed to load archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+            snapshot_path.display(),
+            record.archive_path.display()
+        )
+    })?;
+    let observed_hash = contract_snapshot_hash(&contents);
+    if observed_hash != expected_hash {
+        return Err(format!(
+            "receipt archive `{}` references contract snapshot `{}` with identity `{observed_hash}`, expected `{expected_hash}`",
+            compact_path(&record.archive_path, "."),
+            compact_path(&snapshot_path, ".")
+        ));
+    }
+    let snapshot = serde_json::from_slice(&contents).map_err(|error| {
+        format!(
+            "failed to parse archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+            snapshot_path.display(),
+            record.archive_path.display()
+        )
+    })?;
+    Ok((snapshot, snapshot_path))
 }
 
 fn archived_repo_receipt_snapshot(
@@ -48538,7 +49682,7 @@ fn governance_evaluation_for_task_preview(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             Some(task.effective_safe_for_agent),
-            refusal,
+            refusal.is_some(),
             &task.unsafe_closure_tasks,
             "task",
         );
@@ -48667,7 +49811,7 @@ fn governance_evaluation_for_workflow_preview(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             safety.effective_safe,
-            refusal,
+            refusal.is_some(),
             &safety.unsafe_closure_tasks,
             "workflow",
         );
@@ -49122,7 +50266,7 @@ fn reconcile_preflight_replay(
     let (expected_crossing_required, expected_crossing_classification, expected_crossing_boundary) =
         crossing_preflight_posture(
             parsed.effective_safe_for_agent,
-            parsed.refusal.as_ref(),
+            parsed.refusal.is_some(),
             &parsed.unsafe_closure_tasks,
             lane_kind,
         );
@@ -56813,6 +57957,7 @@ fn render_up_result(
             &preview.plan,
             &preview.governance,
             preview.sandbox_admission.as_ref(),
+            preview.crossing_grant_admission.as_deref(),
             &preview.blockers,
             result.ok,
             format,
@@ -57072,6 +58217,7 @@ fn render_up_preview_result(
     plan: &UpPreviewPlan,
     governance: &crate::output::GovernanceEvaluation,
     sandbox_admission: Option<&JsonValue>,
+    crossing_grant_admission: Option<&crate::output::CrossingGrantAdmissionPreview>,
     blockers: &[Finding],
     ready: bool,
     format: OutputFormat,
@@ -57082,6 +58228,12 @@ fn render_up_preview_result(
                 render_up_preview_text(text_path, summary, contract_identity, execution, plan);
             if let Some(admission) = sandbox_admission {
                 stdout.push_str(&render_sandbox_admission_json_preview(admission));
+            }
+            if let Some(authority) = crossing_grant_admission {
+                stdout.push_str(&format!(
+                    "\n\nCrossing Grant: admissible `{}` from authority `{}`\nScope: `{}`",
+                    authority.grant_id, authority.authority_id, authority.scope_identity
+                ));
             }
             CommandOutput {
                 stdout,
@@ -57104,6 +58256,7 @@ fn render_up_preview_result(
                 plan: plan.clone(),
                 governance: governance.clone(),
                 sandbox_admission,
+                crossing_grant_admission,
                 blockers,
             }),
             stderr: None,
@@ -57128,6 +58281,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "plan": preview.plan,
             "governance": preview.governance,
             "sandbox_admission": preview.sandbox_admission,
+            "crossing_grant_admission": preview.crossing_grant_admission,
             "blockers": preview.blockers,
         })
     } else {
@@ -57187,6 +58341,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "plan": preview.plan,
             "governance": preview.governance,
             "sandbox_admission": preview.sandbox_admission,
+            "crossing_grant_admission": preview.crossing_grant_admission,
             "blockers": preview.blockers,
         })
     } else {
@@ -57665,12 +58820,34 @@ mod tests {
         ServiceReadinessSummary, ServiceSummary, TaskSummary, ToolchainSelectionSummary,
         UpPreviewExecution, UpPreviewPlan, WorkflowSummary,
     };
+
+    fn governed_task_archive_context(contract: &Contract, task_name: &str) -> serde_json::Value {
+        let scope = crate::crossing::crossing_scope_for_task(
+            contract,
+            task_name,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            None,
+            "unsafe_task",
+            "escalated",
+        )
+        .expect("governed task scope");
+        serde_json::json!({
+            "schema_version": 2,
+            "kind": "execution",
+            "lane_kind": "task",
+            "lane_name": task_name,
+            "semantic_scope": scope,
+        })
+    }
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningPlanEntry,
         ProvisioningTargetKind,
     };
+    use crate::schema::Contract;
     #[test]
     fn github_projection_sync_and_check_share_one_renderer() {
         let repo = tempdir().expect("repo tempdir");
@@ -69322,6 +70499,434 @@ agent:
     }
 
     #[test]
+    fn configured_crossing_authority_refuses_missing_grant_before_task_execution() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: governed-crossing
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("release requested"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("crossing_grant_required"), "{stderr}");
+        assert!(stderr.contains("OTA_CROSSING_GRANT_REFUSED"), "{stderr}");
+        assert!(stderr.contains("Refusal Evidence"), "{stderr}");
+        assert!(
+            stderr.contains("Authority Source: prebound_file"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Authority: release-authority"), "{stderr}");
+        assert!(stderr.contains("Execution Started: false"), "{stderr}");
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[test]
+    fn governed_receipt_archive_refuses_when_crossing_evidence_is_removed() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: governed-archive
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            serde_yaml::to_string(&contract).expect("contract yaml"),
+        )
+        .expect("current contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        let archive_context = governed_task_archive_context(&contract, "publish");
+        fs::write(contracts.join("governed.json"), snapshot).expect("snapshot");
+        let archive_path = receipts.join("repo-receipt-governed.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": archive_context,
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        let error = super::read_repo_receipt_archive_record(&archive_path)
+            .expect_err("governed archive cannot omit crossing evidence");
+        assert!(
+            error.contains("omits required crossing evidence"),
+            "{error}"
+        );
+
+        let stripped_snapshot_path = receipts.join("repo-receipt-governed-no-snapshot.json");
+        fs::write(
+            &stripped_snapshot_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": governed_task_archive_context(&contract, "publish"),
+                "receipt": { "scope": "repo", "contract": "ota.yaml" }
+            }))
+            .expect("stripped archive json"),
+        )
+        .expect("stripped archive");
+        fs::remove_file(repo.path().join("ota.yaml")).expect("remove current contract");
+        let error = super::read_repo_receipt_archive_record(&stripped_snapshot_path)
+            .expect_err("missing archived snapshot cannot be accepted from the current contract");
+        assert!(
+            error.contains("omits immutable `receipt.contract_snapshot_ref`"),
+            "{error}"
+        );
+
+        let mismatched_identity_path = receipts.join("repo-receipt-governed-bad-identity.json");
+        fs::write(
+            &mismatched_identity_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": governed_task_archive_context(&contract, "publish"),
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("mismatched archive json"),
+        )
+        .expect("mismatched archive");
+        let error = super::read_repo_receipt_archive_record(&mismatched_identity_path)
+            .expect_err("snapshot identity mismatch must refuse");
+        assert!(error.contains("expected `sha256:0000"), "{error}");
+    }
+
+    #[test]
+    fn governed_archive_rejects_lane_context_downgrade() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: governed-archive-context
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "printf verify"]
+    safe_for_agent: true
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("governed.json"), snapshot).expect("snapshot");
+        let mut context = governed_task_archive_context(&contract, "publish");
+        context["lane_name"] = serde_json::Value::String(String::from("verify"));
+        let archive_path = receipts.join("repo-receipt-governed-context.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": context,
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        let error = super::read_repo_receipt_archive_record(&archive_path)
+            .expect_err("mutable lane label cannot downgrade governed crossing admission");
+        assert!(
+            error.contains("does not match its canonical selected-invocation scope"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn ordinary_crossing_archive_remains_valid_without_grant_authority() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ordinary-crossing-archive
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("ordinary.json"), snapshot).expect("snapshot");
+        let archive_path = receipts.join("repo-receipt-ordinary.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": {
+                    "schema_version": 1,
+                    "kind": "execution",
+                    "lane_kind": "task",
+                    "lane_name": "publish"
+                },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/ordinary.json",
+                    "crossing": {
+                        "id": "crossing-ordinary",
+                        "created_at": "2026-07-31T00:00:00Z",
+                        "lane_id": "publish",
+                        "lane_kind": "task",
+                        "boundary_family": "unsafe_task",
+                        "classification": "escalated",
+                        "requirement_source": "derived",
+                        "actor_mode": "non_agent",
+                        "principal_attribution_state": "runner_mode_observed",
+                        "intent_source": "operator_flag",
+                        "reason_present": false,
+                        "evidence_attachment_state": "attested",
+                        "evidence_classes": {
+                            "id": "derived",
+                            "created_at": "runner_observed",
+                            "lane_id": "derived",
+                            "lane_kind": "derived",
+                            "boundary_family": "derived",
+                            "classification": "derived",
+                            "requirement_source": "derived",
+                            "actor_mode": "runner_observed",
+                            "principal_attribution_state": "runner_observed",
+                            "intent_source": "derived",
+                            "reason_present": "derived",
+                            "evidence_attachment_state": "derived"
+                        }
+                    }
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        super::read_repo_receipt_archive_record(&archive_path)
+            .expect("ordinary crossing should not require grant authority");
+    }
+
+    #[test]
+    fn governed_readiness_archive_does_not_require_crossing_authority() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: governed-readiness-archive
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("governed.json"), snapshot).expect("snapshot");
+        let archive_path = receipts.join("repo-receipt-readiness.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": { "schema_version": 1, "kind": "readiness" },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        super::read_repo_receipt_archive_record(&archive_path)
+            .expect("readiness archive should not require a crossing");
+    }
+
+    #[test]
+    fn snapshotless_receipt_archive_is_reported_as_legacy_unverified() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        fs::write(
+            receipts.join("repo-receipt-legacy.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "receipt": { "scope": "repo", "contract": "ota.yaml" }
+            }))
+            .expect("legacy archive json"),
+        )
+        .expect("legacy archive");
+
+        let scan = super::scan_repo_receipt_archives(repo.path()).expect("scan history");
+        assert!(scan.archives.is_empty());
+        assert_eq!(scan.invalid_archives.len(), 1);
+        assert_eq!(scan.invalid_archives[0].posture, "legacy_unverified");
+    }
+
+    #[test]
+    fn crossing_grant_dry_run_and_execution_share_missing_grant_admission() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: governed-crossing-preview
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            None,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value = serde_json::from_str(
+            output
+                .stderr
+                .as_deref()
+                .expect("preview refusal should emit machine output"),
+        )
+        .expect("preview refusal json");
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(
+            json["crossing_grant_admission"]["reason_family"],
+            "crossing_grant_required"
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[test]
     fn refusal_canary_fails_when_the_target_is_admitted() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
@@ -71364,6 +72969,11 @@ policies:
                         blocked_task: String::from("publish"),
                         closure_path: vec![String::from("publish")],
                         evidence_class: String::from("attested"),
+                        authority_source: None,
+                        authority_id: None,
+                        requested_grant_id: None,
+                        evaluation_details: None,
+                        execution_started: None,
                     }),
                     crossing_required: None,
                     crossing_classification: None,
@@ -77820,7 +79430,7 @@ tasks:
                         detail: Some(String::from("kind=workflow")),
                     },
                     crate::output::GovernanceDecisionInputEntry {
-                        id: String::from("actor_mode:human"),
+                        id: String::from("actor_mode:non_agent"),
                         family: String::from("actor_mode"),
                         evidence_class: String::from("derived"),
                         replay_class: String::from("pinned"),
@@ -77967,7 +79577,7 @@ tasks:
         assert_eq!(crossing.boundary_family, "unsafe_task");
         assert_eq!(crossing.classification, "escalated");
         assert_eq!(crossing.requirement_source, "derived");
-        assert_eq!(crossing.actor_mode, "human");
+        assert_eq!(crossing.actor_mode, "non_agent");
         assert_eq!(crossing.intent_source, "caller_supplied");
         assert!(crossing.reason_present);
         assert_eq!(crossing.reason.as_deref(), Some("release requested"));
@@ -77990,7 +79600,7 @@ tasks:
             boundary_family: String::from("unsafe_task"),
             classification: String::from("escalated"),
             requirement_source: String::from("derived"),
-            actor_mode: String::from("human"),
+            actor_mode: String::from("non_agent"),
             principal_attribution_state: String::from("runner_mode_only"),
             intent_source: String::from("caller_supplied"),
             reason_present: true,
@@ -78011,6 +79621,7 @@ tasks:
                 reason: Some(String::from("asserted")),
                 evidence_attachment_state: String::from("attested"),
             },
+            authority: None,
         };
         let receipt = ExecutionReceipt {
             ok: false,
@@ -78023,7 +79634,7 @@ tasks:
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
-            crossing: Some(crossing.clone()),
+            crossing: Some(Box::new(crossing.clone())),
             refusal: None,
             replay_input_policy: None,
             workspace: None,
@@ -78338,6 +79949,7 @@ tasks:
                     crossing: None,
                 },
                 sandbox_admission: None,
+                crossing_grant_admission: None,
                 blockers: Vec::new(),
             }),
             governance_preflight: None,
@@ -100306,7 +101918,9 @@ fn run_contract_targets(
     overrides: ExecutionOverrides,
     members: &[String],
     task_inputs: &[String],
+    effect_overrides: &[String],
     agent: bool,
+    grant: Option<&str>,
     sandbox_target: Option<&str>,
     reason: Option<&str>,
     show_receipt: bool,
@@ -100324,7 +101938,9 @@ fn run_contract_targets(
             None,
             target,
             task_inputs,
+            effect_overrides,
             agent,
+            grant,
             sandbox_target,
             reason,
             show_receipt,
@@ -100351,7 +101967,9 @@ fn run_contract_targets(
             Some(member.as_str()),
             target,
             task_inputs,
+            effect_overrides,
             agent,
+            grant,
             sandbox_target,
             reason,
             show_receipt,
@@ -100370,7 +101988,9 @@ fn run_single_contract_target(
     member: Option<&str>,
     target: LoadedContractTarget,
     task_inputs: &[String],
+    effect_overrides: &[String],
     agent: bool,
+    grant: Option<&str>,
     sandbox_target: Option<&str>,
     reason: Option<&str>,
     show_receipt: bool,
@@ -100407,6 +102027,31 @@ fn run_single_contract_target(
     {
         return Err(failure);
     }
+    let initial_grant_admission = evaluate_task_crossing_grant(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+        overrides,
+        task_inputs,
+        effect_overrides,
+        agent,
+        grant,
+        sandbox_target,
+    )
+    .map_err(|error| {
+        crossing_grant_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+            grant,
+            &error,
+        )
+    })?;
     let sandbox_admission = resolve_task_sandbox_admission(
         &target.contract,
         &target.contract_path,
@@ -100429,7 +102074,6 @@ fn run_single_contract_target(
             &error,
         )
     })?;
-
     // Closure-wide interaction preflight: refuse before any dependency or task execution when
     // any task in the full dependency closure has `interaction: required` and no interactive
     // terminal is available. This check covers the entire planned execution set so that Ota
@@ -100489,14 +102133,6 @@ fn run_single_contract_target(
                 )),
             );
             receipt.blocked = blocked;
-            attach_task_crossing_to_receipt(
-                &mut receipt,
-                &target.contract,
-                task_name,
-                overrides,
-                agent,
-                reason,
-            );
             refresh_execution_receipt_status(&mut receipt);
             let summary =
                 render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
@@ -100518,7 +102154,59 @@ fn run_single_contract_target(
     let use_terminal_passthrough =
         should_use_command_terminal_passthrough(closure_allows_terminal_passthrough);
 
-    crate::runner::with_oci_local_application_plan(
+    let grant_admission = if initial_grant_admission.is_some() {
+        evaluate_task_crossing_grant(
+            &target.contract,
+            &target.contract_path,
+            selected_task_name.as_str(),
+            overrides,
+            task_inputs,
+            effect_overrides,
+            agent,
+            grant,
+            sandbox_target,
+        )
+        .map_err(|error| {
+            crossing_grant_run_failure(
+                &target.contract,
+                &target.contract_path,
+                task_name,
+                member,
+                overrides,
+                show_receipt,
+                agent,
+                reason,
+                grant,
+                &error,
+            )
+        })?
+    } else {
+        None
+    };
+    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate(grant_admission);
+    let _crossing_transaction_guard = ActiveCrossingTransactionGuard::activate(
+        contract_working_dir(&target.contract_path),
+        ACTIVE_CROSSING_GRANT_ADMISSION
+            .with(|active| active.borrow().clone())
+            .as_ref(),
+    )
+    .map_err(|details| {
+        crossing_grant_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+            grant,
+            &GrantAdmissionError::new("crossing_transaction_unavailable", details),
+        )
+    })?;
+    let crossing_failure_contract = target.contract.clone();
+    let crossing_failure_contract_path = target.contract_path.clone();
+    let result = crate::runner::with_oci_local_application_plan(
         sandbox_admission
             .as_ref()
             .and_then(|admission| admission.plan.as_ref()),
@@ -100531,6 +102219,8 @@ fn run_single_contract_target(
                 &target.contract_path,
                 show_receipt,
                 &replay_input_preflight,
+                agent,
+                reason,
             ) {
                 return Err(failure);
             }
@@ -100569,7 +102259,20 @@ fn run_single_contract_target(
                 .map(|result| result.output)
             }
         },
-    )
+    );
+    result.map_err(|failure| {
+        ensure_crossing_run_failure_evidence(
+            failure,
+            &crossing_failure_contract,
+            &crossing_failure_contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+        )
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -100985,8 +102688,8 @@ fn sandbox_admission_run_failure(
     member: Option<&str>,
     overrides: ExecutionOverrides,
     show_receipt: bool,
-    agent: bool,
-    reason: Option<&str>,
+    _agent: bool,
+    _reason: Option<&str>,
     error: &SandboxAdmissionError,
 ) -> RunCommandFailure {
     let mut receipt = run_execution_receipt_with_shared(
@@ -101021,7 +102724,6 @@ fn sandbox_admission_run_failure(
             .unwrap_or(task_name),
         error.message
     ));
-    attach_task_crossing_to_receipt(&mut receipt, contract, task_name, overrides, agent, reason);
     refresh_execution_receipt_status(&mut receipt);
     let summary = render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
     RunCommandFailure {
@@ -101029,6 +102731,245 @@ fn sandbox_admission_run_failure(
         summary: Some(summary),
         exit_code: 1,
         receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn crossing_grant_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    _agent: bool,
+    _reason: Option<&str>,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> RunCommandFailure {
+    let mut receipt = run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        None,
+        overrides,
+        task_name,
+        member,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        &[],
+        None,
+        1,
+        false,
+        None,
+        None,
+        Some(String::from(
+            "supply an exact live grant from the contract-bound authority, or select a closure that does not require a crossing",
+        )),
+    );
+    receipt
+        .blocked
+        .push(format!("OTA_CROSSING_GRANT_REFUSED:{}", error.reason));
+    receipt.refusal = Some(crossing_grant_refusal_record(
+        contract, task_name, grant, error,
+    ));
+    refresh_execution_receipt_status(&mut receipt);
+    let summary = render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+    RunCommandFailure {
+        message: stylize_text_failure(
+            "ota run",
+            &format!(
+                "Crossing grant admission refused: {error}\nWhere: {}",
+                display_contract_target(&compact_contract_path(contract_path), member)
+            ),
+        ),
+        summary: Some(summary),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn crossing_grant_up_result(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    dry_run: bool,
+    _agent: bool,
+    _run_behavior_preference: UpRunBehaviorPreference,
+    grant: Option<&str>,
+    error: GrantAdmissionError,
+) -> RepoUpResult {
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_CROSSING_GRANT_REFUSED"),
+            category: String::from("policy"),
+            owner: String::from("agent_safety"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Crossing grant admission refused"),
+        why: error.to_string(),
+        next: String::from(
+            "supply an exact live grant from the contract-bound authority, or select a workflow closure that does not require a crossing",
+        ),
+    };
+    let task_name = contract
+        .selected_run_task_name_for(workflow_name)
+        .map(str::to_string);
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, contract_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        context,
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(format!("crossing_grant_{}", error.reason));
+    receipt
+        .blocked
+        .push(format!("OTA_CROSSING_GRANT_REFUSED:{}", error.reason));
+    receipt.refusal = Some(crossing_grant_refusal_record(
+        contract,
+        workflow_name.unwrap_or("default"),
+        grant,
+        &error,
+    ));
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: if dry_run { "preview" } else { "preconditions" },
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+}
+
+fn crossing_grant_refusal_record(
+    contract: &Contract,
+    lane_name: &str,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> crate::output::GovernanceRefusalRecord {
+    crate::output::GovernanceRefusalRecord {
+        reason_family: error.reason.to_string(),
+        boundary_family: String::from("crossing_grant_authority"),
+        closure_status: String::from("admission_refused"),
+        requested_task: lane_name.to_string(),
+        blocked_task: lane_name.to_string(),
+        closure_path: vec![lane_name.to_string()],
+        evidence_class: String::from("runner_evaluated"),
+        authority_source: Some(String::from("prebound_file")),
+        authority_id: contract
+            .governance
+            .crossing_authority
+            .as_ref()
+            .map(|authority| authority.authority_id.clone()),
+        requested_grant_id: grant.map(str::to_string),
+        evaluation_details: Some(error.details.clone()),
+        execution_started: Some(false),
+    }
+}
+
+fn crossing_execution_up_failure_result(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    error: String,
+) -> RepoUpResult {
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_CROSSING_EXECUTION_FAILED"),
+            category: String::from("policy"),
+            owner: String::from("agent_safety"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Admitted crossing failed before a normal execution result"),
+        why: error,
+        next: String::from(
+            "inspect the crossing failure, repair the selected workflow, and rerun with a fresh live grant",
+        ),
+    };
+    let task_name = contract
+        .selected_run_task_name_for(workflow_name)
+        .map(str::to_string);
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, contract_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        context,
+        "FAILED",
+        "execution",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(String::from("crossing_execution_failed_before_receipt"));
+    receipt
+        .blocked
+        .push(String::from("OTA_CROSSING_EXECUTION_FAILED"));
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "FAILED",
+        phase: "execution",
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: Some(1),
+        stdout: String::new(),
+        stderr: String::new(),
     }
 }
 
@@ -101046,8 +102987,8 @@ fn sandbox_admission_up_result(
     let finding = Finding {
         identity: Some(FindingIdentity {
             code: String::from("OTA_SANDBOX_POLICY_REFUSED"),
-            category: String::from("execution_governance"),
-            owner: String::from("ota_runner"),
+            category: String::from("policy"),
+            owner: String::from("agent_safety"),
         }),
         severity: FindingSeverity::Error,
         summary: String::from("Selected sandbox policy cannot be enforced"),
@@ -101257,6 +103198,8 @@ fn run_selected_precondition_failure(
     contract_path: &Path,
     show_receipt: bool,
     replay_input_preflight: &TaskReplayInputPreflight,
+    agent: bool,
+    reason: Option<&str>,
 ) -> Option<RunCommandFailure> {
     let task_name = canonical_declared_task_name(contract, task_name);
     if resolve_execution_plan_for_task(contract, contract_path, task_name.as_str(), overrides)
@@ -101392,7 +103335,7 @@ fn run_selected_precondition_failure(
         identity: primary_blocker.code.as_ref().map(|code| FindingIdentity {
             code: code.clone(),
             category: String::from("preconditions"),
-            owner: String::from("ota_runner"),
+            owner: String::from("agent_safety"),
         }),
         severity: primary_blocker.severity,
         summary: primary_blocker.summary.clone(),
@@ -101430,7 +103373,22 @@ fn run_selected_precondition_failure(
     if let Some(evidence) = crate::runner::current_oci_local_application_evidence() {
         receipt.witnessed_observations.sandbox_application = Some(evidence);
     }
+    if active_crossing_transaction_is_pending() {
+        attach_task_crossing_to_receipt(
+            &mut receipt,
+            contract,
+            task_name.as_str(),
+            overrides,
+            agent,
+            reason,
+        );
+    }
     refresh_execution_receipt_status(&mut receipt);
+    if active_crossing_transaction_is_pending()
+        && let Err(failure) = archive_sandbox_run_receipt(contract, contract_path, &mut receipt)
+    {
+        return Some(failure);
+    }
     let receipt_summary =
         render_execution_receipt_summary_block(&receipt, Some(task_name.as_str()), "RUN SUMMARY");
 
@@ -101472,6 +103430,66 @@ fn run_selected_precondition_failure(
         exit_code: 1,
         receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_crossing_run_failure_evidence(
+    failure: RunCommandFailure,
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    agent: bool,
+    reason: Option<&str>,
+) -> RunCommandFailure {
+    if !active_crossing_transaction_is_pending() {
+        return failure;
+    }
+    let mut receipt = run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        None,
+        overrides,
+        task_name,
+        member,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        &[],
+        None,
+        failure.exit_code,
+        false,
+        None,
+        None,
+        Some(String::from(
+            "inspect the crossing failure, repair the selected lane, and rerun with a fresh live grant",
+        )),
+    );
+    receipt.failure_origin = Some(String::from("crossing_execution_failed_before_receipt"));
+    receipt
+        .blocked
+        .push(String::from("CROSSING_EXECUTION_FAILED_BEFORE_RECEIPT"));
+    attach_task_crossing_to_receipt(&mut receipt, contract, task_name, overrides, agent, reason);
+    refresh_execution_receipt_status(&mut receipt);
+    if let Err(mut archive_failure) =
+        archive_sandbox_run_receipt(contract, contract_path, &mut receipt)
+    {
+        archive_failure.message = format!("{}\n{}", failure.message, archive_failure.message);
+        return archive_failure;
+    }
+    let mut failure = failure;
+    failure.summary = Some(render_execution_receipt_summary_block(
+        &receipt,
+        Some(task_name),
+        "RUN SUMMARY",
+    ));
+    failure.receipt = show_receipt.then(|| render_execution_receipt_text(&receipt));
+    failure
 }
 
 fn enforce_task_replay_input_preflight(
@@ -102563,6 +104581,8 @@ pub(crate) fn replay_baseline_record(
             &target.contract_path,
             false,
             &replay_input_preflight,
+            false,
+            None,
         ) {
             return Err(failure.message);
         }
@@ -108094,11 +110114,22 @@ fn archive_sandbox_execution_receipt(
     contract_path: &Path,
     receipt: &mut ExecutionReceipt,
 ) -> Result<Option<PathBuf>, String> {
-    let Some(application) = receipt.witnessed_observations.sandbox_application.as_ref() else {
+    finalize_and_attach_active_crossing_transaction(receipt)?;
+    let application = receipt.witnessed_observations.sandbox_application.as_ref();
+    let crossing_authority = receipt
+        .crossing
+        .as_ref()
+        .and_then(|crossing| crossing.authority.as_ref());
+    if application.is_none() && crossing_authority.is_none() {
         return Ok(None);
-    };
-    crate::sandbox_policy::validate_application_evidence_against_contract(contract, application)?;
-    validate_sandbox_application_against_receipt_steps(application, &receipt.steps)?;
+    }
+    if let Some(application) = application {
+        crate::sandbox_policy::validate_application_evidence_against_contract(
+            contract,
+            application,
+        )?;
+        validate_sandbox_application_against_receipt_steps(application, &receipt.steps)?;
+    }
     let root = contract_working_dir(contract_path);
     let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
     let normalized_snapshot = normalized_contract_snapshot_value(contract)?;
@@ -108111,8 +110142,56 @@ fn archive_sandbox_execution_receipt(
     let archive_path = next_receipt_archive_path(root, "repo-receipt")?;
     let archive_path_display = receipt_storage_path_display(&archive_path);
     let path_display = compact_path(contract_path, ".");
-    let workflow = (application.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow)
-        .then_some(application.lane.name.as_str());
+    let workflow = application
+        .filter(|application| {
+            application.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow
+        })
+        .map(|application| application.lane.name.as_str())
+        .or_else(|| {
+            receipt
+                .crossing
+                .as_ref()
+                .filter(|crossing| crossing.lane_kind == "workflow")
+                .and_then(|crossing| crossing.lane_id.strip_prefix("workflow:"))
+        });
+    let authority_scope = crossing_authority
+        .map(|authority| {
+            serde_json::from_value::<ArchivedCrossingGrantEvidence>(
+                authority.archive_evidence.clone(),
+            )
+            .map(|archived| archived.admission.semantic_scope)
+            .map_err(|error| {
+                format!("crossing authority evidence cannot supply an archive scope: {error}")
+            })
+        })
+        .transpose()?;
+    let archive_context = if let Some(application) = application {
+        crate::output::ReceiptArchiveContext {
+            schema_version: authority_scope.as_ref().map_or(1, |_| 2),
+            kind: String::from("execution"),
+            lane_kind: Some(match application.lane.kind {
+                crate::sandbox_policy::SandboxLaneKind::Task => String::from("task"),
+                crate::sandbox_policy::SandboxLaneKind::Workflow => String::from("workflow"),
+            }),
+            lane_name: Some(application.lane.name.clone()),
+            semantic_scope: authority_scope.clone(),
+        }
+    } else if let Some(crossing) = receipt.crossing.as_ref() {
+        crate::output::ReceiptArchiveContext {
+            schema_version: authority_scope.as_ref().map_or(1, |_| 2),
+            kind: String::from("execution"),
+            lane_kind: Some(crossing.lane_kind.clone()),
+            lane_name: crossing
+                .lane_id
+                .split_once(':')
+                .map(|(_, lane_name)| lane_name.to_string()),
+            semantic_scope: authority_scope,
+        }
+    } else {
+        return Err(String::from(
+            "execution receipt archive is missing immutable lane context",
+        ));
+    };
     let findings = Vec::<Finding>::new();
     let payload = ReceiptSuccess {
         ok: receipt.ok,
@@ -108122,6 +110201,7 @@ fn archive_sandbox_execution_receipt(
         summary: receipt.summary,
         receipt: receipt.clone(),
         archive_path: Some(archive_path_display.as_str()),
+        archive_context: Some(archive_context),
         promoted_baseline: None,
         artifact_routing: receipt_artifact_routing(
             contract_path,
@@ -116519,6 +118599,48 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             failure_origin
         ));
     }
+    if let Some(refusal) = receipt.refusal.as_ref() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Refusal Evidence")));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Reason:"),
+            refusal.reason_family
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Boundary:"),
+            refusal.boundary_family
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Closure:"),
+            refusal.closure_status
+        ));
+        if let Some(authority_source) = refusal.authority_source.as_deref() {
+            stdout.push_str(&format!(
+                "\n{} {authority_source}",
+                paint_key("Authority Source:")
+            ));
+        }
+        if let Some(authority_id) = refusal.authority_id.as_deref() {
+            stdout.push_str(&format!("\n{} {authority_id}", paint_key("Authority:")));
+        }
+        if let Some(requested_grant_id) = refusal.requested_grant_id.as_deref() {
+            stdout.push_str(&format!(
+                "\n{} {requested_grant_id}",
+                paint_key("Requested Grant:")
+            ));
+        }
+        if let Some(execution_started) = refusal.execution_started {
+            stdout.push_str(&format!(
+                "\n{} {execution_started}",
+                paint_key("Execution Started:")
+            ));
+        }
+        if let Some(details) = refusal.evaluation_details.as_deref() {
+            stdout.push_str(&format!("\n{} {details}", paint_key("Evaluation:")));
+        }
+    }
     if !receipt.env_sources.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Env Sources")));
         for source in &receipt.env_sources {
@@ -118348,6 +120470,15 @@ fn attach_crossing_to_up_result(
     agent: bool,
     reason: Option<&str>,
 ) {
+    if matches!(result.phase, "preview" | "preconditions")
+        || result
+            .receipt
+            .failure_origin
+            .as_deref()
+            .is_some_and(|origin| origin.starts_with("crossing_grant_"))
+    {
+        return;
+    }
     attach_workflow_crossing_to_receipt(
         &mut result.receipt,
         contract,
@@ -118367,6 +120498,7 @@ struct RepoUpPreview {
     plan: UpPreviewPlan,
     governance: crate::output::GovernanceEvaluation,
     sandbox_admission: Option<JsonValue>,
+    crossing_grant_admission: Option<Box<crate::output::CrossingGrantAdmissionPreview>>,
     blockers: Vec<Finding>,
 }
 
@@ -118486,6 +120618,25 @@ enum UpRunBehaviorPreference {
     Auto,
     Attach,
     Detach,
+}
+
+fn up_run_behavior_preference_label(preference: UpRunBehaviorPreference) -> &'static str {
+    match preference {
+        UpRunBehaviorPreference::Auto => "auto",
+        UpRunBehaviorPreference::Attach => "attach",
+        UpRunBehaviorPreference::Detach => "detach",
+    }
+}
+
+fn archived_up_run_behavior_preference(value: &str) -> Result<UpRunBehaviorPreference, String> {
+    match value {
+        "auto" => Ok(UpRunBehaviorPreference::Auto),
+        "attach" => Ok(UpRunBehaviorPreference::Attach),
+        "detach" => Ok(UpRunBehaviorPreference::Detach),
+        _ => Err(format!(
+            "unsupported archived workflow run behavior `{value}`"
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118619,6 +120770,8 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     witnessed_observations: ExecutionReceiptWitnessedObservations,
     #[serde(default)]
+    crossing: Option<crate::output::ExecutionBoundaryCrossing>,
+    #[serde(default)]
     steps: Vec<ExecutionReceiptStep>,
     #[serde(default)]
     status: Option<String>,
@@ -118645,6 +120798,8 @@ struct ArchivedRepoReceiptEnvelope {
     workflow: Option<String>,
     #[serde(default)]
     archive_path: Option<String>,
+    #[serde(default)]
+    archive_context: Option<crate::output::ReceiptArchiveContext>,
     #[serde(default)]
     summary: ArchivedReceiptSummaryData,
     receipt: ArchivedRepoReceiptData,
@@ -119778,6 +121933,7 @@ fn render_repo_receipt(
                     summary: report.receipt.summary,
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
+                    archive_context: None,
                     promoted_baseline: report.promoted_baseline.clone(),
                     artifact_routing: receipt_artifact_routing(
                         contract_path,
@@ -122822,6 +124978,7 @@ fn build_up_preview_with_actor(
             None,
         ),
         sandbox_admission: None,
+        crossing_grant_admission: None,
         blockers: preflight
             .findings
             .iter()
@@ -125189,6 +127346,126 @@ fn execute_repo_up_with_behavior(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_repo_up_with_behavior_with_agent_and_grant(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    effect_overrides: &[String],
+    agent: bool,
+    grant: Option<&str>,
+    reason: Option<&str>,
+    sandbox_target: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
+    let grant_admission = match evaluate_workflow_crossing_grant(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        effect_overrides,
+        run_behavior_preference,
+        agent,
+        grant,
+        sandbox_target,
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return Ok(crossing_grant_up_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                dry_run,
+                agent,
+                run_behavior_preference,
+                grant,
+                error,
+            ));
+        }
+    };
+    let has_grant_admission = grant_admission.is_some();
+    let _crossing_transaction_guard = if dry_run {
+        None
+    } else {
+        match ActiveCrossingTransactionGuard::activate(
+            contract_working_dir(resolved_path),
+            grant_admission.as_ref(),
+        ) {
+            Ok(guard) => guard,
+            Err(details) => {
+                return Ok(crossing_grant_up_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    dry_run,
+                    agent,
+                    run_behavior_preference,
+                    grant,
+                    GrantAdmissionError::new("crossing_transaction_unavailable", details),
+                ));
+            }
+        }
+    };
+    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate(grant_admission);
+    // Keep the orchestration wrapper's frame small while the nested up path is active.
+    let mut result = Box::new(
+        match execute_repo_up_with_behavior_with_agent(
+            contract,
+            resolved_path,
+            overrides,
+            workflow_name,
+            agent,
+            sandbox_target,
+            policy_env,
+            dry_run,
+            mode,
+            run_behavior_preference,
+            ready_timeout,
+        ) {
+            Ok(result) => result,
+            Err(error) if has_grant_admission => crossing_execution_up_failure_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                error,
+            ),
+            Err(error) => return Err(error),
+        },
+    );
+    if dry_run {
+        if let Some(preview) = result.preview.as_mut() {
+            preview.crossing_grant_admission = active_crossing_grant_preview().map(Box::new);
+        }
+    } else if has_grant_admission || result.phase != "preconditions" {
+        attach_workflow_crossing_to_receipt(
+            &mut result.receipt,
+            contract,
+            workflow_name,
+            overrides,
+            run_behavior_preference,
+            agent,
+            reason,
+        );
+    }
+    if !dry_run && result.receipt.crossing.is_some() {
+        finalize_and_attach_active_crossing_transaction(&mut result.receipt)?;
+    }
+    if !dry_run && has_grant_admission && result.receipt.crossing.is_some() {
+        archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt).map_err(
+            |error| format!("crossing authority evidence could not be archived: {error}"),
+        )?;
+    }
+    Ok(*result)
+}
+
 fn execute_repo_up_with_behavior_with_agent(
     contract: &Contract,
     resolved_path: &Path,
@@ -125345,9 +127622,12 @@ fn execute_repo_up_with_behavior_with_agent(
     result.receipt.replay_input_policy = replay_input_policy;
     if !dry_run {
         result.receipt.witnessed_observations.sandbox_application = sandbox_application;
-        archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt).map_err(
-            |error| format!("sandbox enforcement evidence could not be archived: {error}"),
-        )?;
+        if active_crossing_grant_authority().is_none() {
+            archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt)
+                .map_err(|error| {
+                    format!("sandbox enforcement evidence could not be archived: {error}")
+                })?;
+        }
     }
     Ok(result)
 }

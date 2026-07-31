@@ -680,6 +680,9 @@
         "provisioning_request": { "$ref": "./doctor.json#/properties/provisioning_request" },
         "governance": { "$ref": "#/$defs/governance" },
         "sandbox_admission": { "$ref": "#/$defs/sandboxAdmission" },
+        "crossing_grant_admission": {
+          "$ref": "#/$defs/crossingGrantAdmission"
+        },
         "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" },
         "artifact_routing": {
           "type": "array",
@@ -717,6 +720,109 @@
         "code": { "type": "string" },
         "error": { "type": "string" },
         "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" }
+      }
+    },
+    "crossingGrantAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "authority_id",
+        "authority_binding_identity",
+        "issuer_id",
+        "key_id",
+        "key_fingerprint",
+        "bundle_id",
+        "bundle_identity",
+        "bundle_sequence",
+        "grant_id",
+        "grant_identity",
+        "scope_identity",
+        "contract_identity",
+        "boundary_family",
+        "classification",
+        "actor_mode",
+        "environment_posture",
+        "expiry_kind",
+        "issued_at",
+        "not_before",
+        "next_update",
+        "expires_at",
+        "clock_evidence",
+        "sequence_evidence",
+        "revocation_evidence",
+        "admitted_at"
+      ],
+      "properties": {
+        "decision": { "const": "admissible_not_consumed" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "authority_binding_identity": {
+          "$ref": "./receipt.json#/$defs/sha256Identity"
+        },
+        "issuer_id": { "type": "string", "minLength": 1 },
+        "key_id": { "type": "string", "minLength": 1 },
+        "key_fingerprint": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "bundle_id": { "type": "string", "minLength": 1 },
+        "bundle_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "bundle_sequence": { "type": "integer", "minimum": 0 },
+        "grant_id": { "type": "string", "minLength": 1 },
+        "grant_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "scope_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "boundary_family": { "type": "string", "minLength": 1 },
+        "classification": { "type": "string", "minLength": 1 },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "environment_posture": { "type": "string", "minLength": 1 },
+        "expiry_kind": { "type": "string", "minLength": 1 },
+        "issued_at": { "type": "string", "format": "date-time" },
+        "not_before": { "type": "string", "format": "date-time" },
+        "next_update": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "clock_evidence": { "type": "string", "minLength": 1 },
+        "sequence_evidence": { "type": "string", "minLength": 1 },
+        "revocation_evidence": { "type": "string", "minLength": 1 },
+        "admitted_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "crossingGrantAdmissionFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "member",
+        "task",
+        "dry_run",
+        "execution_started",
+        "crossing_grant_admission"
+      ],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": ["string", "null"] },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "execution_started": { "const": false },
+        "crossing_grant_admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "authority_source",
+            "reason_family",
+            "details",
+            "execution_started"
+          ],
+          "properties": {
+            "decision": { "const": "refused" },
+            "authority_source": { "const": "prebound_file" },
+            "authority_id": { "type": ["string", "null"] },
+            "requested_grant_id": { "type": ["string", "null"] },
+            "reason_family": { "type": "string", "minLength": 1 },
+            "details": { "type": "string", "minLength": 1 },
+            "execution_started": { "const": false }
+          }
+        }
       }
     },
     "replayInputIdentityFailure": {
@@ -798,6 +904,7 @@
     { "$ref": "#/$defs/singleTarget" },
     { "$ref": "#/$defs/aggregate" },
     { "$ref": "#/$defs/simpleFailure" },
+    { "$ref": "#/$defs/crossingGrantAdmissionFailure" },
     { "$ref": "#/$defs/replayInputIdentityFailure" },
     { "$ref": "#/$defs/sandboxAdmissionFailure" }
   ]

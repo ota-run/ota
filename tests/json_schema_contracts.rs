@@ -332,6 +332,18 @@ fn published_contract_schema_includes_container_image_hydration_network_kind() {
 }
 
 #[test]
+fn published_contract_schema_includes_crossing_authority_reference() {
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    let authority = &schema["$defs"]["governance"]["properties"]["crossing_authority"];
+
+    assert_eq!(authority["$ref"], json!("#/$defs/crossingAuthority"));
+    assert_eq!(
+        schema["$defs"]["crossingAuthority"]["required"],
+        json!(["authority_id"])
+    );
+}
+
+#[test]
 fn published_contract_schema_allows_replay_authority_on_generated_source() {
     let schema = load_schema("docs/spec/json-schemas/contract.json");
     let generated_source = schema["$defs"]["generatedArtifact"]["oneOf"]
@@ -1252,6 +1264,26 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(history_summary.get("archive_count").is_some());
     assert!(history_summary.get("invalid_archive_count").is_some());
     assert!(history.get("invalid_archives").is_some());
+    assert_eq!(
+        success["archive_context"]["oneOf"][0]["properties"]["kind"]["const"],
+        "readiness"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][1]["properties"]["kind"]["const"],
+        "execution"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][2]["properties"]["schema_version"]["const"],
+        2
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][2]["properties"]["semantic_scope"]["$ref"],
+        "#/$defs/crossingSemanticScope"
+    );
+    assert_eq!(
+        history["invalid_archives"]["items"]["properties"]["posture"]["enum"],
+        serde_json::json!(["legacy_unverified", "invalid"])
+    );
     assert!(failure.get("errors").is_some());
     assert!(failure.get("error").is_some());
 }
@@ -1958,6 +1990,82 @@ fn receipt_schema_includes_execution_conflict_metadata() {
 }
 
 #[test]
+fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
+    let receipt = load_schema("docs/spec/json-schemas/receipt.json");
+    let authority = &receipt["oneOf"][0]["properties"]["receipt"]["properties"]["crossing"]["properties"]
+        ["authority"];
+    let preview = load_schema("docs/spec/json-schemas/run-preview.json");
+
+    assert!(
+        authority["required"]
+            .as_array()
+            .is_some_and(|required| { required.iter().any(|field| field == "archive_evidence") })
+    );
+    assert_eq!(
+        authority["properties"]["actor_mode"]["enum"],
+        json!(["agent", "non_agent"])
+    );
+    assert_eq!(
+        authority["properties"]["decision"]["const"],
+        json!("allowed")
+    );
+    assert_eq!(
+        authority["properties"]["transaction"]["$ref"],
+        json!("#/$defs/crossingTransaction")
+    );
+    assert_eq!(
+        authority["properties"]["authority_separation_posture"]["const"],
+        json!("current_process_filesystem_guarded")
+    );
+    assert_eq!(
+        authority["properties"]["archive_evidence"]["$ref"],
+        json!("#/$defs/crossingGrantArchiveEvidence")
+    );
+    assert_eq!(
+        receipt["$defs"]["crossingGrantArchiveEvidence"]["additionalProperties"],
+        json!(false)
+    );
+    assert_eq!(
+        receipt["$defs"]["crossingTransaction"]["properties"]["state"]["enum"],
+        json!([
+            "pending",
+            "completed",
+            "failed",
+            "interrupted",
+            "incomplete"
+        ])
+    );
+    assert_eq!(
+        receipt["$defs"]["crossingTransaction"]["properties"]["authentication_posture"]["const"],
+        json!("runner_local_content_addressed")
+    );
+    assert_eq!(
+        preview["$defs"]["singleTarget"]["properties"]["crossing_grant_admission"]["$ref"],
+        json!("#/$defs/crossingGrantAdmission")
+    );
+    assert_eq!(
+        preview["$defs"]["crossingGrantAdmission"]["properties"]["decision"]["const"],
+        json!("admissible_not_consumed")
+    );
+    assert_eq!(
+        preview["$defs"]["crossingGrantAdmissionFailure"]["properties"]["crossing_grant_admission"]
+            ["properties"]["decision"]["const"],
+        json!("refused")
+    );
+
+    let up = load_schema("docs/spec/json-schemas/up.json");
+    assert_eq!(
+        up["oneOf"][0]["properties"]["crossing_grant_admission"]["$ref"],
+        json!("./run-preview.json#/$defs/crossingGrantAdmission")
+    );
+    assert_eq!(
+        up["oneOf"][0]["properties"]["members"]["items"]["properties"]["crossing_grant_admission"]
+            ["$ref"],
+        json!("./run-preview.json#/$defs/crossingGrantAdmission")
+    );
+}
+
+#[test]
 fn receipt_schema_includes_native_prerequisite_activation_metadata() {
     let schema = load_schema("docs/spec/json-schemas/receipt.json");
     let receipt_properties = &schema["oneOf"][0]["properties"]["receipt"]["properties"];
@@ -2123,6 +2231,26 @@ fn canonical_docs_manifest_publishes_contract_reference_source_boundary() {
     assert_eq!(
         contract["public_url"],
         json!("https://ota.run/docs/reference/contract")
+    );
+}
+
+#[test]
+fn canonical_docs_manifest_publishes_execution_governance_capability_map() {
+    let manifest = load_schema("docs/spec/published-docs/canonical-docs.json");
+    let capabilities = manifest["docs"]
+        .as_array()
+        .expect("canonical docs manifest docs array")
+        .iter()
+        .find(|entry| entry["id"] == json!("execution-governance-capabilities"))
+        .expect("execution-governance-capabilities manifest entry");
+
+    assert_eq!(
+        capabilities["source_path"],
+        json!("docs/spec/execution-governance-capabilities.md")
+    );
+    assert_eq!(
+        capabilities["public_url"],
+        json!("https://ota.run/docs#execution-governance-capabilities")
     );
 }
 

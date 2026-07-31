@@ -24,16 +24,19 @@
 
 # V11.7 Plan
 
-Status: partially implemented. Boundary crossing records and provenance are shipped; reusable
-grant authority, crossing-time liveness/scope checks, and authorizer binding remain open.
+Status: active, partially implemented. Boundary crossing records and provenance are shipped. The
+canonical semantic crossing evaluator and first `prebound_file` signed-authority carrier are
+implemented in Core and awaiting hosted pressure. The separate broker-backed, runner-verifiable
+work-unit lifetime remains open.
 
-Deferral: this remaining grant-authority work is explicitly deferred. It is not approval authority
-for any active execution or contract-authoring slice, and no later slice may consume a crossing
-record as a reusable grant until this plan is resumed and its acceptance bar is completed.
+Activation prerequisite: closed by independent design review. Crossing records remain evidence,
+never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
+be redirected by repository content, `OTA_POLICY`, environment variables, or caller flags.
 
 Release target:
 
-- partially implemented continuation after `v11.6`; reusable grant authority remains open
+- `v1.6.26` implementation branch; signed offline authority is in Core, hosted pressure and
+  broker-backed work-unit authority remain open
 
 Source direction:
 
@@ -280,10 +283,17 @@ The important part is:
 - no caller deciding for itself whether crossing was required
 - the repo contract and derived governance model remain canonical
 
+The first implementation must make this evaluator explicit before grant admission. Until contract
+declarations add other supported families, its only derived outputs are the existing
+`unsafe_task` and `heavier_workflow` families. A grant cannot name `external_effect_lane`, runtime
+proof, or another family that Ota cannot itself derive for the selected semantic closure.
+
 ### 3. Boundary-authored crossing record
 
-When a crossing is required or explicitly requested, Ota should create the crossing record at the
-moment the boundary is crossed.
+When a crossing is required and grant admission succeeds, Ota should mint the crossing record
+before the first execution side effect, then finalize it after success, failure, interruption, or
+timeout. Missing, expired, revoked, or out-of-scope grants produce a typed grant-admission refusal
+and never mint a crossing record.
 
 Minimum record fields:
 
@@ -366,6 +376,243 @@ The important part is:
 - grants should be reviewable at a blast radius a human can understand in one breath
 - the model should avoid both broad standing authority and approval-fatigue micro-grants
 - grants carry the coarse reviewed scope; crossing records carry the fine-grained per-use detail
+
+### 3c. Grant authority activation prerequisite
+
+The repository contract may declare that a lane requires an audited crossing, but it must not issue
+the grant that authorizes one. Existing `OTA_POLICY` overrides and discovered local/workspace
+policy packs are caller- or repository-controlled inputs: they may narrow execution, but they must
+never widen it by issuing a grant.
+
+Before implementation, V11.7 needs one pre-bound authority source with all of these properties:
+
+- an issuer identity configured independently of the command's policy override and bound to the
+  selected contract snapshot;
+- grant integrity verification against that issuer, not a self-consistent local YAML artifact;
+- a fresh revocation source or a bounded issuer-signed validity window, with the clock source and
+  revocation observation posture carried as evidence;
+- exact semantic scope binding to contract identity, selected closure identity, derived crossing
+  family/classification, actor attribution posture, and environment posture;
+- archive verification that re-derives the same authority decision from archived contract,
+  authority, and grant evidence.
+
+#### Authority source model
+
+The first authority source is `prebound_file`: a bounded-TTL signed grant bundle whose trust
+binding is installed outside the repository and outside caller-controlled command inputs. The
+contract references only an `authority_id`. It does not declare the bundle location, trusted key,
+or public-key fingerprint.
+
+```yaml
+governance:
+  crossing_authority:
+    authority_id: platform-release-authority
+```
+
+The Ota installation or enforcing launcher binds that ID in a fixed system trust store to:
+
+- one issuer identity;
+- exact Ed25519 public-key material and derived key fingerprint;
+- an absolute signed-bundle path outside the repository;
+- optional repository and contract constraints;
+- the maximum accepted bundle age;
+- the store's authority and integrity posture.
+
+The first implementation recognizes only fixed platform store locations. It has no CLI flag,
+environment-variable override, repository fallback, or user-config fallback. On platforms where
+Ota cannot establish that the store and bundle are outside the selected repository and not writable
+by the executing principal, authority admission refuses. A writable or unverifiable store may
+still be described as configuration, but it is not grant authority.
+
+The signed bundle uses a versioned envelope with:
+
+- `schema_version`;
+- `bundle_id`;
+- `issuer_id`;
+- `key_id`;
+- monotonic issuer `sequence`;
+- `issued_at`, `not_before`, and `next_update`;
+- a deterministically ordered grant set;
+- a deterministically ordered revocation set;
+- `algorithm: ed25519`;
+- one detached signature.
+
+Ota verifies Ed25519 over canonical RFC 8785 JSON bytes for the unsigned payload, prefixed by the
+domain separator `ota.crossing-authority.bundle.v1\0`. Unknown fields, duplicate object keys,
+duplicate key IDs, duplicate grant IDs, duplicate revocations, non-canonical identities, unknown
+algorithms, or envelope-version downgrade refuse. Revocations are part of the signed payload.
+The verified bundle identity is the SHA-256 identity of those same domain-separated canonical
+payload bytes.
+
+Each grant carries its own identity, semantic crossing-scope identity, contract identity, derived
+crossing family/classification, supported actor-attribution posture, supported environment posture,
+validity window, and expiry kind. Ota verifies the system binding, signature, bundle identity,
+freshness, contract binding, selected grant, and signed revocation set before execution. A missing
+store, stale bundle, future-issued bundle outside the declared skew bound, unknown key, invalid
+signature, missing grant, revoked grant, or scope mismatch is a typed preflight refusal.
+
+`OTA_POLICY`, discovered repo/workspace policy packs, environment variables, repository files, and
+caller flags may continue to narrow execution, but they cannot provide, replace, or redirect the
+authority store, bundle, key material, or issuer identity.
+
+#### Semantic crossing scope
+
+The canonical crossing evaluator must emit a content-addressed scope before grant admission. Its
+identity includes:
+
+- the semantic contract identity;
+- the exact task or workflow lane and selected workflow instance;
+- the complete ordered conditional execution graph, including dependencies, aggregates, preparation,
+  and `after_success`, `after_failure`, and `after_always` edges;
+- service provisioning, readiness, lifecycle, teardown, and cleanup invocations reachable from the
+  selected lane;
+- proof observers, negative controls, lifecycle assertions, and every other provider mutation that
+  can occur in the selected transaction;
+- the derived crossing family and classification;
+- selected mode, lifecycle, context, backend, and provider identity;
+- target OS, architecture, and platform identity;
+- normalized declared effect posture for every invocation;
+- execution overrides and selected effect overrides;
+- eventually, resolved non-secret task-input identity and stable source/version posture for
+  secret-bearing inputs without embedding, hashing, or otherwise fingerprinting secret values.
+
+The identity is over the ordered graph and edge conditions, not an unordered task set. A renamed or
+expanded workflow, changed hook, platform-specific variant, or changed execution override therefore
+has a different scope identity even when its display lane remains unchanged. The first
+`prebound_file` carrier conservatively marks every free-form task-input invocation as incomplete and
+refuses it. A later typed-input identity lane may admit non-secret values or stable secret-source
+posture, but it must never substitute a raw or low-entropy secret hash.
+
+The authority bundle binds grants to that scope identity. Ota evaluates scope equality at the
+crossing boundary; a display-name match alone never authorizes execution.
+
+#### Attribution, time, and revocation posture
+
+The first source distinguishes evidence from claims:
+
+- runner mode is directly observed as `agent` or `non_agent`; CI and human identity are not
+  independently attested by Core and remain `unknown` without an authority adapter;
+- environment posture is `unknown` unless the selected execution provider supplies a
+  transaction-bound environment attestation; an absent `CI` variable is not local-environment
+  proof;
+- expiry and bundle freshness are evaluated against the runner clock and emitted as
+  `runner_clock_observed`, not an external time attestation;
+- revocation is bounded by the verified bundle's signed contents and `next_update` deadline. Once
+  stale, the authority source fails closed rather than treating its last `revoked: false` as live.
+
+The signed-file adapter is bounded offline authority, not strong online revocation or hardened
+privilege separation. Root ownership and mode checks establish only that Ota's current unprivileged
+process cannot rewrite authority files; they cannot prove the invoking job lacks `sudo`,
+capabilities, or namespace control. The carrier publishes
+`current_process_filesystem_guarded`, not a provider-attested separation claim. A hardened launcher
+or provider attestation is required before Ota can claim stronger authority separation. It accepts
+a bundle only inside its short signed validity window and only when the authority adapter can supply:
+
+- protected issuer-sequence or last-observed-time high-water evidence; and
+- a system-clock posture the executing principal cannot modify inside the enforced boundary.
+
+The independently managed authority provisioning process advances the greatest issued sequence and
+last observed time in protected adapter state alongside the signed bundle. Ota is intentionally
+non-root and read-only against that state: it verifies exact bundle/high-water agreement and refuses
+rollback. If either the protected high-water state or trustworthy clock posture is unavailable,
+`prebound_file` refuses authority; a disclaimer is not enough to turn an untrustworthy time source
+into expiry evidence. A runner clock before `not_before`, after `next_update`, behind protected
+last-observed time beyond allowed skew, or otherwise untrustworthy for the requested authority
+posture refuses.
+
+The initial signed-bundle carrier must not authorize a grant whose scope requires stronger actor or
+environment attribution than Core can evidence. Provider-issued authority adapters may add that
+capability later without changing the canonical crossing scope.
+
+#### Admission and evidence split
+
+Grant admission occurs before setup, provisioning, child-process creation, service mutation, or
+proof artifacts. A failed admission emits a typed refusal receipt with authority-source and
+grant-evaluation evidence, but no crossing record.
+
+For an allowed crossing, Ota durably creates a runner-owned crossing transaction and cleanup/finalizer
+journal after admission and before the first execution side effect. Journal creation is atomic,
+durably flushed, and protected by an exclusive transaction lock. It binds the crossing scope,
+verified bundle, selected grant, observed clock posture, revocation posture, and pending terminal
+state. State transitions are monotonic and compare the expected prior state before replacement.
+Every success, failure, interruption, timeout, or startup failure finalizes that same transaction.
+If durable journaling is unavailable, Ota refuses instead of executing.
+
+The first local journal is runner-authored, exclusively locked, compare-before-replace, and
+content-addressed. It is not independently authenticated against a same-user process that can
+rewrite `.ota/state`. Receipts must publish that posture as
+`authentication_posture: runner_local_content_addressed`; archive verification may claim internal
+identity and admission/outcome reconciliation, but not tamper-proof execution attestation. The
+broker-backed work-unit adapter below is the path to independently authenticated per-use
+consumption evidence.
+
+On startup, Ota recovers pending journals before admitting another crossing for the same repository
+and scope. A journal left pending by `SIGKILL`, process crash, or power loss is finalized as
+`abandoned` or `incomplete` after any recoverable cleanup/finalizer work. It can never be read as an
+allowed completed crossing. Recovery must first verify the pending journal's recorded semantic
+identity; malformed or identity-mismatched state refuses recovery rather than being legitimized as a
+new terminal record. Recovery and finalization errors remain explicit terminal evidence.
+
+Archive verification re-derives the crossing evaluator from the archived contract snapshot and an
+authority-bearing archive-context v2 canonical selected-invocation scope (rather than a mutable
+lane label),
+re-verifies the archived signed envelope against the current fixed trust-store binding, and requires
+that binding identity to match the one recorded at execution. If the current store has rotated, an
+independently signed historical trust-root attestation must bridge the recorded binding to the
+current root; a substituted archived binding is never sufficient. Verification then replays the
+grant decision against recorded protected clock/high-water evidence and rejects a permitted crossing
+with missing terminal finalization. Archive verification proves the historical decision made from
+the bound authority snapshot; it does not claim that the grant remains live or unrevoked now.
+
+The first carrier must not claim more attribution than Ota observes. Current Core distinguishes
+`agent` from non-agent runner mode only; it does not independently attest CI identity or a generic
+`local` environment. Those fields remain `unknown` unless the chosen authority adapter supplies
+transaction-bound evidence. A grant never bypasses V11.3 agent-safe admission.
+
+A runner-verifiable work-unit lifetime is also required by the V11.7 acceptance bar. The credible
+OSS design is a separate `authority_broker` adapter:
+
+1. Ota generates a fresh cryptographic nonce and ephemeral work-unit identity after resolving the
+   semantic crossing scope.
+2. Ota sends the nonce, scope identity, contract identity, actor/environment evidence posture, and
+   requested lifetime to a pre-bound authenticated broker.
+3. The broker atomically creates a one-use lease, signs a grant for that exact work-unit identity,
+   and returns issuer sequence, freshness, and revocation evidence.
+4. Ota asks the broker to atomically consume the lease before the first execution side effect; the
+   broker, not runner-local state, rejects repeat consumption.
+5. Ota durably records that broker consumption before execution and terminally finalizes the local
+   crossing transaction on success, failure, interruption, or timeout.
+6. Where supported, Ota reports the terminal result to the broker without treating delivery of that
+   report as proof that execution completed.
+7. Reuse, replay, scope substitution, missing terminal state, or caller-supplied work-unit identity
+   refuses.
+
+The `prebound_file` adapter intentionally supports bounded calendar TTL only. It is the first grant
+carrier, not evidence that the work-unit acceptance bar is complete. V11.7 remains open until the
+broker-backed one-use lifetime is implemented and pressure-proven.
+
+#### `--grant` admission semantics
+
+`ota run <task> --grant <id>` and `ota up --workflow <name> --grant <id>` use the same option
+admission boundary as other Ota-owned execution flags. The flag remains Ota-owned when it appears
+after the task/workflow selector and before declared task inputs.
+
+The first carrier uses explicit selection only:
+
+- a crossing-required lane without exactly one `--grant <id>` refuses;
+- duplicate `--grant` flags refuse during parsing;
+- an unknown, revoked, expired, stale, out-of-scope, or incorrectly attributed grant refuses;
+- supplying `--grant` for a lane where the canonical evaluator says no crossing is required refuses
+  as inapplicable;
+- Ota never auto-selects a grant merely because one bundle entry appears to match.
+
+Dry-run performs the same authority-source, signature, freshness, revocation, attribution, and scope
+evaluation as real execution. It emits `admissible_not_consumed`, creates no crossing transaction,
+does not emit a crossing record, does not consume a broker work unit, and performs no execution side
+effect. A failed grant admission emits a typed refusal and likewise never emits a crossing record.
+Real execution repeats
+the time-, sequence-, and revocation-sensitive checks immediately before durable transaction
+creation; any changed decision refuses.
 
 ### 4. Execution-intent capture
 

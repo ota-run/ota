@@ -550,7 +550,7 @@ pub struct ExecutionReceipt {
     )]
     pub witnessed_observations: ExecutionReceiptWitnessedObservations,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crossing: Option<ExecutionBoundaryCrossing>,
+    pub crossing: Option<Box<ExecutionBoundaryCrossing>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<GovernanceRefusalRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1274,6 +1274,73 @@ pub struct ExecutionBoundaryCrossing {
     pub reason: Option<String>,
     pub evidence_attachment_state: String,
     pub evidence_classes: ExecutionBoundaryCrossingEvidenceClasses,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority: Option<ExecutionBoundaryCrossingAuthority>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionBoundaryCrossingAuthority {
+    pub decision: String,
+    pub authority_id: String,
+    /// The local signed-file carrier is guarded from the current process, not provider-attested.
+    pub authority_separation_posture: String,
+    pub authority_binding_identity: String,
+    pub issuer_id: String,
+    pub key_id: String,
+    pub key_fingerprint: String,
+    pub bundle_id: String,
+    pub bundle_identity: String,
+    pub bundle_sequence: u64,
+    pub grant_id: String,
+    pub grant_identity: String,
+    pub scope_identity: String,
+    pub contract_identity: String,
+    pub boundary_family: String,
+    pub classification: String,
+    pub actor_mode: String,
+    pub environment_posture: String,
+    pub expiry_kind: String,
+    pub issued_at: String,
+    pub not_before: String,
+    pub next_update: String,
+    pub expires_at: String,
+    pub clock_evidence: String,
+    pub sequence_evidence: String,
+    pub revocation_evidence: String,
+    pub admitted_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction: Option<serde_json::Value>,
+    pub archive_evidence: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct CrossingGrantAdmissionPreview {
+    pub decision: String,
+    pub authority_id: String,
+    pub authority_binding_identity: String,
+    pub issuer_id: String,
+    pub key_id: String,
+    pub key_fingerprint: String,
+    pub bundle_id: String,
+    pub bundle_identity: String,
+    pub bundle_sequence: u64,
+    pub grant_id: String,
+    pub grant_identity: String,
+    pub scope_identity: String,
+    pub contract_identity: String,
+    pub boundary_family: String,
+    pub classification: String,
+    pub actor_mode: String,
+    pub environment_posture: String,
+    pub expiry_kind: String,
+    pub issued_at: String,
+    pub not_before: String,
+    pub next_update: String,
+    pub expires_at: String,
+    pub clock_evidence: String,
+    pub sequence_evidence: String,
+    pub revocation_evidence: String,
+    pub admitted_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -1304,6 +1371,16 @@ pub struct GovernanceRefusalRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub closure_path: Vec<String>,
     pub evidence_class: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_grant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluation_details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_started: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -1443,7 +1520,7 @@ pub struct GovernanceEvaluation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_policy: Option<HarnessSandboxPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub crossing: Option<ExecutionBoundaryCrossing>,
+    pub crossing: Option<Box<ExecutionBoundaryCrossing>>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -1516,6 +1593,8 @@ pub struct RunPreviewSuccess<'a> {
     pub governance: RunPreviewGovernanceSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_admission: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_grant_admission: Option<CrossingGrantAdmissionPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) replay_input_policy: Option<ReplayInputPolicyEvaluation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2527,11 +2606,31 @@ pub struct ReceiptSuccess<'a> {
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_path: Option<&'a str>,
+    /// Archive-only lane context. Receipt history uses this with the archived contract snapshot
+    /// instead of consulting the current worktree when it re-derives crossing requirements.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_context: Option<ReceiptArchiveContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promoted_baseline: Option<ReceiptPromotedBaseline>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub artifact_routing: Vec<ArtifactRoute>,
     pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ReceiptArchiveContext {
+    pub schema_version: u32,
+    /// `readiness` describes a diagnosis-only receipt; `execution` identifies a task or workflow
+    /// that actually crossed the execution boundary.
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lane_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lane_name: Option<String>,
+    /// V2 execution archives carry the canonical crossing scope used to select the exact lane.
+    /// History re-derives this from the archived contract before accepting crossing evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) semantic_scope: Option<crate::crossing::CrossingSemanticScope>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2575,6 +2674,9 @@ pub struct ReceiptHistoryEntry {
 #[derive(Debug, Serialize, Clone)]
 pub struct ReceiptHistoryInvalidArchive {
     pub archive_path: String,
+    /// `legacy_unverified` records an older archive that lacks the immutable snapshot pair.
+    /// It remains inspectable but cannot become a baseline or assurance input.
+    pub posture: String,
     pub error: String,
 }
 
@@ -3445,6 +3547,8 @@ pub struct UpPreviewStatus<'a> {
     pub governance: GovernanceEvaluation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_admission: Option<&'a serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_grant_admission: Option<&'a CrossingGrantAdmissionPreview>,
     #[serde(skip_serializing_if = "<[Finding]>::is_empty")]
     pub blockers: &'a [Finding],
 }

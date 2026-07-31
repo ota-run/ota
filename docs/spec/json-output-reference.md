@@ -148,10 +148,22 @@ human text output:
   attempted interrupt-driven host-managed service cleanup and whether each stop succeeded or failed
 - `ota up --json`: inspect additive `governance.crossing` and `receipt.crossing` when the
   selected workflow crossed a heavier audited execution boundary and the operator supplied intent
-  with `--reason`; the current shipped record keeps `requirement_source: derived` honest instead
-  of pretending contract-declared grant or approval truth, and `crossing.evidence_classes`
+  with `--reason`; the record keeps `requirement_source: derived` honest, and
+  `crossing.evidence_classes`
   distinguishes caller-asserted fields such as `reason` from runner-derived or runner-attested
-  fields
+  fields. When a contract-bound signed grant admitted the crossing, `crossing.authority` carries
+  the verified authority, bundle, grant, exact semantic scope, freshness/revocation posture, and
+  archived signed evidence. Real execution also carries a terminal `authority.transaction`;
+  dry-run admission does not create one
+- `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
+  fixed-authority admission with `decision: admissible_not_consumed` and no transaction. A grant
+  refusal instead returns `execution_started: false` plus
+  `crossing_grant_admission.decision: refused`, `authority_source: prebound_file`, the configured
+  authority and requested grant when present, a stable `reason_family`, and evaluation details.
+  Admission-produced `ota up --json` refusal receipts carry the same evidence under
+  `receipt.refusal` and never carry `receipt.crossing`. Mutating repo-level `ota run` remains a
+  text execution surface; `ota run --receipt` renders the same typed refusal fields rather than
+  inventing a mutating run JSON contract
 - `ota run <task> --dry-run --json` and `ota up --json`: inspect additive
   `governance.post_execution.not_run_reason` and `governance.post_execution.crossing_record_state`
   when you need phase-accurate non-run and crossing-evidence posture instead of inferring from
@@ -2654,6 +2666,9 @@ Notes:
     boundary, or classification
   - `attested` means ota recorded the field at the decision boundary itself, such as
     `reason_present`, `principal_attribution_state`, or attachment state
+  - optional `authority` means the selected signed grant was verified before execution against
+    the contract-bound fixed trust store. Its `archive_evidence` is re-verified with the archived
+    contract snapshot and current fixed trust binding; it is not reusable authorization
 - refused workflow entries may also carry additive `blocked_task` and `closure_path` when the
   selected workflow reaches a non-safe task in its prepare/setup/run/attach closure
 - each workflow entry includes additive fields only when declared or resolved:
@@ -3314,7 +3329,7 @@ filesystem or outbound boundary posture.
             "detail": "kind=task"
           },
           {
-            "id": "actor_mode:human",
+          "id": "actor_mode:non_agent",
             "family": "actor_mode",
             "evidence_class": "derived",
             "replay_class": "pinned"
@@ -4778,7 +4793,7 @@ runner-attested at the decision site itself.
           "detail": "kind=workflow"
         },
         {
-          "id": "actor_mode:human",
+          "id": "actor_mode:non_agent",
           "family": "actor_mode",
           "evidence_class": "derived",
           "replay_class": "pinned"
@@ -5245,7 +5260,18 @@ The nested `receipt` object can also include:
 - `contract_snapshot_hash` with the normalized semantic contract snapshot identity used for this
   receipt; the hash is content-addressed and stable across formatting-only contract edits
 - `contract_snapshot_ref` when Ota archived the normalized snapshot under `.ota/contracts`; plain
-  read-only receipt JSON can still emit the hash without emitting a local archive ref
+  read-only receipt JSON can still emit the hash without emitting a local archive ref. A persisted
+  repo receipt archive requires both this reference and the matching `contract_snapshot_hash`;
+  receipt history does not load the current contract as a substitute
+- `archive_context` on a persisted repo receipt archive: `readiness` records a diagnosis-only
+  lane. Authority-bearing `execution` archives use schema v2 and carry a canonical
+  `semantic_scope` identity with the exact lane, closure graph, target platform, execution
+  selection, workflow run behavior, and effect overrides. History re-derives it from the archived
+  contract before deciding crossing necessity; it does not infer authority from global contract
+  configuration or trust an editable lane label
+- `invalid_archives[].posture: legacy_unverified` when an older archive lacks the immutable
+  snapshot pair. These entries are visible for operator inspection but are never valid baseline,
+  proof, or authority inputs
 - `assumption_set_hash` with the canonical extracted assumption-set identity used for this
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file

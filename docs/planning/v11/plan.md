@@ -128,12 +128,13 @@ The implemented OSS governance slices after that are:
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 
-The following governance slice has open acceptance work and must not be represented as complete
-until its stated pressure or implementation bars close:
+The following governance continuation is active but remains incomplete until hosted pressure and
+its runner-verifiable work-unit authority bar close:
 
-- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;
-  reusable grant authority and crossing-time liveness remain open and explicitly deferred. No
-  later slice may treat a crossing record as reusable approval authority.
+- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - active continuation:
+  canonical semantic scope and the fixed-trust `prebound_file` signed carrier are implemented;
+  hosted pressure and the separate broker-backed one-use work-unit carrier remain open. No later
+  slice may treat a crossing record as reusable approval authority.
 
 The completed trust/product follow-ons are:
 
@@ -188,7 +189,7 @@ The completed sandbox-enforcement slice is:
   `1.6.26-implementation`. It applies the provider-neutral canonical policy envelope through the
   bounded stock OCI subset and refuses unsupported authoritative controls before work begins.
 
-The next planned OSS authoring slice is:
+The subsequent planned OSS authoring slice is:
 
 - [V11.22: contract creation and quality UX](../v11.22/plan.md) - planned and inactive. It makes
   deterministic, source-bound contract candidates and existing V11.14 assurance legible without

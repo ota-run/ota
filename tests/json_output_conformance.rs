@@ -34,6 +34,101 @@ fn run_ota(args: &[&str], cwd: &Path) -> Value {
     run_ota_with_env(args, cwd, &[], true)
 }
 
+#[test]
+fn crossing_grant_preview_refusal_matches_published_schema() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: crossing-grant-preview
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+    )
+    .expect("contract");
+
+    let preview = run_ota_json_output(&["run", "publish", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &preview);
+    assert_eq!(preview["execution_started"], false);
+    assert_eq!(
+        preview["crossing_grant_admission"]["reason_family"],
+        "crossing_grant_required"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["authority_source"],
+        "prebound_file"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["authority_id"],
+        "release-authority"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["execution_started"],
+        false
+    );
+}
+
+#[test]
+fn crossing_grant_up_refusal_receipt_carries_typed_authority_evidence() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: crossing-grant-up-refusal
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+"#,
+    )
+    .expect("contract");
+
+    let refusal = run_ota_json_output(
+        &["up", "--workflow", "release", "--json", "--receipt"],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &refusal);
+    assert_eq!(refusal["receipt"]["crossing"], Value::Null);
+    assert_eq!(
+        refusal["receipt"]["refusal"]["boundary_family"],
+        "crossing_grant_authority"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["authority_source"],
+        "prebound_file"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["authority_id"],
+        "release-authority"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["reason_family"],
+        "crossing_grant_required"
+    );
+    assert_eq!(refusal["receipt"]["refusal"]["execution_started"], false);
+}
+
 fn run_ota_with_env(
     args: &[&str],
     cwd: &Path,

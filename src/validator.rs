@@ -130,6 +130,7 @@ pub fn validate_contract_with_path(
     validate_duplicate_requirement_ownership(contract, &mut errors);
     validate_native_prerequisites(contract, &mut errors);
     validate_policies(contract, &mut errors);
+    validate_governance(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_readiness(contract, &mut errors);
     validate_surfaces(contract, &mut errors);
@@ -146,6 +147,25 @@ pub fn validate_contract_with_path(
         Ok(())
     } else {
         Err(ValidationErrors::from_vec(errors))
+    }
+}
+
+fn validate_governance(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(authority) = contract.governance.crossing_authority.as_ref() else {
+        return;
+    };
+    let authority_id = authority.authority_id.trim();
+    if authority_id.is_empty()
+        || authority_id.len() > 128
+        || !authority_id.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))
+        })
+    {
+        errors.push(ValidationError::new(
+            "`governance.crossing_authority.authority_id` must be a non-empty lowercase identifier of at most 128 ASCII characters using letters, digits, `.`, `_`, or `-`",
+        ));
     }
 }
 

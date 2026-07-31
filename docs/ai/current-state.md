@@ -85,12 +85,40 @@ durable agent workflow belongs in the canonical Ota skill.
   records two explicit boundaries: the clean host remains Doctor-blocked on the declared missing
   `just` tool, and pre-boundary sandbox refusal is inline receipt evidence rather than a durable
   refusal archive.
-- next planned slice: V11.22 contract creation and quality UX. It is planning-only and inactive.
-  It will make `init`/`detect` candidates source-bound and reviewable, reuse V11.14's assurance
-  truth only for its existing claim families, and add deterministic review-gated contract upgrades
-  without hosted or LLM dependency. V11.7 reusable grant authority remains explicitly deferred;
-  V11.22 does not consume crossing records as approval authority. See
-  [V11.22](../planning/v11.22/plan.md).
+- V11.7 audited-crossing authority is active and partially implemented after independent design
+  review. Core now derives one canonical content-addressed crossing scope from the selected
+  task/workflow execution graph, refuses unresolved task-input identity, and supports an opt-in
+  `governance.crossing_authority.authority_id` plus `ota run|up --grant <id>` admission path.
+  The first `prebound_file` carrier reads only fixed system trust state protected from Ota's current
+  unprivileged process; it does not claim hardened provider-attested privilege separation. It verifies an
+  Ed25519/RFC-8785 signed bundle, exact contract/scope/family/classification/actor binding,
+  bounded freshness, signed revocations, and protected sequence/clock high-water evidence; and
+  refuses before sandbox admission or execution side effects. `ota run` repeats the
+  time-, sequence-, and revocation-sensitive admission immediately before transaction creation.
+  Real execution durably creates a
+  runner-owned per-scope crossing transaction before any selected-lane side effect, terminalizes it
+  on success, precondition/startup failure, interruption, or abandoned recovery, and binds that
+  transaction identity to the fresh crossing receipt. Archived receipts preserve the signed
+  bundle, binding, scope,
+  admission time, and terminal transaction for re-derivation against the current fixed trust root.
+  Receipt history derives crossing necessity from each authority-bearing archive's canonical
+  selected-invocation scope and archived contract snapshot, never from global authority
+  configuration or an editable lane label;
+  older snapshot-less receipts remain visible only as `legacy_unverified`.
+  The first local transaction carrier is explicitly `runner_local_content_addressed`: it is
+  runner-authored, locked, and internally reconciled, but not independently authenticated against
+  same-user state tampering. Refusal and dry-run emit no crossing record; successful dry-run
+  publishes only `admissible_not_consumed`, while refusal carries typed `prebound_file`
+  authority-source, authority/grant selection, reason, and `execution_started: false` evidence.
+  Existing contracts
+  remain compatible until they opt into crossing authority, and grants never bypass V11.3 agent
+  refusal. Core regression proof covers exact admission, mutation, revocation, sequence rollback,
+  selected-graph expansion, missing-grant refusal, dry-run parity, pending-journal recovery, and
+  terminal outcome reconciliation. Hosted pressure remains required.
+  V11.7 also remains open for the separately pre-bound broker adapter that can issue and atomically
+  consume runner-nonce-bound one-use work-unit leases. V11.22 remains planning-only and inactive; it
+  does not consume crossing records as approval authority. See
+  [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
@@ -581,10 +609,12 @@ durable agent workflow belongs in the canonical Ota skill.
 ## Handoff To The Next Chat
 
 Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
-`docs/planning/v11.22/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
+`docs/planning/v11.7/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
 `ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
-V11.21 is complete. The local real-OCI
+V11.21 is complete. V11.7 authority-source and semantic-crossing implementation is active and
+ready for final independent review, then hosted pressure; its broker-backed one-use work-unit
+lifetime remains explicitly open. V11.22 remains planning-only and inactive. The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
 and Caddy run [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898)
@@ -593,10 +623,11 @@ prove the bounded stock-OCI subset against exact Core
 completion, targeted egress, managed isolated paths, typed preparation, services, lifecycle proof,
 or raw-shell governance.
 
-The public example, canonical skill, and site reference are carried, and the full Core/first-party
-release gate is green. Do not reopen V11.21 or widen its bounded claims. V11.22 is planned but
-inactive: review and explicitly activate its source-bound candidate and upgrade model before any
-implementation begins.
+The V11.7 public example, canonical skill, global skill mirrors, and site reference are carried.
+Core crossing, schema, and JSON conformance tests plus first-party example/skill/site checks are
+green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7 open until hosted signed-grant
+pressure and the separate broker-backed work-unit carrier close its remaining acceptance bar; keep
+V11.22 planned until it is explicitly activated.
 
 ## Working Rules
 

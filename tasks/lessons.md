@@ -226,3 +226,12 @@
 - Pattern: Pinning Ota's setup Action while leaving other changed workflow Actions on moving major tags or branches preserves a supply-chain drift path.
 - Correction: Resolve every Action reference introduced or modified by an upstream governance PR to its current full commit SHA and retain the human-readable release line as a comment.
 - Rule: Upstream-facing Ota governance changes must not add mutable GitHub Action references; full commit identities are the execution authority.
+
+## 2026-07-31
+
+- Pattern: An agent can validate an agent-safe Ota task through the ordinary human lane and thereby
+  skip the exact admission posture the contract advertises for agents.
+- Correction: Run every agent-safe `ota run` and `ota up` validation with `--agent`; use the human
+  lane only when the task is explicitly review-required and the user has approved that execution.
+- Rule: Codex must preserve its actor mode when invoking Ota. Agent-safe validation means
+  `--agent`, not merely a task that would also run successfully for a human.

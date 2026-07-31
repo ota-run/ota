@@ -62,6 +62,18 @@
       ]
     },
     {
+      "id": "execution-governance-capabilities",
+      "title": "ota Execution Governance Capability Reference",
+      "kind": "reference",
+      "source_path": "docs/spec/execution-governance-capabilities.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/execution-governance-capabilities.md",
+      "public_url": "https://ota.run/docs#execution-governance-capabilities",
+      "canonical_for": [
+        "major execution-governance capability ownership",
+        "focused public reference and example routing"
+      ]
+    },
+    {
       "id": "execution-topology",
       "title": "ota Execution Topology",
       "kind": "reference",

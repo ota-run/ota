@@ -759,8 +759,30 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "evidence_class": { "type": "string" }
-      }
+        "evidence_class": { "type": "string" },
+        "authority_source": { "const": "prebound_file" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "requested_grant_id": { "type": "string", "minLength": 1 },
+        "evaluation_details": { "type": "string", "minLength": 1 },
+        "execution_started": { "const": false }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "boundary_family": { "const": "crossing_grant_authority" }
+            },
+            "required": ["boundary_family"]
+          },
+          "then": {
+            "required": [
+              "authority_source",
+              "evaluation_details",
+              "execution_started"
+            ]
+          }
+        }
+      ]
     },
     "harnessEnvironmentBoundary": {
       "type": "object",

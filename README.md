@@ -375,6 +375,9 @@ directly instead of only consuming it through `ota diff` or receipt correlation.
 Public architecture guide:
 [Execution Governance Loop](https://ota.run/docs/reference/execution-governance-loop)
 
+Public capability map:
+[Execution Governance Capabilities](docs/spec/execution-governance-capabilities.md)
+
 Public operator guide:
 [Semantic Snapshots and Correlation](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
 

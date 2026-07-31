@@ -1,6 +1,6 @@
 [package]
 name = "ota"
-version = "1.6.25"
+version = "1.6.26"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -21,8 +21,14 @@ jsonschema = { version = "0.18.3", features = ["draft202012"] }
 getrandom = "0.2.16"
 fs2 = "0.4.3"
 sha2 = "0.10.9"
+base64 = "0.22.1"
+ed25519-dalek = "3.0.0"
+serde_jcs = "0.2.0"
 quick-xml = "0.41.0"
 tempfile = "3.23.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.177"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

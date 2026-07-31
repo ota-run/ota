@@ -2365,6 +2365,26 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "bootstrap": { "$ref": "#/$defs/agentBootstrap" },
         "notes": { "type": "string" }
       }
+    },
+    "crossingAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority_id"],
+      "properties": {
+        "authority_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "crossing_authority": { "$ref": "#/$defs/crossingAuthority" }
+      }
     }
   },
   "type": "object",
@@ -2449,6 +2469,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/yamlValue" }
     },
+    "governance": { "$ref": "#/$defs/governance" },
     "metadata": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/yamlValue" }

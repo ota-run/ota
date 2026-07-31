@@ -204,7 +204,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--grant`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run publish --grant approved-publish\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -262,6 +262,9 @@ enum Commands {
         /// Attach operator intent when crossing a heavier audited execution boundary.
         #[arg(long)]
         reason: Option<String>,
+        /// Select one signed grant from the contract's pre-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
@@ -599,6 +602,9 @@ enum Commands {
         /// Attach operator intent when crossing a heavier audited execution boundary.
         #[arg(long)]
         reason: Option<String>,
+        /// Select one signed grant from the contract's pre-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -3719,11 +3725,12 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Enum(LIFECYCLES),
         }),
-        "--member" | "--file" | "--sandbox-target" | "--reason" => Some(RunFlagSpec {
+        "--member" | "--file" | "--sandbox-target" | "--reason" | "--grant" => Some(RunFlagSpec {
             canonical: match name {
                 "--member" => "member",
                 "--sandbox-target" => "sandbox-target",
                 "--reason" => "reason",
+                "--grant" => "grant",
                 _ => "file",
             },
             takes_value: true,
@@ -5416,6 +5423,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             skip_deps,
             effect_override,
             reason,
+            grant,
             receipt,
             stream,
             log,
@@ -5432,7 +5440,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps,
             };
             if agent {
-                commands::run_command_with_agent_reason(
+                commands::run_command_with_agent_reason_and_grant(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5444,6 +5452,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     reason.as_deref(),
+                    grant.as_deref(),
                     sandbox_target.as_deref(),
                     dry_run,
                     debug,
@@ -5452,7 +5461,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     log,
                 )
             } else {
-                commands::run_command_with_agent_reason(
+                commands::run_command_with_agent_reason_and_grant(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5464,6 +5473,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     false,
                     false,
                     reason.as_deref(),
+                    grant.as_deref(),
                     sandbox_target.as_deref(),
                     dry_run,
                     debug,
@@ -5612,6 +5622,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             replay_baseline,
             effect_override,
             reason,
+            grant,
             member,
             workflow,
             path,
@@ -5625,7 +5636,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps: false,
             };
             if agent {
-                commands::up_with_agent_reason(
+                commands::up_with_agent_reason_and_grant(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5635,6 +5646,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     reason.as_deref(),
+                    grant.as_deref(),
                     sandbox_target.as_deref(),
                     format,
                     debug,
@@ -5647,7 +5659,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     ready_timeout.as_deref(),
                 )
             } else {
-                commands::up_with_agent_reason(
+                commands::up_with_agent_reason_and_grant(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5657,6 +5669,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     false,
                     false,
                     reason.as_deref(),
+                    grant.as_deref(),
                     sandbox_target.as_deref(),
                     format,
                     debug,
@@ -10440,7 +10453,7 @@ tasks:
     }
 
     #[test]
-    fn receipt_history_accepts_archives_missing_supported_execution_field() {
+    fn receipt_history_marks_snapshotless_archives_legacy_unverified() {
         let fixture = ContractFixture::new_dir();
 
         fixture.write(
@@ -10481,10 +10494,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["summary"]["archive_count"], 1);
-        assert_eq!(json["summary"]["invalid_archive_count"], 0);
-        assert_eq!(json["archives"].as_array().unwrap().len(), 1);
-        assert_eq!(json["archives"][0]["contract"], "./ota.yaml");
+        assert_eq!(json["summary"]["archive_count"], 0);
+        assert_eq!(json["summary"]["invalid_archive_count"], 1);
+        assert_eq!(json["invalid_archives"][0]["posture"], "legacy_unverified");
     }
 
     #[test]
@@ -10753,6 +10765,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-baseline",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 let baseline_payload = serde_json::json!({
                     "ok": false,
@@ -10769,6 +10789,8 @@ env:
                         "path": fixture.file_path().display().to_string(),
                         "scope": "repo",
                         "contract": fixture.file_path().display().to_string(),
+                        "contract_snapshot_hash": snapshot_hash,
+                        "contract_snapshot_ref": snapshot_ref,
                         "backend": "native",
                         "summary": {
                             "error_count": 2,
@@ -10863,14 +10885,13 @@ env:
                     .cloned()
                     .unwrap();
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
-  "version": 1,
-  "project": {
-    "name": "receipt-diff"
-  }
-}"#,
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "sha256-old",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -10889,8 +10910,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -10952,7 +10973,7 @@ env:
     }
 
     #[test]
-    fn receipt_json_diff_fails_when_baseline_snapshot_ref_is_broken() {
+    fn receipt_json_diff_latest_skips_broken_snapshot_archive() {
         let worker = std::thread::Builder::new()
             .name(String::from("receipt-json-diff-broken-snapshot"))
             .stack_size(8 * 1024 * 1024)
@@ -10965,7 +10986,6 @@ project:
   name: receipt-diff
 "#,
                 );
-
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
                     &serde_json::to_string_pretty(&serde_json::json!({
@@ -11020,7 +11040,7 @@ project:
                     json["errors"][0]
                         .as_str()
                         .unwrap()
-                        .contains("failed to load archived contract snapshot")
+                        .contains("no archived repo receipt found")
                 );
             })
             .expect("spawn broken snapshot receipt diff worker");
@@ -11056,9 +11076,11 @@ checks:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-check-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11070,6 +11092,8 @@ checks:
   },
   "version": 1
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11088,8 +11112,8 @@ checks:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11167,9 +11191,11 @@ agent:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-unrelated-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11179,7 +11205,7 @@ agent:
       "name": "api-health",
       "kind": "precondition",
       "severity": "error",
-      "run": false
+      "run": "false"
     }
   ],
   "agent": {
@@ -11188,6 +11214,8 @@ agent:
     ]
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11206,8 +11234,8 @@ agent:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11277,9 +11305,11 @@ env:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-same-family-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11295,6 +11325,8 @@ env:
     }
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11313,8 +11345,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11389,9 +11421,11 @@ execution:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-broad-execution-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11401,7 +11435,7 @@ execution:
       "name": "api-health",
       "kind": "precondition",
       "severity": "error",
-      "run": false
+      "run": "false"
     }
   ],
   "execution": {
@@ -11412,6 +11446,8 @@ execution:
     }
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11430,8 +11466,8 @@ execution:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11499,9 +11535,11 @@ env:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-no-clear-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11514,6 +11552,8 @@ env:
     }
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11532,8 +11572,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11608,6 +11648,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-gate-fail",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11626,6 +11674,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 2,
@@ -11703,8 +11753,24 @@ project:
         let current = run_with(["ota", "receipt", "--json", fixture.path()]);
         assert_eq!(current.exit_code, 1);
 
+        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+            &fixture,
+            "receipt-diff-gate-pass",
+            serde_json::json!({
+                "version": 1,
+                "project": { "name": "receipt-diff" }
+            }),
+        );
+        let mut baseline: Value = serde_json::from_str(&current.stdout).unwrap();
+        baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
+        baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
+
         let baseline_file = fixture.dir.path().join("baseline-receipt.json");
-        fs::write(&baseline_file, current.stdout).unwrap();
+        fs::write(
+            &baseline_file,
+            serde_json::to_string_pretty(&baseline).unwrap(),
+        )
+        .unwrap();
 
         let output = run_with([
             "ota",
@@ -11743,6 +11809,14 @@ project:
   name: receipt-diff
 "#,
                 );
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-moved",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11762,6 +11836,8 @@ project:
                             "path": "/old/location/ota.yaml",
                             "scope": "repo",
                             "contract": "/old/location/ota.yaml",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -12028,7 +12104,7 @@ env:
     }
 
     #[test]
-    fn receipt_json_diff_legacy_explicit_baseline_keeps_same_contract_identity() {
+    fn receipt_json_diff_rejects_legacy_explicit_baseline() {
         let worker = std::thread::Builder::new()
             .name(String::from("receipt-json-legacy-baseline"))
             .stack_size(8 * 1024 * 1024)
@@ -12097,17 +12173,12 @@ project:
                     fixture.path(),
                 ]);
 
-                assert_eq!(output.exit_code, 0);
+                assert_eq!(output.exit_code, 1);
                 let json: Value = serde_json::from_str(&output.stdout).unwrap();
-                assert_eq!(
-                    json["summary"]["comparison"]["baseline_identity_label"],
-                    "ota.yaml"
-                );
-                assert_eq!(
-                    json["summary"]["comparison"]["current_identity_label"],
-                    "ota.yaml"
-                );
-                assert_eq!(json["summary"]["comparison"]["identity_changed"], false);
+                assert!(json["errors"][0]
+                    .as_str()
+                    .unwrap()
+                    .contains("unverifiable because it omits immutable `receipt.contract_snapshot_ref`"));
             })
             .expect("spawn receipt legacy-baseline worker");
 
@@ -12303,6 +12374,14 @@ project:
   name: receipt-diff
 "#,
                 );
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-valid-baseline",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101011-123Z.json",
@@ -12366,6 +12445,8 @@ project:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -12449,6 +12530,14 @@ project:
                     .unwrap();
 
                 let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-explicit-file",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
                 fs::write(
                     &baseline_file,
                     serde_json::to_string_pretty(&serde_json::json!({
@@ -12466,6 +12555,8 @@ project:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -12538,6 +12629,16 @@ tasks:
 "#,
                 );
 
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-remote",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" },
+                        "tasks": { "setup": { "run": "echo ready" } }
+                    }),
+                );
+
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
                     &serde_json::to_string_pretty(&serde_json::json!({
@@ -12555,6 +12656,8 @@ tasks:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "status": "interrupted",
                             "backend": "remote",
                             "context": "remote_app",
@@ -18192,6 +18295,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
                 sandbox_target: None,
                 path: None,
                 inputs: Vec::new(),
@@ -18235,6 +18339,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
                 sandbox_target: None,
                 path: None,
                 inputs: Vec::new(),
@@ -19235,6 +19340,7 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
             sandbox_target: None,
             workflow: None,
         }));
@@ -19265,6 +19371,7 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
             sandbox_target: None,
             workflow: None,
         }));
@@ -19327,6 +19434,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
                 sandbox_target: None,
                 workflow: None,
             },
@@ -19363,6 +19471,7 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
                 sandbox_target: None,
                 workflow: None,
             }),
@@ -19438,6 +19547,7 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
             sandbox_target: None,
             path: None,
             inputs: Vec::new(),
@@ -19826,6 +19936,7 @@ tasks:
                     member: Vec::new(),
                     effect_override: Vec::new(),
                     reason: None,
+                    grant: None,
                     sandbox_target: None,
                     workflow: None,
                     path: None,
@@ -28467,6 +28578,48 @@ policies:
     }
 
     #[test]
+    fn run_grant_after_task_remains_an_ota_command_flag() {
+        let args = [
+            "ota",
+            "run",
+            "publish",
+            "--grant",
+            "approved-publish",
+            "--receipt",
+            ".",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        let rewritten = super::rewrite_task_input_path_hint(args);
+        let cli = try_parse_cli_on_test_stack(
+            &rewritten
+                .iter()
+                .map(|value| value.to_str().expect("test argument should be UTF-8"))
+                .collect::<Vec<_>>(),
+        )
+        .expect("grant after the task should remain an Ota command flag");
+
+        match cli.command {
+            Commands::Run {
+                task,
+                grant,
+                receipt,
+                path,
+                inputs,
+                ..
+            } => {
+                assert_eq!(task, "publish");
+                assert_eq!(grant.as_deref(), Some("approved-publish"));
+                assert!(receipt);
+                assert_eq!(path.as_deref(), Some(Path::new(".")));
+                assert!(inputs.is_empty());
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
     fn run_effect_override_is_classified_as_repo_run_value_flag() {
         let occurrence = super::parse_run_flag_occurrence(
             &[
@@ -28513,6 +28666,7 @@ policies:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
             sandbox_target: None,
             path: None,
             inputs: Vec::new(),
@@ -50220,6 +50374,21 @@ tasks:
             }
             fs::write(path, contents).unwrap();
         }
+    }
+
+    fn write_receipt_snapshot(
+        fixture: &ContractFixture,
+        name: &str,
+        snapshot: serde_json::Value,
+    ) -> (String, String) {
+        let bytes = serde_json::to_vec(&snapshot).expect("snapshot json");
+        let hash = crate::semantic_identity::contract_snapshot_hash(&bytes);
+        let relative = format!(".ota/contracts/{name}.json");
+        fixture.write(
+            relative.as_str(),
+            std::str::from_utf8(&bytes).expect("utf8 snapshot"),
+        );
+        (relative, hash)
     }
 
     #[test]

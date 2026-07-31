@@ -26,6 +26,44 @@
 
 ## Unreleased
 
+- Receipt-history verification now fails closed when an archived repo receipt omits its immutable
+  contract snapshot reference or matching snapshot identity. Historical authority requirements are
+  derived only from that archived contract, while ordinary audited crossings remain valid when the
+  archived contract did not opt into grant authority.
+- Authority-bearing receipt archives now preserve a canonical selected-invocation scope so grant
+  authority applies only to the exact archived execution closure. History re-derives lane, graph,
+  platform, execution selection, workflow run behavior, and effect overrides from the archived
+  contract rather than trusting an editable lane label. Snapshot-less older-release archives remain
+  inspectable as `legacy_unverified` and cannot participate in baseline, proof, or authority
+  selection.
+
+- activated V11.7 audited execution boundary authority. Contracts can opt into a fixed
+  system-bound crossing authority with `governance.crossing_authority.authority_id`; `ota run` and
+  `ota up` accept `--grant <id>` and refuse a governed heavier closure before sandbox admission,
+  provisioning, or child execution when the grant is missing, stale, revoked, untrusted, or out of
+  exact semantic scope. Ota derives that scope from the ordered selected task/workflow graph,
+  dependency and hook edges, target platform, and execution/effect overrides. The first
+  `prebound_file` carrier verifies Ed25519 signatures over RFC-8785 canonical JSON from fixed
+  protected system paths, bounded signed freshness, revocation state, and protected monotonic
+  sequence/clock evidence. `ota run` repeats time-, sequence-, and revocation-sensitive admission
+  immediately before transaction creation. Real execution persists a runner-owned per-scope
+  crossing transaction before selected-lane side effects and terminalizes it on success,
+  precondition/startup failure, interruption, or abandoned recovery. Successful admission and that
+  terminal transaction are runner-authored
+  receipt evidence; archived receipts retain the exact signed authority snapshot and reject
+  missing, pending, identity-mismatched, or outcome-inconsistent transaction evidence during
+  re-derivation against the current fixed trust binding. The local transaction is explicitly
+  `runner_local_content_addressed`, not independently authenticated same-user tamper evidence.
+  The signed-file carrier additionally reports
+  `authority_separation_posture: current_process_filesystem_guarded`; filesystem ownership does
+  not establish that the invoking job lacks administrative escalation, so stronger authority
+  separation remains a hardened-launcher or provider-attestation capability.
+  Grant refusal and dry-run never emit a crossing record; successful dry-run publishes only
+  `admissible_not_consumed`. Refused dry-run and admission-produced execution receipts instead
+  carry typed `prebound_file` authority-source, authority/grant selection, reason, and
+  `execution_started: false` evidence without minting crossing authority. Existing contracts
+  remain unchanged until they opt in, and no grant bypasses agent-safe refusal. Broker-backed
+  one-use work-unit authority remains an explicit open V11.7 boundary.
 - added V11.21 enforced sandbox policy application. Agent execution now compiles the selected
   task/workflow closure into a provider-neutral, target-platform-bound segment graph; applies
   policy-pack restrictions only as identified monotonic overlays; and negotiates the first

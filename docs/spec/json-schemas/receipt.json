@@ -7,6 +7,148 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "crossingSemanticScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "identity", "contract_identity", "lane", "boundary_family", "classification", "target_platform", "execution_graph_identity", "segment_identities", "edge_identities", "execution_selection", "input_identity_posture"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "lane": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "enum": ["task", "workflow"] },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        "boundary_family": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["routine", "escalated"] },
+        "target_platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "architecture"],
+          "properties": {
+            "os": { "type": "string", "minLength": 1 },
+            "architecture": { "type": "string", "minLength": 1 },
+            "platform": { "type": "string", "minLength": 1 }
+          }
+        },
+        "execution_graph_identity": { "$ref": "#/$defs/sha256Identity" },
+        "segment_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } },
+        "edge_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } },
+        "execution_selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skip_dependencies"],
+          "properties": {
+            "backend": { "enum": ["native", "container", "remote"] },
+            "lifecycle": { "enum": ["ephemeral", "persistent"] },
+            "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "memory": { "type": "integer", "minimum": 1 },
+            "skip_dependencies": { "type": "boolean" },
+            "run_behavior": { "enum": ["auto", "attach", "detach"] },
+            "sandbox_target": { "type": "string", "minLength": 1 },
+            "effect_overrides": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "input_identity_posture": { "enum": ["not_applicable", "unknown_secret_posture"] },
+        "unknown_dimensions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "crossingTransaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "identity",
+        "authentication_posture",
+        "transaction_id",
+        "authority_id",
+        "admission_identity",
+        "grant_identity",
+        "scope_identity",
+        "contract_identity",
+        "state",
+        "created_at"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "authentication_posture": { "const": "runner_local_content_addressed" },
+        "transaction_id": {
+          "type": "string",
+          "pattern": "^crossing-[0-9]+-[0-9a-f]{64}$"
+        },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "admission_identity": { "$ref": "#/$defs/sha256Identity" },
+        "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+        "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "state": {
+          "enum": ["pending", "completed", "failed", "interrupted", "incomplete"]
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "finalized_at": { "type": "string", "format": "date-time" },
+        "receipt_status": { "type": "string" }
+      }
+    },
+    "crossingGrantArchiveEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admission", "transaction"],
+      "properties": {
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authority_id", "authority_binding_identity", "issuer_id", "key_id",
+            "key_fingerprint", "bundle_id", "bundle_identity", "bundle_sequence",
+            "grant_id", "grant_identity", "scope_identity", "contract_identity",
+            "boundary_family", "classification", "actor_mode", "environment_posture",
+            "expiry_kind", "issued_at", "not_before", "next_update", "expires_at",
+            "clock_evidence", "sequence_evidence", "revocation_evidence", "decision",
+            "admitted_at", "semantic_scope", "authority_binding_snapshot",
+            "signed_bundle_snapshot", "sequence_state_snapshot"
+          ],
+          "properties": {
+            "authority_id": { "type": "string", "minLength": 1 },
+            "authority_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "issuer_id": { "type": "string", "minLength": 1 },
+            "key_id": { "type": "string", "minLength": 1 },
+            "key_fingerprint": { "$ref": "#/$defs/sha256Identity" },
+            "bundle_id": { "type": "string", "minLength": 1 },
+            "bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+            "bundle_sequence": { "type": "integer", "minimum": 0 },
+            "grant_id": { "type": "string", "minLength": 1 },
+            "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+            "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+            "boundary_family": { "type": "string", "minLength": 1 },
+            "classification": { "type": "string", "minLength": 1 },
+            "actor_mode": { "enum": ["agent", "non_agent"] },
+            "environment_posture": { "type": "string", "minLength": 1 },
+            "expiry_kind": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "not_before": { "type": "string", "format": "date-time" },
+            "next_update": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" },
+            "clock_evidence": { "type": "string", "minLength": 1 },
+            "sequence_evidence": { "type": "string", "minLength": 1 },
+            "revocation_evidence": { "type": "string", "minLength": 1 },
+            "decision": { "const": "allowed" },
+            "admitted_at": { "type": "string", "format": "date-time" },
+            "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" },
+            "authority_binding_snapshot": { "type": "object" },
+            "signed_bundle_snapshot": { "type": "object" },
+            "sequence_state_snapshot": { "type": "object" }
+          }
+        },
+        "transaction": { "$ref": "#/$defs/crossingTransaction" }
+      }
+    },
     "sandboxControlApplication": {
       "type": "object",
       "additionalProperties": false,
@@ -178,6 +320,42 @@
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
         "archive_path": { "type": "string" },
+        "archive_context": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema_version", "kind"],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "kind": { "const": "readiness" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema_version", "kind", "lane_kind", "lane_name"],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "kind": { "const": "execution" },
+                "lane_kind": { "enum": ["task", "workflow"] },
+                "lane_name": { "type": "string", "minLength": 1 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema_version", "kind", "lane_kind", "lane_name", "semantic_scope"],
+              "properties": {
+                "schema_version": { "const": 2 },
+                "kind": { "const": "execution" },
+                "lane_kind": { "enum": ["task", "workflow"] },
+                "lane_name": { "type": "string", "minLength": 1 },
+                "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" }
+              }
+            }
+          ]
+        },
         "artifact_routing": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
@@ -934,6 +1112,72 @@
                     "reason": { "type": "string" },
                     "evidence_attachment_state": { "type": "string" }
                   }
+                },
+                "authority": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "decision",
+                    "authority_id",
+                    "authority_separation_posture",
+                    "authority_binding_identity",
+                    "issuer_id",
+                    "key_id",
+                    "key_fingerprint",
+                    "bundle_id",
+                    "bundle_identity",
+                    "bundle_sequence",
+                    "grant_id",
+                    "grant_identity",
+                    "scope_identity",
+                    "contract_identity",
+                    "boundary_family",
+                    "classification",
+                    "actor_mode",
+                    "environment_posture",
+                    "expiry_kind",
+                    "issued_at",
+                    "not_before",
+                    "next_update",
+                    "expires_at",
+                    "clock_evidence",
+                    "sequence_evidence",
+                    "revocation_evidence",
+                    "admitted_at",
+                    "transaction",
+                    "archive_evidence"
+                  ],
+                  "properties": {
+                    "decision": { "const": "allowed" },
+                    "authority_id": { "type": "string", "minLength": 1 },
+                    "authority_separation_posture": { "const": "current_process_filesystem_guarded" },
+                    "authority_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "issuer_id": { "type": "string", "minLength": 1 },
+                    "key_id": { "type": "string", "minLength": 1 },
+                    "key_fingerprint": { "$ref": "#/$defs/sha256Identity" },
+                    "bundle_id": { "type": "string", "minLength": 1 },
+                    "bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "bundle_sequence": { "type": "integer", "minimum": 0 },
+                    "grant_id": { "type": "string", "minLength": 1 },
+                    "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "boundary_family": { "type": "string", "minLength": 1 },
+                    "classification": { "type": "string", "minLength": 1 },
+                    "actor_mode": { "enum": ["agent", "non_agent"] },
+                    "environment_posture": { "type": "string", "minLength": 1 },
+                    "expiry_kind": { "type": "string", "minLength": 1 },
+                    "issued_at": { "type": "string", "format": "date-time" },
+                    "not_before": { "type": "string", "format": "date-time" },
+                    "next_update": { "type": "string", "format": "date-time" },
+                    "expires_at": { "type": "string", "format": "date-time" },
+                    "clock_evidence": { "type": "string", "minLength": 1 },
+                    "sequence_evidence": { "type": "string", "minLength": 1 },
+                    "revocation_evidence": { "type": "string", "minLength": 1 },
+                    "admitted_at": { "type": "string", "format": "date-time" },
+                    "transaction": { "$ref": "#/$defs/crossingTransaction" },
+                    "archive_evidence": { "$ref": "#/$defs/crossingGrantArchiveEvidence" }
+                  }
                 }
               }
             },
@@ -1558,9 +1802,10 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["archive_path", "error"],
+            "required": ["archive_path", "posture", "error"],
             "properties": {
               "archive_path": { "type": "string" },
+              "posture": { "enum": ["legacy_unverified", "invalid"] },
               "error": { "type": "string" }
             }
           }

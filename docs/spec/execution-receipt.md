@@ -122,9 +122,35 @@ evidence, not caller-authored narration. The current shipped slice publishes:
 - optional `reason`
 - `evidence_attachment_state`
 - `evidence_classes`
+- optional `authority` when a contract-bound signed grant admitted the crossing
 
-Current shipped receipts keep `requirement_source` honest as `derived`, because ota is not yet
-projecting contract-declared crossing requirements or grant/approval truth on this lane.
+Current receipts keep `requirement_source` honest as `derived`: Ota derives the crossing from the
+selected effective safety closure. When `governance.crossing_authority` is configured and a signed
+grant admits that closure, `authority` carries the fixed authority binding, issuer/key and bundle
+identities, exact grant and semantic-scope identities, admission/freshness/revocation posture,
+and the archived signed evidence needed to re-derive the historical decision. Real execution also
+carries `authority.transaction`: a runner-owned journal created
+before selected-lane side effects and finalized as `completed`, `failed`, `interrupted`, or
+`incomplete`. The crossing `id` is that transaction identity. Archive verification rejects
+missing, pending, identity-mismatched, or outcome-inconsistent transaction evidence. This is
+grant-admission and per-use crossing evidence, not reusable authority or proof that the grant
+remains live now.
+`authority.authority_separation_posture: current_process_filesystem_guarded` is also an explicit
+boundary: the signed-file carrier verifies root-owned paths against Ota's current unprivileged
+process, but it does not prove that the invoking job lacks administrative escalation. Strong
+authority separation requires a hardened launcher or provider attestation.
+`authority.transaction.authentication_posture: runner_local_content_addressed` is an explicit
+boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
+is not independently authenticated against another same-user process with write access to
+`.ota/state`. Archive verification proves signed grant admission plus internal transaction,
+crossing-record, and receipt reconciliation; broker-backed per-use attestation remains future
+V11.7 work.
+Authority `actor_mode` is runner-observed as `agent` or `non_agent`; it does not claim a verified
+human identity merely because agent mode was absent.
+When grant admission refuses, the receipt carries no `crossing`. Its typed `refusal` instead names
+`boundary_family: crossing_grant_authority`, `authority_source: prebound_file`, the configured
+authority and requested grant when present, the stable reason family, runner evaluation detail, and
+`execution_started: false`.
 They now also publish additive `evidence_classes` on the crossing record itself so consumers can
 distinguish caller assertion from runner-derived and runner-attested truth without inferring it
 from field names. The current shipped posture is:
@@ -134,6 +160,19 @@ from field names. The current shipped posture is:
 - `evidence_attachment_state`: `attested`
 - `principal_attribution_state`: `attested`
 - lane, boundary, classification, requirement source, actor mode, and intent source: `derived`
+
+Contracts without `governance.crossing_authority` retain the existing audited-crossing behavior.
+Contracts that opt in fail before execution when a heavier non-agent lane lacks exact live authority.
+A grant cannot authorize an agent-mode closure that the agent-safe boundary refuses.
+Receipt-history verification derives whether authority was required only from the receipt's archived,
+content-addressed contract snapshot. A repo receipt archive without that snapshot and its matching
+identity is unverifiable; history never recovers authority requirements from the current worktree.
+The archive also distinguishes a diagnosis-only `readiness` receipt from an `execution` receipt with
+a canonical recorded selected-invocation scope. Archive verification reconciles the content-addressed
+record, but does not make local storage tamper-proof against a caller who can rewrite both the archive
+and its local storage. Authority configuration alone never turns readiness or a safe archived lane into
+a crossing. Older snapshot-less archives are reported as
+`legacy_unverified` and are excluded from baseline, proof, and authority selection.
 The corresponding governance output now also keeps phase semantics explicit for non-run and
 crossing-evidence posture: post-execution governance can publish why execution did not run
 (`preview_only`, `preflight_refusal`, `preflight_blocked`) and whether a crossing record was
