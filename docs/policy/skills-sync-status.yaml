@@ -25,10 +25,10 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "7832edf74331c77e60786c598720589ce4e7da51"
-consumer_commit: "d5851c7fffce2eae0ac42673daa06fbb32ea7fe7"
+reviewed_ota_commit: "e269af6253445e29033fc40f5cc0e5da4c1c6ce4"
+consumer_commit: "7f1a1ed73ad59591f91809d18bd3fe06a50696ed"
 waiver_reason: ""
 notes: >
-  Reviewed after completing the canonical build_container_image example. The canonical skill
-  already teaches explicit file, context, tag, Docker external-state, and network posture, so no
-  guidance change was needed.
+  Synced audited-crossing authority guidance, including bounded prebound-file authority posture,
+  terminal transaction evidence, and refusal scope issuance without task-input or trust-material
+  disclosure.
