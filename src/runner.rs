@@ -3926,7 +3926,11 @@ fn apply_runner_owned_proof_env<I>(
         process_env
             .iter()
             .filter(|(name, _)| {
-                name.starts_with("OTA_PROOF_") && name.as_str() != OTA_PROOF_MARKER_BINDINGS_ENV
+                name.starts_with("OTA_PROOF_")
+                    && name.as_str() != OTA_PROOF_MARKER_BINDINGS_ENV
+                    // Parent/child crossing handoff is runner-private. Selected task code must
+                    // never receive a writable evidence path or its transaction capability.
+                    && !name.starts_with("OTA_PROOF_RUNTIME_CROSSING_")
             })
             .map(|(name, value)| (name.clone(), value.clone())),
     );
@@ -37692,6 +37696,36 @@ tasks:
             Some("development")
         );
         assert!(!task_env.contains_key("UNRELATED"));
+    }
+
+    #[test]
+    fn runner_owned_proof_env_does_not_expose_crossing_handoff_to_task_code() {
+        let mut task_env = BTreeMap::new();
+        super::apply_runner_owned_proof_env(
+            &mut task_env,
+            vec![
+                (
+                    String::from("OTA_PROOF_SEAM_MARKER"),
+                    String::from("marker"),
+                ),
+                (
+                    String::from("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH"),
+                    String::from(".ota/proof/private.json"),
+                ),
+                (
+                    String::from("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"),
+                    String::from("capability"),
+                ),
+            ],
+            Some("verify"),
+        );
+
+        assert_eq!(
+            task_env.get("OTA_PROOF_SEAM_MARKER").map(String::as_str),
+            Some("marker")
+        );
+        assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH"));
+        assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"));
     }
 
     #[test]

@@ -1618,6 +1618,125 @@ policies:
 }
 
 #[test]
+fn proof_runtime_crossing_grant_refusal_starts_no_artifact_or_child() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: governed-runtime-proof
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch proof-ran"]
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+"#,
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "release",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "crossing_grant_required");
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(
+        json["crossing_grant_admission"]["reason_family"],
+        "crossing_grant_required"
+    );
+    assert!(!fixture.path().join("proof-ran").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
+}
+
+#[test]
+fn proof_runtime_refuses_unsafe_seam_observer_before_artifact_or_workflow_execution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: governed-runtime-observer
+governance:
+  crossing_authority:
+    authority_id: release-authority
+services:
+  service:
+    manager:
+      kind: compose
+      name: governed-runtime-observer
+      file: compose.yaml
+      service: service
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "touch workflow-ran"]
+    safe_for_agent: true
+    requires_services: [service]
+  observe-service:
+    command:
+      exe: sh
+      args: ["-c", "touch observer-ran"]
+    safe_for_agent: false
+    requires_services: [service]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: verify
+    proof:
+      seam_observations:
+        - id: service-marker
+          dependency: service
+          producer_task: verify
+          task: observe-service
+          marker_env: OTA_PROOF_SERVICE_MARKER
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "smoke",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "crossing_grant_required");
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["crossing_grant_admission"]["requested_task"], "smoke");
+    assert!(!fixture.path().join("workflow-ran").exists());
+    assert!(!fixture.path().join("observer-ran").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
+}
+
+#[test]
 fn tasks_json_output_with_copy_if_missing_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

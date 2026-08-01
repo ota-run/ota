@@ -186,12 +186,38 @@ pub(crate) struct CrossingSemanticScope {
     pub classification: String,
     pub target_platform: SandboxTargetPlatform,
     pub execution_graph_identity: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proof_invocations: Vec<CrossingProofInvocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_transaction_selection: Option<CrossingProofTransactionSelection>,
     pub segment_identities: Vec<String>,
     pub edge_identities: Vec<String>,
     pub execution_selection: CrossingExecutionSelection,
     pub input_identity_posture: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unknown_dimensions: Vec<String>,
+}
+
+/// One declared proof-only invocation. The identity preserves the declared role and order even
+/// when multiple proof obligations reference the same task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct CrossingProofInvocation {
+    pub id: String,
+    pub kind: String,
+    pub task: String,
+    pub order: usize,
+}
+
+/// Selection details that alter the proof transaction without changing its workflow display name.
+/// They are runner-derived from normalized command inputs before grant admission.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct CrossingProofTransactionSelection {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_closure: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready_timeout_seconds: Option<u64>,
 }
 
 impl CrossingSemanticScope {
@@ -246,7 +272,7 @@ pub(crate) fn crossing_scope_for_workflow(
     )
 }
 
-fn crossing_scope_from_policy(
+pub(crate) fn crossing_scope_from_policy(
     policy: SandboxPolicy,
     overrides: ExecutionOverrides,
     task_inputs: &[String],
@@ -272,6 +298,8 @@ fn crossing_scope_from_policy(
         classification: classification.to_string(),
         target_platform: policy.target_platform,
         execution_graph_identity: policy.identity,
+        proof_invocations: Vec::new(),
+        proof_transaction_selection: None,
         segment_identities: policy
             .segments
             .into_iter()
@@ -287,6 +315,24 @@ fn crossing_scope_from_policy(
         input_identity_posture,
         unknown_dimensions,
     };
+    scope.identity = semantic_contract_identity(&scope)?;
+    Ok(scope)
+}
+
+pub(crate) fn crossing_scope_with_proof_invocations(
+    mut scope: CrossingSemanticScope,
+    proof_invocations: Vec<CrossingProofInvocation>,
+) -> Result<CrossingSemanticScope, String> {
+    scope.proof_invocations = proof_invocations;
+    scope.identity = semantic_contract_identity(&scope)?;
+    Ok(scope)
+}
+
+pub(crate) fn crossing_scope_with_proof_transaction_selection(
+    mut scope: CrossingSemanticScope,
+    selection: CrossingProofTransactionSelection,
+) -> Result<CrossingSemanticScope, String> {
+    scope.proof_transaction_selection = Some(selection);
     scope.identity = semantic_contract_identity(&scope)?;
     Ok(scope)
 }
@@ -485,5 +531,156 @@ workflows:
         assert_ne!(baseline.identity, overridden.identity);
         assert_ne!(baseline.identity, detached.identity);
         assert!(baseline.complete());
+    }
+
+    #[test]
+    fn proof_invocation_scope_binds_role_order_and_duplicate_task_uses() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: crossing-proof-invocations
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "printf verify"]
+    safe_for_agent: false
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        );
+        let baseline = crossing_scope_for_workflow(
+            &contract,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &[],
+            None,
+            "auto",
+            "heavier_workflow",
+            "escalated",
+        )
+        .expect("workflow scope");
+        let observer_then_control = crossing_scope_with_proof_invocations(
+            baseline.clone(),
+            vec![
+                CrossingProofInvocation {
+                    id: String::from("seam_observation:database"),
+                    kind: String::from("seam_observation"),
+                    task: String::from("verify"),
+                    order: 0,
+                },
+                CrossingProofInvocation {
+                    id: String::from("negative_control:database-down"),
+                    kind: String::from("negative_control"),
+                    task: String::from("verify"),
+                    order: 1,
+                },
+            ],
+        )
+        .expect("proof scope");
+        let control_then_observer = crossing_scope_with_proof_invocations(
+            baseline,
+            vec![
+                CrossingProofInvocation {
+                    id: String::from("negative_control:database-down"),
+                    kind: String::from("negative_control"),
+                    task: String::from("verify"),
+                    order: 0,
+                },
+                CrossingProofInvocation {
+                    id: String::from("seam_observation:database"),
+                    kind: String::from("seam_observation"),
+                    task: String::from("verify"),
+                    order: 1,
+                },
+            ],
+        )
+        .expect("proof scope");
+
+        assert_ne!(
+            observer_then_control.identity,
+            control_then_observer.identity
+        );
+        assert_eq!(observer_then_control.proof_invocations.len(), 2);
+        assert_eq!(
+            observer_then_control.proof_invocations[0].kind,
+            "seam_observation"
+        );
+    }
+
+    #[test]
+    fn proof_transaction_selection_binds_services_and_readiness_timeout() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: crossing-proof-selection
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "printf verify"]
+    safe_for_agent: false
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        );
+        let base = crossing_scope_for_workflow(
+            &contract,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &[],
+            None,
+            "lifecycle_proof",
+            "unsafe_task",
+            "escalated",
+        )
+        .expect("workflow scope");
+        let database = crossing_scope_with_proof_transaction_selection(
+            base.clone(),
+            CrossingProofTransactionSelection {
+                selected_services: vec![String::from("database")],
+                service_closure: vec![String::from("database")],
+                ready_timeout_seconds: None,
+            },
+        )
+        .expect("database scope");
+        let cache = crossing_scope_with_proof_transaction_selection(
+            base.clone(),
+            CrossingProofTransactionSelection {
+                selected_services: vec![String::from("cache")],
+                service_closure: vec![String::from("cache")],
+                ready_timeout_seconds: None,
+            },
+        )
+        .expect("cache scope");
+        let short_timeout = crossing_scope_with_proof_transaction_selection(
+            base.clone(),
+            CrossingProofTransactionSelection {
+                selected_services: Vec::new(),
+                service_closure: Vec::new(),
+                ready_timeout_seconds: Some(30),
+            },
+        )
+        .expect("short timeout scope");
+        let long_timeout = crossing_scope_with_proof_transaction_selection(
+            base,
+            CrossingProofTransactionSelection {
+                selected_services: Vec::new(),
+                service_closure: Vec::new(),
+                ready_timeout_seconds: Some(90),
+            },
+        )
+        .expect("long timeout scope");
+
+        assert_ne!(database.identity, cache.identity);
+        assert_ne!(short_timeout.identity, long_timeout.identity);
     }
 }

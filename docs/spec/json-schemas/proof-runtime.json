@@ -31,6 +31,7 @@
         "phase": { "type": "string" },
         "stage_family": { "const": "proof" },
         "proof_scope": { "$ref": "#/$defs/proofScope" },
+        "crossing_evidence": { "$ref": "#/$defs/crossingEvidence" },
         "execution_boundary": { "$ref": "#/$defs/executionBoundary" },
         "dependency_evidence": {
           "type": "array",
@@ -87,6 +88,9 @@
         "replay_input_policy": {
           "$ref": "./doctor.json#/$defs/replayInputPolicy"
         },
+        "crossing_grant_admission": {
+          "$ref": "./tasks.json#/$defs/governanceRefusalRecord"
+        },
         "summary": {
           "type": ["object", "null"]
         },
@@ -103,6 +107,22 @@
     }
   ],
   "$defs": {
+    "crossingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_archive_identity",
+        "receipt_archive_path",
+        "transaction_id",
+        "scope_identity"
+      ],
+      "properties": {
+        "receipt_archive_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "receipt_archive_path": { "type": "string" },
+        "transaction_id": { "type": "string" },
+        "scope_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
     "proofScope": {
       "type": "object",
       "additionalProperties": false,

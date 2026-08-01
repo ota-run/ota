@@ -186,7 +186,7 @@ pub(crate) struct GrantAdmissionError {
 
 impl std::fmt::Display for GrantAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.reason, self.details)
+        write!(formatter, "{}: {}", self.reason, self.public_details())
     }
 }
 
@@ -202,6 +202,12 @@ impl GrantAdmissionError {
     pub(crate) fn with_scope(mut self, semantic_scope: CrossingSemanticScope) -> Self {
         self.semantic_scope = Some(semantic_scope);
         self
+    }
+
+    /// Keep filesystem and authority-store diagnostics out of machine-consumer output.
+    /// Callers may retain `details` for an explicit local debug channel only.
+    pub(crate) fn public_details(&self) -> String {
+        format!("crossing authority admission refused ({})", self.reason)
     }
 }
 
@@ -1206,5 +1212,21 @@ tasks:
         let error = validate_sequence_state(&binding, &envelope.payload, &future_state, now)
             .expect_err("a clock behind the protected observation time must refuse");
         assert_eq!(error.reason, "crossing_authority_sequence_rollback");
+    }
+
+    #[test]
+    fn public_admission_details_redact_protected_authority_paths() {
+        let error = GrantAdmissionError::new(
+            "crossing_authority_store_unavailable",
+            "could not read /etc/ota/authority/bundle.json or /var/lib/ota/sequence.json",
+        );
+
+        assert!(!error.public_details().contains("/etc/ota"));
+        assert!(!error.to_string().contains("/var/lib/ota"));
+        assert!(
+            error
+                .public_details()
+                .contains("crossing_authority_store_unavailable")
+        );
     }
 }

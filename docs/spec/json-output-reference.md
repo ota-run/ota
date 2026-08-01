@@ -1045,6 +1045,10 @@ Notes:
   execution or readiness evaluation failed; parse/load failures do not enter this carrier
 - `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
+- `crossing_evidence` is reserved for a future runtime proof whose complete selected invocation
+  set shares one terminal crossing transaction. The current runner refuses any grant-required
+  runtime proof before start rather than emitting partial authority evidence. It never widens
+  proof to repository-wide safety or application correctness.
 - `execution_boundary` is additive runner-authored prerequisite provenance. Its `identity` binds
   the sorted asserted-target and derivation-input closures, declared artifact/producer ownership,
   prerequisite records (including a verified precondition identity when state is reused), and
@@ -1127,8 +1131,10 @@ Notes:
 - `ota proof runtime --json --archive` additionally writes one immutable proof-owned record under
   `.ota/proof/archives/` and returns additive `archive.identity` and `archive.path`. The archive
   is content-addressed and binds the terminal proof JSON to an archived semantic contract snapshot,
-  clean Git source identity when available, resolved workflow/task/backend/provider/lifecycle
-  scope, and explicit `replay_posture: witness_only`. The mutable `.ota/proof/<lane>/` working
+  clean Git source identity when available, resolved workflow/task/backend/provider/lifecycle,
+  target-platform, host-port, and normalized readiness-timeout selection scope, and explicit
+  `replay_posture: witness_only`. The
+  mutable `.ota/proof/<lane>/` working
   bundle remains supporting evidence, not a replay-grade witness. Archive consumers also verify
   that `contract_snapshot_ref` resolves to the same content-addressed snapshot as
   `contract_snapshot_hash` before using the record as assurance evidence. The archive retains the
@@ -2333,12 +2339,28 @@ including post-readiness seam observers and the selected negative-control task, 
 before creating proof artifacts or spawning the child runtime. It then reuses that preflight across
 readiness diagnosis and the emitted Doctor artifact; the artifact does not re-read the checkout
 after runtime execution.
-`ota proof lifecycle` evaluates the exact workflow prerequisite-plus-assertion closure before
-creating its transaction or running any task, service command, readiness observation, or
-assertion. Both proof commands emit `execution_started: false` with typed hard-pin and policy
-evidence when admission refuses. Aggregate monorepo Doctor JSON carries the same canonical
-`replay_input_policy` record inside each applicable `members[]` result rather than dropping the
-member's policy identity and observed-input status.
+`ota proof lifecycle` resolves its explicit selected-service set and dependency closure, then
+evaluates the exact workflow prerequisite-plus-assertion closure before creating its transaction
+or running any task, service command, readiness observation, or assertion. Both proof commands
+emit `execution_started: false` with typed hard-pin and policy evidence when admission refuses.
+Aggregate monorepo Doctor JSON carries the same canonical `replay_input_policy` record inside each
+applicable `members[]` result rather than dropping the member's policy identity and observed-input
+status.
+
+When `governance.crossing_authority` governs a selected non-agent proof workflow, both proof
+commands require `--grant <id>` before any proof-owned side effect. Their refusal payloads carry
+`crossing_grant_admission` with a stable reason family, typed semantic scope, and
+`execution_started: false`; the public `error` and refusal detail are deliberately bounded and do
+not expose protected authority-store, bundle, or sequence-state paths. Runtime proof scope always
+includes its carrier, every selected seam/control invocation by role and declaration order, and the
+normalized `--ready-timeout` selection. Lifecycle proof scope includes its selected-service closure
+and lifecycle assertion. Any grant-required runtime proof refuses before start until Ota can retain
+one terminal crossing transaction across that complete invocation set; it never silently inherits a
+workflow-only grant. Lifecycle assertions are likewise part of proof admission rather than an
+authority bypass.
+Lifecycle proof likewise verifies and refuses before state changes, but it currently refuses a
+governed grant as `crossing_grant_lifecycle_proof_unsupported` because its archive does not yet
+carry the required terminal crossing transaction evidence.
 When an active org policy pack participates in the selected lane, receipt capture also adds
 `kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
 policy/ruleset drift as named input drift instead of leaving governance movement ambient.

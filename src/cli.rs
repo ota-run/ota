@@ -1050,6 +1050,9 @@ enum ProofCommands {
         /// Execute one declared negative-control task and require it to fail.
         #[arg(long, value_name = "ID")]
         negative_control: Option<String>,
+        /// Select one signed grant from the contract-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -1061,6 +1064,9 @@ enum ProofCommands {
         /// Enforce the selected workflow's declared agent-safe closure before lifecycle ownership.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Select one signed grant from the contract-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Archive the terminal machine-readable proof record under `.ota/proof/archives`.
         #[arg(long, action = ArgAction::SetTrue, requires = "json")]
         archive: bool,
@@ -4995,14 +5001,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     member,
                     workflow,
                     negative_control,
+                    grant,
                     path,
                 },
-        } => commands::proof_runtime(
+        } => commands::proof_runtime_with_grant(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
             negative_control.as_deref(),
+            grant.as_deref(),
             archive,
             ready_timeout.as_deref(),
             ExecutionOverrides {
@@ -5020,6 +5028,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 ProofCommands::Lifecycle {
                     json,
                     agent,
+                    grant,
                     archive,
                     member,
                     backend,
@@ -5030,13 +5039,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     service,
                     path,
                 },
-        } => commands::proof_lifecycle(
+        } => commands::proof_lifecycle_with_grant(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
             service.as_deref(),
             agent,
+            grant.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: None,
@@ -19395,6 +19405,7 @@ tasks:
                 member: None,
                 workflow: None,
                 negative_control: None,
+                grant: None,
                 path: None,
             },
         }));
@@ -19516,6 +19527,7 @@ tasks:
                     member: None,
                     workflow: None,
                     negative_control: None,
+                    grant: None,
                     path: None,
                 },
             }),
@@ -19673,6 +19685,7 @@ tasks:
                         member: None,
                         workflow: None,
                         negative_control: None,
+                        grant: None,
                         path: None,
                     },
                 },
@@ -28391,6 +28404,8 @@ policies:
             "app",
             "--negative-control",
             "postgres-unavailable",
+            "--grant",
+            "approved-app",
             "--container",
             "--persistent",
             "--host-port",
@@ -28420,6 +28435,7 @@ policies:
                         member,
                         workflow,
                         negative_control,
+                        grant,
                         path,
                     },
             } => {
@@ -28436,6 +28452,7 @@ policies:
                 assert!(member.is_none());
                 assert_eq!(workflow.as_deref(), Some("app"));
                 assert_eq!(negative_control.as_deref(), Some("postgres-unavailable"));
+                assert_eq!(grant.as_deref(), Some("approved-app"));
                 assert_eq!(path.as_deref(), Some(Path::new("./ota.yaml")));
             }
             other => panic!("unexpected command parsed: {other:?}"),

@@ -623,6 +623,7 @@ or teardown shell commands into the workflow.
 ota proof lifecycle --workflow smoke [PATH]
 ota proof lifecycle --workflow smoke --service database [PATH]
 ota proof lifecycle --workflow smoke --mode container [PATH]
+ota proof lifecycle --workflow smoke --grant approved-smoke [PATH]
 ota proof lifecycle --json --workflow smoke [PATH]
 ota proof lifecycle --json --archive --workflow smoke [PATH]
 ```
@@ -637,6 +638,18 @@ Current behavior:
   `execution_started: false` plus the hard-pin and policy evidence
 - refuses with `replay_input_policy_unavailable` before lifecycle work when the active policy
   source cannot be loaded
+- when `governance.crossing_authority` governs the selected non-agent workflow closure, requires
+  `--grant <id>` and verifies it before creating a lifecycle transaction, starting a service, or
+  running a prerequisite/assertion. The current lifecycle proof archive has no terminal crossing
+  transaction carrier, so an otherwise valid governed grant still refuses as
+  `crossing_grant_lifecycle_proof_unsupported` rather than executing without durable authority
+  evidence. Refusal JSON carries typed authority evidence with `execution_started: false`; a
+  grant never bypasses agent-safety admission
+- lifecycle grant scope binds the explicit `--service` selection and its resolved dependency
+  closure before authority evaluation; an invalid service selector refuses before any grant
+  admission evidence is produced
+- lifecycle assertions are authority roots too: an unsafe assertion makes the whole proof
+  transaction require grant admission before prerequisites or services can start
 - executes the selected workflow's prerequisite closure before acquiring lifecycle ownership
 - refuses a concurrent lifecycle transaction for the same repository before it can observe manager
   state or acquire a cleanup lease
@@ -684,6 +697,7 @@ ota proof runtime --member api --workflow backend [PATH]
 ota proof runtime --json --workflow app [PATH]
 ota proof runtime --json --archive --workflow app [PATH]
 ota proof runtime --workflow app --negative-control postgres-unavailable [PATH]
+ota proof runtime --workflow app --grant approved-app [PATH]
 ```
 
 Current behavior:
@@ -695,6 +709,12 @@ Current behavior:
   refusal carries `execution_started: false` plus the hard-pin and policy evidence
 - refuses with `replay_input_policy_unavailable` before proof artifacts or child execution when
   the active policy source cannot be loaded
+- when `governance.crossing_authority` governs the selected proof scope, requires `--grant <id>`
+  before creating `.ota/proof` or spawning `ota up`. Proof scope binds the runtime carrier plus
+  every seam/control invocation by role and declaration order plus the normalized
+  `--ready-timeout` selection. Any grant-required runtime proof
+  refuses before start until Ota can retain one terminal crossing transaction across that complete
+  invocation set; it never treats a workflow-only grant as authority for proof execution
 - when `--member` is set, proves the merged member contract from the monorepo root
 - when `--workflow` is set, proves that selected workflow path; otherwise it uses the effective
   default workflow or the default task path when the repo has no workflows
@@ -710,7 +730,8 @@ Current behavior:
 - supports `--archive` with `--json` to write an immutable, content-addressed terminal proof
   record under `.ota/proof/archives/`; it binds the terminal proof JSON to an archived semantic
   contract snapshot, clean Git source identity when available, the resolved execution scope
-  (`workflow`, primary task, backend, provider, lifecycle, and target), and explicit
+  (`workflow`, primary task, backend, provider, lifecycle, target, target platform, host-port
+  selection, and normalized readiness-timeout selection), and explicit
   `replay_posture: witness_only`; later assurance verifies the referenced snapshot's content
   identity before admitting the proof archive
 - treats `.ota/proof/<workflow>/` as a mutable working bundle only. Its topology, doctor, and log

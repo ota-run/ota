@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Extended audited-crossing admission to `ota proof runtime` and `ota proof lifecycle`. Both
+  commands now accept `--grant <id>` and refuse before creating proof artifacts, spawning a child,
+  acquiring lifecycle ownership, starting a service, or running a proof task. Proof invocation
+  role and order are semantic scope. Grant-required runtime and lifecycle proofs refuse before
+  proof start until one terminal transaction can cover every invocation; they never inherit an
+  ordinary workflow grant. Governed lifecycle proof remains refused until its
+  archive can retain terminal crossing evidence. Public refusal JSON and receipt evidence now expose a
+  stable reason family and typed scope without leaking trust-store, bundle, or sequence-state
+  filesystem paths.
+
 - Receipt-history verification now fails closed when an archived repo receipt omits its immutable
   contract snapshot reference or matching snapshot identity. Historical authority requirements are
   derived only from that archived contract, while ordinary audited crossings remain valid when the

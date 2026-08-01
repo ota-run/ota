@@ -3410,6 +3410,10 @@ pub struct ProofRuntimeStatus<'a> {
     pub phase: &'a str,
     pub stage_family: &'a str,
     pub proof_scope: ProofRuntimeScope,
+    /// Reserved linkage for a future proof transaction that can retain one terminal crossing
+    /// record across every selected runtime-proof invocation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_evidence: Vec<ProofRuntimeDependencyEvidence>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3437,6 +3441,15 @@ pub struct ProofRuntimeStatus<'a> {
     pub likely_cause_evidence: Option<ProofRuntimeLikelyCauseEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,
+}
+
+/// Reserved linkage for a future runtime proof transaction spanning every selected invocation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProofRuntimeCrossingEvidence {
+    pub receipt_archive_identity: String,
+    pub receipt_archive_path: String,
+    pub transaction_id: String,
+    pub scope_identity: String,
 }
 
 /// Runner-owned evidence for one manager-controlled lifecycle transition.

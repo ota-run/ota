@@ -88,7 +88,15 @@ durable agent workflow belongs in the canonical Ota skill.
 - V11.7 audited-crossing authority is active and partially implemented after independent design
   review. Core now derives one canonical content-addressed crossing scope from the selected
   task/workflow execution graph, refuses unresolved task-input identity, and supports an opt-in
-  `governance.crossing_authority.authority_id` plus `ota run|up --grant <id>` admission path.
+  `governance.crossing_authority.authority_id` plus `ota run|up|proof runtime|proof lifecycle
+  --grant <id>` admission path. Proof commands refuse before artifacts, child execution, lifecycle
+  ownership, service start, or assertion execution. Proof invocation role and order, lifecycle
+  selected-service closure, and normalized runtime `--ready-timeout` selection are part of
+  semantic grant scope; any grant-required runtime or lifecycle proof refuses before start until
+  one terminal transaction can cover every invocation, rather than inheriting a workflow-only
+  grant.
+  Governed lifecycle proof remains intentionally unsupported until its archive carries a terminal
+  crossing transaction, so a valid grant refuses rather than creating unarchived authority use.
   The first `prebound_file` carrier reads only fixed system trust state protected from Ota's current
   unprivileged process; it does not claim hardened provider-attested privilege separation. It verifies an
   Ed25519/RFC-8785 signed bundle, exact contract/scope/family/classification/actor binding,
@@ -252,7 +260,8 @@ durable agent workflow belongs in the canonical Ota skill.
   exact `effects.adapter_state: compose_volume:<volume>` it mutates; opaque shell remains
   `unknown`. `ota proof runtime --json --archive` now creates a content-addressed proof-owned
   record bound to the terminal proof output, archived contract snapshot, clean source identity
-  when available, resolved execution scope, and explicit witness-only replay posture. The shared
+  when available, resolved execution, target-platform, host-port, and normalized readiness-timeout
+  scope, and explicit witness-only replay posture. The shared
   proof-breadth evaluator consumes only a matching immutable archive: matching failed proof is
   cited as `contradicted`; missing, stale, source-mismatched, or scope-mismatched evidence remains
   `unknown`. Ota-owned `.ota` runtime state is excluded from the source-identity cleanliness check,

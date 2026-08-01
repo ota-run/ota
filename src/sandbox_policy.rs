@@ -123,6 +123,8 @@ pub(crate) enum SandboxPolicyPhase {
     Setup,
     Run,
     Attach,
+    /// A task executed by a proof transaction after its primary workflow lane.
+    Proof,
     Dependency,
     Hook,
 }
@@ -773,6 +775,18 @@ pub(crate) fn sandbox_policy_for_workflow(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> Result<SandboxPolicy, String> {
+    sandbox_policy_for_workflow_with_proof_roots(contract, workflow_name, overrides, &[])
+}
+
+/// Builds the selected workflow policy together with proof-only roots that execute as part of
+/// the same proof transaction. A task cannot be reused across ordinary and proof phases: the
+/// provider needs one unambiguous segment identity for every invocation.
+pub(crate) fn sandbox_policy_for_workflow_with_proof_roots(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    proof_roots: &[String],
+) -> Result<SandboxPolicy, String> {
     let selected_name = contract
         .selected_workflow(workflow_name)
         .map(|(name, _)| name.to_string())
@@ -826,6 +840,19 @@ pub(crate) fn sandbox_policy_for_workflow(
             ));
         }
         previous = Some(root.to_string());
+    }
+    for root in proof_roots {
+        builder.add_root(root, SandboxPolicyPhase::Proof)?;
+        if let Some(previous) = previous.as_ref()
+            && previous != root
+        {
+            builder.edges.push((
+                previous.clone(),
+                root.clone(),
+                SandboxPolicyEdgeCondition::Unconditional,
+            ));
+        }
+        previous = Some(root.clone());
     }
     if let Some(boundary) = contract
         .selected_workflow(workflow_name)

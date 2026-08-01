@@ -84,6 +84,9 @@
         },
         "replay_input_policy": {
           "$ref": "./doctor.json#/$defs/replayInputPolicy"
+        },
+        "crossing_grant_admission": {
+          "$ref": "./tasks.json#/$defs/governanceRefusalRecord"
         }
       }
     }
