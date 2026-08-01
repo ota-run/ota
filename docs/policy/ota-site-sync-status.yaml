@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "ed027c740d271beb368e138643c95440bd9d069f"
-consumer_commit: "bdbfdd914c3cef44ea38d3d833e36ca468b70152"
+reviewed_ota_commit: "e3203e5e215ab69a24ccb4783dd952f6231f7a3a"
+consumer_commit: "a61eeab87543f7d1410422d028d2388a20c1aecf"
 waiver_reason: ""
 notes: >
-  Synced workflow-refusal scope issuance and phase-accurate receipt-backed refusal evidence for
-  external grant review without workflow-side semantic reconstruction.
+  Synced the V11.7 authority preview with provisioner-owned fixed trust-store binding and
+  separately protected bundle and sequence-state guidance.

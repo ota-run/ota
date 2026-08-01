@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "ed027c740d271beb368e138643c95440bd9d069f"
-consumer_commit: "d7a4294c0059bd129674727a6db97d5487f81c31"
+reviewed_ota_commit: "e3203e5e215ab69a24ccb4783dd952f6231f7a3a"
+consumer_commit: "7134027adb23c02fe93064888997d2b8d2845d97"
 waiver_reason: ""
 notes: >
-  Synced audited-crossing authority guidance, including task-preview and workflow-refusal scope
-  issuance without task-input or trust-material disclosure.
+  Synced the prebound crossing-authority operator boundary: fixed Linux trust-store binding,
+  separately protected bundle and sequence state, and the hardened-runner limitation.
