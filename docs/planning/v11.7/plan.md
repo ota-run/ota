@@ -26,8 +26,11 @@
 
 Status: active, partially implemented. Boundary crossing records and provenance are shipped. The
 canonical semantic crossing evaluator and first `prebound_file` signed-authority carrier are
-implemented in Core and awaiting hosted pressure. The separate broker-backed, runner-verifiable
-work-unit lifetime remains open.
+implemented in Core. GitHub-hosted pressure proves that absent fixed authority refuses before the
+selected lane starts through create-chrome-extension run
+[30714738522](https://github.com/bobaikato/create-chrome-extension/actions/runs/30714738522).
+Live grant pressure on a pre-provisioned hardened non-root runner remains open. The separate
+broker-backed, runner-verifiable work-unit lifetime remains open.
 
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot

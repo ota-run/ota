@@ -78,6 +78,11 @@
   Existing contracts
   remain unchanged until they opt in, and no grant bypasses agent-safe refusal. Broker-backed
   one-use work-unit authority remains an explicit open V11.7 boundary.
+
+- Added a pre-release operator guide for the first `prebound_file` carrier. It separates the
+  Linux fixed trust store at `/etc/ota/crossing-authorities.json` from provisioner-owned signed
+  bundle and sequence state, documents root-owned filesystem requirements, and explicitly states
+  that GitHub-hosted runners cannot prove independent authority separation.
 - added V11.21 enforced sandbox policy application. Agent execution now compiles the selected
   task/workflow closure into a provider-neutral, target-platform-bound segment graph; applies
   policy-pack restrictions only as identified monotonic overlays; and negotiates the first
