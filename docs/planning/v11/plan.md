@@ -148,28 +148,29 @@ The completed trust/product follow-ons are:
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
 - [V11.13: generated artifact lineage](../v11.13/plan.md)
 - [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - completed at
-  the capability-profile compilation boundary; provider-enforced application is planned
+  the capability-profile compilation boundary; bounded provider-enforced application was delivered
   separately in V11.21.
-- [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation complete; release
-  reconciliation remains active.
+- [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation and pressure complete.
 
 The completed provider-adapter slice is:
 
 - [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md) - implementation and
-  real-repo pressure complete; release reconciliation remains active.
+  real-repo pressure complete.
 
 The completed execution-trust slice is:
 
-- [V11.16: fresh-boundary setup proof](../v11.16/plan.md) - implementation and declared
-  filesystem-boundary pressure complete; release reconciliation remains active.
+- [V11.16: fresh-boundary setup proof](../v11.16/plan.md) - scoped implementation and declared
+  filesystem-boundary pressure complete.
 
-The following planned replay-governance slice is:
+The completed replay-governance slice is:
 
-- [V11.17: trusted replay baseline regeneration](../v11.17/plan.md)
+- [V11.17: trusted replay baseline regeneration](../v11.17/plan.md) - implementation and independent
+  EventCatalog pressure complete, with explicit record, promotion, and detached replay consumption.
 
-The following planned lifecycle-proof slice is:
+The completed lifecycle-proof slice is:
 
-- [V11.18: managed lifecycle-sequence proof](../v11.18/plan.md)
+- [V11.18: managed lifecycle-sequence proof](../v11.18/plan.md) - implementation,
+  two-manager-family pressure, and independent review complete.
 
 The completed typed-hydration slice is:
 
@@ -195,6 +196,14 @@ The subsequent planned OSS authoring slice is:
   deterministic, source-bound contract candidates and existing V11.14 assurance legible without
   inventing a second claim model or hosted intelligence dependency.
 
+One deferred harness-integration follow-on is recorded in the completed
+[V11.6 plan](../v11.6/plan.md#deferred-integration-follow-on-agent-evaluation-disposition): an
+agent-evaluation disposition profile that prevents preflight policy refusal from being counted as
+agent capability failure while still allowing an expected refusal to pass an explicitly declared
+admission-compliance evaluation. It remains inactive until V11.7 closes and real
+evaluation-harness pressure validates the need; it must derive scoring eligibility from existing
+governance truth rather than introduce a parallel verdict taxonomy.
+
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
 - V11.4 publishes portable governance truth
@@ -202,8 +211,8 @@ Those slices make Ota higher in the stack without abandoning the open execution 
 - V11.6 lets external harnesses enforce Ota’s callable boundary without guessing
 - V11.7 makes allowed-but-heavier execution explicit, classifiable, and auditable in OSS before
   enterprise approval layers build on top
-- V11.8 compiles contract-owned execution boundary truth into real runtime filesystem and egress
-  policy for cooperating sandbox targets
+- V11.8 compiles contract-owned execution boundary truth into a provider-neutral capability profile;
+  V11.21 applies the bounded first provider-enforced filesystem and network subset
 
 The completed trust-refinement sequence established:
 

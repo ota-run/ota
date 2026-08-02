@@ -219,6 +219,44 @@ The important part is:
 - but it must export enough identity for `11.7` grants and `11.8` runtime boundaries to be
   evaluated without harness guesswork
 
+## Deferred integration follow-on: agent evaluation disposition
+
+Agent-evaluation harnesses can still misclassify an Ota policy refusal as an agent capability
+failure if they ignore the canonical governance phase and execution-attempt evidence. That is a
+consumer-integration gap, not a reason to reopen V11.3 enforcement or add a second governance
+taxonomy.
+
+A future evaluator-facing profile should remain a constrained view over V11.4 governance truth and
+this V11.6 harness export. It must preserve these rules:
+
+- the harness declares the evaluation question as `capability` or `admission_compliance` before it
+  interprets the result;
+- the profile reports scoring eligibility and its evidence basis without replacing or rewriting the
+  canonical governance verdict;
+- capability scoring requires `execution_attempted: true` and a terminal selected-task outcome; a
+  setup-only, provisioning-only, preview, preflight-refused, or preflight-blocked result is
+  `not_evaluated` for capability and never evidence of capability failure;
+- admission-compliance scoring may treat a runner-authored `refused_as_expected` result as passing
+  while preserving the underlying refusal and zero-start evidence;
+- every profile result binds the contract identity, selected semantic scope identity, and one
+  canonical command/governance output identity;
+- receipt binding is explicit as `bound` or `not_emitted`; `receipt_identity` is required only for
+  `bound`, while a legitimate zero-side-effect refusal must retain `not_emitted` instead of
+  manufacturing receipt or archive authority;
+- policy binding is explicit as `bound`, `not_configured`, or `unavailable`; `policy_identity` is
+  required only for `bound`, and a fail-closed unavailable-policy refusal must remain distinguishable
+  from a repository with no configured policy;
+- an optional authorized counterfactual remains a separate execution, with both artifacts linked
+  by contract identity and semantic scope identity;
+- Ota never relaxes policy automatically or treats inferred agent intent as authorization;
+- one real evaluation-harness pressure test must exercise both evaluation questions and prove that
+  governance compliance, policy refusal, execution failure, and capability regression cannot
+  collapse into one result.
+
+This follow-on remains inactive while V11.7 authority work is active. It should become a dedicated
+implementation slice only after V11.7 closes and real evaluation pressure confirms that a portable
+profile is needed. Audited crossing and authority semantics remain owned by V11.7.
+
 ## Acceptance bar
 
 V11.6 is complete when:
