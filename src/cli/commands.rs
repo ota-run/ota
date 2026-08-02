@@ -38841,12 +38841,6 @@ fn resolve_receipt_history_file_root(path: &Path, source: &str) -> Result<PathBu
             path.display()
         ));
     }
-    if path.file_name().and_then(|value| value.to_str()) != Some(DEFAULT_CONTRACT_FILE) {
-        return Err(format!(
-            "receipt history path must point to `ota.yaml` or a repo directory: `{}`",
-            path.display()
-        ));
-    }
     Ok(contract_working_dir(path).to_path_buf())
 }
 
@@ -59178,6 +59172,20 @@ mod tests {
     };
     use crate::doctor::ProvisioningDiagnostics;
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
+
+    #[test]
+    fn receipt_history_accepts_an_explicit_nondefault_contract_filename() {
+        let fixture = tempdir().expect("receipt history fixture");
+        let contract = fixture.path().join("ota-pressure.yaml");
+        fs::write(&contract, "version: 1\nproject:\n  name: fixture\n")
+            .expect("write contract fixture");
+
+        assert_eq!(
+            super::resolve_receipt_history_file_root(&contract, "--file")
+                .expect("custom contract root"),
+            fixture.path()
+        );
+    }
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorPrimaryBlocker,
         DoctorSummary, DoctorVerdict, EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt,

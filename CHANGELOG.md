@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Fixed `ota receipt --history --file <contract>` for valid non-default contract filenames. Receipt
+  history now resolves the explicit contract's repository root instead of requiring the file to be
+  named `ota.yaml`; archived snapshot verification semantics are unchanged.
+
 - Extended audited-crossing admission to `ota proof runtime` and `ota proof lifecycle`. Both
   commands now accept `--grant <id>` and refuse before creating proof artifacts, spawning a child,
   acquiring lifecycle ownership, starting a service, or running a proof task. Proof invocation
