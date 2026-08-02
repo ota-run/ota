@@ -901,6 +901,42 @@ fn version_schema_covers_build_identity_and_capability_fields() {
 }
 
 #[test]
+fn authority_inspect_schema_bounds_diagnostic_posture_and_verdicts() {
+    let schema = load_schema("docs/spec/json-schemas/authority-inspect.json");
+    let properties = &schema["properties"];
+    let observations = &properties["observations"];
+    let observation = &schema["$defs"]["observation"]["properties"];
+
+    assert_eq!(properties["kind"]["const"], json!("authority_inspect"));
+    assert_eq!(
+        properties["authority_source"]["const"],
+        json!("prebound_file")
+    );
+    assert_eq!(
+        properties["authority_separation_posture"]["const"],
+        json!("current_process_filesystem_guarded")
+    );
+    assert_eq!(
+        properties["profile"]["properties"]["verdict"]["enum"],
+        json!([
+            "matched_with_unknowns",
+            "incomplete",
+            "failed",
+            "unsupported"
+        ])
+    );
+    assert!(observation.get("required").is_some());
+    assert_eq!(
+        observation["status"]["enum"],
+        json!(["passed", "failed", "unknown", "unavailable"])
+    );
+    assert_eq!(observations["minItems"], json!(14));
+    assert_eq!(observations["maxItems"], json!(14));
+    assert_eq!(observations["items"], json!(false));
+    assert_eq!(observations["prefixItems"].as_array().unwrap().len(), 14);
+}
+
+#[test]
 fn run_preview_schema_keeps_member_aggregate_separate_from_single_target_preview() {
     let schema = load_schema("docs/spec/json-schemas/run-preview.json");
     let aggregate = &schema["$defs"]["aggregate"]["properties"];

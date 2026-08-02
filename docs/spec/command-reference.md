@@ -795,6 +795,36 @@ JSON output:
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
 
+## `ota authority inspect`
+
+Inspect the fixed `prebound_file` authority boundary without selecting a grant or creating
+execution authority.
+
+```bash
+ota authority inspect
+ota authority inspect --json
+```
+
+Current behavior:
+
+- reads the fixed platform trust store and every referenced binding, signed bundle, and sequence
+  state through the same canonical protected-file verifier used by grant admission
+- accepts no authority ID, path, contract, policy, environment, or repository override
+- performs no task, provisioning, receipt/archive, crossing-transaction, or authority-state write
+- reports required and informational observations as `passed`, `failed`, `unknown`, or
+  `unavailable`; it does not execute `sudo` merely to test whether privilege is available
+- exits `0` only for `matched_with_unknowns`, where every required observable check passed and the
+  unobservable capability boundaries remain explicit; `incomplete`, `failed`, and `unsupported`
+  remain schema-valid JSON and exit non-zero
+- always bounds a matched profile as
+  `authority_separation_posture: current_process_filesystem_guarded`; it is diagnostic evidence,
+  not a grant, crossing record, provider attestation, or hardened-runner identity
+- redacts protected paths, keys, fingerprints, signatures, bundle contents, grant identities, and
+  parser/filesystem details from public output
+
+Use it in a self-hosted-runner conformance check before grant pressure. Keep provider/launcher
+attestation, worktree mutation controls, execution receipts, and archive assertions separate.
+
 ## `ota ci projection` and `ota ci github`
 
 Render a dedicated, Ota-owned reusable GitHub Actions workflow after `ota.yaml` has become the

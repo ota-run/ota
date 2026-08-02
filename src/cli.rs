@@ -185,6 +185,13 @@ enum Commands {
         #[command(subcommand)]
         command: ProofCommands,
     },
+    #[command(display_order = 14)]
+    /// Inspect the fixed prebound crossing-authority hardening profile without granting authority.
+    Authority {
+        #[command(subcommand)]
+        command: AuthorityCommands,
+    },
+    #[command(display_order = 12)]
     /// Render and validate provider projections from canonical contract truth.
     Ci {
         #[command(subcommand)]
@@ -734,6 +741,16 @@ enum Commands {
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommands,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum AuthorityCommands {
+    /// Inspect the fixed prebound-file authority boundary without mutating authority state.
+    Inspect {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
     },
 }
 
@@ -4864,6 +4881,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Execution {
                 command: ExecutionCommands::Topology { json: true, .. },
             }
+            | Commands::Authority {
+                command: AuthorityCommands::Inspect { json: true },
+            }
             | Commands::Policy { json: true, .. }
             | Commands::Policy {
                 command: Some(PolicyCommands::Init { json: true, .. }),
@@ -4930,6 +4950,20 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Authority {
+            command: AuthorityCommands::Inspect { json },
+        } => {
+            if file.is_some() {
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`ota authority inspect` reads only the fixed prebound authority boundary and does not accept `--file`",
+                    ),
+                    2,
+                )
+            } else {
+                commands::authority_inspect(format_from_json(json))
+            }
+        }
         Commands::Env {
             json,
             member,
@@ -6335,6 +6369,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Proof { .. } => {
             "run `ota doctor` to inspect blockers first, or rerun `ota proof runtime` with one explicit workflow"
         }
+        Commands::Authority { .. } => {
+            "have the runner administrator repair the fixed prebound-file boundary, then rerun `ota authority inspect --json`"
+        }
         Commands::Ci { .. } => {
             "run `ota ci github render --workflow <name>` to inspect the canonical managed projection"
         }
@@ -6565,6 +6602,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Proof {
             command: ProofCommands::Lifecycle { json, .. },
         }
+        | Commands::Authority {
+            command: AuthorityCommands::Inspect { json },
+        }
         | Commands::Ci {
             command:
                 CiCommands::Github {
@@ -6673,6 +6713,9 @@ fn command_where_label(command: &Commands) -> &'static str {
             ProofCommands::Runtime { .. } => "ota proof runtime",
             ProofCommands::Lifecycle { .. } => "ota proof lifecycle",
         },
+        Commands::Authority {
+            command: AuthorityCommands::Inspect { .. },
+        } => "ota authority inspect",
         Commands::Ci { command } => match command {
             CiCommands::Projection { .. } => "ota ci projection",
             CiCommands::Github { command } => match command {
@@ -40814,6 +40857,26 @@ edition = "2024"
                 .stderr
                 .as_deref()
                 .expect("help text should be present"),
+        );
+    }
+
+    #[test]
+    fn authority_inspect_rejects_contract_file_override() {
+        let output = run_with([
+            "ota",
+            "--file",
+            "ota.yaml",
+            "authority",
+            "inspect",
+            "--json",
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .is_some_and(|stderr| stderr.contains("does not accept `--file`"))
         );
     }
 

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/authority-inspect.json",
+  "title": "ota authority inspect --json",
+  "type": "object",
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "required", "status", "method", "reason"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "required": { "type": "boolean" },
+        "status": { "enum": ["passed", "failed", "unknown", "unavailable"] },
+        "method": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "reason": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "kind",
+    "profile",
+    "authority_source",
+    "authority_separation_posture",
+    "platform",
+    "observations",
+    "summary"
+  ],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "kind": { "const": "authority_inspect" },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "verdict"],
+      "properties": {
+        "id": { "const": "prebound_file_hardening" },
+        "version": { "const": 1 },
+        "verdict": {
+          "enum": ["matched_with_unknowns", "incomplete", "failed", "unsupported"]
+        }
+      }
+    },
+    "authority_source": { "const": "prebound_file" },
+    "authority_separation_posture": {
+      "const": "current_process_filesystem_guarded"
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "prefixItems": [
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "platform_os" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "platform_architecture" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "effective_user" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "passwordless_sudo" }, "required": { "const": false } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "docker_host" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "common_docker_socket" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "trust_store" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "authority_bindings" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "signed_bundles" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "sequence_states" }, "required": { "const": true } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "namespace_control" }, "required": { "const": false } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "alternative_container_endpoints" }, "required": { "const": false } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "provider_metadata_credentials" }, "required": { "const": false } } }] },
+        { "allOf": [{ "$ref": "#/$defs/observation" }, { "properties": { "id": { "const": "administrative_escalation" }, "required": { "const": false } } }] }
+      ],
+      "items": false
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "failed",
+        "unknown",
+        "unavailable",
+        "authority_bindings_observed"
+      ],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "unavailable": { "type": "integer", "minimum": 0 },
+        "authority_bindings_observed": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "profile": {
+            "properties": { "verdict": { "const": "matched_with_unknowns" } },
+            "required": ["verdict"]
+          }
+        },
+        "required": ["profile"]
+      },
+      "then": { "properties": { "ok": { "const": true } } },
+      "else": { "properties": { "ok": { "const": false } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": {
+            "properties": { "verdict": { "const": "matched_with_unknowns" } },
+            "required": ["verdict"]
+          }
+        },
+        "required": ["profile"]
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "prefixItems": [
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              {},
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              { "properties": { "status": { "const": "passed" } } },
+              {},
+              {},
+              {},
+              {}
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

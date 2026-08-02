@@ -300,6 +300,48 @@ fn assert_rejects_schema(schema_name: &str, instance: &Value) {
 }
 
 #[test]
+fn authority_inspect_emits_bounded_schema_valid_diagnostics() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let output = run_ota_json_output(&["authority", "inspect", "--json"], fixture.path());
+
+    assert_matches_schema("authority-inspect.json", &output);
+    assert_eq!(output["kind"], "authority_inspect");
+    assert_eq!(output["authority_source"], "prebound_file");
+    assert_eq!(
+        output["authority_separation_posture"],
+        "current_process_filesystem_guarded"
+    );
+    let mut partial = output.clone();
+    partial["observations"] = serde_json::json!([output["observations"][3].clone()]);
+    partial["profile"]["verdict"] = serde_json::json!("matched_with_unknowns");
+    partial["ok"] = serde_json::json!(true);
+    assert_rejects_schema("authority-inspect.json", &partial);
+    let mut contradictory = output.clone();
+    contradictory["profile"]["verdict"] = serde_json::json!("matched_with_unknowns");
+    contradictory["ok"] = serde_json::json!(true);
+    contradictory["observations"][0]["status"] = serde_json::json!("failed");
+    assert_rejects_schema("authority-inspect.json", &contradictory);
+    assert!(
+        !fixture.path().join(".ota").exists(),
+        "authority inspection must not create receipt, archive, or transaction state"
+    );
+    let serialized = serde_json::to_string(&output).expect("diagnostic JSON");
+    for forbidden in [
+        "public_key",
+        "key_fingerprint",
+        "signature",
+        "bundle_path",
+        "sequence_state_path",
+        "grant_id",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "authority inspection must redact `{forbidden}`"
+        );
+    }
+}
+
+#[test]
 fn lifecycle_proof_json_schema_accepts_runner_owned_transaction() {
     let payload = serde_json::json!({
         "ok": true,

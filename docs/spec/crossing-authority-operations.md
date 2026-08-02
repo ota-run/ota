@@ -151,6 +151,26 @@ It must agree with the signed bundle sequence. The provisioner updates bundle an
 one controlled authority operation; Ota refuses inconsistent or rolled-back state rather than
 trying to repair it.
 
+## Inspect the fixed boundary
+
+Run the diagnostic before grant pressure:
+
+```bash
+ota authority inspect --json
+```
+
+The command reads the fixed store and every binding through the same protected-file verifier used
+by admission. It does not select a grant, create a crossing transaction, write authority/high-water
+state, create a receipt/archive, or execute repository work. A matched report is bounded to
+`authority_separation_posture: current_process_filesystem_guarded`.
+
+Each observation carries `required`, `status`, `method`, and a stable redacted `reason`. Only
+`profile.verdict: matched_with_unknowns` exits zero. Informational unknowns include passwordless
+sudo, namespace control, alternative container endpoints, provider metadata credentials, and
+broader administrative escalation when Ota cannot observe them without crossing the boundary.
+Therefore this diagnostic supplements, but never replaces, administrator or provider evidence for
+the runner boundary.
+
 ## Provision and verify
 
 1. Provision the trust-store binding, bundle, and sequence state as a system administrator before

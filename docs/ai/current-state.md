@@ -103,6 +103,13 @@ durable agent workflow belongs in the canonical Ota skill.
   bounded freshness, signed revocations, and protected sequence/clock high-water evidence; and
   refuses before sandbox admission or execution side effects. `ota run` repeats the
   time-, sequence-, and revocation-sensitive admission immediately before transaction creation.
+  `ota authority inspect --json` now exposes a separate diagnostic-only hardening profile over the
+  same fixed-path protected-file verifier. It checks every fixed-store binding, emits typed
+  required/informational observations, and remains bounded to
+  `current_process_filesystem_guarded`; it selects no grant, writes no authority state or receipt,
+  and cannot make a crossing admissible. Passwordless sudo, namespace control, alternative
+  container endpoints, provider metadata credentials, and broader escalation stay explicit
+  unknowns when Ota cannot observe them safely.
   Real execution durably creates a
   runner-owned per-scope crossing transaction before any selected-lane side effect, terminalizes it
   on success, precondition/startup failure, interruption, or abandoned recovery, and binds that

@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -184,6 +185,108 @@ pub(crate) struct GrantAdmissionError {
     pub semantic_scope: Option<CrossingSemanticScope>,
 }
 
+pub(crate) const AUTHORITY_INSPECT_PROFILE_ID: &str = "prebound_file_hardening";
+pub(crate) const AUTHORITY_INSPECT_PROFILE_VERSION: u32 = 1;
+const AUTHORITY_INSPECT_OBSERVATIONS: &[(&str, bool)] = &[
+    ("platform_os", true),
+    ("platform_architecture", true),
+    ("effective_user", true),
+    ("passwordless_sudo", false),
+    ("docker_host", true),
+    ("common_docker_socket", true),
+    ("trust_store", true),
+    ("authority_bindings", true),
+    ("signed_bundles", true),
+    ("sequence_states", true),
+    ("namespace_control", false),
+    ("alternative_container_endpoints", false),
+    ("provider_metadata_credentials", false),
+    ("administrative_escalation", false),
+];
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AuthorityInspectVerdict {
+    MatchedWithUnknowns,
+    Incomplete,
+    Failed,
+    Unsupported,
+}
+
+impl std::fmt::Display for AuthorityInspectVerdict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MatchedWithUnknowns => "matched_with_unknowns",
+            Self::Incomplete => "incomplete",
+            Self::Failed => "failed",
+            Self::Unsupported => "unsupported",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AuthorityInspectObservationStatus {
+    Passed,
+    Failed,
+    Unknown,
+    Unavailable,
+}
+
+impl std::fmt::Display for AuthorityInspectObservationStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+            Self::Unavailable => "unavailable",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AuthorityInspectReport {
+    pub ok: bool,
+    pub kind: String,
+    pub profile: AuthorityInspectProfile,
+    pub authority_source: String,
+    pub authority_separation_posture: String,
+    pub platform: AuthorityInspectPlatform,
+    pub observations: Vec<AuthorityInspectObservation>,
+    pub summary: AuthorityInspectSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AuthorityInspectProfile {
+    pub id: String,
+    pub version: u32,
+    pub verdict: AuthorityInspectVerdict,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AuthorityInspectPlatform {
+    pub os: String,
+    pub architecture: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AuthorityInspectObservation {
+    pub id: String,
+    pub required: bool,
+    pub status: AuthorityInspectObservationStatus,
+    pub method: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AuthorityInspectSummary {
+    pub passed: usize,
+    pub failed: usize,
+    pub unknown: usize,
+    pub unavailable: usize,
+    pub authority_bindings_observed: usize,
+}
+
 impl std::fmt::Display for GrantAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}: {}", self.reason, self.public_details())
@@ -209,6 +312,417 @@ impl GrantAdmissionError {
     pub(crate) fn public_details(&self) -> String {
         format!("crossing authority admission refused ({})", self.reason)
     }
+}
+
+pub(crate) fn inspect_prebound_authority(repo_root: &Path) -> AuthorityInspectReport {
+    let platform = AuthorityInspectPlatform {
+        os: env::consts::OS.to_string(),
+        architecture: env::consts::ARCH.to_string(),
+    };
+    let mut observations = Vec::new();
+    let platform_supported = matches!(env::consts::OS, "linux" | "macos");
+    observations.push(observation(
+        "platform_os",
+        true,
+        if platform_supported {
+            AuthorityInspectObservationStatus::Passed
+        } else {
+            AuthorityInspectObservationStatus::Unavailable
+        },
+        "compile_target",
+        if platform_supported {
+            "prebound_file_os_supported"
+        } else {
+            "prebound_file_os_unsupported"
+        },
+    ));
+    let architecture_supported = matches!(env::consts::ARCH, "x86_64" | "aarch64");
+    observations.push(observation(
+        "platform_architecture",
+        true,
+        if architecture_supported {
+            AuthorityInspectObservationStatus::Passed
+        } else {
+            AuthorityInspectObservationStatus::Unavailable
+        },
+        "compile_target",
+        if architecture_supported {
+            "prebound_file_architecture_supported"
+        } else {
+            "prebound_file_architecture_unsupported"
+        },
+    ));
+
+    #[cfg(unix)]
+    let running_as_root = unsafe { libc::geteuid() } == 0;
+    #[cfg(not(unix))]
+    let running_as_root = false;
+    observations.push(observation(
+        "effective_user",
+        true,
+        if cfg!(unix) {
+            if running_as_root {
+                AuthorityInspectObservationStatus::Failed
+            } else {
+                AuthorityInspectObservationStatus::Passed
+            }
+        } else {
+            AuthorityInspectObservationStatus::Unavailable
+        },
+        "process_identity",
+        if !cfg!(unix) {
+            "effective_user_not_observable"
+        } else if running_as_root {
+            "effective_user_is_root"
+        } else {
+            "effective_user_is_non_root"
+        },
+    ));
+    observations.push(observation(
+        "passwordless_sudo",
+        false,
+        AuthorityInspectObservationStatus::Unknown,
+        "not_safely_observable",
+        "passwordless_sudo_not_probed",
+    ));
+
+    let docker_host_configured = env::var_os("DOCKER_HOST").is_some_and(|value| !value.is_empty());
+    observations.push(observation(
+        "docker_host",
+        true,
+        if docker_host_configured {
+            AuthorityInspectObservationStatus::Failed
+        } else {
+            AuthorityInspectObservationStatus::Passed
+        },
+        "process_environment",
+        if docker_host_configured {
+            "docker_host_configured"
+        } else {
+            "docker_host_absent"
+        },
+    ));
+    let common_docker_socket_present = common_docker_socket_present();
+    observations.push(observation(
+        "common_docker_socket",
+        true,
+        if common_docker_socket_present {
+            AuthorityInspectObservationStatus::Failed
+        } else {
+            AuthorityInspectObservationStatus::Passed
+        },
+        "filesystem_metadata",
+        if common_docker_socket_present {
+            "common_docker_socket_present"
+        } else {
+            "common_docker_socket_absent"
+        },
+    ));
+
+    let mut binding_count = 0;
+    if let Some(store_path) = system_trust_store_path() {
+        match read_protected_json::<PreboundAuthorityStore>(
+            &store_path,
+            repo_root,
+            "authority trust store",
+        )
+        .and_then(|store| {
+            validate_store(&store)?;
+            if store.bindings.is_empty() {
+                return Err(error(
+                    "crossing_authority_binding_missing",
+                    "authority trust store has no bindings",
+                ));
+            }
+            Ok(store)
+        }) {
+            Ok(store) => {
+                binding_count = store.bindings.len();
+                observations.push(observation(
+                    "trust_store",
+                    true,
+                    AuthorityInspectObservationStatus::Passed,
+                    "canonical_protected_file_verifier",
+                    "trust_store_verified",
+                ));
+                inspect_authority_bindings(&store, repo_root, &mut observations);
+            }
+            Err(error) => {
+                observations.push(observation(
+                    "trust_store",
+                    true,
+                    AuthorityInspectObservationStatus::Failed,
+                    "canonical_protected_file_verifier",
+                    error.reason,
+                ));
+                observations.push(observation(
+                    "authority_bindings",
+                    true,
+                    AuthorityInspectObservationStatus::Unavailable,
+                    "canonical_protected_file_verifier",
+                    "trust_store_unavailable",
+                ));
+                observations.push(observation(
+                    "signed_bundles",
+                    true,
+                    AuthorityInspectObservationStatus::Unavailable,
+                    "canonical_protected_file_verifier",
+                    "authority_bindings_unavailable",
+                ));
+                observations.push(observation(
+                    "sequence_states",
+                    true,
+                    AuthorityInspectObservationStatus::Unavailable,
+                    "canonical_protected_file_verifier",
+                    "authority_bindings_unavailable",
+                ));
+            }
+        }
+    } else {
+        for id in [
+            "trust_store",
+            "authority_bindings",
+            "signed_bundles",
+            "sequence_states",
+        ] {
+            observations.push(observation(
+                id,
+                true,
+                AuthorityInspectObservationStatus::Unavailable,
+                "canonical_protected_file_verifier",
+                "prebound_file_platform_unsupported",
+            ));
+        }
+    }
+
+    for (id, reason) in [
+        ("namespace_control", "namespace_control_not_observed"),
+        (
+            "alternative_container_endpoints",
+            "alternative_container_endpoints_not_observed",
+        ),
+        (
+            "provider_metadata_credentials",
+            "provider_metadata_credentials_not_observed",
+        ),
+        (
+            "administrative_escalation",
+            "administrative_escalation_not_observed",
+        ),
+    ] {
+        observations.push(observation(
+            id,
+            false,
+            AuthorityInspectObservationStatus::Unknown,
+            "not_observed",
+            reason,
+        ));
+    }
+
+    build_inspect_report(
+        platform,
+        observations,
+        binding_count,
+        platform_supported && architecture_supported,
+    )
+}
+
+fn inspect_authority_bindings(
+    store: &PreboundAuthorityStore,
+    repo_root: &Path,
+    observations: &mut Vec<AuthorityInspectObservation>,
+) {
+    let now = OffsetDateTime::now_utc();
+    let mut verified_bindings = Vec::new();
+    let mut bindings_failed = false;
+    for binding in &store.bindings {
+        match verify_binding_identity(binding) {
+            Ok(()) => verified_bindings.push(binding),
+            Err(_) => bindings_failed = true,
+        }
+    }
+    observations.push(observation(
+        "authority_bindings",
+        true,
+        if bindings_failed {
+            AuthorityInspectObservationStatus::Failed
+        } else {
+            AuthorityInspectObservationStatus::Passed
+        },
+        "canonical_semantic_verifier",
+        if bindings_failed {
+            "authority_bindings_invalid"
+        } else {
+            "authority_bindings_verified"
+        },
+    ));
+
+    let mut envelopes = Vec::new();
+    let mut bundles_failed = bindings_failed;
+    for binding in verified_bindings {
+        let result: Result<
+            (&PreboundAuthorityBinding, SignedGrantBundleEnvelope),
+            GrantAdmissionError,
+        > = (|| {
+            let envelope = read_protected_json::<SignedGrantBundleEnvelope>(
+                Path::new(binding.bundle_path.as_str()),
+                repo_root,
+                "signed authority bundle",
+            )?;
+            verify_bundle_integrity(binding, &envelope, now)?;
+            for grant in &envelope.payload.grants {
+                verify_grant_identity(grant)?;
+            }
+            Ok((binding, envelope))
+        })();
+        match result {
+            Ok(envelope) => envelopes.push(envelope),
+            Err(_) => bundles_failed = true,
+        }
+    }
+    observations.push(observation(
+        "signed_bundles",
+        true,
+        if bundles_failed {
+            AuthorityInspectObservationStatus::Failed
+        } else {
+            AuthorityInspectObservationStatus::Passed
+        },
+        "canonical_protected_file_verifier",
+        if bundles_failed {
+            "signed_bundles_invalid"
+        } else {
+            "signed_bundles_verified"
+        },
+    ));
+
+    let mut sequence_failed = false;
+    for (binding, envelope) in envelopes {
+        let result = (|| {
+            let sequence_state = read_protected_json::<PreboundAuthoritySequenceState>(
+                Path::new(binding.sequence_state_path.as_str()),
+                repo_root,
+                "authority sequence state",
+            )?;
+            validate_sequence_state(binding, &envelope.payload, &sequence_state, now)
+        })();
+        if result.is_err() {
+            sequence_failed = true;
+        }
+    }
+    observations.push(observation(
+        "sequence_states",
+        true,
+        if bundles_failed || sequence_failed {
+            AuthorityInspectObservationStatus::Failed
+        } else {
+            AuthorityInspectObservationStatus::Passed
+        },
+        "canonical_protected_file_verifier",
+        if bundles_failed {
+            "sequence_states_not_all_verified"
+        } else if sequence_failed {
+            "sequence_states_invalid"
+        } else {
+            "sequence_states_verified"
+        },
+    ));
+}
+
+fn observation(
+    id: &str,
+    required: bool,
+    status: AuthorityInspectObservationStatus,
+    method: &str,
+    reason: &str,
+) -> AuthorityInspectObservation {
+    AuthorityInspectObservation {
+        id: id.to_string(),
+        required,
+        status,
+        method: method.to_string(),
+        reason: reason.to_string(),
+    }
+}
+
+fn build_inspect_report(
+    platform: AuthorityInspectPlatform,
+    observations: Vec<AuthorityInspectObservation>,
+    binding_count: usize,
+    platform_supported: bool,
+) -> AuthorityInspectReport {
+    let count = |status| {
+        observations
+            .iter()
+            .filter(|observation| observation.status == status)
+            .count()
+    };
+    let profile_complete = observations.len() == AUTHORITY_INSPECT_OBSERVATIONS.len()
+        && AUTHORITY_INSPECT_OBSERVATIONS.iter().all(|(id, required)| {
+            observations
+                .iter()
+                .filter(|observation| observation.id == *id && observation.required == *required)
+                .count()
+                == 1
+        });
+    let verdict = if !platform_supported {
+        AuthorityInspectVerdict::Unsupported
+    } else if !profile_complete {
+        AuthorityInspectVerdict::Incomplete
+    } else if observations.iter().any(|observation| {
+        observation.required && observation.status == AuthorityInspectObservationStatus::Failed
+    }) {
+        AuthorityInspectVerdict::Failed
+    } else if observations.iter().any(|observation| {
+        observation.required
+            && matches!(
+                observation.status,
+                AuthorityInspectObservationStatus::Unknown
+                    | AuthorityInspectObservationStatus::Unavailable
+            )
+    }) {
+        AuthorityInspectVerdict::Incomplete
+    } else {
+        AuthorityInspectVerdict::MatchedWithUnknowns
+    };
+    AuthorityInspectReport {
+        ok: verdict == AuthorityInspectVerdict::MatchedWithUnknowns,
+        kind: "authority_inspect".to_string(),
+        profile: AuthorityInspectProfile {
+            id: AUTHORITY_INSPECT_PROFILE_ID.to_string(),
+            version: AUTHORITY_INSPECT_PROFILE_VERSION,
+            verdict,
+        },
+        authority_source: "prebound_file".to_string(),
+        authority_separation_posture: "current_process_filesystem_guarded".to_string(),
+        platform,
+        summary: AuthorityInspectSummary {
+            passed: count(AuthorityInspectObservationStatus::Passed),
+            failed: count(AuthorityInspectObservationStatus::Failed),
+            unknown: count(AuthorityInspectObservationStatus::Unknown),
+            unavailable: count(AuthorityInspectObservationStatus::Unavailable),
+            authority_bindings_observed: binding_count,
+        },
+        observations,
+    }
+}
+
+#[cfg(unix)]
+fn common_docker_socket_present() -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    ["/var/run/docker.sock", "/run/docker.sock"]
+        .iter()
+        .any(|path| {
+            fs::metadata(path)
+                .map(|metadata| metadata.file_type().is_socket())
+                .unwrap_or(false)
+        })
+}
+
+#[cfg(not(unix))]
+fn common_docker_socket_present() -> bool {
+    false
 }
 
 pub(crate) fn admit_prebound_file_grant(
@@ -430,6 +944,114 @@ fn verify_bundle_and_select_grant(
     actor_mode: &str,
     now: OffsetDateTime,
 ) -> Result<GrantAdmissionEvidence, GrantAdmissionError> {
+    let bundle_identity = verify_bundle_integrity(binding, envelope, now)?;
+    if !binding.allowed_contract_identities.is_empty()
+        && !binding
+            .allowed_contract_identities
+            .iter()
+            .any(|identity| identity == &scope.contract_identity)
+    {
+        return Err(error(
+            "crossing_authority_contract_unbound",
+            "the selected contract identity is not allowed by the pre-bound authority",
+        ));
+    }
+    let grant = envelope
+        .payload
+        .grants
+        .iter()
+        .find(|grant| grant.id == grant_id)
+        .ok_or_else(|| {
+            error(
+                "crossing_grant_missing",
+                format!("signed bundle has no grant `{grant_id}`"),
+            )
+        })?;
+    verify_grant_identity(grant)?;
+    if envelope
+        .payload
+        .revocations
+        .iter()
+        .any(|revocation| revocation.grant_id == grant.id)
+    {
+        return Err(error(
+            "crossing_grant_revoked",
+            format!("grant `{grant_id}` is revoked by the signed bundle"),
+        ));
+    }
+    validate_grant_time(grant, now, binding.max_clock_skew_seconds)?;
+    if grant.contract_identity != scope.contract_identity
+        || grant.scope_identity != scope.identity
+        || grant.boundary_family != boundary_family
+        || grant.classification != classification
+        || grant.actor_mode != actor_mode
+        || grant.environment_posture != "unknown"
+        || grant.action != "execute"
+        || grant.resource != scope.lane.name
+        || grant.expiry_kind != "calendar_ttl"
+    {
+        return Err(error(
+            "crossing_grant_out_of_scope",
+            "grant does not exactly match the selected semantic crossing scope",
+        ));
+    }
+
+    Ok(GrantAdmissionEvidence {
+        authority_id: binding.authority_id.clone(),
+        authority_binding_identity: binding.identity.clone(),
+        issuer_id: binding.issuer_id.clone(),
+        key_id: binding.key_id.clone(),
+        key_fingerprint: binding.key_fingerprint.clone(),
+        bundle_id: envelope.payload.bundle_id.clone(),
+        bundle_identity,
+        bundle_sequence: envelope.payload.sequence,
+        grant_id: grant.id.clone(),
+        grant_identity: grant.identity.clone(),
+        scope_identity: scope.identity.clone(),
+        contract_identity: scope.contract_identity.clone(),
+        boundary_family: boundary_family.to_string(),
+        classification: classification.to_string(),
+        actor_mode: actor_mode.to_string(),
+        environment_posture: String::from("unknown"),
+        expiry_kind: grant.expiry_kind.clone(),
+        issued_at: envelope.payload.issued_at.clone(),
+        not_before: envelope.payload.not_before.clone(),
+        next_update: envelope.payload.next_update.clone(),
+        expires_at: grant.expires_at.clone(),
+        clock_evidence: String::from("runner_clock_observed_current_process_guarded"),
+        sequence_evidence: format!(
+            "bundle_sequence:{}>=minimum:{}",
+            envelope.payload.sequence, binding.minimum_sequence
+        ),
+        revocation_evidence: String::from("verified_signed_bundle_snapshot"),
+        decision: String::from("allowed"),
+        admitted_at: now.format(&Rfc3339).map_err(|details| {
+            error(
+                "crossing_authority_time_invalid",
+                format!("failed to format admission time: {details}"),
+            )
+        })?,
+        semantic_scope: scope.clone(),
+        authority_binding_snapshot: binding.clone(),
+        signed_bundle_snapshot: envelope.clone(),
+        sequence_state_snapshot: PreboundAuthoritySequenceState {
+            authority_id: binding.authority_id.clone(),
+            highest_sequence: envelope.payload.sequence,
+            last_observed_at: now.format(&Rfc3339).map_err(|details| {
+                error(
+                    "crossing_authority_time_invalid",
+                    format!("failed to format sequence observation time: {details}"),
+                )
+            })?,
+        },
+    })
+}
+
+fn verify_bundle_integrity(
+    binding: &PreboundAuthorityBinding,
+    envelope: &SignedGrantBundleEnvelope,
+    now: OffsetDateTime,
+) -> Result<String, GrantAdmissionError> {
     if envelope.schema_version != CROSSING_AUTHORITY_SCHEMA_VERSION {
         return Err(error(
             "crossing_authority_schema_unsupported",
@@ -493,106 +1115,7 @@ fn verify_bundle_and_select_grant(
         })?;
     let bundle_identity = sha256_identity(&signed_bytes);
     validate_bundle_time(binding, &envelope.payload, now)?;
-    if !binding.allowed_contract_identities.is_empty()
-        && !binding
-            .allowed_contract_identities
-            .iter()
-            .any(|identity| identity == &scope.contract_identity)
-    {
-        return Err(error(
-            "crossing_authority_contract_unbound",
-            "the selected contract identity is not allowed by the pre-bound authority",
-        ));
-    }
-    let grant = envelope
-        .payload
-        .grants
-        .iter()
-        .find(|grant| grant.id == grant_id)
-        .ok_or_else(|| {
-            error(
-                "crossing_grant_missing",
-                format!("signed bundle has no grant `{grant_id}`"),
-            )
-        })?;
-    verify_grant_identity(grant)?;
-    if envelope
-        .payload
-        .revocations
-        .iter()
-        .any(|revocation| revocation.grant_id == grant.id)
-    {
-        return Err(error(
-            "crossing_grant_revoked",
-            format!("grant `{grant_id}` is revoked by the signed bundle"),
-        ));
-    }
-    validate_grant_time(grant, now, binding.max_clock_skew_seconds)?;
-    if grant.contract_identity != scope.contract_identity
-        || grant.scope_identity != scope.identity
-        || grant.boundary_family != boundary_family
-        || grant.classification != classification
-        || grant.actor_mode != actor_mode
-        || grant.environment_posture != "unknown"
-        || grant.action != "execute"
-        || grant.resource != scope.lane.name
-        || grant.expiry_kind != "calendar_ttl"
-    {
-        return Err(error(
-            "crossing_grant_out_of_scope",
-            "grant does not exactly match the selected semantic crossing scope",
-        ));
-    }
-
-    Ok(GrantAdmissionEvidence {
-        authority_id: binding.authority_id.clone(),
-        authority_binding_identity: binding.identity.clone(),
-        issuer_id: binding.issuer_id.clone(),
-        key_id: binding.key_id.clone(),
-        key_fingerprint,
-        bundle_id: envelope.payload.bundle_id.clone(),
-        bundle_identity,
-        bundle_sequence: envelope.payload.sequence,
-        grant_id: grant.id.clone(),
-        grant_identity: grant.identity.clone(),
-        scope_identity: scope.identity.clone(),
-        contract_identity: scope.contract_identity.clone(),
-        boundary_family: boundary_family.to_string(),
-        classification: classification.to_string(),
-        actor_mode: actor_mode.to_string(),
-        environment_posture: String::from("unknown"),
-        expiry_kind: grant.expiry_kind.clone(),
-        issued_at: envelope.payload.issued_at.clone(),
-        not_before: envelope.payload.not_before.clone(),
-        next_update: envelope.payload.next_update.clone(),
-        expires_at: grant.expires_at.clone(),
-        clock_evidence: String::from("runner_clock_observed_current_process_guarded"),
-        sequence_evidence: format!(
-            "bundle_sequence:{}>=minimum:{}",
-            envelope.payload.sequence, binding.minimum_sequence
-        ),
-        revocation_evidence: String::from("verified_signed_bundle_snapshot"),
-        decision: String::from("allowed"),
-        admitted_at: now.format(&Rfc3339).map_err(|details| {
-            error(
-                "crossing_authority_time_invalid",
-                format!("failed to format admission time: {details}"),
-            )
-        })?,
-        semantic_scope: scope.clone(),
-        authority_binding_snapshot: binding.clone(),
-        signed_bundle_snapshot: envelope.clone(),
-        sequence_state_snapshot: PreboundAuthoritySequenceState {
-            authority_id: binding.authority_id.clone(),
-            highest_sequence: envelope.payload.sequence,
-            last_observed_at: now.format(&Rfc3339).map_err(|details| {
-                error(
-                    "crossing_authority_time_invalid",
-                    format!("failed to format sequence observation time: {details}"),
-                )
-            })?,
-        },
-    })
+    Ok(bundle_identity)
 }
 
 fn validate_sequence_state(
@@ -1228,5 +1751,126 @@ tasks:
                 .public_details()
                 .contains("crossing_authority_store_unavailable")
         );
+    }
+
+    #[test]
+    fn inspect_verdict_is_total_and_unknown_capabilities_never_become_authority() {
+        let platform = AuthorityInspectPlatform {
+            os: String::from("linux"),
+            architecture: String::from("x86_64"),
+        };
+        let incomplete = build_inspect_report(
+            platform.clone(),
+            vec![observation(
+                "trust_store",
+                true,
+                AuthorityInspectObservationStatus::Unavailable,
+                "canonical_protected_file_verifier",
+                "crossing_authority_unavailable",
+            )],
+            0,
+            true,
+        );
+        assert!(!incomplete.ok);
+        assert_eq!(
+            incomplete.profile.verdict,
+            AuthorityInspectVerdict::Incomplete
+        );
+
+        let partial = build_inspect_report(
+            platform.clone(),
+            vec![observation(
+                "passwordless_sudo",
+                false,
+                AuthorityInspectObservationStatus::Unknown,
+                "not_safely_observable",
+                "passwordless_sudo_not_probed",
+            )],
+            1,
+            true,
+        );
+        assert!(!partial.ok);
+        assert_eq!(partial.profile.verdict, AuthorityInspectVerdict::Incomplete);
+
+        let matched = build_inspect_report(platform, complete_inspect_observations(), 1, true);
+        assert!(matched.ok);
+        assert_eq!(
+            matched.profile.verdict,
+            AuthorityInspectVerdict::MatchedWithUnknowns
+        );
+        assert_eq!(
+            matched.authority_separation_posture,
+            "current_process_filesystem_guarded"
+        );
+    }
+
+    #[test]
+    fn inspect_report_distinguishes_verified_bindings_from_bundle_and_sequence_failures() {
+        let platform = AuthorityInspectPlatform {
+            os: String::from("linux"),
+            architecture: String::from("x86_64"),
+        };
+        let verified =
+            build_inspect_report(platform.clone(), complete_inspect_observations(), 1, true);
+        assert!(verified.ok);
+        assert_eq!(verified.summary.authority_bindings_observed, 1);
+
+        let mut malformed_observations = complete_inspect_observations();
+        set_inspect_observation_status(
+            &mut malformed_observations,
+            "signed_bundles",
+            AuthorityInspectObservationStatus::Failed,
+        );
+        let malformed_bundle =
+            build_inspect_report(platform.clone(), malformed_observations, 1, true);
+        assert!(!malformed_bundle.ok);
+        assert_eq!(
+            malformed_bundle.profile.verdict,
+            AuthorityInspectVerdict::Failed
+        );
+
+        let mut stale_observations = complete_inspect_observations();
+        set_inspect_observation_status(
+            &mut stale_observations,
+            "sequence_states",
+            AuthorityInspectObservationStatus::Failed,
+        );
+        let stale_sequence = build_inspect_report(platform, stale_observations, 1, true);
+        assert!(!stale_sequence.ok);
+        assert_eq!(
+            stale_sequence.profile.verdict,
+            AuthorityInspectVerdict::Failed
+        );
+    }
+
+    fn complete_inspect_observations() -> Vec<AuthorityInspectObservation> {
+        AUTHORITY_INSPECT_OBSERVATIONS
+            .iter()
+            .map(|(id, required)| {
+                observation(
+                    id,
+                    *required,
+                    if *required {
+                        AuthorityInspectObservationStatus::Passed
+                    } else {
+                        AuthorityInspectObservationStatus::Unknown
+                    },
+                    "test",
+                    "test_observation",
+                )
+            })
+            .collect()
+    }
+
+    fn set_inspect_observation_status(
+        observations: &mut [AuthorityInspectObservation],
+        id: &str,
+        status: AuthorityInspectObservationStatus,
+    ) {
+        observations
+            .iter_mut()
+            .find(|observation| observation.id == id)
+            .expect("complete profile observation")
+            .status = status;
     }
 }

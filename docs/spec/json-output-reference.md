@@ -22,6 +22,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
 - [json-schemas/proof-lifecycle.json](json-schemas/proof-lifecycle.json)
 - [json-schemas/refusal-canary.json](json-schemas/refusal-canary.json)
+- [json-schemas/authority-inspect.json](json-schemas/authority-inspect.json)
 - [json-schemas/replay-baseline.json](json-schemas/replay-baseline.json)
 - [json-schemas/replay-baseline-authority.json](json-schemas/replay-baseline-authority.json)
 - [json-schemas/services.json](json-schemas/services.json)
@@ -94,6 +95,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota policy init --json` when you want the starter org policy pack preview or write result
 - use `ota policy review --json` when you need policy-authority review over a repo contract
+- use `ota authority inspect --json` when a controlled runner must inspect the fixed prebound-file
+  hardening profile without selecting a grant or creating crossing authority
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
 - use `ota workspace list --json` when you want lightweight workspace inventory and readiness
@@ -3618,6 +3621,62 @@ Use this when a human or agent needs the selected run plan before execution:
   env, or execution-plan problems
 - blocked previews still use the full preview envelope on stdout so automation can read
   `summary.primary_blocker` without scraping stderr
+
+## `ota authority inspect --json`
+
+`ota authority inspect --json` is a diagnostic-only view over the fixed `prebound_file` authority
+boundary. It accepts no authority selector or path override, performs no execution or authority
+mutation, and always keeps its strongest claim at
+`current_process_filesystem_guarded`.
+
+```json
+{
+  "ok": true,
+  "kind": "authority_inspect",
+  "profile": {
+    "id": "prebound_file_hardening",
+    "version": 1,
+    "verdict": "matched_with_unknowns"
+  },
+  "authority_source": "prebound_file",
+  "authority_separation_posture": "current_process_filesystem_guarded",
+  "platform": {
+    "os": "linux",
+    "architecture": "x86_64"
+  },
+  "observations": [
+    {
+      "id": "trust_store",
+      "required": true,
+      "status": "passed",
+      "method": "canonical_protected_file_verifier",
+      "reason": "trust_store_verified"
+    },
+    {
+      "id": "passwordless_sudo",
+      "required": false,
+      "status": "unknown",
+      "method": "not_safely_observable",
+      "reason": "passwordless_sudo_not_probed"
+    }
+  ],
+  "summary": {
+    "passed": 9,
+    "failed": 0,
+    "unknown": 5,
+    "unavailable": 0,
+    "authority_bindings_observed": 1
+  }
+}
+```
+
+Observation statuses are `passed`, `failed`, `unknown`, or `unavailable`. Only
+`matched_with_unknowns` exits zero, and it requires every required check to pass. Required unknown
+or unavailable checks produce `incomplete`; explicit required failures produce `failed`; an
+unsupported fixed carrier produces `unsupported`. All verdicts use the same
+[authority-inspect.json](json-schemas/authority-inspect.json) schema. Public output contains only
+stable reason codes, never protected paths, keys, signatures, bundle contents, grant identities,
+or parser/filesystem details.
 
 ## `ota policy review --json`
 

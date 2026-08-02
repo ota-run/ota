@@ -27,6 +27,7 @@ Commands:
   baseline     Record and explicitly promote governed replay baselines
   ci           Render and validate provider projections from canonical contract truth
   agents       Generate or sync AGENTS.md from an Ota contract
+  authority    Inspect the fixed prebound crossing-authority hardening profile without granting authority
   clean        Clean persistent execution state for a repo
   extensions   List staged extension descriptors from an Ota contract
   self-update  Update the installed Ota binary

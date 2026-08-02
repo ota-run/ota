@@ -724,6 +724,52 @@ profile and conformance check first; a signed reference image follows only after
 launcher binding contract is stable, with its CVE, patching, provenance, and release obligations
 explicitly owned.
 
+##### Hardening profile and diagnostic conformance
+
+Before publishing a reference image, Ota publishes one versioned `prebound_file` hardening profile
+and a read-only conformance command:
+
+```bash
+ota authority inspect --json
+```
+
+The command has no contract mutation, grant-selection, transaction, or execution authority. It
+must not mint a crossing record, create or update receipts/archives/high-water state, provision a
+resource, execute a task, or make a grant admissible. It reports runner-observed diagnostic
+evidence only:
+
+- supported OS and architecture;
+- effective user/root posture and non-elevating passwordless-sudo evidence when the platform can
+  observe it safely; otherwise the sudo capability remains `unknown` or `unavailable` rather than
+  executing a privileged command merely to test the boundary;
+- `DOCKER_HOST` presence and the observed common Docker socket posture;
+- fixed trust-store, bundle, and sequence-state existence, resolved regular-file posture, and
+  root-owner/non-writable parent checks produced by the same fixed-path canonical verifier used by
+  `prebound_file` admission; the command inspects every binding in the fixed store and accepts no
+  authority id, path, environment, policy, or repository override; and
+- profile identity/version plus explicit `unknown` for capabilities it cannot observe, including
+  namespace control, alternative container endpoints, provider metadata credentials, and broader
+  administrative escalation.
+
+Each JSON observation has one of `passed | failed | unknown | unavailable`, whether it is required
+or informational, its bounded observation method, and a stable reason code. The derived diagnostic
+profile is `matched_with_unknowns` only when every required check passed and only informational
+capabilities remain unknown, `incomplete` when a required check is `unknown` or `unavailable`,
+`failed` when any required check failed, and `unsupported` when the platform cannot evaluate the
+fixed carrier. Only `matched_with_unknowns` exits zero. Every other verdict remains schema-valid
+JSON and exits nonzero; human output follows the same verdict. Unknown capabilities remain explicit
+and cannot silently become passed checks.
+
+A matched profile means only that the locally observable checks matched; it publishes
+`authority_separation_posture: current_process_filesystem_guarded`, never
+provider-attested/hardened separation. `DOCKER_HOST` and named common-socket observations do not
+claim that every container endpoint is absent. Missing, unreadable, or malformed authority state
+is an inspectable diagnostic failure and never falls back to an advisory allow. Public output must
+not expose raw paths, public keys, fingerprints, signatures, bundle contents, grant identities,
+or parser/filesystem error details. The CCE hardened-runner workflow should consume this canonical
+JSON rather than duplicate its in-scope checks in shell; its remaining worktree-mutation and
+receipt assertions stay pressure-specific.
+
 The `prebound_file` adapter intentionally supports bounded calendar TTL only. It is the first grant
 carrier, not evidence that the work-unit acceptance bar is complete. V11.7 remains open until the
 broker-backed one-use lifetime is implemented and pressure-proven.

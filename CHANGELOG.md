@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Added diagnostic-only `ota authority inspect [--json]` for the fixed `prebound_file` hardening
+  profile. It reuses admission's canonical protected-file verifier across every fixed-store
+  binding, reports typed required/informational observations, exits nonzero for incomplete,
+  failed, or unsupported posture, and redacts protected trust material. The command never selects
+  a grant, mutates authority/high-water state, creates receipts or crossing transactions, or claims
+  more than `current_process_filesystem_guarded` separation.
+
 - Fixed `ota receipt --history --file <contract>` for valid non-default contract filenames. Receipt
   history now resolves the explicit contract's repository root instead of requiring the file to be
   named `ota.yaml`; archived snapshot verification semantics are unchanged.

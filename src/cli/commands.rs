@@ -2202,6 +2202,52 @@ fn apply_ci_projection_governance(
     Ok(projection)
 }
 
+pub fn authority_inspect(format: OutputFormat) -> CommandOutput {
+    let report = crate::crossing_authority::inspect_prebound_authority(Path::new("."));
+    let exit_code = if report.ok { 0 } else { 1 };
+    let stdout = match format {
+        OutputFormat::Json => to_json(&report),
+        OutputFormat::Text => {
+            let required_failures = report
+                .observations
+                .iter()
+                .filter(|observation| {
+                    observation.required
+                        && observation.status
+                            != crate::crossing_authority::AuthorityInspectObservationStatus::Passed
+                })
+                .map(|observation| format!("{} ({})", observation.id, observation.reason))
+                .collect::<Vec<_>>();
+            let next = if report.ok {
+                "use this diagnostic together with provider/launcher evidence; it is not crossing authority"
+            } else {
+                "have the runner administrator repair the fixed prebound-file boundary, then inspect again"
+            };
+            format!(
+                "Profile: {} v{}\nVerdict: {}\nAuthority source: {}\nSeparation posture: {}\nPlatform: {}/{}\nRequired gaps: {}\nNext: {}",
+                report.profile.id,
+                report.profile.version,
+                report.profile.verdict,
+                report.authority_source,
+                report.authority_separation_posture,
+                report.platform.os,
+                report.platform.architecture,
+                if required_failures.is_empty() {
+                    String::from("none")
+                } else {
+                    required_failures.join(", ")
+                },
+                next,
+            )
+        }
+    };
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code,
+    }
+}
+
 pub fn ci_projection(
     path: Option<&Path>,
     file_override: Option<&Path>,
