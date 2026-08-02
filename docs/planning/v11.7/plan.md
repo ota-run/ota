@@ -642,6 +642,11 @@ record, receipt, and archive. Stale, wrong-audience, cached, substituted, or rep
 refuse before broker or selected-lane work. A provider that cannot enforce this separation refuses
 the broker carrier; transport authentication alone is not attestation.
 
+When a reference runner image is selected, the same protected attestation must additionally bind
+its exact immutable OCI digest and hardening-profile identity. Ota binds those verified identities
+into the lease, crossing receipt, and archive; a signed image, SBOM, or provenance statement alone
+does not prove that the runner executed that image.
+
 ##### Authority source and request
 
 - The broker endpoint, trust root, and runner credential source are pre-bound by the platform
@@ -710,9 +715,11 @@ layout, hardening checks, SBOM, provenance, signature, and immutable digest. It 
 shared trust roots, signed grants, broker credentials, or reusable organization authority.
 
 An operator supplies authority separately through an administrator-controlled image layer,
-protected read-only mount, or non-delegable provider/launcher channel. Ota still verifies the
-effective runtime boundary: image identity cannot establish that the job lacks root, Docker socket
-access, mutable authority mounts, or credential access. The delivery order is a published hardening
+protected read-only mount, or non-delegable provider/launcher channel. In-image conformance checks
+are diagnostic evidence only: they cannot independently establish absence of root escalation,
+Docker socket access, mutable authority mounts, or credential access. Stronger separation requires
+provider or launcher attestation that binds the effective runtime boundary and, where used, the
+exact image digest and hardening-profile identity. The delivery order is a published hardening
 profile and conformance check first; a signed reference image follows only after the broker and
 launcher binding contract is stable, with its CVE, patching, provenance, and release obligations
 explicitly owned.
