@@ -38,8 +38,8 @@ be redirected by repository content, `OTA_POLICY`, environment variables, or cal
 
 Release target:
 
-- `v1.6.26` implementation branch; signed offline authority is in Core, hosted pressure and
-  broker-backed work-unit authority remain open
+- `v1.6.26` implementation branch; signed offline authority is in Core, while pre-provisioned
+  hardened non-root runner live-grant pressure and broker-backed work-unit authority remain open
 
 Source direction:
 
@@ -290,6 +290,41 @@ The first implementation must make this evaluator explicit before grant admissio
 declarations add other supported families, its only derived outputs are the existing
 `unsafe_task` and `heavier_workflow` families. A grant cannot name `external_effect_lane`, runtime
 proof, or another family that Ota cannot itself derive for the selected semantic closure.
+
+#### Contract-owned requirements
+
+The contract-owned form must be additive and monotonic. Direction:
+
+```yaml
+governance:
+  crossing_requirements:
+    tasks:
+      publish: required
+    workflows:
+      release: required
+```
+
+- selectors resolve to declared task or workflow roots and are unique; unknown or duplicate
+  selectors are validation errors;
+- detection or caller input cannot write this declaration, and it has no `allow`, `false`,
+  exemption, or caller-override form;
+- `required` applies to the exact semantic selected root and complete execution closure, not a
+  display name or provider-check label;
+- canonical requirement is `declared || derived`; a declaration can add a requirement but can
+  never suppress a derived one; and
+- output records `declared` when present while retaining every derived family/classification reason
+  in the decision basis. A declared-only requirement receives the fixed runner-derived
+  `contract_declared_boundary` family and `escalated` classification; the declaration cannot
+  self-assign authority source, family, classification, actor, or environment.
+
+When more than one ground applies, the canonical grant-scope family/classification uses fixed
+precedence: `unsafe_task` > `heavier_workflow` > `contract_declared_boundary`. The decision basis
+retains every applicable declared and derived ground. This makes the selected scope deterministic
+without allowing a lower-precedence declaration to weaken or hide a stronger derived boundary.
+
+This is a planned contract surface. Current Core derives only `unsafe_task` and
+`heavier_workflow`; it must not claim declaration support until schema, validation, JSON, and
+archive re-derivation ship together.
 
 ### 3. Boundary-authored crossing record
 
@@ -572,23 +607,115 @@ The first carrier must not claim more attribution than Ota observes. Current Cor
 `local` environment. Those fields remain `unknown` unless the chosen authority adapter supplies
 transaction-bound evidence. A grant never bypasses V11.3 agent-safe admission.
 
-A runner-verifiable work-unit lifetime is also required by the V11.7 acceptance bar. The credible
-OSS design is a separate `authority_broker` adapter:
+#### Broker-backed one-use work-unit leases (planned second carrier)
 
-1. Ota generates a fresh cryptographic nonce and ephemeral work-unit identity after resolving the
-   semantic crossing scope.
-2. Ota sends the nonce, scope identity, contract identity, actor/environment evidence posture, and
-   requested lifetime to a pre-bound authenticated broker.
-3. The broker atomically creates a one-use lease, signs a grant for that exact work-unit identity,
-   and returns issuer sequence, freshness, and revocation evidence.
-4. Ota asks the broker to atomically consume the lease before the first execution side effect; the
-   broker, not runner-local state, rejects repeat consumption.
-5. Ota durably records that broker consumption before execution and terminally finalizes the local
-   crossing transaction on success, failure, interruption, or timeout.
-6. Where supported, Ota reports the terminal result to the broker without treating delivery of that
-   report as proof that execution completed.
-7. Reuse, replay, scope substitution, missing terminal state, or caller-supplied work-unit identity
-   refuses.
+A runner-verifiable work-unit lifetime is also required by the V11.7 acceptance bar. This is a
+planned second `authority_broker` carrier, not an Enterprise approval service and not an extension
+of caller-controlled policy. Its purpose is narrowly to make one independently issued authority
+lease usable once for one exact crossing transaction.
+
+##### Canonical broker binding and attestation record
+
+Before implementing `authority_broker`, Ota must define one versioned, administrator-owned binding
+record outside the repository. Every adapter consumes this record; adapters must not invent their
+own endpoint, credential, or attestation model. Its canonical identity includes:
+
+- binding schema version, `authority_id`, broker identity, and accepted authority/contract labels;
+- normalized HTTPS origin, expected server name, redirect prohibition, and protocol version;
+- authenticated transport profile (`mtls` or `provider_workload_identity`), never a repository or
+  task-environment bearer token;
+- root trust-bundle identity, verifier key set and key IDs, and an explicit bounded key-rotation
+  overlap rule;
+- protected credential-source descriptor and audience, resolved by the hardened launcher or
+  provider through a non-delegable channel: a launcher-held one-shot capability, non-inheritable
+  descriptor, or provider exchange cryptographically bound to this Ota invocation. The selected
+  task must not inherit or be able to reacquire that credential, its metadata path, or its session;
+- attestation verifier identity, issuer/audience, required runner claims, maximum age/skew, and
+  attestation key-rotation posture; and
+- canonical request/response domain, maximum lease duration, and replay-binding requirements.
+
+The broker request carries the binding identity, a fresh runner-generated nonce commitment,
+work-unit identity, and exact semantic crossing scope. Accepted provider or launcher attestation
+must bind that challenge, the runner principal, audience, issue/expiry window, and work-unit. Ota
+verifies it before requesting a lease and binds its verified identity into the lease, consume
+record, receipt, and archive. Stale, wrong-audience, cached, substituted, or replayed attestations
+refuse before broker or selected-lane work. A provider that cannot enforce this separation refuses
+the broker carrier; transport authentication alone is not attestation.
+
+##### Authority source and request
+
+- The broker endpoint, trust root, and runner credential source are pre-bound by the platform
+  administrator or hardened launcher. Repository files, `OTA_POLICY`, environment variables,
+  caller flags, and workflow YAML cannot select or replace them.
+- Ota resolves the complete semantic crossing scope before contacting the broker, then creates a
+  fresh cryptographic nonce and runner-generated work-unit identity. The caller never supplies
+  either value.
+- `--grant <id>` remains only an explicit request for a configured authority label. It cannot name
+  a lease, inject issuer data, or select an endpoint. Missing or inapplicable grant labels refuse
+  before broker mutation.
+- Ota sends the nonce, work-unit identity, contract identity, exact scope identity, requested
+  action/resource, runner-observed actor posture, available provider/launcher attestation, and a
+  bounded requested lifetime. Unavailable required runner identity or attestation refuses rather
+  than being represented as a caller assertion.
+
+##### Lease and consume protocol
+
+- The broker authenticates the pre-bound runner principal and atomically issues one signed lease
+  for that exact work-unit, contract, scope, authority label, and expiry. The response carries a
+  lease identity, issuer/key identity, broker sequence or revision, issue/expiry times, and the
+  cryptographic binding needed for later verification.
+- Ota verifies the broker response against the pre-bound trust root and durably records a pending
+  local crossing transaction before requesting consumption.
+- The broker atomically checks current lease liveness and revocation, then consumes the lease using
+  the work-unit identity and nonce as an idempotency key in the same transition. A successful
+  consume response must bind the exact lease and transaction identity. Ota starts selected-lane
+  work only after it has verified and durably recorded that response.
+- The broker, not runner-local state, rejects duplicate consume, replayed nonce, stale or revoked
+  lease, wrong runner identity, wrong authority label, contract mismatch, scope substitution, and
+  expiry. Ota maps each failure to typed grant-admission refusal with `execution_started: false`.
+
+##### Recovery, finalization, and evidence
+
+- If Ota crashes after requesting consumption but before durable acknowledgement, it must not
+  execute or silently retry. Recovery re-queries the exact work-unit through the pre-bound broker;
+  an unknown or indeterminate state finalizes locally as incomplete and requires a new lease.
+- Ota finalizes the same crossing transaction on success, task failure, interruption, timeout,
+  startup failure, or abandoned recovery. It may report that terminal outcome to the broker, but
+  delivery acknowledgement is not proof that selected work completed.
+- Receipts and archives bind the broker authority identity, lease identity, work-unit identity,
+  nonce commitment, consume response identity, exact semantic scope, and terminal local
+  transaction. Archive verification re-derives scope from the archived contract snapshot and
+  refuses missing, substituted, replayed, or terminally incomplete broker evidence.
+- No broker token, runner credential, raw nonce, or private endpoint diagnostics appear in public
+  JSON, receipts, archives, repository state, or task environments. Debug diagnostics remain
+  launcher/operator-local.
+
+##### Carrier boundaries and pressure bar
+
+- The broker carrier does not add hosted accounts, approval routing, waivers, centralized policy,
+  or fleet reporting. It consumes authority already issued by an independently operated source.
+- A hosted runner may claim stronger separation only when the launcher or provider supplies a
+  verifiable attestation that binds the runner principal and protected authority material. A
+  self-hosted image without that evidence remains `current_process_filesystem_guarded`.
+- Pressure must prove a valid one-use lease, expired lease, revoked lease, out-of-scope lease,
+  duplicate/replayed consume, broker-unavailable preflight, and interruption/recovery. Every
+  refusal must occur before task, service, provider, child-process, or repository mutation; the
+  valid path must archive a broker-bound terminal crossing transaction.
+
+##### Reference hardened runner image (deferred delivery)
+
+Ota may later publish a **reference hardened runner image**, never a “prebound authority image.”
+It can supply a pinned Ota binary and minimal runtime, non-root runner user, fixed authority-store
+layout, hardening checks, SBOM, provenance, signature, and immutable digest. It must not contain
+shared trust roots, signed grants, broker credentials, or reusable organization authority.
+
+An operator supplies authority separately through an administrator-controlled image layer,
+protected read-only mount, or non-delegable provider/launcher channel. Ota still verifies the
+effective runtime boundary: image identity cannot establish that the job lacks root, Docker socket
+access, mutable authority mounts, or credential access. The delivery order is a published hardening
+profile and conformance check first; a signed reference image follows only after the broker and
+launcher binding contract is stable, with its CVE, patching, provenance, and release obligations
+explicitly owned.
 
 The `prebound_file` adapter intentionally supports bounded calendar TTL only. It is the first grant
 carrier, not evidence that the work-unit acceptance bar is complete. V11.7 remains open until the
@@ -646,11 +773,11 @@ It should also publish who or what triggered it, at the OSS level that Ota can c
 Direction:
 
 - actor mode such as:
-  - `human`
   - `agent`
-  - `ci`
-  - `harness`
-- triggering principal attribution where available from the execution path
+  - `non_agent`
+- richer principal kind such as `human`, `ci`, or `harness` only when a selected provider or
+  launcher supplies transaction-bound attestation; otherwise principal attribution is `unknown`
+- triggering principal attribution where available from verified provider or launcher evidence
 - explicit authorizer attribution where a reusable grant or approval binding exists
 - explicit runner attestation posture for the execution context that enforced and emitted the
   crossing evidence
@@ -763,7 +890,20 @@ V11.7 is complete when:
   standing authority
 - grant identity is modeled around actor + action + resource rather than loose approval prose
 - environment remains a hard grant boundary rather than a wildcardable scope field
-- work-unit expiry is the default grant lifetime where Ota can model it honestly
+- the first `prebound_file` carrier remains explicitly bounded as
+  `current_process_filesystem_guarded`; V11.7 cannot complete until a hardened launcher or
+  provider-attested carrier establishes that the job cannot self-supply authority
+- completion requires broker-backed, nonce-bound, atomic one-use lease consumption for the exact
+  work unit; calendar TTL alone is not work-unit lifetime authority
+- the canonical broker binding defines transport authentication, protected credential isolation,
+  trust/key rotation, attestation verification/freshness, and replay binding, and its identity is
+  preserved and archive-rederived with every broker crossing
+- grant-required runtime and lifecycle proof either bind one terminal crossing transaction across
+  the complete proof invocation set and cleanup, or refuse before proof work starts
+- pressure proves valid live authority, expired, revoked, out-of-scope, double-spend/replay,
+  broker-unavailable, interruption, recovery, cleanup, and archive re-verification controls;
+  every refusal is pre-side-effect and every allowed terminal transaction is independently
+  reconciled
 - crossing evidence distinguishes the acting principal, the authorizer, and the runner attestation
   context instead of smearing them into one identity field
 - Ota can answer whether a crossing was required from contract-owned or contract-derived truth

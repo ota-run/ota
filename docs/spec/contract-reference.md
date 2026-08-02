@@ -4540,8 +4540,10 @@ boundary.
 The independently managed platform-authority process advances the signed bundle and sequence state;
 Ota reads and verifies them but does not run as root or mutate authority state.
 
-For the complete provisioner/runner separation, protected file layout, record responsibilities, and
-explicit limitations, see [Prebound Crossing Authority Operations](crossing-authority-operations.md).
+For the version-matched operator specification, see
+[Crossing authority operations](crossing-authority-operations.md). For the public provisioning
+flow, protected file layout, and explicit limits, see
+[Prebound Crossing Authority (Preview)](https://ota.run/docs/reference/prebound-crossing-authority).
 
 When configured:
 

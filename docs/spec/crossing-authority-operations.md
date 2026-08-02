@@ -31,6 +31,10 @@ Use this operator guide only for the V11.7 `prebound_file` preview carrier. It i
 provisioner-owned boundary for heavier **non-agent** execution. A repository names only an
 `authority_id`; it must never create, update, or select authority files.
 
+The stable public operator reference is
+[Prebound Crossing Authority (Preview)](https://ota.run/docs/reference/prebound-crossing-authority).
+Use this Core specification for the exact record layout and verification rules.
+
 This carrier is not a hosted-service approval system and is not complete V11.7 authority. It is
 filesystem-guarded from Ota's current unprivileged process. It does **not** prove that a CI job
 lacks `sudo`, host capabilities, or namespace control. Do not use a GitHub-hosted runner to claim
