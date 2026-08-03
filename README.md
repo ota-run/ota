@@ -923,5 +923,5 @@ If you want the shortest “which example proves what?” guide, use
 
 ---
 <div align="center">
-    Ota 🦦
+    🦦
     </div>

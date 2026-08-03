@@ -55,6 +55,12 @@ work complete:
 Update each surface that is affected. If one is not affected, state that decision in the handoff or
 completion summary; do not silently assume core code alone is enough.
 
+**Command-reference gate:** every public CLI command or subcommand addition, removal, rename, flag
+surface, or semantic change must update both `docs/spec/command-reference.md` and the rendered
+site command index at `/docs/reference/command` in `ota-site`. The Core Markdown specification is
+not sufficient when the site uses curated command cards. Run the site command-reference sync check
+and confirm the local rendered page exposes the command before declaring propagation complete.
+
 Pressure testing is product discovery as well as proof. Follow the canonical Ota skill's
 `references/pressure-testing-protocol.md` from `/Users/bobai/Workspace/Ota.run/skills` when it is
 available locally. Every pressure repo must prove the advertised task, workflow, runtime, mode,

@@ -193,6 +193,53 @@ the runner boundary.
 Use `ota run publish --dry-run --grant approved-publish --json` to inspect an admissible scope
 without consuming a crossing transaction. A matching grant still cannot override `--agent` safety.
 
+## Prepare a dedicated GitHub Actions VPS runner
+
+Use this sequence only for controlled pressure or operator validation. It prepares a Linux/x86_64
+host for GitHub Actions; GitHub schedules the job but is not the authority source. Do not attach
+this runner to untrusted pull-request workflows or install it on an administrator's daily-use
+machine.
+
+1. Create a dedicated Linux/x86_64 VPS and restrict SSH to the administrator's known network.
+   The host needs a persistent disk because the provisioner-owned sequence state must survive jobs.
+2. As the system administrator, create the non-root job principal and protected authority parents:
+
+   ```sh
+   sudo useradd --create-home --shell /bin/bash ota-runner
+   sudo install -d -o root -g root -m 0755 /etc/ota /var/lib/ota
+   ```
+
+   Do not add `ota-runner` to `sudo`, Docker, or other host-control groups. A matching local
+   inspection remains only `current_process_filesystem_guarded`; it does not prove every possible
+   escalation path is absent.
+3. Build the exact reviewed Ota commit from a clean Core checkout and install the binary at an
+   administrator-controlled absolute path. Publish a root-owned build manifest outside the
+   repository that binds the full source revision and the binary SHA-256, then have the workflow
+   compare that manifest with the exact executable it invokes. Do not rely on inherited job `PATH`
+   ordering for a protected-runner authority lane. Retain `ota --version --json` as corroborating
+   source-build and clean-tree evidence; its embedded commit is abbreviated and must not be treated
+   as the full revision proof.
+   Do not substitute a release binary, a branch, or a repository-installed binary for this check.
+4. In GitHub repository settings, open **Actions > Runners > New self-hosted runner**, select
+   Linux/x64, and run GitHub's time-limited registration commands as `ota-runner`. Register only
+   the reviewed repository with `self-hosted`, `linux`, and one scenario label such as
+   `ota-crossing-live`. Install the runner service only after the Ota binary and protected parent
+   directories are in place.
+5. Separately, the authority provisioner derives the exact contract/scope from Ota's refusal or
+   dry-run output, signs the bundle outside the repository and runner job, and atomically publishes
+   the root-owned trust binding, bundle, and matching sequence state. The private signing key never
+   enters the VPS.
+6. Log in as `ota-runner` and run `ota authority inspect --json`. Require every required
+   observation to pass before dispatching the pressure workflow. Preserve the inspection and Ota
+   version JSON as workflow artifacts.
+7. Dispatch exactly one administrator-provisioned scenario. For live authority, retain the receipt
+   archive and verify it with `ota receipt --history --json`; for expired, revoked, and out-of-scope
+   authority, prove refusal before any checkout mutation, task, service, child process, or provider
+   work starts.
+
+This is a runner preparation checklist, not a public authority-provisioning API. Ota does not yet
+ship a signing CLI, provider-attested separation, or broker-backed one-use work-unit authority.
+
 ## Unsupported or bounded behavior
 
 - Governed runtime and lifecycle proof refuse before start because the current proof carriers do

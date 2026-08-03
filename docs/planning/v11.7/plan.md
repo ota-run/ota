@@ -655,13 +655,44 @@ does not prove that the runner executed that image.
 - Ota resolves the complete semantic crossing scope before contacting the broker, then creates a
   fresh cryptographic nonce and runner-generated work-unit identity. The caller never supplies
   either value.
-- `--grant <id>` remains only an explicit request for a configured authority label. It cannot name
-  a lease, inject issuer data, or select an endpoint. Missing or inapplicable grant labels refuse
-  before broker mutation.
+- `--grant <id>` is an explicit diagnostic or disambiguation request for a configured authority
+  label. It cannot name a lease, inject issuer data, or select an endpoint. Missing or
+  inapplicable labels refuse before broker mutation. This does not change the first
+  `prebound_file` carrier: it continues to require its explicit `--grant` admission surface until
+  the broker carrier ships.
 - Ota sends the nonce, work-unit identity, contract identity, exact scope identity, requested
   action/resource, runner-observed actor posture, available provider/launcher attestation, and a
   bounded requested lifetime. Unavailable required runner identity or attestation refuses rather
   than being represented as a caller assertion.
+
+##### Authority-selection UX (planned broker carrier)
+
+The broker carrier should make the routine governed path operable without callers copying a raw
+grant or lease identifier. This is a future broker admission semantic, not a relaxation of the
+current `prebound_file` rules above:
+
+- Default-safe execution has no authority request and no crossing.
+- For a crossing-required lane, Ota resolves the contract-selected `authority_id` and asks the
+  independently administered broker for eligible authority for the exact verified invocation. It
+  may proceed only when exactly one live, in-scope authorization matches the verified contract,
+  semantic scope, actor posture, and attestation. Zero matches and multiple matches both refuse
+  with distinct typed evidence; Ota never guesses a selection or applies evaluation order as a
+  tie-breaker.
+- The caller does not receive, copy, or name a raw grant or lease identity. Ota records the broker
+  selection identity and its bounded selection basis in the fresh crossing transaction, receipt,
+  and archive so later audit does not rely on implicit selection.
+- An exceptional crossing uses the same fixed authority source but requires a broker-issued,
+  one-use work-unit authorization. The authorization decision and any approval reference are
+  broker-policy-owned and invocation-bound. Caller-provided justification is non-authoritative
+  context only and cannot create or widen authority.
+- `--grant` may remain during migration as an explicit label-level diagnostic/disambiguation
+  surface. It must never silently select an actual broker lease, bypass exact-one matching, or
+  widen contract authority.
+
+The adoption bar is not that Ota is shorter than raw shell. The broker carrier must instead prove
+that pre-authorized work needs no repository policy edit, no caller-authored authority, and one
+governed command; exceptional work has one explicit broker-side authorization step; both emit
+fresh evidence and actionable pre-side-effect refusal.
 
 ##### Lease and consume protocol
 
@@ -702,10 +733,11 @@ does not prove that the runner executed that image.
 - A hosted runner may claim stronger separation only when the launcher or provider supplies a
   verifiable attestation that binds the runner principal and protected authority material. A
   self-hosted image without that evidence remains `current_process_filesystem_guarded`.
-- Pressure must prove a valid one-use lease, expired lease, revoked lease, out-of-scope lease,
-  duplicate/replayed consume, broker-unavailable preflight, and interruption/recovery. Every
-  refusal must occur before task, service, provider, child-process, or repository mutation; the
-  valid path must archive a broker-bound terminal crossing transaction.
+- Pressure must prove one exact eligible authorization, zero eligible authorizations, multiple
+  eligible authorizations, a valid one-use lease, expired lease, revoked lease, out-of-scope
+  lease, duplicate/replayed consume, broker-unavailable preflight, and interruption/recovery.
+  Every refusal must occur before task, service, provider, child-process, or repository mutation;
+  the valid path must archive a broker-bound terminal crossing transaction.
 
 ##### Reference hardened runner image (deferred delivery)
 
