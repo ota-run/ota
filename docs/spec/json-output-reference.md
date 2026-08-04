@@ -157,7 +157,9 @@ human text output:
   fields. When a contract-bound signed grant admitted the crossing, `crossing.authority` carries
   the verified authority, bundle, grant, exact semantic scope, freshness/revocation posture, and
   archived signed evidence. Real execution also carries a terminal `authority.transaction`;
-  dry-run admission does not create one
+  dry-run admission does not create one. Transaction schema v2 binds `authority_carrier` and a
+  carrier-neutral `authorization_identity`; its archive carries a matching admission envelope.
+  Legacy v1 transaction history remains `prebound_file`-only and uses `grant_identity` instead.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed` and no transaction. A grant
   refusal instead returns `execution_started: false` plus

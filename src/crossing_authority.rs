@@ -20,6 +20,8 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
@@ -45,6 +47,49 @@ pub(crate) const CROSSING_AUTHORITY_SCHEMA_VERSION: u32 = 1;
 const BUNDLE_DOMAIN: &[u8] = b"ota.crossing-authority.bundle.v1\0";
 const GRANT_DOMAIN: &[u8] = b"ota.crossing-authority.grant.v1\0";
 const BINDING_DOMAIN: &[u8] = b"ota.crossing-authority.binding.v1\0";
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SYSTEM_TRUST_STORE_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static TEST_PROTECTED_AUTHORITY_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct TestSystemTrustStoreGuard {
+    previous_store_path: Option<PathBuf>,
+    previous_protected_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl TestSystemTrustStoreGuard {
+    pub(crate) fn install(path: PathBuf) -> Self {
+        let protected_root = fs::canonicalize(
+            path.parent()
+                .expect("test authority store must have a parent"),
+        )
+        .expect("test authority store parent must exist");
+        let previous_store_path =
+            TEST_SYSTEM_TRUST_STORE_PATH.with(|current| current.replace(Some(path)));
+        let previous_protected_root =
+            TEST_PROTECTED_AUTHORITY_ROOT.with(|current| current.replace(Some(protected_root)));
+        Self {
+            previous_store_path,
+            previous_protected_root,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestSystemTrustStoreGuard {
+    fn drop(&mut self) {
+        TEST_SYSTEM_TRUST_STORE_PATH.with(|current| {
+            current.replace(self.previous_store_path.take());
+        });
+        TEST_PROTECTED_AUTHORITY_ROOT.with(|current| {
+            current.replace(self.previous_protected_root.take());
+        });
+    }
+}
 
 #[cfg(target_os = "linux")]
 const SYSTEM_TRUST_STORE_PATH: &str = "/etc/ota/crossing-authorities.json";
@@ -176,6 +221,52 @@ pub(crate) struct GrantAdmissionEvidence {
     pub authority_binding_snapshot: PreboundAuthorityBinding,
     pub signed_bundle_snapshot: SignedGrantBundleEnvelope,
     pub sequence_state_snapshot: PreboundAuthoritySequenceState,
+}
+
+/// Carrier-neutral facts that a crossing transaction must bind before execution.
+///
+/// The initial `prebound_file` carrier still retains its complete signed-bundle payload above.
+/// Later carriers construct this envelope from their own verified admission evidence rather than
+/// inventing placeholder bundle fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub(crate) enum CrossingAuthorityCarrier {
+    PreboundFile,
+    AuthorityBroker,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CrossingAuthorityAdmission {
+    pub carrier: CrossingAuthorityCarrier,
+    pub authority_id: String,
+    pub admission_identity: String,
+    pub authorization_identity: String,
+    pub scope_identity: String,
+    pub contract_identity: String,
+    pub boundary_family: String,
+    pub classification: String,
+    pub actor_mode: String,
+    pub decision: String,
+    pub admitted_at: String,
+}
+
+impl GrantAdmissionEvidence {
+    pub(crate) fn crossing_admission(&self) -> Result<CrossingAuthorityAdmission, String> {
+        Ok(CrossingAuthorityAdmission {
+            carrier: CrossingAuthorityCarrier::PreboundFile,
+            authority_id: self.authority_id.clone(),
+            admission_identity: crate::semantic_identity::semantic_contract_identity(self)?,
+            authorization_identity: self.grant_identity.clone(),
+            scope_identity: self.scope_identity.clone(),
+            contract_identity: self.contract_identity.clone(),
+            boundary_family: self.boundary_family.clone(),
+            classification: self.classification.clone(),
+            actor_mode: self.actor_mode.clone(),
+            decision: self.decision.clone(),
+            admitted_at: self.admitted_at.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1339,6 +1430,7 @@ fn read_protected_json<T: for<'de> Deserialize<'de>>(
         )
     })?;
     verify_protected_file_metadata(
+        &canonical,
         &file.metadata().map_err(|details| {
             error(
                 "crossing_authority_unavailable",
@@ -1431,6 +1523,10 @@ fn verify_protected_system_path(
             format!("{label} must live outside the selected repository"),
         ));
     }
+    #[cfg(test)]
+    if test_protected_authority_path(&canonical) {
+        return Ok(canonical);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -1467,14 +1563,21 @@ fn verify_protected_system_path(
 }
 
 fn verify_protected_file_metadata(
+    path: &Path,
     metadata: &fs::Metadata,
     label: &str,
 ) -> Result<(), GrantAdmissionError> {
+    #[cfg(not(test))]
+    let _ = path;
     if !metadata.is_file() {
         return Err(error(
             "crossing_authority_path_untrusted",
             format!("{label} must be a regular file"),
         ));
+    }
+    #[cfg(test)]
+    if test_protected_authority_path(path) {
+        return Ok(());
     }
     #[cfg(unix)]
     {
@@ -1489,8 +1592,22 @@ fn verify_protected_file_metadata(
     Ok(())
 }
 
+#[cfg(test)]
+fn test_protected_authority_path(path: &Path) -> bool {
+    TEST_PROTECTED_AUTHORITY_ROOT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .is_some_and(|root| path.starts_with(root))
+    })
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn system_trust_store_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = TEST_SYSTEM_TRUST_STORE_PATH.with(|current| current.borrow().clone()) {
+        return Some(path);
+    }
     Some(PathBuf::from(SYSTEM_TRUST_STORE_PATH))
 }
 
@@ -1508,7 +1625,7 @@ fn error(reason: &'static str, details: impl Into<String>) -> GrantAdmissionErro
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
 
@@ -1535,7 +1652,7 @@ tasks:
         .expect("contract should parse")
     }
 
-    fn fixture(
+    pub(crate) fn fixture(
         now: OffsetDateTime,
     ) -> (
         PreboundAuthorityBinding,
@@ -1626,6 +1743,61 @@ tasks:
         };
         binding.identity = domain_identity(BINDING_DOMAIN, &binding).unwrap();
         (binding, envelope, scope)
+    }
+
+    pub(crate) fn install_test_prebound_authority(
+        authority_root: &Path,
+        repo_root: &Path,
+    ) -> (TestSystemTrustStoreGuard, Contract, GrantAdmissionEvidence) {
+        let now = OffsetDateTime::now_utc();
+        let (mut binding, envelope, scope) = fixture(now);
+        fs::create_dir_all(authority_root).expect("test authority directory");
+        let bundle_path = authority_root.join("signed-grants.json");
+        let sequence_path = authority_root.join("sequence.json");
+        let store_path = authority_root.join("crossing-authorities.json");
+        binding.bundle_path = bundle_path.display().to_string();
+        binding.sequence_state_path = sequence_path.display().to_string();
+        binding.identity.clear();
+        binding.identity =
+            domain_identity(BINDING_DOMAIN, &binding).expect("test binding identity");
+        fs::write(
+            &bundle_path,
+            serde_json::to_vec(&envelope).expect("test signed bundle"),
+        )
+        .expect("write test signed bundle");
+        fs::write(
+            &sequence_path,
+            serde_json::to_vec(&PreboundAuthoritySequenceState {
+                authority_id: binding.authority_id.clone(),
+                highest_sequence: envelope.payload.sequence,
+                last_observed_at: now.format(&Rfc3339).expect("test timestamp"),
+            })
+            .expect("test sequence state"),
+        )
+        .expect("write test sequence state");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&PreboundAuthorityStore {
+                schema_version: CROSSING_AUTHORITY_SCHEMA_VERSION,
+                bindings: vec![binding],
+            })
+            .expect("test authority store"),
+        )
+        .expect("write test authority store");
+        let guard = TestSystemTrustStoreGuard::install(store_path);
+        let contract = contract();
+        let admission = admit_prebound_file_grant(
+            &contract,
+            repo_root,
+            &scope,
+            "publish-once",
+            "unsafe_task",
+            "escalated",
+            "non_agent",
+            now,
+        )
+        .expect("test grant admission");
+        (guard, contract, admission)
     }
 
     #[test]

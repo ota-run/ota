@@ -135,6 +135,12 @@ before selected-lane side effects and finalized as `completed`, `failed`, `inter
 missing, pending, identity-mismatched, or outcome-inconsistent transaction evidence. This is
 grant-admission and per-use crossing evidence, not reusable authority or proof that the grant
 remains live now.
+
+Crossing transaction schema v2 records `authority_carrier` and the carrier-neutral
+`authorization_identity`; its archive evidence carries a re-derived carrier admission envelope.
+The earlier v1 `grant_identity` shape remains readable only as legacy `prebound_file` evidence.
+Neither form represents a broker lease until the broker carrier is implemented and independently
+verified.
 `authority.authority_separation_posture: current_process_filesystem_guarded` is also an explicit
 boundary: the signed-file carrier verifies root-owned paths against Ota's current unprivileged
 process, but it does not prove that the invoking job lacks administrative escalation. Strong

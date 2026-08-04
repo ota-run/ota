@@ -23,6 +23,7 @@
 use std::fs;
 use std::path::Path;
 
+use jsonschema::{Draft, JSONSchema};
 use ota::published_contract_schemas::{generated_contract_schema, published_contract_schemas};
 use ota::published_docs_manifest::{generated_doc_manifest, published_doc_manifests};
 use serde_json::{Value, json};
@@ -31,6 +32,16 @@ fn load_schema(path: &str) -> Value {
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     let contents = fs::read_to_string(&schema_path).expect("schema file should be readable");
     serde_json::from_str(&contents).expect("schema file should be valid JSON")
+}
+
+fn receipt_definition_schema(definition: &str) -> JSONSchema {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let mut definition_schema = schema["$defs"][definition].clone();
+    definition_schema["$defs"] = schema["$defs"].clone();
+    JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&definition_schema)
+        .expect("receipt definition schema should compile")
 }
 
 #[test]
@@ -2098,6 +2109,141 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         up["oneOf"][0]["properties"]["members"]["items"]["properties"]["crossing_grant_admission"]
             ["$ref"],
         json!("./run-preview.json#/$defs/crossingGrantAdmission")
+    );
+}
+
+#[test]
+fn receipt_crossing_archive_schema_enforces_carrier_version_branches() {
+    let schema = receipt_definition_schema("crossingGrantArchiveEvidence");
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let scope = json!({
+        "schema_version": 2,
+        "identity": identity,
+        "contract_identity": identity,
+        "lane": { "kind": "task", "name": "publish" },
+        "boundary_family": "unsafe_task",
+        "classification": "escalated",
+        "target_platform": { "os": "linux", "architecture": "amd64" },
+        "execution_graph_identity": identity,
+        "segment_identities": [identity],
+        "edge_identities": [identity],
+        "execution_selection": { "skip_dependencies": false },
+        "input_identity_posture": "not_applicable"
+    });
+    let admission = json!({
+        "authority_id": "release-authority",
+        "authority_binding_identity": identity,
+        "issuer_id": "issuer",
+        "key_id": "key",
+        "key_fingerprint": identity,
+        "bundle_id": "bundle",
+        "bundle_identity": identity,
+        "bundle_sequence": 1,
+        "grant_id": "publish-once",
+        "grant_identity": identity,
+        "scope_identity": identity,
+        "contract_identity": identity,
+        "boundary_family": "unsafe_task",
+        "classification": "escalated",
+        "actor_mode": "non_agent",
+        "environment_posture": "unknown",
+        "expiry_kind": "calendar_ttl",
+        "issued_at": "2026-08-04T00:00:00Z",
+        "not_before": "2026-08-04T00:00:00Z",
+        "next_update": "2026-08-04T00:01:00Z",
+        "expires_at": "2026-08-04T00:02:00Z",
+        "clock_evidence": "system_non_root",
+        "sequence_evidence": "monotonic",
+        "revocation_evidence": "bundle",
+        "decision": "allowed",
+        "admitted_at": "2026-08-04T00:00:00Z",
+        "semantic_scope": scope,
+        "authority_binding_snapshot": {},
+        "signed_bundle_snapshot": {},
+        "sequence_state_snapshot": {}
+    });
+    let carrier_admission = json!({
+        "carrier": "prebound_file",
+        "authority_id": "release-authority",
+        "admission_identity": identity,
+        "authorization_identity": identity,
+        "scope_identity": identity,
+        "contract_identity": identity,
+        "boundary_family": "unsafe_task",
+        "classification": "escalated",
+        "actor_mode": "non_agent",
+        "decision": "allowed",
+        "admitted_at": "2026-08-04T00:00:00Z"
+    });
+    let transaction = |version, carrier: &str| {
+        let mut value = json!({
+            "schema_version": version,
+            "identity": identity,
+            "authentication_posture": "runner_local_content_addressed",
+            "transaction_id": format!("crossing-1-{}", "a".repeat(64)),
+            "authority_id": "release-authority",
+            "admission_identity": identity,
+            "scope_identity": identity,
+            "contract_identity": identity,
+            "state": "completed",
+            "created_at": "2026-08-04T00:00:00Z",
+            "finalized_at": "2026-08-04T00:00:01Z",
+            "receipt_status": "passed"
+        });
+        if version == 1 {
+            value["grant_identity"] = Value::String(identity.clone());
+        } else {
+            value["authority_carrier"] = Value::String(carrier.to_string());
+            value["authorization_identity"] = Value::String(identity.clone());
+        }
+        value
+    };
+    let archive = |transaction: Value, carrier: Option<Value>| {
+        let mut value = json!({
+            "admission": admission.clone(),
+            "transaction": transaction
+        });
+        if let Some(carrier) = carrier {
+            value["carrier_admission"] = carrier;
+        }
+        value
+    };
+
+    assert!(
+        schema
+            .validate(&archive(transaction(1, "prebound_file"), None))
+            .is_ok()
+    );
+    assert!(
+        schema
+            .validate(&archive(
+                transaction(1, "prebound_file"),
+                Some(carrier_admission.clone()),
+            ))
+            .is_err()
+    );
+    assert!(
+        schema
+            .validate(&archive(transaction(2, "prebound_file"), None))
+            .is_err()
+    );
+    assert!(
+        schema
+            .validate(&archive(
+                transaction(2, "prebound_file"),
+                Some(carrier_admission.clone()),
+            ))
+            .is_ok()
+    );
+    let mut broker_carrier = carrier_admission;
+    broker_carrier["carrier"] = Value::String(String::from("authority_broker"));
+    assert!(
+        schema
+            .validate(&archive(
+                transaction(2, "authority_broker"),
+                Some(broker_carrier),
+            ))
+            .is_err()
     );
 }
 

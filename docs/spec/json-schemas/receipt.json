@@ -68,23 +68,24 @@
         "transaction_id",
         "authority_id",
         "admission_identity",
-        "grant_identity",
         "scope_identity",
         "contract_identity",
         "state",
         "created_at"
       ],
       "properties": {
-        "schema_version": { "const": 1 },
+        "schema_version": { "enum": [1, 2] },
         "identity": { "$ref": "#/$defs/sha256Identity" },
         "authentication_posture": { "const": "runner_local_content_addressed" },
         "transaction_id": {
           "type": "string",
           "pattern": "^crossing-[0-9]+-[0-9a-f]{64}$"
         },
+        "authority_carrier": { "enum": ["prebound_file", "authority_broker"] },
         "authority_id": { "type": "string", "minLength": 1 },
         "admission_identity": { "$ref": "#/$defs/sha256Identity" },
         "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_identity": { "$ref": "#/$defs/sha256Identity" },
         "scope_identity": { "$ref": "#/$defs/sha256Identity" },
         "contract_identity": { "$ref": "#/$defs/sha256Identity" },
         "state": {
@@ -93,6 +94,47 @@
         "created_at": { "type": "string", "format": "date-time" },
         "finalized_at": { "type": "string", "format": "date-time" },
         "receipt_status": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "schema_version": { "const": 1 } } },
+          "then": {
+            "required": ["grant_identity"],
+            "not": { "anyOf": [
+              { "required": ["authority_carrier"] },
+              { "required": ["authorization_identity"] }
+            ] }
+          }
+        },
+        {
+          "if": { "properties": { "schema_version": { "const": 2 } } },
+          "then": {
+            "required": ["authority_carrier", "authorization_identity"],
+            "not": { "required": ["grant_identity"] }
+          }
+        }
+      ]
+    },
+    "crossingAuthorityAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "carrier", "authority_id", "admission_identity", "authorization_identity",
+        "scope_identity", "contract_identity", "boundary_family", "classification",
+        "actor_mode", "decision", "admitted_at"
+      ],
+      "properties": {
+        "carrier": { "enum": ["prebound_file", "authority_broker"] },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "admission_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_identity": { "$ref": "#/$defs/sha256Identity" },
+        "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "boundary_family": { "type": "string", "minLength": 1 },
+        "classification": { "type": "string", "minLength": 1 },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "decision": { "const": "allowed" },
+        "admitted_at": { "type": "string", "format": "date-time" }
       }
     },
     "crossingGrantArchiveEvidence": {
@@ -146,8 +188,41 @@
             "sequence_state_snapshot": { "type": "object" }
           }
         },
+        "carrier_admission": { "$ref": "#/$defs/crossingAuthorityAdmission" },
         "transaction": { "$ref": "#/$defs/crossingTransaction" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "transaction": {
+                "properties": { "schema_version": { "const": 1 } }
+              }
+            }
+          },
+          "then": { "not": { "required": ["carrier_admission"] } }
+        },
+        {
+          "if": {
+            "properties": {
+              "transaction": {
+                "properties": { "schema_version": { "const": 2 } }
+              }
+            }
+          },
+          "then": {
+            "required": ["carrier_admission"],
+            "properties": {
+              "carrier_admission": {
+                "properties": { "carrier": { "const": "prebound_file" } }
+              },
+              "transaction": {
+                "properties": { "authority_carrier": { "const": "prebound_file" } }
+              }
+            }
+          }
+        }
+      ]
     },
     "sandboxControlApplication": {
       "type": "object",

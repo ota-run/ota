@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Began the carrier-neutral audited-crossing evidence foundation. New transaction schema v2 binds
+  the authority carrier and authorization identity, while receipt archives bind a re-derived common
+  admission envelope. Legacy v1 receipt history remains limited to the existing `prebound_file`
+  carrier; no broker authority carrier is executable yet.
+
 - Added diagnostic-only `ota authority inspect [--json]` for the fixed `prebound_file` hardening
   profile. It reuses admission's canonical protected-file verifier across every fixed-store
   binding, reports typed required/informational observations, exits nonzero for incomplete,

@@ -30,10 +30,10 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::crossing_authority::GrantAdmissionEvidence;
+use crate::crossing_authority::CrossingAuthorityAdmission;
 use crate::semantic_identity::semantic_contract_identity;
 
-pub(crate) const CROSSING_TRANSACTION_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CROSSING_TRANSACTION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -42,9 +42,14 @@ pub(crate) struct CrossingTransactionEvidence {
     pub identity: String,
     pub authentication_posture: String,
     pub transaction_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_carrier: Option<String>,
     pub authority_id: String,
     pub admission_identity: String,
-    pub grant_identity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_identity: Option<String>,
     pub scope_identity: String,
     pub contract_identity: String,
     pub state: String,
@@ -63,9 +68,10 @@ pub(crate) struct CrossingTransactionGuard {
 
 #[derive(Debug, Clone)]
 struct CrossingTransactionBinding {
+    authority_carrier: String,
     authority_id: String,
     admission_identity: String,
-    grant_identity: String,
+    authorization_identity: String,
     scope_identity: String,
     contract_identity: String,
 }
@@ -73,14 +79,22 @@ struct CrossingTransactionBinding {
 impl CrossingTransactionGuard {
     pub(crate) fn begin(
         repo_root: &Path,
-        admission: &GrantAdmissionEvidence,
+        admission: &CrossingAuthorityAdmission,
     ) -> Result<Self, String> {
         Self::begin_with_binding(
             repo_root,
             &CrossingTransactionBinding {
+                authority_carrier: match admission.carrier {
+                    crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile => {
+                        String::from("prebound_file")
+                    }
+                    crate::crossing_authority::CrossingAuthorityCarrier::AuthorityBroker => {
+                        String::from("authority_broker")
+                    }
+                },
                 authority_id: admission.authority_id.clone(),
-                admission_identity: semantic_contract_identity(admission)?,
-                grant_identity: admission.grant_identity.clone(),
+                admission_identity: admission.admission_identity.clone(),
+                authorization_identity: admission.authorization_identity.clone(),
                 scope_identity: admission.scope_identity.clone(),
                 contract_identity: admission.contract_identity.clone(),
             },
@@ -136,9 +150,11 @@ impl CrossingTransactionGuard {
             identity: String::new(),
             authentication_posture: String::from("runner_local_content_addressed"),
             transaction_id: transaction_id.clone(),
+            authority_carrier: Some(binding.authority_carrier.clone()),
             authority_id: binding.authority_id.clone(),
             admission_identity: binding.admission_identity.clone(),
-            grant_identity: binding.grant_identity.clone(),
+            grant_identity: None,
+            authorization_identity: Some(binding.authorization_identity.clone()),
             scope_identity: binding.scope_identity.clone(),
             contract_identity: binding.contract_identity.clone(),
             state: String::from("pending"),
@@ -188,6 +204,20 @@ impl CrossingTransactionGuard {
 }
 
 #[cfg(test)]
+pub(crate) fn legacy_prebound_file_evidence_for_tests(
+    evidence: &CrossingTransactionEvidence,
+    grant_identity: String,
+) -> CrossingTransactionEvidence {
+    let mut legacy = evidence.clone();
+    legacy.schema_version = 1;
+    legacy.authority_carrier = None;
+    legacy.grant_identity = Some(grant_identity);
+    legacy.authorization_identity = None;
+    legacy.identity = transaction_identity(&legacy).expect("legacy transaction identity");
+    legacy
+}
+
+#[cfg(test)]
 mod tests {
     use std::fs;
 
@@ -195,16 +225,35 @@ mod tests {
 
     use super::{
         CrossingTransactionBinding, CrossingTransactionEvidence, CrossingTransactionGuard,
-        transaction_identity, verify_crossing_transaction_outcome,
+        transaction_identity, verify_crossing_transaction_evidence,
+        verify_crossing_transaction_outcome,
     };
+    use crate::crossing_authority::{CrossingAuthorityAdmission, CrossingAuthorityCarrier};
 
     fn binding(scope: &str) -> CrossingTransactionBinding {
         CrossingTransactionBinding {
+            authority_carrier: String::from("prebound_file"),
             authority_id: String::from("authority:test"),
             admission_identity: format!("sha256:{}", "0".repeat(64)),
-            grant_identity: format!("sha256:{}", "1".repeat(64)),
+            authorization_identity: format!("sha256:{}", "1".repeat(64)),
             scope_identity: format!("sha256:{scope}"),
             contract_identity: format!("sha256:{}", "2".repeat(64)),
+        }
+    }
+
+    fn broker_admission(scope: &str) -> CrossingAuthorityAdmission {
+        CrossingAuthorityAdmission {
+            carrier: CrossingAuthorityCarrier::AuthorityBroker,
+            authority_id: String::from("authority:broker-test"),
+            admission_identity: format!("sha256:{}", "3".repeat(64)),
+            authorization_identity: format!("sha256:{}", "4".repeat(64)),
+            scope_identity: format!("sha256:{scope}"),
+            contract_identity: format!("sha256:{}", "5".repeat(64)),
+            boundary_family: String::from("unsafe_task"),
+            classification: String::from("escalated"),
+            actor_mode: String::from("non_agent"),
+            decision: String::from("allowed"),
+            admitted_at: String::from("2026-01-01T00:00:00Z"),
         }
     }
 
@@ -255,6 +304,69 @@ mod tests {
             completed[0].identity,
             transaction_identity(&completed[0]).expect("identity should derive")
         );
+    }
+
+    #[test]
+    fn broker_admission_binds_carrier_neutral_authorization_identity() {
+        let root = tempdir().expect("tempdir should be available");
+        let admission = broker_admission(&"8".repeat(64));
+        let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
+            .expect("broker admission should create a transaction");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("transaction should finalize");
+        let evidence = transaction.evidence();
+        assert_eq!(
+            evidence.authority_carrier.as_deref(),
+            Some("authority_broker")
+        );
+        assert_eq!(
+            evidence.authorization_identity.as_deref(),
+            Some(admission.authorization_identity.as_str())
+        );
+        verify_crossing_transaction_evidence(&evidence, &admission)
+            .expect("transaction should reconcile with the broker admission");
+    }
+
+    #[test]
+    fn v1_transaction_cannot_be_reinterpreted_as_broker_authority() {
+        let root = tempdir().expect("tempdir should be available");
+        let admission = broker_admission(&"9".repeat(64));
+        let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
+            .expect("broker admission should create a transaction");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("transaction should finalize");
+        let mut evidence = transaction.evidence();
+        evidence.schema_version = 1;
+        evidence.authority_carrier = None;
+        evidence.grant_identity = evidence.authorization_identity.take();
+        evidence.identity = transaction_identity(&evidence).expect("legacy identity should derive");
+        assert!(verify_crossing_transaction_evidence(&evidence, &admission).is_err());
+    }
+
+    #[test]
+    fn v2_transaction_refuses_missing_carrier_or_changed_authorization_identity() {
+        let root = tempdir().expect("tempdir should be available");
+        let admission = broker_admission(&"a".repeat(64));
+        let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
+            .expect("broker admission should create a transaction");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("transaction should finalize");
+        let evidence = transaction.evidence();
+
+        let mut missing_carrier = evidence.clone();
+        missing_carrier.authority_carrier = None;
+        missing_carrier.identity =
+            transaction_identity(&missing_carrier).expect("modified identity should derive");
+        assert!(verify_crossing_transaction_evidence(&missing_carrier, &admission).is_err());
+
+        let mut changed_authorization = evidence;
+        changed_authorization.authorization_identity = Some(format!("sha256:{}", "b".repeat(64)));
+        changed_authorization.identity =
+            transaction_identity(&changed_authorization).expect("modified identity should derive");
+        assert!(verify_crossing_transaction_evidence(&changed_authorization, &admission).is_err());
     }
 
     #[test]
@@ -401,13 +513,32 @@ impl Drop for CrossingTransactionGuard {
 
 pub(crate) fn verify_crossing_transaction_evidence(
     evidence: &CrossingTransactionEvidence,
-    admission: &GrantAdmissionEvidence,
+    admission: &CrossingAuthorityAdmission,
 ) -> Result<(), String> {
-    if evidence.schema_version != CROSSING_TRANSACTION_SCHEMA_VERSION
+    let expected_carrier = match admission.carrier {
+        crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile => "prebound_file",
+        crate::crossing_authority::CrossingAuthorityCarrier::AuthorityBroker => "authority_broker",
+    };
+    let carrier_matches = match evidence.schema_version {
+        1 => {
+            expected_carrier == "prebound_file"
+                && evidence.authority_carrier.is_none()
+                && evidence.grant_identity.as_deref()
+                    == Some(admission.authorization_identity.as_str())
+                && evidence.authorization_identity.is_none()
+        }
+        CROSSING_TRANSACTION_SCHEMA_VERSION => {
+            evidence.authority_carrier.as_deref() == Some(expected_carrier)
+                && evidence.grant_identity.is_none()
+                && evidence.authorization_identity.as_deref()
+                    == Some(admission.authorization_identity.as_str())
+        }
+        _ => false,
+    };
+    if !carrier_matches
         || evidence.authentication_posture != "runner_local_content_addressed"
         || evidence.authority_id != admission.authority_id
-        || evidence.admission_identity != semantic_contract_identity(admission)?
-        || evidence.grant_identity != admission.grant_identity
+        || evidence.admission_identity != admission.admission_identity
         || evidence.scope_identity != admission.scope_identity
         || evidence.contract_identity != admission.contract_identity
         || evidence.state == "pending"

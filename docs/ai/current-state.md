@@ -144,6 +144,12 @@ durable agent workflow belongs in the canonical Ota skill.
   [30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
   The live artifact retains the exact transaction-bound receipt archive; every refusal preserves
   typed admission evidence and an unchanged checkout before and after dry-run and real refusal.
+  The current carrier-neutral transaction/archive foundation uses transaction schema v2 to bind
+  authority carrier, admission identity, and authorization identity. V1 archives remain legacy
+  `prebound_file` evidence without a carrier envelope; receipt history rejects carrier-envelope
+  injection into v1 and missing or substituted envelopes in v2. This is compatibility groundwork
+  only: Core has no executable `authority_broker` selector, admission path, or broker archive
+  format yet.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
   material. Hardened-runner pressure now proves the carrier's bounded

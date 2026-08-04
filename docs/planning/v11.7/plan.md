@@ -706,10 +706,11 @@ strict variants:
   or unavailable refuses rather than falling back to a standing file grant.
 
 The common envelope carries only canonical facts shared by every carrier: authority identity,
-contract identity, semantic scope identity, boundary family, classification, runner-observed actor
-mode, decision, and admission time. JSON output, crossing transactions, receipt archives, and
-history verification consume that envelope and switch on its explicit carrier variant. This is the
-only allowed path for later carriers; `prebound_file` compatibility remains additive.
+admission identity, authorization identity, contract identity, semantic scope identity, boundary
+family, classification, runner-observed actor mode, decision, and admission time. JSON output,
+crossing transactions, receipt archives, and history verification consume that envelope and switch
+on its explicit carrier variant. This is the only allowed path for later carriers; `prebound_file`
+compatibility remains additive.
 
 Admission evidence is immutable evidence available before selected-lane execution. It must not
 contain a terminal crossing-transaction binding, consume response, task outcome, or cleanup result.
@@ -793,6 +794,14 @@ or trust root.
 Ota loads the fixed store through the existing protected-file verifier. Symlinks, non-regular files,
 writable parents, malformed or unknown records, duplicate `authority_id` entries, and duplicate
 binding identities all refuse before IPC, broker, or selected-lane work.
+
+Carrier selection is external and exact. For a contract `authority_id`, Ota reads the existing
+fixed `prebound_file` store and `/etc/ota/crossing-brokers.json` through the same protected-file
+rules, then admits exactly one matching carrier binding. Zero matches refuse as unknown; more than
+one match, including a file/broker collision, refuses as `crossing_authority_ambiguous`. Ota never
+uses store ordering, fallback, or a repository declaration to choose a carrier. A missing broker
+store is not an error for an existing unambiguous `prebound_file` authority; a present broker store
+must be structurally valid before any authority decision.
 
 `image_identity` and `hardening_profile_identity` become required attestation claims only when the
 administrator binding selects a reference-image profile. They are not universal requirements for a

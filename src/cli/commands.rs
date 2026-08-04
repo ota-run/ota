@@ -16136,6 +16136,7 @@ fn active_crossing_grant_authority() -> Option<crate::output::ExecutionBoundaryC
         Some(crossing_grant_authority_output_with_transaction(
             admission,
             Some(transaction),
+            true,
         ))
     })
 }
@@ -16188,8 +16189,12 @@ impl ActiveCrossingTransactionGuard {
         let Some(admission) = admission else {
             return Ok(None);
         };
+        let transaction_admission = admission.crossing_admission()?;
         let transaction = Rc::new(RefCell::new(
-            crate::crossing_transaction::CrossingTransactionGuard::begin(repo_root, admission)?,
+            crate::crossing_transaction::CrossingTransactionGuard::begin(
+                repo_root,
+                &transaction_admission,
+            )?,
         ));
         let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
         Ok(Some(Self { previous }))
@@ -16207,6 +16212,8 @@ impl Drop for ActiveCrossingTransactionGuard {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct ArchivedCrossingGrantEvidence {
     admission: GrantAdmissionEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    carrier_admission: Option<crate::crossing_authority::CrossingAuthorityAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
 }
@@ -16276,6 +16283,7 @@ fn finalize_and_attach_active_crossing_transaction(
 fn crossing_grant_authority_output_with_transaction(
     admission: &GrantAdmissionEvidence,
     transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+    include_carrier_admission: bool,
 ) -> crate::output::ExecutionBoundaryCrossingAuthority {
     crate::output::ExecutionBoundaryCrossingAuthority {
         decision: admission.decision.clone(),
@@ -16310,6 +16318,11 @@ fn crossing_grant_authority_output_with_transaction(
             .map(|evidence| serde_json::to_value(evidence).expect("transaction should serialize")),
         archive_evidence: serde_json::to_value(ArchivedCrossingGrantEvidence {
             admission: admission.clone(),
+            carrier_admission: include_carrier_admission.then(|| {
+                admission
+                    .crossing_admission()
+                    .expect("verified crossing grant admission should derive its carrier envelope")
+            }),
             transaction,
         })
         .expect("verified crossing grant admission should serialize"),
@@ -39076,6 +39089,37 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                 compact_path(path, ".")
             )
         })?;
+        match transaction.schema_version {
+            1 if archived.carrier_admission.is_some() => {
+                return Err(format!(
+                    "receipt archive `{}` carries carrier admission evidence incompatible with a legacy v1 transaction",
+                    compact_path(path, ".")
+                ));
+            }
+            crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION
+                if archived.carrier_admission.is_none() =>
+            {
+                return Err(format!(
+                    "receipt archive `{}` omits carrier admission evidence required by its v2 transaction",
+                    compact_path(path, ".")
+                ));
+            }
+            _ => {}
+        }
+        if let Some(carrier_admission) = archived.carrier_admission.as_ref() {
+            let expected_carrier_admission = archived.admission.crossing_admission().map_err(|error| {
+                format!(
+                    "receipt archive `{}` cannot derive its carrier-neutral crossing admission: {error}",
+                    compact_path(path, ".")
+                )
+            })?;
+            if carrier_admission != &expected_carrier_admission {
+                return Err(format!(
+                    "receipt archive `{}` carries carrier-neutral admission evidence that does not match its signed file-grant admission",
+                    compact_path(path, ".")
+                ));
+            }
+        }
         let archive_scope = record
             .payload
             .archive_context
@@ -39096,6 +39140,8 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
         let expected = crossing_grant_authority_output_with_transaction(
             &archived.admission,
             Some(transaction.clone()),
+            transaction.schema_version
+                == crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION,
         );
         if &expected != authority {
             return Err(format!(
@@ -39119,9 +39165,15 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                 compact_path(path, ".")
             )
         })?;
+        let transaction_admission = archived.admission.crossing_admission().map_err(|error| {
+            format!(
+                "receipt archive `{}` cannot derive its carrier-neutral crossing admission: {error}",
+                compact_path(path, ".")
+            )
+        })?;
         crate::crossing_transaction::verify_crossing_transaction_evidence(
             transaction,
-            &archived.admission,
+            &transaction_admission,
         )
         .map_err(|error| {
             format!(
@@ -59261,6 +59313,57 @@ mod tests {
             "semantic_scope": scope,
         })
     }
+
+    fn write_governed_crossing_archive(
+        repo: &Path,
+        contract: &Contract,
+        admission: &crate::crossing_authority::GrantAdmissionEvidence,
+        transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+        include_carrier_admission: bool,
+        archive_name: &str,
+    ) -> PathBuf {
+        let contracts = repo.join(".ota/contracts");
+        let receipts = repo.join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("governed-crossing.json"), snapshot).expect("snapshot");
+        let mut crossing = super::build_task_crossing_record(
+            contract,
+            "publish",
+            ExecutionOverrides::default(),
+            false,
+            None,
+        )
+        .expect("governed task crossing");
+        crossing.id = transaction.transaction_id.clone();
+        crossing.authority = Some(super::crossing_grant_authority_output_with_transaction(
+            admission,
+            Some(transaction),
+            include_carrier_admission,
+        ));
+        let archive_path = receipts.join(archive_name);
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": governed_task_archive_context(contract, "publish"),
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed-crossing.json",
+                    "status": "passed",
+                    "crossing": crossing
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+        archive_path
+    }
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
@@ -71084,6 +71187,102 @@ tasks:
         let error = super::read_repo_receipt_archive_record(&mismatched_identity_path)
             .expect_err("snapshot identity mismatch must refuse");
         assert!(error.contains("expected `sha256:0000"), "{error}");
+    }
+
+    #[test]
+    fn receipt_history_reconciles_crossing_authority_transaction_versions_and_envelopes() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let authority = tempfile::tempdir().expect("authority tempdir");
+        let (_authority_guard, contract, admission) =
+            crate::crossing_authority::tests::install_test_prebound_authority(
+                authority.path(),
+                repo.path(),
+            );
+        let carrier_admission = admission
+            .crossing_admission()
+            .expect("carrier-neutral admission");
+        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
+            repo.path(),
+            &carrier_admission,
+        )
+        .expect("crossing transaction");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("completed transaction");
+        let v2_transaction = transaction.evidence();
+
+        let legacy_transaction =
+            crate::crossing_transaction::legacy_prebound_file_evidence_for_tests(
+                &v2_transaction,
+                admission.grant_identity.clone(),
+            );
+        let legacy_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            legacy_transaction.clone(),
+            false,
+            "repo-receipt-crossing-v1.json",
+        );
+        super::read_repo_receipt_archive_record(&legacy_path)
+            .expect("legacy v1 archive without carrier admission remains readable");
+
+        let v1_envelope_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            legacy_transaction,
+            true,
+            "repo-receipt-crossing-v1-envelope.json",
+        );
+        let error = super::read_repo_receipt_archive_record(&v1_envelope_path)
+            .expect_err("v1 archive cannot carry a v2 carrier envelope");
+        assert!(
+            error.contains("incompatible with a legacy v1 transaction"),
+            "{error}"
+        );
+
+        let v2_missing_envelope_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            v2_transaction.clone(),
+            false,
+            "repo-receipt-crossing-v2-no-envelope.json",
+        );
+        let error = super::read_repo_receipt_archive_record(&v2_missing_envelope_path)
+            .expect_err("v2 archive requires carrier admission evidence");
+        assert!(
+            error.contains("omits carrier admission evidence"),
+            "{error}"
+        );
+
+        let substituted_envelope_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            v2_transaction,
+            true,
+            "repo-receipt-crossing-v2-substituted-envelope.json",
+        );
+        let mut substituted: serde_json::Value = serde_json::from_slice(
+            &fs::read(&substituted_envelope_path).expect("substituted archive"),
+        )
+        .expect("archive json");
+        substituted["receipt"]["crossing"]["authority"]["archive_evidence"]["carrier_admission"]
+            ["authorization_identity"] =
+            serde_json::Value::String(String::from("sha256:substituted"));
+        fs::write(
+            &substituted_envelope_path,
+            serde_json::to_vec(&substituted).expect("substituted archive json"),
+        )
+        .expect("write substituted archive");
+        let error = super::read_repo_receipt_archive_record(&substituted_envelope_path)
+            .expect_err("substituted carrier envelope must refuse");
+        assert!(
+            error.contains("carrier-neutral admission evidence that does not match"),
+            "{error}"
+        );
     }
 
     #[test]
