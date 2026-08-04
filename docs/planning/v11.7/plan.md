@@ -626,8 +626,10 @@ lease usable once for one exact crossing transaction.
 ##### Canonical broker binding and attestation record
 
 Before implementing `authority_broker`, Ota must define one versioned, administrator-owned binding
-record outside the repository. Every adapter consumes this record; adapters must not invent their
-own endpoint, credential, or attestation model. Its canonical identity includes:
+record at the fixed protected Linux path `/etc/ota/crossing-brokers.json`. It is root-owned, outside
+the repository, and has no repository, environment, policy, workflow, or CLI override. Every
+adapter consumes this record; adapters must not invent their own endpoint, credential, or
+attestation model. Its canonical identity includes:
 
 - binding schema version, `authority_id`, broker identity, and accepted authority/contract labels;
 - normalized HTTPS origin, expected server name, redirect prohibition, and protocol version;
@@ -639,17 +641,162 @@ own endpoint, credential, or attestation model. Its canonical identity includes:
   provider through a non-delegable channel: a launcher-held one-shot capability, non-inheritable
   descriptor, or provider exchange cryptographically bound to this Ota invocation. The selected
   task must not inherit or be able to reacquire that credential, its metadata path, or its session;
-- attestation verifier identity, issuer/audience, required runner claims, maximum age/skew, and
-  attestation key-rotation posture; and
-- canonical request/response domain, maximum lease duration, and replay-binding requirements.
+- attestation trust-bundle identity, verifier key set and key IDs, issuer/audience, mandatory
+  protocol claims, administrator-added claims, maximum age/skew, and attestation key-rotation
+  posture; and
+- phase-separated message domains, maximum approval wait, minimum post-approval freshness, maximum
+  lease duration, and replay-binding requirements.
 
-The broker request carries the binding identity, a fresh runner-generated nonce commitment,
-work-unit identity, and exact semantic crossing scope. Accepted provider or launcher attestation
-must bind that challenge, the runner principal, audience, issue/expiry window, and work-unit. Ota
-verifies it before requesting a lease and binds its verified identity into the lease, consume
-record, receipt, and archive. Stale, wrong-audience, cached, substituted, or replayed attestations
-refuse before broker or selected-lane work. A provider that cannot enforce this separation refuses
-the broker carrier; transport authentication alone is not attestation.
+Broker admission uses a two-phase handshake. Ota first freezes the selected semantic scope and
+creates a fresh nonce commitment and work-unit identity. The launcher then obtains provider or
+launcher attestation bound to that exact challenge, runner principal, audience, and issue/expiry
+window. Ota verifies the returned attestation before it requests an authorization decision or
+lease. Stale, wrong-audience, cached, substituted, or replayed attestations refuse before broker
+or selected-lane work. A provider that cannot enforce this separation refuses the broker carrier;
+transport authentication alone is not attestation.
+
+##### Initial launcher-session adapter
+
+The first `authority_broker` adapter is Unix-only and is a launcher-session delivery carrier. Other
+platforms refuse this carrier rather than emulating descriptor isolation. The launcher owns the
+binding's configured `mtls` or `provider_workload_identity` transport authentication; Ota receives
+no mTLS private key, provider token, metadata endpoint, or broker credential in its environment,
+repository, contract, receipt, archive, or task environment. The administrator-owned binding names
+one fixed inherited descriptor number. The launcher delivers that already-connected local session
+when Ota starts, but it is initially untrusted IPC rather than authority.
+
+The descriptor is an Ota-only transport channel, not caller authority:
+
+- the fixed binding, not an environment variable or CLI flag, selects the descriptor number,
+  expected broker origin, protocol version, and verifier keys;
+- Ota verifies that the inherited descriptor is a connected Unix-domain stream and successfully
+  sets `FD_CLOEXEC` before it sends the challenge. All Ota child spawning must pass through one
+  defensive descriptor-sanitization path; any missing, wrong-kind, malformed, or inheritable
+  channel is a pre-side-effect broker refusal;
+- the launcher keeps all broker transport credentials and provider-exchange material outside the
+  job user and passes only the one invocation's channel to Ota;
+- Ota writes a framed challenge request containing its fresh nonce commitment, work-unit identity,
+  and exact semantic scope; the launcher obtains the bound attestation through its protected
+  channel. Only after Ota verifies that response does it treat the channel as authority-capable,
+  send the authorization or lease request, and verify each signed response against the binding
+  before creating a crossing transaction; and
+- Ota never serializes a channel handle, nonce, request, or response payload into
+  public output; and
+- a launcher/provider attestation must state that the channel was delivered for this Ota invocation
+  and cannot be reacquired by selected task code. If that assertion is absent, the broker carrier
+  refuses rather than treating a same-user descriptor as authority separation.
+
+This adapter leaves direct Ota-to-broker mTLS and provider-workload-identity transports for later
+only if they can meet the same non-delegable delivery and task-isolation requirements. They must
+reuse this binding and request/response model rather than defining new authority semantics.
+
+##### Core admission model
+
+Core must not overload the first carrier's `GrantAdmissionEvidence` with broker fields. Its signed
+bundle, protected sequence-state, and calendar-TTL claims are specific to `prebound_file`; filling
+them with broker placeholders would make receipts lie. Before wiring the broker into `run`, `up`,
+or proof commands, Core introduces one carrier-neutral `CrossingAuthorityAdmission` envelope with
+strict variants:
+
+- `prebound_file`: the existing signed-bundle admission evidence unchanged;
+- `authority_broker`: binding identity, verified attestation identity/posture, work-unit identity,
+  nonce commitment, authorization-decision identity, prepared lease identity, broker revision, and
+  bounded approval state; and
+- no implicit or fallback variant. A contract-selected broker binding that is missing, unsupported,
+  or unavailable refuses rather than falling back to a standing file grant.
+
+The common envelope carries only canonical facts shared by every carrier: authority identity,
+contract identity, semantic scope identity, boundary family, classification, runner-observed actor
+mode, decision, and admission time. JSON output, crossing transactions, receipt archives, and
+history verification consume that envelope and switch on its explicit carrier variant. This is the
+only allowed path for later carriers; `prebound_file` compatibility remains additive.
+
+Admission evidence is immutable evidence available before selected-lane execution. It must not
+contain a terminal crossing-transaction binding, consume response, task outcome, or cleanup result.
+Those belong to the separately created pending transaction and its terminal finalization record.
+The broker consume record links the prepared lease to that transaction only after Ota has durably
+created the journal.
+
+The first broker binding record is read only from `/etc/ota/crossing-brokers.json`, is addressed by
+the existing contract `authority_id` only, and has this canonical shape:
+
+```json
+{
+  "schema_version": 1,
+  "identity": "sha256:<canonical binding digest>",
+  "authority_id": "platform-release-authority",
+  "broker_id": "platform-crossing-broker",
+  "origin": "https://broker.example.internal",
+  "server_name": "broker.example.internal",
+  "protocol_version": "ota-crossing-broker/v1",
+  "transport_authentication": {
+    "kind": "mtls",
+    "trust_bundle_identity": "sha256:<broker trust bundle>",
+    "credential_source_identity": "launcher:workload-session/v1"
+  },
+  "credential_delivery": {
+    "kind": "launcher_session_fd",
+    "descriptor": 3,
+    "session_audience": "ota-crossing-broker"
+  },
+  "broker_verifiers": [
+    { "key_id": "broker-2026-01", "algorithm": "ed25519", "public_key": "..." }
+  ],
+  "attestation": {
+    "issuer": "runner-launcher",
+    "audience": "ota-crossing-broker",
+    "trust_bundle_identity": "sha256:<launcher attestation trust bundle>",
+    "verifiers": [
+      { "key_id": "launcher-2026-01", "algorithm": "ed25519", "public_key": "..." }
+    ],
+    "maximum_age_seconds": 180,
+    "maximum_clock_skew_seconds": 5,
+    "key_rotation_overlap_seconds": 300,
+    "mandatory_protocol_claims": [
+      "binding_identity",
+      "challenge_nonce_commitment",
+      "invocation_id",
+      "work_unit_identity",
+      "semantic_scope_identity",
+      "runner_principal",
+      "channel_delivery",
+      "authenticated_origin",
+      "authority_mounts"
+    ],
+    "required_administrator_claims": []
+  },
+  "message_domains": {
+    "challenge_request": "ota-crossing-broker/challenge-request/v1",
+    "attestation_response": "ota-crossing-broker/attestation-response/v1",
+    "authorization_request": "ota-crossing-broker/authorization-request/v1",
+    "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+    "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
+    "lease_consume": "ota-crossing-broker/lease-consume/v1",
+    "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1"
+  },
+  "maximum_approval_wait_seconds": 120,
+  "minimum_post_approval_freshness_seconds": 30,
+  "maximum_lease_seconds": 300
+}
+```
+
+`identity` is the SHA-256 digest of JCS-normalized content with its own value blank and the
+`ota.crossing-broker.binding.v1` domain prefix. Broker and attestation verifier entries are sorted
+by unique `key_id`; the binding rejects duplicates, unsupported algorithms, non-HTTPS origins,
+redirects, non-absolute launcher-owned paths, unknown administrator claims, unsupported descriptor
+values, duplicate or missing message domains, or windows outside the bounded maximum. Every signed
+message carries the matching `message_kind` and is verified only under its corresponding domain.
+The mandatory protocol claims are not configurable. Any key rotation uses a new binding identity
+with an explicit, time-bounded overlap of verifier keys; a caller cannot supply a replacement key
+or trust root.
+
+Ota loads the fixed store through the existing protected-file verifier. Symlinks, non-regular files,
+writable parents, malformed or unknown records, duplicate `authority_id` entries, and duplicate
+binding identities all refuse before IPC, broker, or selected-lane work.
+
+`image_identity` and `hardening_profile_identity` become required attestation claims only when the
+administrator binding selects a reference-image profile. They are not universal requirements for a
+broker carrier running on another attested platform.
 
 When a reference runner image is selected, the same protected attestation must additionally bind
 its exact immutable OCI digest and hardening-profile identity. Ota binds those verified identities
@@ -662,17 +809,19 @@ does not prove that the runner executed that image.
   administrator or hardened launcher. Repository files, `OTA_POLICY`, environment variables,
   caller flags, and workflow YAML cannot select or replace them.
 - Ota resolves the complete semantic crossing scope before contacting the broker, then creates a
-  fresh cryptographic nonce and runner-generated work-unit identity. The caller never supplies
-  either value.
+  fresh cryptographic nonce commitment and runner-generated work-unit identity. This frozen
+  challenge is given to the launcher, which obtains an attestation bound to that exact challenge.
+  Ota verifies the returned attestation before it requests an authorization decision or lease. The
+  caller never supplies any of these values.
 - `--grant <id>` is an explicit diagnostic or disambiguation request for a configured authority
   label. It cannot name a lease, inject issuer data, or select an endpoint. Missing or
   inapplicable labels refuse before broker mutation. This does not change the first
   `prebound_file` carrier: it continues to require its explicit `--grant` admission surface until
   the broker carrier ships.
-- Ota sends the nonce, work-unit identity, contract identity, exact scope identity, requested
-  action/resource, runner-observed actor posture, available provider/launcher attestation, and a
-  bounded requested lifetime. Unavailable required runner identity or attestation refuses rather
-  than being represented as a caller assertion.
+- Ota sends the verified attestation identity, nonce commitment, work-unit identity, contract
+  identity, exact scope identity, requested action/resource, runner-observed actor posture, and a
+  bounded requested lifetime. Unavailable required runner identity or challenge-bound attestation
+  refuses rather than being represented as a caller assertion.
 
 ##### Authority-selection UX (planned broker carrier)
 
@@ -698,6 +847,33 @@ current `prebound_file` rules above:
   surface. It must never silently select an actual broker lease, bypass exact-one matching, or
   widen contract authority.
 
+##### Exceptional same-terminal approval wait
+
+An exceptional crossing may wait in the invoking terminal for a broker-side authorization decision,
+but only after Ota has frozen one complete semantic scope, work-unit identity, nonce commitment,
+attestation identity, and requested lifetime. The wait is bounded by
+`maximum_approval_wait_seconds`; its state machine is
+`requested -> pending -> allowed | denied | timed_out | cancelled | ambiguous`. Ota starts no
+selected-lane work while pending, and no lease is issued or consumed while approval remains pending.
+The first carrier never refreshes a frozen attestation. Ota begins waiting only when its remaining
+freshness covers `maximum_approval_wait_seconds` plus the binding's
+`minimum_post_approval_freshness_seconds`; otherwise it refuses before waiting. Ota rechecks the
+same attestation before lease issuance and again before consumption.
+
+- timeout, denial, local interruption/cancellation, unavailable broker, stale attestation, changed
+  scope, changed work unit, or an otherwise indeterminate response refuse before execution. A
+  later approval for a cancelled local request is non-executable and must not issue a usable lease;
+- a signed decision response may be retransmitted only when every decision identity is
+  byte-for-byte equivalent to the already verified result; a distinct or conflicting response is
+  `ambiguous` and refuses. Lease issuance and consumption happen only after an allowed decision;
+- the caller cannot continue waiting against a changed invocation, edit the selection while a
+  request is pending, or carry a pending request into another process; and
+- caller justification remains non-authoritative context. The broker owns the authorization
+  decision and any approval reference.
+
+The wait is an exceptional broker interaction, not a general approval UI or a repository-owned
+policy mechanism.
+
 The adoption bar is not that Ota is shorter than raw shell. The broker carrier must instead prove
 that pre-authorized work needs no repository policy edit, no caller-authored authority, and one
 governed command; exceptional work has one explicit broker-side authorization step; both emit
@@ -705,10 +881,13 @@ fresh evidence and actionable pre-side-effect refusal.
 
 ##### Lease and consume protocol
 
-- The broker authenticates the pre-bound runner principal and atomically issues one signed lease
-  for that exact work-unit, contract, scope, authority label, and expiry. The response carries a
-  lease identity, issuer/key identity, broker sequence or revision, issue/expiry times, and the
-  cryptographic binding needed for later verification.
+- The protocol order is fixed: authorization decision -> lease issuance -> durable local journal
+  -> atomic broker consumption -> execution. A pending approval is not a lease and cannot be
+  consumed.
+- After an allowed decision, the broker authenticates the pre-bound runner principal and issues one
+  signed lease for that exact work-unit, contract, scope, authority label, and expiry. The response
+  carries a lease identity, issuer/key identity, broker sequence or revision, issue/expiry times,
+  and the cryptographic binding needed for later verification.
 - Ota verifies the broker response against the pre-bound trust root and durably records a pending
   local crossing transaction before requesting consumption.
 - The broker atomically checks current lease liveness and revocation, then consumes the lease using
@@ -718,6 +897,22 @@ fresh evidence and actionable pre-side-effect refusal.
 - The broker, not runner-local state, rejects duplicate consume, replayed nonce, stale or revoked
   lease, wrong runner identity, wrong authority label, contract mismatch, scope substitution, and
   expiry. Ota maps each failure to typed grant-admission refusal with `execution_started: false`.
+
+##### Scope-breadth evidence
+
+Every broker crossing records a runner-derived scope-breadth summary alongside, but never in place
+of, the canonical semantic scope identity. Its `breadth_identity` is the SHA-256 digest of the
+JCS-normalized summary under `ota.crossing-broker.scope-breadth.v1`; receipts bind that identity and
+archive verification re-derives it from the archived semantic scope. The summary contains the
+selected closure's node and edge counts, declared effect categories, and bounded resource identities
+or counts. Resource values must use the same redaction/identity rules as execution evidence: task
+inputs, secrets, raw authority data, and unbounded provider resource strings never enter public
+JSON, receipts, or archives.
+
+Breadth evidence explains the shape of an authorization to an operator and helps pressure tests
+detect catch-all requests. It is not an approval metric: one declared workflow may truthfully be
+one atomic work unit even when its closure contains many nodes. The authority invariant remains one
+verified semantic scope and one work-unit identity per consumed lease.
 
 ##### Recovery, finalization, and evidence
 
@@ -747,6 +942,13 @@ fresh evidence and actionable pre-side-effect refusal.
   lease, duplicate/replayed consume, broker-unavailable preflight, and interruption/recovery.
   Every refusal must occur before task, service, provider, child-process, or repository mutation;
   the valid path must archive a broker-bound terminal crossing transaction.
+- Pressure must also prove pending-approval scope mutation, timeout, local cancellation followed by
+  late approval, attestation expiry during a pending wait, conflicting approval response, and a
+  deliberately broad catch-all workflow. One work unit is one exact selected invocation closure: a
+  second invocation, including the same displayed lane, has a distinct work-unit identity and
+  requires a distinct lease. A genuinely atomic declared workflow remains valid and retains its
+  breadth summary as explanation rather than a refusal trigger; Ota introduces no atomicity
+  heuristic.
 
 ##### Reference hardened runner image (deferred delivery)
 
