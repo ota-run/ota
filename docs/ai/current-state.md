@@ -136,12 +136,19 @@ durable agent workflow belongs in the canonical Ota skill.
   confirms that a GitHub-hosted runner without the fixed authority source refuses before scaffold
   execution; its normal matrix [30718303916](https://github.com/bobaikato/create-chrome-extension/actions/runs/30718303916)
   is green across native and bounded container paths. This does not prove live grant authority
-  separation because a hosted job could self-provision its own filesystem state. Valid, expired,
-  revoked, and out-of-scope grant pressure remains required on a pre-provisioned, non-root hardened
-  runner.
+  separation because a hosted job could self-provision its own filesystem state. The first
+  carrier's live, expired, revoked, and out-of-scope VPS pressure is now green:
+  [30863257307](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863257307),
+  [30862934335](https://github.com/bobaikato/create-chrome-extension/actions/runs/30862934335),
+  [30863024099](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099), and
+  [30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
+  The live artifact retains the exact transaction-bound receipt archive; every refusal preserves
+  typed admission evidence and an unchanged checkout before and after dry-run and real refusal.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
-  material. It remains a preview guide until hardened-runner pressure proves the carrier.
+  material. Hardened-runner pressure now proves the carrier's bounded
+  `current_process_filesystem_guarded` posture; the guide remains a preview because it does not
+  claim provider-attested separation, reusable broker credentials, or one-use work-unit authority.
   V11.7 also remains open for the separately pre-bound broker adapter that can issue and atomically
   consume runner-nonce-bound one-use work-unit leases. V11.22 remains planning-only and inactive; it
   does not consume crossing records as approval authority. See
@@ -641,9 +648,10 @@ Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
 `ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
 V11.21 is complete. V11.7 authority-source and semantic-crossing implementation is active and
-partially pressure-proven: GitHub-hosted missing-authority refusal is green, while hardened-runner
-live grant pressure and the broker-backed one-use work-unit lifetime remain explicitly open. V11.22
-remains planning-only and inactive. The local real-OCI
+partially pressure-proven: GitHub-hosted missing-authority refusal plus the pre-provisioned
+Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green. The separate
+broker-backed one-use work-unit lifetime and provider-attested separation remain explicitly open.
+V11.22 remains planning-only and inactive. The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
 and Caddy run [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898)
@@ -654,9 +662,9 @@ or raw-shell governance.
 
 The V11.7 public example, canonical skill, global skill mirrors, and site reference are carried.
 Core crossing, schema, and JSON conformance tests plus first-party example/skill/site checks are
-green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7 open until pre-provisioned
-hardened non-root runner live-grant pressure and the separate broker-backed work-unit carrier close
-its remaining acceptance bar; keep V11.22 planned until it is explicitly activated.
+green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7 open until the separate
+broker-backed work-unit carrier and provider-attested separation close its remaining acceptance
+bar; keep V11.22 planned until it is explicitly activated.
 
 ## Working Rules
 

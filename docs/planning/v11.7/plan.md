@@ -29,8 +29,16 @@ canonical semantic crossing evaluator and first `prebound_file` signed-authority
 implemented in Core. GitHub-hosted pressure proves that absent fixed authority refuses before the
 selected lane starts through create-chrome-extension run
 [30714738522](https://github.com/bobaikato/create-chrome-extension/actions/runs/30714738522).
-Live grant pressure on a pre-provisioned hardened non-root runner remains open. The separate
-broker-backed, runner-verifiable work-unit lifetime remains open.
+Pre-provisioned Linux/x64 VPS pressure now proves the bounded carrier under one exact workflow
+revision: a live grant creates and retains a transaction-bound archive in
+[30863257307](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863257307), and
+expired, revoked, and out-of-scope grants refuse before task work with full checkout mutation
+controls in [30862934335](https://github.com/bobaikato/create-chrome-extension/actions/runs/30862934335),
+[30863024099](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099), and
+[30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
+This proves only the first carrier's `current_process_filesystem_guarded` posture, not
+provider-attested separation. The separate broker-backed, runner-verifiable work-unit lifetime
+remains open.
 
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
@@ -38,8 +46,9 @@ be redirected by repository content, `OTA_POLICY`, environment variables, or cal
 
 Release target:
 
-- `v1.6.26` implementation branch; signed offline authority is in Core, while pre-provisioned
-  hardened non-root runner live-grant pressure and broker-backed work-unit authority remain open
+- `v1.6.26` implementation branch; signed offline authority and its bounded pre-provisioned
+  hardened non-root pressure are in Core, while broker-backed work-unit authority and
+  provider-attested separation remain open
 
 Source direction:
 
