@@ -1078,6 +1078,7 @@ dependencies = [
  "getrandom 0.2.17",
  "jsonschema",
  "libc",
+ "ota-authority-protocol",
  "quick-xml",
  "semver",
  "serde",
@@ -1091,6 +1092,17 @@ dependencies = [
  "time",
  "toml",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ota-authority-protocol"
+version = "0.1.0"
+source = "git+https://github.com/ota-run/authority-protocol?rev=bfa11a1703e7067d72656aa1c6cb9e931e35497a#bfa11a1703e7067d72656aa1c6cb9e931e35497a"
+dependencies = [
+ "serde",
+ "serde_jcs",
+ "sha2 0.10.9",
+ "thiserror",
 ]
 
 [[package]]

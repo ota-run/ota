@@ -42,6 +42,9 @@ provider-attested separation. Core now also implements the Unix launcher-session
 launcher attestation, obtains a signed exact-scope authorization, durably creates the crossing
 transaction, and atomically consumes one lease before selected-lane work. Hosted broker pressure,
 proof-wide transaction coverage, and stronger provider-attested separation remain open.
+The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
+bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
+and retains all trust-root, admission, execution, receipt, and archive semantics.
 
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot

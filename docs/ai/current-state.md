@@ -149,7 +149,11 @@ durable agent workflow belongs in the canonical Ota skill.
   legacy `prebound_file` evidence without a carrier envelope; receipt history rejects
   carrier-envelope injection into v1 and missing or substituted envelopes in v2. The Unix
   launcher-session `authority_broker` carrier is now executable for governed `ota run` and
-  `ota up`. It selects exactly one protected binding from `/etc/ota/crossing-brokers.json`, freezes
+  `ota up`. Its v1 wire structs, fixed message domains, bounded framing, and canonical nonce,
+  message, and work-unit identities now come from the immutable public
+  `ota-run/authority-protocol` revision `bfa11a1703e7067d72656aa1c6cb9e931e35497a`; Core retains
+  trust-root, verification, admission, transaction, receipt, and archive ownership. It selects
+  exactly one protected binding from `/etc/ota/crossing-brokers.json`, freezes
   the semantic work unit, verifies challenge-bound launcher attestation, obtains signed
   authorization, creates the durable pending transaction, and atomically consumes the exact lease
   after deterministic admission succeeds and before provisioning or selected work. `ota up`

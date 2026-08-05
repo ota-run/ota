@@ -42,13 +42,24 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+#[cfg(test)]
+use ota_authority_protocol::LauncherAttestationPayload;
+use ota_authority_protocol::{
+    AuthorizationDecision, AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge,
+    MAX_FRAME_BYTES, PreparedLeasePayload, SignedLauncherAttestation,
+    derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
+    message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
+    sha256_identity, signed_message_identity as protocol_signed_message_identity,
+};
+pub(crate) use ota_authority_protocol::{
+    LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, SignedBrokerMessage,
+};
 
 use crate::crossing::CrossingSemanticScope;
 use crate::crossing_authority::{
@@ -56,89 +67,13 @@ use crate::crossing_authority::{
     CrossingAuthorityAdmission, CrossingAuthorityCarrier,
 };
 
-const CHALLENGE_DOMAIN: &[u8] = b"ota.crossing-broker.challenge.v1\0";
-const WORK_UNIT_DOMAIN: &[u8] = b"ota.crossing-broker.work-unit.v1\0";
-const MAX_FRAME_BYTES: usize = 64 * 1024;
 #[cfg(unix)]
 const SESSION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BrokerChallenge {
-    pub message_kind: String,
-    pub protocol_version: String,
-    pub binding_identity: String,
-    pub nonce_commitment: String,
-    pub work_unit_identity: String,
-    pub semantic_scope_identity: String,
-    pub contract_identity: String,
-}
 
 #[derive(Debug)]
 pub(crate) struct FrozenBrokerChallenge {
     pub challenge: BrokerChallenge,
     nonce: [u8; 32],
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LauncherAttestationPayload {
-    pub message_kind: String,
-    pub binding_identity: String,
-    pub challenge_nonce_commitment: String,
-    pub invocation_id: String,
-    pub work_unit_identity: String,
-    pub semantic_scope_identity: String,
-    pub runner_principal: String,
-    pub channel_delivery: String,
-    pub authenticated_origin: String,
-    pub authority_mounts: Vec<String>,
-    pub issuer: String,
-    pub audience: String,
-    pub issued_at: String,
-    pub expires_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SignedLauncherAttestation {
-    pub payload: LauncherAttestationPayload,
-    pub key_id: String,
-    pub algorithm: String,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SignedBrokerMessage<T> {
-    pub payload: T,
-    pub key_id: String,
-    pub algorithm: String,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthorizationRequest {
-    pub message_kind: String,
-    pub binding_identity: String,
-    pub authority_id: String,
-    pub attestation_identity: String,
-    pub challenge_nonce_commitment: String,
-    pub work_unit_identity: String,
-    pub contract_identity: String,
-    pub semantic_scope_identity: String,
-    pub runner_principal: String,
-    pub actor_mode: String,
-    pub requested_lifetime_seconds: u64,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AuthorizationDecision {
-    Allowed,
-    Denied,
-    Pending,
 }
 
 #[cfg(unix)]
@@ -154,82 +89,6 @@ pub(crate) enum LauncherSessionState {
     Complete,
     Refused,
     Cancelled,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthorizationDecisionPayload {
-    pub message_kind: String,
-    pub request_identity: String,
-    pub binding_identity: String,
-    pub authority_id: String,
-    pub attestation_identity: String,
-    pub challenge_nonce_commitment: String,
-    pub work_unit_identity: String,
-    pub contract_identity: String,
-    pub semantic_scope_identity: String,
-    pub decision: AuthorizationDecision,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_reference: Option<String>,
-    pub broker_revision: u64,
-    pub issued_at: String,
-    pub expires_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct PreparedLeasePayload {
-    pub message_kind: String,
-    pub authorization_decision_identity: String,
-    pub binding_identity: String,
-    pub authority_id: String,
-    pub attestation_identity: String,
-    pub challenge_nonce_commitment: String,
-    pub work_unit_identity: String,
-    pub contract_identity: String,
-    pub semantic_scope_identity: String,
-    pub runner_principal: String,
-    pub broker_revision: u64,
-    pub lease_sequence: u64,
-    pub issued_at: String,
-    pub expires_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LeaseConsumeRequest {
-    pub message_kind: String,
-    pub binding_identity: String,
-    pub lease_identity: String,
-    pub challenge_nonce_commitment: String,
-    pub work_unit_identity: String,
-    pub crossing_transaction_id: String,
-    pub crossing_transaction_identity: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum LeaseConsumeState {
-    Consumed,
-    AlreadyConsumed,
-    Expired,
-    Revoked,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LeaseConsumeResponsePayload {
-    pub message_kind: String,
-    pub consume_request_identity: String,
-    pub binding_identity: String,
-    pub lease_identity: String,
-    pub challenge_nonce_commitment: String,
-    pub work_unit_identity: String,
-    pub crossing_transaction_id: String,
-    pub crossing_transaction_identity: String,
-    pub state: LeaseConsumeState,
-    pub broker_revision: u64,
-    pub consumed_at: String,
 }
 
 pub(crate) struct VerifiedBrokerConsumption {
@@ -612,7 +471,7 @@ pub(crate) fn freeze_broker_challenge(
     let mut nonce = [0_u8; 32];
     getrandom::getrandom(&mut nonce)
         .map_err(|error| format!("failed to generate broker challenge nonce: {error}"))?;
-    let nonce_commitment = sha256_identity(&domain_separated(CHALLENGE_DOMAIN, &nonce));
+    let nonce_commitment = protocol_nonce_commitment(&nonce);
     let work_unit_identity = derive_work_unit_identity(
         binding.identity.as_str(),
         scope.contract_identity.as_str(),
@@ -1238,16 +1097,16 @@ fn verify_message_signature<T: Serialize>(
 }
 
 fn message_identity<T: Serialize>(domain: &[u8], payload: &T) -> Result<String, String> {
-    let canonical = serde_jcs::to_vec(payload)
-        .map_err(|error| format!("failed to canonicalize broker message: {error}"))?;
-    Ok(sha256_identity(&domain_separated(domain, &canonical)))
+    protocol_message_identity(domain, payload)
+        .map_err(|error| format!("failed to canonicalize broker message: {error}"))
 }
 
 fn signed_message_identity<T: Serialize>(
     domain: &[u8],
     message: &SignedBrokerMessage<T>,
 ) -> Result<String, String> {
-    message_identity(domain, message)
+    protocol_signed_message_identity(domain, message)
+        .map_err(|error| format!("failed to canonicalize broker message: {error}"))
 }
 
 fn broker_admission_identity(evidence: &BrokerAdmissionEvidence) -> Result<String, String> {
@@ -1268,17 +1127,13 @@ fn derive_work_unit_identity(
     semantic_scope_identity: &str,
     nonce_commitment: &str,
 ) -> Result<String, String> {
-    let canonical = serde_jcs::to_vec(&(
+    protocol_work_unit_identity(
         binding_identity,
         contract_identity,
         semantic_scope_identity,
         nonce_commitment,
-    ))
-    .map_err(|error| format!("failed to canonicalize broker work unit: {error}"))?;
-    Ok(sha256_identity(&domain_separated(
-        WORK_UNIT_DOMAIN,
-        &canonical,
-    )))
+    )
+    .map_err(|error| format!("failed to canonicalize broker work unit: {error}"))
 }
 
 fn verify_validity_window(
@@ -2094,17 +1949,6 @@ fn take_buffered_frame(buffer: &mut Vec<u8>) -> std::io::Result<Option<Vec<u8>>>
     let payload = buffer[4..4 + length].to_vec();
     buffer.drain(..4 + length);
     Ok(Some(payload))
-}
-
-fn domain_separated(domain: &[u8], value: &[u8]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(domain.len() + value.len());
-    bytes.extend_from_slice(domain);
-    bytes.extend_from_slice(value);
-    bytes
-}
-
-fn sha256_identity(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 fn decode_fixed<const N: usize>(value: &str, label: &str) -> Result<[u8; N], String> {

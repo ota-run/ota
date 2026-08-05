@@ -31,6 +31,12 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ota_authority_protocol::{
+    ATTESTATION_RESPONSE_DOMAIN_V1, AUTHORIZATION_DECISION_DOMAIN_V1,
+    AUTHORIZATION_REQUEST_DOMAIN_V1, BROKER_BINDING_IDENTITY_DOMAIN_V1,
+    CHALLENGE_REQUEST_DOMAIN_V1, LEASE_CONSUME_DOMAIN_V1, LEASE_CONSUME_RESPONSE_DOMAIN_V1,
+    LEASE_ISSUANCE_DOMAIN_V1, PROTOCOL_VERSION_V1,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
@@ -49,9 +55,9 @@ const GRANT_DOMAIN: &[u8] = b"ota.crossing-authority.grant.v1\0";
 const BINDING_DOMAIN: &[u8] = b"ota.crossing-authority.binding.v1\0";
 // The broker binding remains crate-private so repository and caller input cannot redirect the
 // fixed protected authority source or reinterpret its trust model.
-const BROKER_BINDING_DOMAIN: &[u8] = b"ota.crossing-broker.binding.v1\0";
+const BROKER_BINDING_DOMAIN: &[u8] = BROKER_BINDING_IDENTITY_DOMAIN_V1;
 pub(crate) const CROSSING_BROKER_SCHEMA_VERSION: u32 = 1;
-const BROKER_PROTOCOL_VERSION: &str = "ota-crossing-broker/v1";
+const BROKER_PROTOCOL_VERSION: &str = PROTOCOL_VERSION_V1;
 #[allow(dead_code)]
 const MAX_BROKER_APPROVAL_WAIT_SECONDS: u64 = 600;
 #[allow(dead_code)]
@@ -72,28 +78,13 @@ const BROKER_MANDATORY_PROTOCOL_CLAIMS: &[&str] = &[
 ];
 #[allow(dead_code)]
 const BROKER_MESSAGE_DOMAINS: &[(&str, &str)] = &[
-    (
-        "attestation_response",
-        "ota-crossing-broker/attestation-response/v1",
-    ),
-    (
-        "authorization_decision",
-        "ota-crossing-broker/authorization-decision/v1",
-    ),
-    (
-        "authorization_request",
-        "ota-crossing-broker/authorization-request/v1",
-    ),
-    (
-        "challenge_request",
-        "ota-crossing-broker/challenge-request/v1",
-    ),
-    ("lease_consume", "ota-crossing-broker/lease-consume/v1"),
-    (
-        "lease_consume_response",
-        "ota-crossing-broker/lease-consume-response/v1",
-    ),
-    ("lease_issuance", "ota-crossing-broker/lease-issuance/v1"),
+    ("attestation_response", ATTESTATION_RESPONSE_DOMAIN_V1),
+    ("authorization_decision", AUTHORIZATION_DECISION_DOMAIN_V1),
+    ("authorization_request", AUTHORIZATION_REQUEST_DOMAIN_V1),
+    ("challenge_request", CHALLENGE_REQUEST_DOMAIN_V1),
+    ("lease_consume", LEASE_CONSUME_DOMAIN_V1),
+    ("lease_consume_response", LEASE_CONSUME_RESPONSE_DOMAIN_V1),
+    ("lease_issuance", LEASE_ISSUANCE_DOMAIN_V1),
 ];
 
 #[cfg(test)]

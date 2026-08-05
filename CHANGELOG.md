@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Moved the broker v1 wire structs, fixed protocol domains, bounded framing, and canonical nonce,
+  message, and work-unit identity primitives into the public `ota-authority-protocol` crate pinned
+  by immutable Git revision. Core retains trust-root selection, signature verification, admission,
+  transaction, receipt, and archive authority while compiling against the shared wire model.
+
 - Began the carrier-neutral audited-crossing evidence foundation. New transaction schema v2 binds
   the authority carrier and authorization identity, while receipt archives bind a re-derived common
   admission envelope. Legacy v1 receipt history remains limited to the existing `prebound_file`
