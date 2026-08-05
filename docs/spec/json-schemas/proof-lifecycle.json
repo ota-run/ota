@@ -33,6 +33,7 @@
         "stage_family": { "const": "proof" },
         "proof_scope": { "$ref": "#/$defs/proofScope" },
         "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "crossing_evidence": { "$ref": "./proof-runtime.json#/$defs/crossingEvidence" },
         "services": {
           "type": "array",
           "items": { "$ref": "#/$defs/serviceRecord" }

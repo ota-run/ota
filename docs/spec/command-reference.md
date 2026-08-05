@@ -640,11 +640,12 @@ Current behavior:
   source cannot be loaded
 - when `governance.crossing_authority` governs the selected non-agent workflow closure, requires
   `--grant <id>` and verifies it before creating a lifecycle transaction, starting a service, or
-  running a prerequisite/assertion. The current lifecycle proof archive has no terminal crossing
-  transaction carrier, so an otherwise valid governed grant still refuses as
-  `crossing_grant_lifecycle_proof_unsupported` rather than executing without durable authority
-  evidence. Refusal JSON carries typed authority evidence with `execution_started: false`; a
-  grant never bypasses agent-safety admission
+  running a prerequisite/assertion. One proof-owned crossing transaction covers prerequisites,
+  selected services, cleanup, and the assertion. Ota passes authority to nested Ota children over
+  a bounded runner-private Unix descriptor that is closed before selected task code starts; task
+  environments never receive the capability. The terminal lifecycle archive embeds and
+  re-verifies the exact authority admission and transaction. Refusal JSON carries typed authority
+  evidence with `execution_started: false`; a grant never bypasses agent-safety admission
 - lifecycle grant scope binds the explicit `--service` selection and its resolved dependency
   closure before authority evaluation; an invalid service selector refuses before any grant
   admission evidence is produced
@@ -712,9 +713,12 @@ Current behavior:
 - when `governance.crossing_authority` governs the selected proof scope, requires `--grant <id>`
   before creating `.ota/proof` or spawning `ota up`. Proof scope binds the runtime carrier plus
   every seam/control invocation by role and declaration order plus the normalized
-  `--ready-timeout` selection. Any grant-required runtime proof
-  refuses before start until Ota can retain one terminal crossing transaction across that complete
-  invocation set; it never treats a workflow-only grant as authority for proof execution
+  `--ready-timeout`, memory, dependency-selection, host-port, and target-platform choices. One
+  proof-owned crossing transaction covers the detached workflow, its nested task execution,
+  post-readiness observers, negative controls, and cleanup. Runner-private authority is delivered
+  only to the immediate Ota child over a bounded Unix descriptor with close-on-exec restored before
+  selected code runs. The terminal proof archive embeds and re-verifies the exact authority and
+  cannot borrow an ordinary workflow grant
 - when `--member` is set, proves the merged member contract from the monorepo root
 - when `--workflow` is set, proves that selected workflow path; otherwise it uses the effective
   default workflow or the default task path when the repo has no workflows

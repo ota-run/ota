@@ -134,8 +134,8 @@ its runner-verifiable work-unit authority bar close:
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md) - active continuation:
   canonical semantic scope and the fixed-trust `prebound_file` signed carrier are implemented;
   the Unix launcher-session broker carrier now provides one-use work-unit authority for governed
-  `run`/`up`. Hosted broker pressure, proof-wide broker transactions, and stronger attested
-  separation remain open. No later slice may treat a crossing record as reusable approval
+  `run`/`up` and proof-wide transactions. Hosted broker pressure and stronger attested separation
+  remain open. No later slice may treat a crossing record as reusable approval
   authority.
 
 The completed trust/product follow-ons are:

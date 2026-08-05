@@ -91,12 +91,12 @@ durable agent workflow belongs in the canonical Ota skill.
   `governance.crossing_authority.authority_id` plus `ota run|up|proof runtime|proof lifecycle
   --grant <id>` admission path. Proof commands refuse before artifacts, child execution, lifecycle
   ownership, service start, or assertion execution. Proof invocation role and order, lifecycle
-  selected-service closure, and normalized runtime `--ready-timeout` selection are part of
-  semantic grant scope; any grant-required runtime or lifecycle proof refuses before start until
-  one terminal transaction can cover every invocation, rather than inheriting a workflow-only
-  grant.
-  Governed lifecycle proof remains intentionally unsupported until its archive carries a terminal
-  crossing transaction, so a valid grant refuses rather than creating unarchived authority use.
+  selected-service closure, target platform, host-port, memory, dependency selection, and
+  normalized runtime `--ready-timeout` are semantic grant scope. One proof-owned transaction now
+  spans the complete runtime or lifecycle invocation set and cleanup. A bounded runner-private
+  Unix descriptor carries authority only between immediate Ota processes and is removed before
+  selected code executes. Runtime archive v6 and lifecycle archive v3 embed and re-derive the
+  exact terminal authority rather than inheriting a workflow-only grant.
   The first `prebound_file` carrier reads only fixed system trust state protected from Ota's current
   unprivileged process; it does not claim hardened provider-attested privilege separation. It verifies an
   Ed25519/RFC-8785 signed bundle, exact contract/scope/family/classification/actor binding,
@@ -169,15 +169,15 @@ durable agent workflow belongs in the canonical Ota skill.
   and archives bind the broker admission, attestation, prepared lease, consume exchange, semantic
   scope, and terminal transaction, and history re-verifies them against the protected binding.
   Replay, missing consumption, and carrier substitution refuse. Grant-required runtime and
-  lifecycle proof remain pre-side-effect refused until one transaction can cover their complete
-  invocation and cleanup sets; hosted broker pressure is also still open.
+  lifecycle proof now retain one transaction across their complete invocation and cleanup sets;
+  hosted broker proof pressure is still open.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
   material. Hardened-runner pressure now proves the carrier's bounded
   `current_process_filesystem_guarded` posture; the guide remains a preview because it does not
   claim provider-attested separation, reusable broker credentials, or one-use work-unit authority.
-  V11.7 remains open for proof-wide broker transactions, hosted broker pressure, and stronger
-  provider/launcher-attested separation beyond the protocol evidence currently verified. V11.22
+  V11.7 remains open for hosted broker pressure and stronger provider/launcher-attested separation
+  beyond the protocol evidence currently verified. V11.22
   remains planning-only and inactive; it does not consume crossing records as approval authority. See
   [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
@@ -678,7 +678,11 @@ V11.21 is complete. V11.7 authority-source and semantic-crossing implementation 
 partially pressure-proven: GitHub-hosted missing-authority refusal plus the pre-provisioned
 Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green. The Unix
 launcher-session broker carrier is implemented locally for governed `run`/`up`; hosted broker
-pressure, proof-wide broker transactions, and stronger provider-attested separation remain open.
+pressure and stronger provider-attested separation remain open. Proof-wide runtime and lifecycle
+transactions passed independent review and are ready for hosted pressure.
+Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
+ordinary post-admission failures finalize explicitly; local content addressing remains integrity
+reconciliation rather than tamper-proof storage against the same host user.
 V11.22 remains planning-only and inactive. The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)

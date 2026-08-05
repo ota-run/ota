@@ -561,7 +561,7 @@ fn lifecycle_proof_json_schema_rejects_manager_state_on_isolated_boundary() {
 fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
     let payload = serde_json::json!({
         "kind": "lifecycle_proof",
-        "version": 2,
+        "version": 3,
         "contract_identity": {
             "version": 1,
             "project": { "name": "archive" },
@@ -581,7 +581,9 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
             "provider": "docker",
             "lifecycle": "ephemeral",
             "target": "local",
-            "target_os": "linux"
+            "target_os": "linux",
+            "target_platform": { "os": "linux", "architecture": "amd64", "platform": "linux/amd64" },
+            "skip_dependencies": false
         },
         "proof": {
             "ok": true,
@@ -610,6 +612,26 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
         }
     });
     assert_matches_schema("proof-lifecycle-archive.json", &payload);
+    let mut legacy_v2 = payload.clone();
+    legacy_v2["version"] = serde_json::json!(2);
+    legacy_v2["scope"]
+        .as_object_mut()
+        .expect("legacy lifecycle scope")
+        .remove("target_platform");
+    legacy_v2["scope"]
+        .as_object_mut()
+        .expect("legacy lifecycle scope")
+        .remove("skip_dependencies");
+    assert_matches_schema("proof-lifecycle-archive.json", &legacy_v2);
+    legacy_v2["scope"]["target_platform"] =
+        serde_json::json!({ "os": "linux", "architecture": "amd64", "platform": "linux/amd64" });
+    assert_rejects_schema("proof-lifecycle-archive.json", &legacy_v2);
+    let mut mode_mismatch = payload.clone();
+    mode_mismatch["scope"]["mode"] = serde_json::json!("native");
+    assert_rejects_schema("proof-lifecycle-archive.json", &mode_mismatch);
+    let mut target_os_mismatch = payload;
+    target_os_mismatch["scope"]["target_os"] = serde_json::json!("windows");
+    assert_rejects_schema("proof-lifecycle-archive.json", &target_os_mismatch);
 }
 
 #[test]

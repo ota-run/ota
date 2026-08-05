@@ -230,9 +230,9 @@ every provider, host, namespace, or privilege-separation fact not carried by tha
 
 ## Current limits
 
-- Only governed `ota run` and `ota up` consume broker authority.
-- Grant-required `ota proof runtime` and `ota proof lifecycle` refuse before work until one terminal
-  transaction can cover their complete helper/service/assertion and cleanup sets.
+- Governed `ota run`, `ota up`, `ota proof runtime`, and `ota proof lifecycle` consume broker
+  authority. Each proof command owns one transaction across its complete
+  helper/service/assertion and cleanup set.
 - The first adapter uses a launcher-supplied Unix stream; direct Ota-to-broker credentials are not
   supported.
 - Hosted broker pressure, interruption/recovery pressure, and stronger provider-attested boundary

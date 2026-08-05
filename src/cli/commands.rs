@@ -3450,27 +3450,30 @@ pub fn proof_lifecycle_with_grant(
             );
         }
     };
-    if grant_admission.is_some() {
-        // Lifecycle proof does not yet have a crossing transaction carrier in its proof/archive
-        // record. Do not consume a grant and execute an unsafe lifecycle lane without terminal,
-        // archive-verifiable crossing evidence.
-        return proof_crossing_grant_admission_failure_output(
-            format,
-            "ota proof lifecycle",
-            &contract,
-            &target.contract_path,
-            grant,
-            &GrantAdmissionError::new(
-                "crossing_grant_lifecycle_proof_unsupported",
-                "lifecycle proof cannot yet retain the required terminal crossing transaction evidence",
-            ),
-        );
-    }
-
     let transaction_id = match proof_runtime_seam_marker() {
         Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
         Err(error) => return CommandOutput::failure(error),
     };
+    let (_proof_authority_guard, _proof_transaction_guard) = match grant_admission {
+        Some(plan) => match activate_crossing_authority_plan(
+            contract_working_dir(&target.contract_path),
+            plan,
+        ) {
+            Ok((authority, transaction)) => (Some(authority), Some(transaction)),
+            Err(error) => {
+                return proof_crossing_grant_admission_failure_output(
+                    format,
+                    "ota proof lifecycle",
+                    &contract,
+                    &target.contract_path,
+                    grant,
+                    &error,
+                );
+            }
+        },
+        None => (None, None),
+    };
+
     let working_dir = contract_working_dir(&target.contract_path);
     let mut error = None::<String>;
 
@@ -3647,6 +3650,21 @@ pub fn proof_lifecycle_with_grant(
     let error = transaction.error;
 
     let ok = error.is_none();
+    let crossing_evidence = match finalize_active_proof_crossing_transaction(
+        ok,
+        finalization.after_interruption,
+        if ok {
+            "passed_with_unproven_boundaries"
+        } else {
+            "failed"
+        },
+        transaction_id.as_str(),
+    ) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            return fail_active_proof_crossing_transaction(error, transaction_id.as_str());
+        }
+    };
     let status = LifecycleProofStatus {
         ok,
         proof_verdict: String::from(if ok {
@@ -3670,6 +3688,7 @@ pub fn proof_lifecycle_with_grant(
             intent: Some(String::from("manager_owned_service_lifecycle")),
         },
         transaction_id: transaction_id.clone(),
+        crossing_evidence,
         services: records.clone(),
         finalization,
         assertion,
@@ -3770,6 +3789,16 @@ pub fn proof_lifecycle_with_grant(
             }
             if let Some(error) = status.error.as_deref() {
                 text.push_str(&format!("\nError: {error}\n"));
+            }
+            if let Some(crossing) = status.crossing_evidence.as_ref() {
+                text.push_str(&format!(
+                    "\nAuthority transaction: {}\nProof execution: {}\n",
+                    crossing.transaction_id,
+                    crossing
+                        .proof_execution_id
+                        .as_deref()
+                        .unwrap_or(transaction_id.as_str())
+                ));
             }
             CommandOutput {
                 stdout: text,
@@ -4028,20 +4057,29 @@ pub fn proof_runtime_with_grant(
                         );
                     }
                 };
-                if let Some(grant_admission) = grant_admission.as_ref() {
-                    return proof_crossing_grant_admission_failure_output(
-                        format,
-                        "ota proof runtime",
-                        contract,
-                        &target.contract_path,
-                        grant,
-                        &GrantAdmissionError::new(
-                            "crossing_grant_runtime_proof_unsupported",
-                            "runtime proof cannot yet retain one terminal crossing transaction across its detached workflow and proof helper invocations",
-                        )
-                        .with_scope(grant_admission.semantic_scope().clone()),
-                    );
-                }
+                let proof_execution_id = match proof_runtime_seam_marker() {
+                    Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
+                    Err(error) => return CommandOutput::failure(error),
+                };
+                let (_proof_authority_guard, _proof_transaction_guard) = match grant_admission {
+                    Some(plan) => match activate_crossing_authority_plan(
+                        contract_working_dir(&target.contract_path),
+                        plan,
+                    ) {
+                        Ok((authority, transaction)) => (Some(authority), Some(transaction)),
+                        Err(error) => {
+                            return proof_crossing_grant_admission_failure_output(
+                                format,
+                                "ota proof runtime",
+                                contract,
+                                &target.contract_path,
+                                grant,
+                                &error,
+                            );
+                        }
+                    },
+                    None => (None, None),
+                };
                 let proof_archive_context = if archive {
                     let root = contract_working_dir(&target.contract_path);
                     match build_proof_runtime_archive_context(
@@ -4054,7 +4092,12 @@ pub fn proof_runtime_with_grant(
                         ready_timeout,
                     ) {
                         Ok(context) => Some(context),
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return fail_active_proof_crossing_transaction(
+                                error,
+                                proof_execution_id.as_str(),
+                            );
+                        }
                     }
                 } else {
                     None
@@ -4064,7 +4107,12 @@ pub fn proof_runtime_with_grant(
                 } else {
                     match proof_runtime_seam_marker() {
                         Ok(marker) => Some(marker),
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return fail_active_proof_crossing_transaction(
+                                error,
+                                proof_execution_id.as_str(),
+                            );
+                        }
                     }
                 };
                 let seam_markers = selected_seam_observations
@@ -4089,16 +4137,19 @@ pub fn proof_runtime_with_grant(
                     effective_workflow_selector.as_deref(),
                 );
                 if let Err(error) = fs::create_dir_all(&artifact_dir) {
-                    return CommandOutput::failure(command_message_failure_text(
-                        "PROOF",
-                        &text_path_display,
-                        "Artifact directory could not be created",
-                        &format!(
-                            "failed to create `{}`: {error}",
-                            compact_path(&artifact_dir, ".")
+                    return fail_active_proof_crossing_transaction(
+                        command_message_failure_text(
+                            "PROOF",
+                            &text_path_display,
+                            "Artifact directory could not be created",
+                            &format!(
+                                "failed to create `{}`: {error}",
+                                compact_path(&artifact_dir, ".")
+                            ),
+                            &[],
                         ),
-                        &[],
-                    ));
+                        proof_execution_id.as_str(),
+                    );
                 }
 
                 let topology_artifact_path = artifact_dir.join("topology.json");
@@ -4108,21 +4159,28 @@ pub fn proof_runtime_with_grant(
                 let crossing_handoff_path = artifact_dir.join("crossing-handoff.json");
                 let execution_boundary_trace_token = match proof_runtime_seam_marker() {
                     Ok(token) => token,
-                    Err(error) => return CommandOutput::failure(error),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 if execution_boundary_trace_path.exists()
                     && let Err(error) = fs::remove_file(&execution_boundary_trace_path)
                 {
-                    return CommandOutput::failure(format!(
-                        "could not clear stale runner execution-boundary trace: {error}"
-                    ));
+                    return fail_active_proof_crossing_transaction(
+                        format!("could not clear stale runner execution-boundary trace: {error}"),
+                        proof_execution_id.as_str(),
+                    );
                 }
                 if crossing_handoff_path.exists()
                     && let Err(error) = fs::remove_file(&crossing_handoff_path)
                 {
-                    return CommandOutput::failure(format!(
-                        "could not clear stale runtime-proof crossing handoff: {error}"
-                    ));
+                    return fail_active_proof_crossing_transaction(
+                        format!("could not clear stale runtime-proof crossing handoff: {error}"),
+                        proof_execution_id.as_str(),
+                    );
                 }
                 let topology_artifact_display = compact_path(&topology_artifact_path, ".");
                 let doctor_artifact_display = compact_path(&doctor_artifact_path, ".");
@@ -4139,7 +4197,10 @@ pub fn proof_runtime_with_grant(
                 if let Err(error) =
                     write_proof_artifact(&topology_artifact_path, &topology_output.stdout)
                 {
-                    return CommandOutput::failure(error);
+                    return fail_active_proof_crossing_transaction(
+                        error,
+                        proof_execution_id.as_str(),
+                    );
                 }
 
                 let compose_services_started_by_proof =
@@ -4149,18 +4210,28 @@ pub fn proof_runtime_with_grant(
                         effective_workflow_selector.as_deref(),
                     ) {
                         Ok(services) => services,
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return fail_active_proof_crossing_transaction(
+                                error,
+                                proof_execution_id.as_str(),
+                            );
+                        }
                     };
                 let policy_snapshot_file = match materialize_proof_runtime_policy_snapshot(
                     proof_replay_input_preflight.loaded_policy.as_ref(),
                     &execution_boundary_trace_token,
                 ) {
                     Ok(snapshot) => snapshot,
-                    Err(error) => return CommandOutput::failure(error),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 let mut up_process = match spawn_proof_runtime_up_process(
                     &target.contract_path,
-                    workflow_name,
+                    effective_workflow_selector.as_deref(),
                     member,
                     file_override,
                     overrides,
@@ -4172,10 +4243,14 @@ pub fn proof_runtime_with_grant(
                     policy_snapshot_file
                         .as_ref()
                         .map(|snapshot| snapshot.path.as_path()),
-                    grant,
                 ) {
                     Ok(child) => child,
-                    Err(error) => return CommandOutput::failure(error.to_string()),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error.to_string(),
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 let (proof_report, proof_phase, _proof_ok, up_process_failure) =
                     match wait_for_proof_runtime_readiness(
@@ -4199,12 +4274,15 @@ pub fn proof_runtime_with_grant(
                                 &compose_services_started_by_proof,
                             )
                             .err();
-                            return CommandOutput::failure(match cleanup_error {
-                                Some(cleanup) => {
-                                    format!("{error}; proof service cleanup failed: {cleanup}")
-                                }
-                                None => error,
-                            });
+                            return fail_active_proof_crossing_transaction(
+                                match cleanup_error {
+                                    Some(cleanup) => {
+                                        format!("{error}; proof service cleanup failed: {cleanup}")
+                                    }
+                                    None => error,
+                                },
+                                proof_execution_id.as_str(),
+                            );
                         }
                     };
                 let proof_summary = doctor_summary(
@@ -4463,14 +4541,20 @@ pub fn proof_runtime_with_grant(
                     Ok(body) => body,
                     Err(error) => {
                         let _ = stop_proof_runtime_up_process(&mut up_process);
-                        return CommandOutput::failure(error);
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
                     }
                 };
                 if let Err(error) =
                     write_proof_artifact(&doctor_artifact_path, &doctor_artifact_json)
                 {
                     let _ = stop_proof_runtime_up_process(&mut up_process);
-                    return CommandOutput::failure(error);
+                    return fail_active_proof_crossing_transaction(
+                        error,
+                        proof_execution_id.as_str(),
+                    );
                 }
                 let workflow_env_artifacts =
                     selected_workflow_env_profile_rendered_artifact_entries(
@@ -4528,22 +4612,25 @@ pub fn proof_runtime_with_grant(
                     &dependency_evidence,
                     effective_workflow_selector.as_deref(),
                 );
-                let crossing_evidence = match proof_runtime_read_crossing_evidence(
-                    contract_working_dir(&target.contract_path),
-                    &crossing_handoff_path,
-                    &execution_boundary_trace_token,
-                    grant_admission
-                        .as_ref()
-                        .and_then(CrossingAuthorityPlan::prebound_admission),
+                let crossing_evidence = match finalize_active_proof_crossing_transaction(
+                    ok,
+                    status == "interrupted",
+                    status,
+                    proof_execution_id.as_str(),
                 ) {
                     Ok(evidence) => evidence,
-                    Err(error) => return CommandOutput::failure(error),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 let proof_verdict = proof_runtime_verdict(ok, &not_proved);
 
                 match format {
-                    OutputFormat::Text => CommandOutput {
-                        stdout: render_proof_runtime_text(
+                    OutputFormat::Text => {
+                        let mut stdout = render_proof_runtime_text(
                             &text_path_display,
                             effective_workflow_selector.as_deref(),
                             &target.contract_path,
@@ -4563,13 +4650,23 @@ pub fn proof_runtime_with_grant(
                             proof_likely_cause_text.as_deref(),
                             cleanup_error.as_deref(),
                             cleanup_next.as_deref(),
-                        ),
-                        stderr: None,
-                        exit_code: if ok { 0 } else { 1 },
-                    },
+                        );
+                        if let Some(crossing) = crossing_evidence.as_ref() {
+                            stdout.push_str(&format!(
+                                "\nAuthority transaction: {}\nProof execution: {}\n",
+                                crossing.transaction_id, proof_execution_id
+                            ));
+                        }
+                        CommandOutput {
+                            stdout,
+                            stderr: None,
+                            exit_code: if ok { 0 } else { 1 },
+                        }
+                    }
                     OutputFormat::Json => {
                         let proof_status = ProofRuntimeStatus {
                             ok,
+                            execution_id: proof_execution_id.as_str(),
                             proof_verdict,
                             path: &path_display,
                             mode: "runtime-proof",
@@ -4609,12 +4706,17 @@ pub fn proof_runtime_with_grant(
                             runner_execution_boundary,
                         ) {
                             Ok(boundary) => boundary,
-                            Err(error) => return CommandOutput::failure(error),
+                            Err(error) => {
+                                return fail_active_proof_crossing_transaction(
+                                    error,
+                                    proof_execution_id.as_str(),
+                                );
+                            }
                         };
                         let archive = if let Some(context) = proof_archive_context.as_ref() {
                             let record = ProofRuntimeArchiveRecord {
                                 kind: "runtime_proof",
-                                version: 5,
+                                version: 6,
                                 contract_identity: &context.contract_identity,
                                 contract_snapshot_hash: &context.contract_snapshot_hash,
                                 contract_snapshot_ref: &context.contract_snapshot_ref,
@@ -4629,7 +4731,12 @@ pub fn proof_runtime_with_grant(
                                 &record,
                             ) {
                                 Ok(archive) => Some(archive),
-                                Err(error) => return CommandOutput::failure(error),
+                                Err(error) => {
+                                    return fail_active_proof_crossing_transaction(
+                                        error,
+                                        proof_execution_id.as_str(),
+                                    );
+                                }
                             }
                         } else {
                             None
@@ -15846,22 +15953,6 @@ enum CrossingAuthorityPlan {
     },
 }
 
-impl CrossingAuthorityPlan {
-    fn semantic_scope(&self) -> &crate::crossing::CrossingSemanticScope {
-        match self {
-            Self::PreboundFile(admission) => &admission.semantic_scope,
-            Self::AuthorityBroker { semantic_scope, .. } => semantic_scope,
-        }
-    }
-
-    fn prebound_admission(&self) -> Option<&GrantAdmissionEvidence> {
-        match self {
-            Self::PreboundFile(admission) => Some(admission),
-            Self::AuthorityBroker { .. } => None,
-        }
-    }
-}
-
 fn governance_preflight_decision_basis(
     declared_safe_for_agent: Option<bool>,
     effective_safe_for_agent: Option<bool>,
@@ -16145,6 +16236,693 @@ thread_local! {
     static ACTIVE_CROSSING_TRANSACTION:
         RefCell<Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>> =
         const { RefCell::new(None) };
+    static ACTIVE_PROOF_PARENT_AUTHORITY: RefCell<Option<ProofParentAuthorityCapability>> =
+        const { RefCell::new(None) };
+}
+
+const PROOF_PARENT_AUTHORITY_FD_ENV: &str = "OTA_PROOF_PARENT_AUTHORITY_FD";
+const PROOF_PARENT_AUTHORITY_MAX_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProofParentInvocation {
+    kind: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proof_invocation: Option<CrossingProofInvocation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "carrier", rename_all = "snake_case")]
+enum ProofParentAuthorityEvidence {
+    PreboundFile {
+        admission: GrantAdmissionEvidence,
+        carrier_admission: crate::crossing_authority::CrossingAuthorityAdmission,
+        transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+    },
+    AuthorityBroker {
+        admission: crate::broker_session::BrokerAdmissionEvidence,
+        transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+    },
+}
+
+impl ProofParentAuthorityEvidence {
+    fn semantic_scope(&self) -> &crate::crossing::CrossingSemanticScope {
+        match self {
+            Self::PreboundFile { admission, .. } => &admission.semantic_scope,
+            Self::AuthorityBroker { admission, .. } => &admission.semantic_scope,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProofParentAuthorityCapability {
+    schema_version: u32,
+    identity: String,
+    challenge_identity: String,
+    parent_pid: u32,
+    invocation: ProofParentInvocation,
+    authority: ProofParentAuthorityEvidence,
+}
+
+fn proof_parent_authority_capability_identity(
+    capability: &ProofParentAuthorityCapability,
+) -> Result<String, String> {
+    let mut unsigned = capability.clone();
+    unsigned.identity.clear();
+    crate::semantic_identity::semantic_contract_identity(&unsigned)
+}
+
+fn active_proof_parent_authority_capability(
+    invocation: ProofParentInvocation,
+) -> Result<Option<ProofParentAuthorityCapability>, String> {
+    let admission = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.borrow().clone());
+    let Some(admission) = admission else {
+        return Ok(None);
+    };
+    let transaction = active_crossing_transaction_evidence()
+        .ok_or_else(|| String::from("proof authority has no active crossing transaction"))?;
+    if transaction.state != "pending" {
+        return Err(String::from(
+            "proof authority transaction is no longer pending",
+        ));
+    }
+    let authority = match admission {
+        VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => {
+            let carrier_admission = admission.crossing_admission()?;
+            crate::crossing_transaction::verify_pending_crossing_transaction_evidence(
+                &transaction,
+                &carrier_admission,
+            )?;
+            ProofParentAuthorityEvidence::PreboundFile {
+                admission,
+                carrier_admission,
+                transaction,
+            }
+        }
+        VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission) => {
+            crate::broker_session::verify_pending_broker_consumption_evidence(
+                &admission,
+                &transaction,
+            )?;
+            ProofParentAuthorityEvidence::AuthorityBroker {
+                admission,
+                transaction,
+            }
+        }
+        VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview { .. } => {
+            return Err(String::from(
+                "proof authority preview cannot authorize a child invocation",
+            ));
+        }
+    };
+    let mut capability = ProofParentAuthorityCapability {
+        schema_version: 1,
+        identity: String::new(),
+        challenge_identity: String::new(),
+        parent_pid: std::process::id(),
+        invocation,
+        authority,
+    };
+    capability.identity = proof_parent_authority_capability_identity(&capability)?;
+    Ok(Some(capability))
+}
+
+fn proof_parent_task_invocation(
+    invocation_id: &str,
+    invocation_kind: &str,
+    task: &str,
+) -> Result<ProofParentInvocation, String> {
+    let admission = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.borrow().clone());
+    let Some(admission) = admission else {
+        return Ok(ProofParentInvocation {
+            kind: String::from("proof_task"),
+            name: task.to_string(),
+            proof_invocation: None,
+        });
+    };
+    let scope = match &admission {
+        VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => &admission.semantic_scope,
+        VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission) => &admission.semantic_scope,
+        VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview { semantic_scope, .. } => {
+            semantic_scope
+        }
+    };
+    let matches = scope
+        .proof_invocations
+        .iter()
+        .filter(|invocation| {
+            invocation.id == invocation_id
+                && invocation.kind == invocation_kind
+                && invocation.task == task
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let [proof_invocation] = matches.as_slice() else {
+        return Err(String::from(
+            "proof helper does not have one exact authorized invocation identity",
+        ));
+    };
+    Ok(ProofParentInvocation {
+        kind: String::from("proof_task"),
+        name: task.to_string(),
+        proof_invocation: Some(proof_invocation.clone()),
+    })
+}
+
+fn proof_scope_overrides(scope: &crate::crossing::CrossingSemanticScope) -> ExecutionOverrides {
+    ExecutionOverrides {
+        backend: scope.execution_selection.backend,
+        lifecycle: scope.execution_selection.lifecycle,
+        host_port: scope.execution_selection.host_port,
+        memory: scope.execution_selection.memory,
+        skip_deps: scope.execution_selection.skip_dependencies,
+        ..ExecutionOverrides::default()
+    }
+}
+
+fn rederive_proof_parent_scope(
+    contract: &Contract,
+    expected: &crate::crossing::CrossingSemanticScope,
+) -> Result<crate::crossing::CrossingSemanticScope, String> {
+    let workflow_name = (expected.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow)
+        .then(|| {
+            expected
+                .execution_selection
+                .workflow_instance
+                .as_ref()
+                .map(|selection| selection.selector.as_str())
+                .unwrap_or(expected.lane.name.as_str())
+        });
+    let overrides = proof_scope_overrides(expected);
+    let proof_roots = expected
+        .proof_invocations
+        .iter()
+        .map(|invocation| invocation.task.clone())
+        .collect::<Vec<_>>();
+    let policy = crate::sandbox_policy::sandbox_policy_for_workflow_with_proof_roots(
+        contract,
+        workflow_name,
+        overrides,
+        &proof_roots,
+    )?;
+    crossing_scope_from_policy(
+        policy,
+        overrides,
+        &[],
+        &expected.execution_selection.effect_overrides,
+        expected.execution_selection.sandbox_target.as_deref(),
+        expected.execution_selection.run_behavior.as_deref(),
+        expected.execution_selection.ready_timeout_seconds,
+        expected.boundary_family.as_str(),
+        expected.classification.as_str(),
+    )
+    .and_then(|scope| match workflow_name {
+        Some(workflow_name) => {
+            crossing_scope_with_workflow_instance_selection(scope, contract, Some(workflow_name))
+        }
+        None => Ok(scope),
+    })
+    .and_then(|scope| {
+        crossing_scope_with_proof_invocations(scope, expected.proof_invocations.clone())
+    })
+    .and_then(|scope| match expected.proof_transaction_selection.clone() {
+        Some(selection) => crossing_scope_with_proof_transaction_selection(scope, selection),
+        None => Ok(scope),
+    })
+}
+
+fn verify_proof_parent_authority_capability(
+    contract: &Contract,
+    contract_path: &Path,
+    capability: &ProofParentAuthorityCapability,
+    expected_kind: &str,
+    expected_name: &str,
+) -> Result<(), String> {
+    if capability.schema_version != 1
+        || capability.identity != proof_parent_authority_capability_identity(capability)?
+        || capability.challenge_identity.is_empty()
+        || capability.parent_pid != current_parent_process_id()?
+        || capability.invocation.kind != expected_kind
+        || capability.invocation.name != expected_name
+    {
+        return Err(String::from(
+            "proof parent authority capability does not match this child invocation",
+        ));
+    }
+    let root = contract_working_dir(contract_path);
+    match &capability.authority {
+        ProofParentAuthorityEvidence::PreboundFile {
+            admission,
+            carrier_admission,
+            transaction,
+        } => {
+            crate::crossing_authority::verify_archived_grant_admission(contract, root, admission)
+                .map_err(|error| error.public_details())?;
+            if admission.crossing_admission()? != *carrier_admission {
+                return Err(String::from(
+                    "proof parent prebound carrier admission does not reconcile",
+                ));
+            }
+            crate::crossing_transaction::verify_pending_crossing_transaction_evidence(
+                transaction,
+                carrier_admission,
+            )?;
+            crate::crossing_transaction::verify_pending_crossing_transaction_journal(
+                root,
+                transaction,
+            )?;
+        }
+        ProofParentAuthorityEvidence::AuthorityBroker {
+            admission,
+            transaction,
+        } => {
+            crate::broker_session::verify_pending_broker_archive_evidence(
+                root,
+                admission,
+                transaction,
+            )?;
+            crate::crossing_transaction::verify_pending_crossing_transaction_journal(
+                root,
+                transaction,
+            )?;
+        }
+    }
+    let rederived = rederive_proof_parent_scope(contract, capability.authority.semantic_scope())?;
+    if rederived != *capability.authority.semantic_scope() {
+        return Err(String::from(
+            "proof parent authority scope no longer matches the selected contract",
+        ));
+    }
+    match expected_kind {
+        "workflow"
+            if rederived.lane.name == expected_name
+                || (rederived.lane.kind == crate::sandbox_policy::SandboxLaneKind::Task
+                    && expected_name == "default") =>
+        {
+            Ok(())
+        }
+        "workflow_task" => {
+            let selected = match rederived.lane.kind {
+                crate::sandbox_policy::SandboxLaneKind::Workflow => contract
+                    .selected_workflow_task_closure_names(Some(rederived.lane.name.as_str())),
+                crate::sandbox_policy::SandboxLaneKind::Task => {
+                    contract.task_dependency_closure_names([rederived.lane.name.clone()])
+                }
+            };
+            selected
+                .into_iter()
+                .any(|task| task == expected_name)
+                .then_some(())
+                .ok_or_else(|| {
+                    String::from("proof child task is outside the authorized workflow closure")
+                })
+        }
+        "proof_task" => capability
+            .invocation
+            .proof_invocation
+            .as_ref()
+            .filter(|invocation| invocation.task == expected_name)
+            .filter(|invocation| {
+                rederived
+                    .proof_invocations
+                    .iter()
+                    .any(|expected| expected == *invocation)
+            })
+            .map(|_| ())
+            .ok_or_else(|| {
+                String::from("proof helper invocation does not match its authorized role and order")
+            }),
+        _ => Err(String::from(
+            "proof parent authority capability uses an unsupported invocation kind",
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn current_parent_process_id() -> Result<u32, String> {
+    // SAFETY: `getppid` has no preconditions and does not dereference memory.
+    Ok(unsafe { libc::getppid() as u32 })
+}
+
+#[cfg(target_os = "linux")]
+fn proof_parent_peer_pid(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd as _;
+    let mut credentials = std::mem::MaybeUninit::<libc::ucred>::uninit();
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the output buffer and length describe a valid `ucred` allocation.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            credentials.as_mut_ptr().cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(String::from(
+            "proof parent authority peer credentials are unavailable",
+        ));
+    }
+    // SAFETY: successful `getsockopt` initialized the complete `ucred` value.
+    let credentials = unsafe { credentials.assume_init() };
+    u32::try_from(credentials.pid)
+        .map_err(|_| String::from("proof parent authority peer PID is invalid"))
+}
+
+#[cfg(target_os = "macos")]
+fn proof_parent_peer_pid(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd as _;
+    let mut pid = 0_i32;
+    let mut length = std::mem::size_of::<i32>() as libc::socklen_t;
+    // SAFETY: the output buffer and length describe a valid PID allocation.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut i32).cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || length as usize != std::mem::size_of::<i32>() {
+        return Err(String::from(
+            "proof parent authority peer credentials are unavailable",
+        ));
+    }
+    u32::try_from(pid).map_err(|_| String::from("proof parent authority peer PID is invalid"))
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn proof_parent_peer_pid(_stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    Err(String::from(
+        "proof parent authority peer verification is unsupported on this Unix platform",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn proof_parent_executable(pid: u32) -> Result<PathBuf, String> {
+    fs::read_link(format!("/proc/{pid}/exe"))
+        .map_err(|_| String::from("proof parent executable identity is unavailable"))
+}
+
+#[cfg(target_os = "macos")]
+fn proof_parent_executable(pid: u32) -> Result<PathBuf, String> {
+    use std::os::unix::ffi::OsStringExt as _;
+    let mut buffer = vec![0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: the buffer is valid for the supplied length and `proc_pidpath` writes at most it.
+    let written =
+        unsafe { libc::proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if written <= 0 {
+        return Err(String::from(
+            "proof parent executable identity is unavailable",
+        ));
+    }
+    buffer.truncate(written as usize);
+    Ok(PathBuf::from(OsString::from_vec(buffer)))
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn proof_parent_executable(_pid: u32) -> Result<PathBuf, String> {
+    Err(String::from(
+        "proof parent executable verification is unsupported on this Unix platform",
+    ))
+}
+
+#[cfg(unix)]
+fn verify_proof_parent_stream(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd as _;
+    let mut peer_address = std::mem::MaybeUninit::<libc::sockaddr_storage>::zeroed();
+    let mut peer_address_length = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // SAFETY: the address buffer and length describe valid writable storage.
+    let peer_result = unsafe {
+        libc::getpeername(
+            stream.as_raw_fd(),
+            peer_address.as_mut_ptr().cast(),
+            &mut peer_address_length,
+        )
+    };
+    if peer_result != 0 {
+        return Err(String::from(
+            "proof parent authority descriptor is not a connected socket",
+        ));
+    }
+    // SAFETY: successful `getpeername` initialized at least the address family.
+    let peer_address = unsafe { peer_address.assume_init() };
+    if peer_address.ss_family != libc::AF_UNIX as libc::sa_family_t {
+        return Err(String::from(
+            "proof parent authority descriptor is not a Unix stream",
+        ));
+    }
+    let mut socket_type = 0_i32;
+    let mut length = std::mem::size_of::<i32>() as libc::socklen_t;
+    // SAFETY: the output buffer and length describe a valid integer allocation.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut socket_type as *mut i32).cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || socket_type != libc::SOCK_STREAM {
+        return Err(String::from(
+            "proof parent authority descriptor is not a Unix stream",
+        ));
+    }
+    let peer_pid = proof_parent_peer_pid(stream)?;
+    if peer_pid != current_parent_process_id()? {
+        return Err(String::from(
+            "proof parent authority stream is not connected to the immediate parent",
+        ));
+    }
+    let parent_executable = fs::canonicalize(proof_parent_executable(peer_pid)?)
+        .map_err(|_| String::from("proof parent executable identity is unavailable"))?;
+    let current_executable = fs::canonicalize(
+        env::current_exe()
+            .map_err(|_| String::from("current Ota executable identity is unavailable"))?,
+    )
+    .map_err(|_| String::from("current Ota executable identity is unavailable"))?;
+    if parent_executable != current_executable {
+        return Err(String::from(
+            "proof parent authority peer is not the matching Ota executable",
+        ));
+    }
+    Ok(peer_pid)
+}
+
+#[cfg(not(unix))]
+fn current_parent_process_id() -> Result<u32, String> {
+    Err(String::from(
+        "proof parent authority capabilities are supported only on Unix platforms",
+    ))
+}
+
+#[cfg(unix)]
+fn load_proof_parent_authority_capability() -> Result<Option<ProofParentAuthorityCapability>, String>
+{
+    if let Some(capability) = ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| active.borrow().clone()) {
+        return Ok(Some(capability));
+    }
+    let Some(raw_fd) = env::var_os(PROOF_PARENT_AUTHORITY_FD_ENV) else {
+        return Ok(None);
+    };
+    // SAFETY: command admission is single-threaded at this boundary; remove the descriptor
+    // carrier before any selected execution or child spawn can observe it.
+    unsafe { env::remove_var(PROOF_PARENT_AUTHORITY_FD_ENV) };
+    let raw_fd = raw_fd
+        .to_string_lossy()
+        .parse::<std::os::fd::RawFd>()
+        .map_err(|_| String::from("proof parent authority descriptor is invalid"))?;
+    // SAFETY: `fcntl` only inspects and updates the supplied descriptor flags.
+    let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(String::from(
+            "proof parent authority descriptor is not open",
+        ));
+    }
+    // SAFETY: the descriptor was proven open above. Set close-on-exec before reading any
+    // authority data so no later child can inherit it accidentally.
+    if unsafe { libc::fcntl(raw_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(String::from(
+            "proof parent authority descriptor could not be made non-inheritable",
+        ));
+    }
+    use std::os::fd::{FromRawFd as _, OwnedFd};
+    use std::os::unix::net::UnixStream;
+    // SAFETY: ownership is transferred exactly once after the descriptor was proven open.
+    let owned = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    let mut stream = UnixStream::from(owned);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|_| String::from("proof parent authority timeout could not be applied"))?;
+    let peer_pid = verify_proof_parent_stream(&stream)?;
+    let mut challenge = [0_u8; 32];
+    getrandom::getrandom(&mut challenge)
+        .map_err(|_| String::from("proof parent authority challenge is unavailable"))?;
+    stream
+        .write_all(&challenge)
+        .map_err(|_| String::from("proof parent authority challenge could not be delivered"))?;
+    let challenge_identity = format!("sha256:{:x}", Sha256::digest(challenge));
+    let mut length = [0_u8; 4];
+    stream
+        .read_exact(&mut length)
+        .map_err(|_| String::from("proof parent authority frame is incomplete"))?;
+    let length = u32::from_be_bytes(length) as usize;
+    if length == 0 || length > PROOF_PARENT_AUTHORITY_MAX_BYTES {
+        return Err(String::from(
+            "proof parent authority frame exceeds its bounded carrier",
+        ));
+    }
+    let mut payload = vec![0_u8; length];
+    stream
+        .read_exact(&mut payload)
+        .map_err(|_| String::from("proof parent authority payload is incomplete"))?;
+    let capability = serde_json::from_slice::<ProofParentAuthorityCapability>(&payload)
+        .map_err(|_| String::from("proof parent authority payload is invalid"))?;
+    if capability.parent_pid != peer_pid || capability.challenge_identity != challenge_identity {
+        return Err(String::from(
+            "proof parent authority payload does not match its connected challenge",
+        ));
+    }
+    ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| {
+        active.replace(Some(capability.clone()));
+    });
+    Ok(Some(capability))
+}
+
+#[cfg(not(unix))]
+fn load_proof_parent_authority_capability() -> Result<Option<ProofParentAuthorityCapability>, String>
+{
+    if env::var_os(PROOF_PARENT_AUTHORITY_FD_ENV).is_some() {
+        return Err(String::from(
+            "proof parent authority capabilities are supported only on Unix platforms",
+        ));
+    }
+    Ok(None)
+}
+
+fn proof_parent_authorizes_invocation(
+    contract: &Contract,
+    contract_path: &Path,
+    kinds: &[&str],
+    name: &str,
+) -> Result<bool, GrantAdmissionError> {
+    let Some(capability) = load_proof_parent_authority_capability()
+        .map_err(|details| GrantAdmissionError::new("proof_parent_authority_invalid", details))?
+    else {
+        return Ok(false);
+    };
+    if !kinds.iter().any(|kind| capability.invocation.kind == *kind) {
+        return Err(GrantAdmissionError::new(
+            "proof_parent_authority_invalid",
+            "proof parent authority capability does not select this command surface",
+        )
+        .with_scope(capability.authority.semantic_scope().clone()));
+    }
+    verify_proof_parent_authority_capability(
+        contract,
+        contract_path,
+        &capability,
+        capability.invocation.kind.as_str(),
+        name,
+    )
+    .map_err(|details| {
+        GrantAdmissionError::new("proof_parent_authority_invalid", details)
+            .with_scope(capability.authority.semantic_scope().clone())
+    })?;
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn spawn_with_proof_parent_authority(
+    command: &mut Command,
+    capability: Option<ProofParentAuthorityCapability>,
+) -> Result<std::process::Child, String> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::net::UnixStream;
+    let Some(capability) = capability else {
+        return command.spawn().map_err(|error| error.to_string());
+    };
+    let payload = serde_json::to_vec(&capability)
+        .map_err(|error| format!("could not serialize proof parent authority: {error}"))?;
+    if payload.is_empty() || payload.len() > PROOF_PARENT_AUTHORITY_MAX_BYTES {
+        return Err(String::from(
+            "proof parent authority payload exceeds its bounded carrier",
+        ));
+    }
+    let (mut parent_stream, child_stream) = UnixStream::pair()
+        .map_err(|error| format!("could not create proof authority channel: {error}"))?;
+    let child_fd = child_stream.as_raw_fd();
+    // SAFETY: the descriptor belongs to `child_stream`; clearing close-on-exec is required only
+    // for the immediate Ota child and the child sets it again before parsing the frame.
+    let flags = unsafe { libc::fcntl(child_fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(child_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(String::from(
+            "could not make the proof authority channel available to the Ota child",
+        ));
+    }
+    command.env(PROOF_PARENT_AUTHORITY_FD_ENV, child_fd.to_string());
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    drop(child_stream);
+    parent_stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| format!("could not bound proof authority challenge wait: {error}"))?;
+    let mut challenge = [0_u8; 32];
+    if let Err(error) = parent_stream.read_exact(&mut challenge) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "could not receive proof authority challenge from the Ota child: {error}"
+        ));
+    }
+    let mut capability = capability;
+    capability.challenge_identity = format!("sha256:{:x}", Sha256::digest(challenge));
+    capability.identity = proof_parent_authority_capability_identity(&capability)?;
+    let payload = serde_json::to_vec(&capability)
+        .map_err(|error| format!("could not serialize proof parent authority: {error}"))?;
+    if payload.is_empty() || payload.len() > PROOF_PARENT_AUTHORITY_MAX_BYTES {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(String::from(
+            "proof parent authority payload exceeds its bounded carrier",
+        ));
+    }
+    if let Err(error) = parent_stream
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .and_then(|_| parent_stream.write_all(&payload))
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "could not deliver proof authority to the Ota child: {error}"
+        ));
+    }
+    Ok(child)
+}
+
+fn output_with_proof_parent_authority(
+    command: &mut Command,
+    capability: Option<ProofParentAuthorityCapability>,
+) -> Result<std::process::Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    spawn_with_proof_parent_authority(command, capability)?
+        .wait_with_output()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
+fn spawn_with_proof_parent_authority(
+    command: &mut Command,
+    capability: Option<ProofParentAuthorityCapability>,
+) -> Result<std::process::Child, String> {
+    if capability.is_some() {
+        return Err(String::from(
+            "proof parent authority capabilities are supported only on Unix platforms",
+        ));
+    }
+    command.spawn().map_err(|error| error.to_string())
 }
 
 struct ActiveCrossingGrantGuard {
@@ -16428,6 +17206,127 @@ impl ArchivedCrossingAuthorityEvidence {
     }
 }
 
+fn verify_terminal_proof_crossing_evidence(
+    contract: &Contract,
+    root: &Path,
+    crossing: &ProofRuntimeCrossingEvidence,
+    expected_scope: &crate::crossing::CrossingSemanticScope,
+    proof_execution_id: &str,
+    proof_status: &str,
+    proof_ok: bool,
+) -> Result<(), String> {
+    if crossing.scope_identity != expected_scope.identity
+        || crossing.proof_execution_id.as_deref() != Some(proof_execution_id)
+        || crossing.receipt_archive_identity.is_some()
+        || crossing.receipt_archive_path.is_some()
+    {
+        return Err(String::from(
+            "proof crossing linkage does not match its canonical semantic scope",
+        ));
+    }
+    let authority = crossing
+        .authority
+        .as_ref()
+        .ok_or_else(|| String::from("proof crossing linkage omits terminal authority evidence"))?;
+    if authority.scope_identity != expected_scope.identity
+        || authority.contract_identity != expected_scope.contract_identity
+    {
+        return Err(String::from(
+            "proof crossing authority does not match its canonical semantic scope",
+        ));
+    }
+    let archived = serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
+        authority.archive_evidence.clone(),
+    )
+    .map_err(|error| format!("proof crossing archive evidence is invalid: {error}"))?;
+    if archived.semantic_scope() != expected_scope {
+        return Err(String::from(
+            "proof crossing archive authority does not re-derive from contract truth",
+        ));
+    }
+    let (transaction, expected_authority) = match &archived {
+        ArchivedCrossingAuthorityEvidence::PreboundFile(evidence) => {
+            crate::crossing_authority::verify_archived_grant_admission(
+                contract,
+                root,
+                &evidence.admission,
+            )
+            .map_err(|error| error.public_details())?;
+            let carrier = evidence.carrier_admission.as_ref().ok_or_else(|| {
+                String::from("proof crossing prebound archive omits its carrier admission")
+            })?;
+            if evidence.admission.crossing_admission()? != *carrier {
+                return Err(String::from(
+                    "proof crossing prebound carrier admission does not reconcile",
+                ));
+            }
+            let transaction = evidence.transaction.as_ref().ok_or_else(|| {
+                String::from("proof crossing prebound archive omits its transaction")
+            })?;
+            crate::crossing_transaction::verify_crossing_transaction_evidence(
+                transaction,
+                carrier,
+            )?;
+            let expected = crossing_authority_output_with_transaction(
+                &VerifiedCrossingAuthorityAdmission::PreboundFile(evidence.admission.clone()),
+                Some(transaction.clone()),
+                true,
+            )?;
+            (transaction, expected)
+        }
+        ArchivedCrossingAuthorityEvidence::AuthorityBroker(evidence) => {
+            crate::broker_session::verify_broker_archive_evidence(root, evidence)?;
+            let expected = crossing_authority_output_with_transaction(
+                &VerifiedCrossingAuthorityAdmission::AuthorityBroker(evidence.admission.clone()),
+                Some(evidence.transaction.clone()),
+                true,
+            )?;
+            (&evidence.transaction, expected)
+        }
+    };
+    verify_exact_proof_authority_projection(authority, &expected_authority)?;
+    verify_terminal_proof_transaction_binding(
+        transaction,
+        crossing,
+        proof_execution_id,
+        proof_status,
+        proof_ok,
+    )
+}
+
+fn verify_exact_proof_authority_projection(
+    actual: &crate::output::ExecutionBoundaryCrossingAuthority,
+    expected: &crate::output::ExecutionBoundaryCrossingAuthority,
+) -> Result<(), String> {
+    if actual != expected {
+        return Err(String::from(
+            "proof crossing public authority projection does not reconcile with verified archive evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_terminal_proof_transaction_binding(
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+    crossing: &ProofRuntimeCrossingEvidence,
+    proof_execution_id: &str,
+    proof_status: &str,
+    proof_ok: bool,
+) -> Result<(), String> {
+    let expected_receipt_status = format!("proof:{proof_execution_id}:{proof_status}");
+    if crossing.proof_execution_id.as_deref() != Some(proof_execution_id)
+        || transaction.transaction_id != crossing.transaction_id
+        || transaction.scope_identity != crossing.scope_identity
+        || transaction.receipt_status.as_deref() != Some(expected_receipt_status.as_str())
+        || proof_ok != (transaction.state == "completed")
+    {
+        return Err(String::from(
+            "proof crossing terminal transaction does not match the proof outcome",
+        ));
+    }
+    Ok(())
+}
+
 fn active_crossing_transaction_evidence()
 -> Option<crate::crossing_transaction::CrossingTransactionEvidence> {
     ACTIVE_CROSSING_TRANSACTION.with(|active| {
@@ -16488,6 +17387,64 @@ fn finalize_and_attach_active_crossing_transaction(
     }
     crossing.authority = Some(authority);
     Ok(())
+}
+
+fn finalize_active_proof_crossing_transaction(
+    ok: bool,
+    interrupted: bool,
+    status: &str,
+    proof_execution_id: &str,
+) -> Result<Option<ProofRuntimeCrossingEvidence>, String> {
+    let Some(transaction) = ACTIVE_CROSSING_TRANSACTION.with(|active| active.borrow().clone())
+    else {
+        return Ok(None);
+    };
+    let state = if ok {
+        "completed"
+    } else if interrupted {
+        "interrupted"
+    } else {
+        "failed"
+    };
+    let receipt_status = format!("proof:{proof_execution_id}:{status}");
+    transaction
+        .borrow_mut()
+        .finalize(state, Some(receipt_status.as_str()))?;
+    let authority = active_crossing_grant_authority().ok_or_else(|| {
+        String::from("proof crossing transaction has no matching verified authority admission")
+    })?;
+    let transaction = active_crossing_transaction_evidence().ok_or_else(|| {
+        String::from("proof crossing transaction disappeared before evidence emission")
+    })?;
+    Ok(Some(ProofRuntimeCrossingEvidence {
+        receipt_archive_identity: None,
+        receipt_archive_path: None,
+        transaction_id: transaction.transaction_id,
+        proof_execution_id: Some(proof_execution_id.to_string()),
+        scope_identity: authority.scope_identity.clone(),
+        authority: Some(authority),
+    }))
+}
+
+fn fail_active_proof_crossing_transaction(
+    message: impl Into<String>,
+    proof_execution_id: &str,
+) -> CommandOutput {
+    let message = message.into();
+    if !active_crossing_transaction_is_pending() {
+        return CommandOutput::failure(message);
+    }
+    match finalize_active_proof_crossing_transaction(
+        false,
+        false,
+        "failed_before_terminal_output",
+        proof_execution_id,
+    ) {
+        Ok(_) => CommandOutput::failure(message),
+        Err(error) => CommandOutput::failure(format!(
+            "{message}; proof crossing finalization failed: {error}"
+        )),
+    }
 }
 
 fn crossing_grant_authority_output_with_transaction(
@@ -16633,6 +17590,21 @@ fn evaluate_task_crossing_grant(
     grant: Option<&str>,
     sandbox_target: Option<&str>,
 ) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    if proof_parent_authorizes_invocation(
+        contract,
+        contract_path,
+        &["proof_task", "workflow_task"],
+        task_name.as_str(),
+    )? {
+        if grant.is_some() {
+            return Err(GrantAdmissionError::new(
+                "proof_parent_authority_conflict",
+                "a proof child invocation cannot also select independent crossing authority",
+            ));
+        }
+        return Ok(None);
+    }
     let authority_configured = contract.governance.crossing_authority.is_some();
     if !authority_configured {
         return match grant {
@@ -16644,7 +17616,6 @@ fn evaluate_task_crossing_grant(
         };
     }
 
-    let task_name = canonical_declared_task_name(contract, task_name);
     let safety = task_effective_safety_with_overrides(contract, task_name.as_str(), overrides);
     let requirement = evaluate_crossing_requirement(
         Some(safety.effective_safe),
@@ -16690,6 +17661,24 @@ fn evaluate_workflow_crossing_grant(
     grant: Option<&str>,
     sandbox_target: Option<&str>,
 ) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
+    let selected_workflow = contract
+        .selected_workflow(workflow_name)
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| workflow_name.unwrap_or("default"));
+    if proof_parent_authorizes_invocation(
+        contract,
+        contract_path,
+        &["workflow"],
+        selected_workflow,
+    )? {
+        if grant.is_some() {
+            return Err(GrantAdmissionError::new(
+                "proof_parent_authority_conflict",
+                "a proof child workflow cannot also select independent crossing authority",
+            ));
+        }
+        return Ok(None);
+    }
     let authority_configured = contract.governance.crossing_authority.is_some();
     if !authority_configured {
         return match grant {
@@ -65411,6 +66400,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: true,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "passed_with_unproven_boundaries",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -65992,6 +66982,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: true,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "passed_with_unproven_boundaries",
                 path: contract_path.to_str().unwrap(),
                 mode: "runtime-proof",
@@ -66056,6 +67047,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -66129,6 +67121,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -66285,6 +67278,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -66357,6 +67351,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -66429,6 +67424,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -66498,6 +67494,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -66570,6 +67567,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -67067,6 +68065,7 @@ policies:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -101380,6 +102379,34 @@ workflows:
         )
         .unwrap_err();
         assert!(error.contains("invalid transaction binding"), "{error}");
+        let mut legacy_v2_archive = archive.clone();
+        legacy_v2_archive["version"] = serde_json::json!(2);
+        let legacy_scope = legacy_v2_archive["scope"]
+            .as_object_mut()
+            .expect("legacy lifecycle scope");
+        legacy_scope.remove("target_platform");
+        legacy_scope.remove("host_port");
+        legacy_scope.remove("memory");
+        legacy_scope.remove("skip_dependencies");
+        legacy_v2_archive["proof"]
+            .as_object_mut()
+            .expect("legacy lifecycle proof")
+            .remove("crossing_evidence");
+        let legacy_v2_content = serde_json::to_vec(&legacy_v2_archive).unwrap();
+        let legacy_v2_identity = super::contract_snapshot_hash(&legacy_v2_content);
+        let legacy_v2_path = archive_path.with_file_name(format!(
+            "lifecycle-proof-{}.json",
+            legacy_v2_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(legacy_v2_identity.as_str())
+        ));
+        fs::write(&legacy_v2_path, legacy_v2_content).unwrap();
+        super::verify_lifecycle_proof_archive(
+            &legacy_v2_path,
+            legacy_v2_identity.as_str(),
+            fixture.path(),
+        )
+        .expect("released lifecycle archive v2 should remain inspectable");
         let snapshot_path = fixture
             .path()
             .join(archive["contract_snapshot_ref"].as_str().unwrap());
@@ -102040,7 +103067,7 @@ workflows:
         let archive: serde_json::Value =
             serde_json::from_slice(&archive_bytes).expect("proof archive json");
         assert_eq!(archive["kind"], "runtime_proof");
-        assert_eq!(archive["version"], 5);
+        assert_eq!(archive["version"], 6);
         assert_eq!(archive["replay_posture"], "witness_only");
         assert_eq!(
             archive["execution_boundary"]["identity"],
@@ -102078,7 +103105,7 @@ workflows:
     }
 
     #[test]
-    fn proof_archive_with_unsafe_seam_requires_crossing_evidence() {
+    fn proof_archive_v6_with_unsafe_seam_requires_direct_crossing_evidence() {
         let repo = TempDir::new().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
         fs::write(
@@ -102131,7 +103158,7 @@ workflows:
             }],
             Some(Duration::from_secs(45)),
         );
-        let derived = super::proof_runtime_archive_crossing_scope(&contract, &scope, 5)
+        let derived = super::proof_runtime_archive_crossing_scope(&contract, &scope, 6)
             .expect("scope is derived from contract");
         assert!(derived.0);
         let proof_scope = derived.1.expect("proof crossing scope");
@@ -102145,10 +103172,24 @@ workflows:
         let mut timeout_mismatch = scope.clone();
         timeout_mismatch.ready_timeout_seconds = Some(90);
         let timeout_scope =
-            super::proof_runtime_archive_crossing_scope(&contract, &timeout_mismatch, 5)
+            super::proof_runtime_archive_crossing_scope(&contract, &timeout_mismatch, 6)
                 .and_then(|(_, scope)| scope)
                 .expect("timeout mismatch scope");
         assert_ne!(proof_scope.identity, timeout_scope.identity);
+        let mut memory_mismatch = scope.clone();
+        memory_mismatch.memory = Some(512);
+        let memory_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &memory_mismatch, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("memory mismatch scope");
+        assert_ne!(proof_scope.identity, memory_scope.identity);
+        let mut dependency_mismatch = scope.clone();
+        dependency_mismatch.skip_dependencies = true;
+        let dependency_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &dependency_mismatch, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("dependency mismatch scope");
+        assert_ne!(proof_scope.identity, dependency_scope.identity);
         let ordinary_workflow_scope = crossing_scope_for_workflow(
             &contract,
             Some("verify"),
@@ -102169,11 +103210,11 @@ workflows:
             .expect("recorded platform")
             .architecture = String::from("mismatch");
         assert!(
-            super::proof_runtime_archive_crossing_scope(&contract, &platform_mismatch, 5).is_none()
+            super::proof_runtime_archive_crossing_scope(&contract, &platform_mismatch, 6).is_none()
         );
         let record = serde_json::json!({
             "kind": "runtime_proof",
-            "version": 5,
+            "version": 6,
             "contract_snapshot_hash": snapshot.hash,
             "contract_snapshot_ref": super::receipt_storage_path_display(
                 snapshot.archive_path.as_deref().expect("snapshot path")
@@ -102306,6 +103347,127 @@ workflows:
         assert!(super::load_proof_runtime_archive_candidates(repo.path()).is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proof_parent_authority_refuses_an_untrusted_same_process_socket() {
+        let (child, _peer) =
+            std::os::unix::net::UnixStream::pair().expect("Unix stream pair should be available");
+        let error = super::verify_proof_parent_stream(&child)
+            .expect_err("an arbitrary caller-owned socket cannot become parent authority");
+        assert!(
+            error.contains("immediate parent") || error.contains("peer credentials"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn proof_post_admission_failure_finalizes_the_pending_transaction_explicitly() {
+        let root = TempDir::new().expect("repo tempdir");
+        let admission = crate::crossing_authority::CrossingAuthorityAdmission {
+            carrier: crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile,
+            authority_id: String::from("authority:test"),
+            admission_identity: format!("sha256:{}", "1".repeat(64)),
+            authorization_identity: format!("sha256:{}", "2".repeat(64)),
+            scope_identity: format!("sha256:{}", "3".repeat(64)),
+            contract_identity: format!("sha256:{}", "4".repeat(64)),
+            boundary_family: String::from("unsafe_task"),
+            classification: String::from("escalated"),
+            actor_mode: String::from("non_agent"),
+            decision: String::from("allowed"),
+            admitted_at: String::from("2026-01-01T00:00:00Z"),
+        };
+        let transaction =
+            crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
+                .expect("pending transaction");
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction);
+        let execution_id = format!("sha256:{}", "5".repeat(64));
+
+        let output = super::fail_active_proof_crossing_transaction(
+            "artifact creation failed",
+            execution_id.as_str(),
+        );
+        let terminal =
+            super::active_crossing_transaction_evidence().expect("terminal transaction evidence");
+
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(terminal.state, "failed");
+        assert_eq!(
+            terminal.receipt_status.as_deref(),
+            Some(format!("proof:{execution_id}:failed_before_terminal_output").as_str())
+        );
+    }
+
+    #[test]
+    fn proof_terminal_binding_rejects_another_same_scope_execution() {
+        let scope_identity = format!("sha256:{}", "6".repeat(64));
+        let expected_execution = format!("sha256:{}", "7".repeat(64));
+        let borrowed_execution = format!("sha256:{}", "8".repeat(64));
+        let transaction = crate::crossing_transaction::CrossingTransactionEvidence {
+            schema_version: 2,
+            identity: format!("sha256:{}", "9".repeat(64)),
+            authentication_posture: String::from("runner_local_content_addressed"),
+            transaction_id: String::from("crossing-borrowed"),
+            authority_carrier: Some(String::from("prebound_file")),
+            authority_id: String::from("authority:test"),
+            admission_identity: format!("sha256:{}", "a".repeat(64)),
+            grant_identity: None,
+            authorization_identity: Some(format!("sha256:{}", "b".repeat(64))),
+            scope_identity: scope_identity.clone(),
+            contract_identity: format!("sha256:{}", "c".repeat(64)),
+            broker_consumption: None,
+            state: String::from("completed"),
+            created_at: String::from("2026-01-01T00:00:00Z"),
+            finalized_at: Some(String::from("2026-01-01T00:00:01Z")),
+            receipt_status: Some(format!(
+                "proof:{borrowed_execution}:passed_with_unproven_boundaries"
+            )),
+        };
+        let crossing = crate::output::ProofRuntimeCrossingEvidence {
+            receipt_archive_identity: None,
+            receipt_archive_path: None,
+            transaction_id: transaction.transaction_id.clone(),
+            proof_execution_id: Some(borrowed_execution),
+            scope_identity,
+            authority: None,
+        };
+
+        assert!(
+            super::verify_terminal_proof_transaction_binding(
+                &transaction,
+                &crossing,
+                expected_execution.as_str(),
+                "passed_with_unproven_boundaries",
+                true,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proof_authority_projection_refuses_a_stripped_public_transaction() {
+        let expected = serde_json::from_value::<crate::output::ExecutionBoundaryCrossingAuthority>(
+            serde_json::json!({
+                "decision": "allowed",
+                "authority_id": "authority:test",
+                "authority_separation_posture": "current_process_filesystem_guarded",
+                "authority_binding_identity": format!("sha256:{}", "1".repeat(64)),
+                "scope_identity": format!("sha256:{}", "2".repeat(64)),
+                "contract_identity": format!("sha256:{}", "3".repeat(64)),
+                "boundary_family": "unsafe_task",
+                "classification": "escalated",
+                "actor_mode": "non_agent",
+                "admitted_at": "2026-01-01T00:00:00Z",
+                "transaction": { "transaction_id": "crossing-test" },
+                "archive_evidence": { "kind": "test" }
+            }),
+        )
+        .expect("authority projection");
+        let mut stripped = expected.clone();
+        stripped.transaction = None;
+
+        assert!(super::verify_exact_proof_authority_projection(&stripped, &expected).is_err());
+    }
+
     #[test]
     fn runtime_proof_scope_remains_proof_specific_without_helper_invocations() {
         let repo = TempDir::new().expect("repo tempdir");
@@ -102409,6 +103571,8 @@ tasks:
             target: None,
             target_platform: None,
             host_port: Some(3001),
+            memory: None,
+            skip_dependencies: false,
             proof_invocations: Vec::new(),
             ready_timeout_seconds: None,
         };
@@ -115794,69 +116958,6 @@ fn write_proof_runtime_crossing_handoff(
         .map_err(|error| format!("could not finalize crossing handoff: {error}"))
 }
 
-fn proof_runtime_read_crossing_evidence(
-    root: &Path,
-    path: &Path,
-    token: &str,
-    expected: Option<&GrantAdmissionEvidence>,
-) -> Result<Option<ProofRuntimeCrossingEvidence>, String> {
-    let Some(expected) = expected else {
-        return Ok(None);
-    };
-    let bytes = fs::read(path)
-        .map_err(|error| format!("runtime proof is missing its child crossing handoff: {error}"))?;
-    let handoff = serde_json::from_slice::<ProofRuntimeCrossingHandoff>(&bytes)
-        .map_err(|error| format!("runtime proof child crossing handoff is invalid: {error}"))?;
-    if handoff.token != token {
-        return Err(String::from(
-            "runtime proof child crossing handoff belongs to a different proof transaction",
-        ));
-    }
-    if handoff.scope_identity != expected.scope_identity {
-        return Err(String::from(
-            "runtime proof child crossing handoff does not match the admitted grant scope",
-        ));
-    }
-    let archive_path = root.join(&handoff.receipt_archive_path);
-    let record = read_repo_receipt_archive_record(&archive_path)?;
-    let authority = record
-        .payload
-        .receipt
-        .crossing
-        .as_ref()
-        .and_then(|crossing| crossing.authority.as_ref())
-        .ok_or_else(|| String::from("runtime proof child receipt omits crossing authority"))?;
-    let archived =
-        serde_json::from_value::<ArchivedCrossingGrantEvidence>(authority.archive_evidence.clone())
-            .map_err(|error| {
-                format!("runtime proof child receipt crossing evidence is invalid: {error}")
-            })?;
-    let transaction = archived.transaction.as_ref().ok_or_else(|| {
-        String::from("runtime proof child receipt omits its terminal crossing transaction")
-    })?;
-    if transaction.transaction_id != handoff.transaction_id
-        || archived.admission.semantic_scope.identity != handoff.scope_identity
-        || archived.admission.semantic_scope.identity != expected.scope_identity
-    {
-        return Err(String::from(
-            "runtime proof child receipt crossing evidence does not match its handoff",
-        ));
-    }
-    let archive_bytes = fs::read(&archive_path)
-        .map_err(|error| format!("could not read runtime proof child receipt archive: {error}"))?;
-    if contract_snapshot_hash(&archive_bytes) != handoff.receipt_archive_identity {
-        return Err(String::from(
-            "runtime proof child receipt archive does not match the handed-off identity",
-        ));
-    }
-    Ok(Some(ProofRuntimeCrossingEvidence {
-        receipt_archive_identity: handoff.receipt_archive_identity,
-        receipt_archive_path: handoff.receipt_archive_path,
-        transaction_id: handoff.transaction_id,
-        scope_identity: handoff.scope_identity,
-    }))
-}
-
 const PROOF_RUNTIME_ARCHIVE_LIMIT: usize = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115878,6 +116979,10 @@ struct ProofRuntimeArchiveScope {
     /// invocation scope used to re-derive crossing authority.
     #[serde(skip_serializing_if = "Option::is_none")]
     host_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<u64>,
+    #[serde(default)]
+    skip_dependencies: bool,
     /// The runtime-proof helper invocation set is part of the selected proof scope. Keep role,
     /// declaration order, and duplicate task uses rather than collapsing to task names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -115925,6 +117030,8 @@ struct ProofRuntimeArchiveReadRecord {
 #[derive(Debug, Deserialize)]
 struct ProofRuntimeArchiveReadProof {
     ok: bool,
+    #[serde(default)]
+    execution_id: Option<String>,
     proof_verdict: String,
     #[serde(default)]
     crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
@@ -115956,6 +117063,14 @@ struct LifecycleProofArchiveScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<String>,
     target_os: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_platform: Option<crate::sandbox_policy::SandboxTargetPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<u64>,
+    #[serde(default)]
+    skip_dependencies: bool,
 }
 
 #[derive(Serialize)]
@@ -115994,6 +117109,8 @@ struct LifecycleProofArchiveReadProof {
     proof_scope: ProofRuntimeScope,
     services: Vec<LifecycleProofServiceRecord>,
     proof_verdict: String,
+    #[serde(default)]
+    crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
     finalization: crate::output::LifecycleProofFinalization,
     assertion: Option<LifecycleProofAssertion>,
     not_proved: Vec<ProofRuntimeNotProved>,
@@ -116053,11 +117170,25 @@ fn proof_runtime_archive_scope(
             task_phase_execution_context(contract, contract_path, task_name, overrides, None)
         },
     );
+    let resolved_overrides = ExecutionOverrides {
+        backend: match phase.backend.as_deref() {
+            Some("native") => Some(Backend::Native),
+            Some("container") => Some(Backend::Container),
+            Some("remote") => Some(Backend::Remote),
+            _ => overrides.backend,
+        },
+        lifecycle: match phase.lifecycle.as_deref() {
+            Some("ephemeral") => Some(Lifecycle::Ephemeral),
+            Some("persistent") => Some(Lifecycle::Persistent),
+            _ => overrides.lifecycle,
+        },
+        ..overrides
+    };
     let target_platform = proof_runtime_archive_policy(
         contract,
         workflow_name,
         task.as_deref(),
-        overrides,
+        resolved_overrides,
         &proof_invocations,
     )
     .ok()
@@ -116071,6 +117202,8 @@ fn proof_runtime_archive_scope(
         target: phase.target,
         target_platform,
         host_port: overrides.host_port,
+        memory: overrides.memory,
+        skip_dependencies: overrides.skip_deps,
         proof_invocations,
         ready_timeout_seconds: ready_timeout.map(|duration| duration.as_secs()),
     }
@@ -116110,6 +117243,8 @@ fn proof_runtime_archive_overrides(scope: &ProofRuntimeArchiveScope) -> Option<E
         backend: Some(backend),
         lifecycle,
         host_port: scope.host_port,
+        memory: scope.memory,
+        skip_deps: scope.skip_dependencies,
         ..ExecutionOverrides::default()
     })
 }
@@ -116336,6 +117471,15 @@ fn load_proof_runtime_archive_candidates(
                 return None;
             }
             if let Some(crossing) = archive.proof.crossing_evidence.as_ref() {
+                if archive.version >= 6
+                    && (archive.proof.execution_id.is_none()
+                        || crossing.proof_execution_id != archive.proof.execution_id)
+                {
+                    return None;
+                }
+                if archive.version >= 6 && crossing.authority.is_none() {
+                    return None;
+                }
                 // Reject a crossing from a different valid invocation before treating its child
                 // receipt as evidence for this proof archive.
                 if expected_crossing_scope
@@ -116344,32 +117488,110 @@ fn load_proof_runtime_archive_candidates(
                 {
                     return None;
                 }
-                // Reuse the child receipt's archive verification before allowing a proof archive
-                // to support later assurance decisions.
-                let receipt_path = root.join(&crossing.receipt_archive_path);
-                let receipt = read_repo_receipt_archive_record(&receipt_path).ok()?;
-                let authority = receipt
-                    .payload
-                    .receipt
-                    .crossing
-                    .as_ref()
-                    .and_then(|entry| entry.authority.as_ref())?;
-                let archived_authority = serde_json::from_value::<ArchivedCrossingGrantEvidence>(
-                    authority.archive_evidence.clone(),
-                )
-                .ok()?;
-                let transaction = archived_authority.transaction.as_ref()?;
-                let receipt_bytes = fs::read(&receipt_path).ok()?;
-                if transaction.transaction_id != crossing.transaction_id
-                    || archived_authority.admission.semantic_scope.identity
-                        != crossing.scope_identity
-                    || contract_snapshot_hash(&receipt_bytes) != crossing.receipt_archive_identity
-                {
-                    return None;
+                if let Some(authority) = crossing.authority.as_ref() {
+                    let archived_authority =
+                        serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
+                            authority.archive_evidence.clone(),
+                        )
+                        .ok()?;
+                    if archived_authority.semantic_scope().identity != crossing.scope_identity {
+                        return None;
+                    }
+                    let (transaction, expected_authority) = match &archived_authority {
+                        ArchivedCrossingAuthorityEvidence::PreboundFile(evidence) => {
+                            crate::crossing_authority::verify_archived_grant_admission(
+                                &snapshot_contract,
+                                root,
+                                &evidence.admission,
+                            )
+                            .ok()?;
+                            let carrier = evidence.carrier_admission.as_ref()?;
+                            if evidence.admission.crossing_admission().ok()?.ne(carrier) {
+                                return None;
+                            }
+                            let transaction = evidence.transaction.as_ref()?;
+                            crate::crossing_transaction::verify_crossing_transaction_evidence(
+                                transaction,
+                                carrier,
+                            )
+                            .ok()?;
+                            let expected = crossing_authority_output_with_transaction(
+                                &VerifiedCrossingAuthorityAdmission::PreboundFile(
+                                    evidence.admission.clone(),
+                                ),
+                                Some(transaction.clone()),
+                                true,
+                            )
+                            .ok()?;
+                            (transaction, expected)
+                        }
+                        ArchivedCrossingAuthorityEvidence::AuthorityBroker(evidence) => {
+                            crate::broker_session::verify_broker_archive_evidence(root, evidence)
+                                .ok()?;
+                            let expected = crossing_authority_output_with_transaction(
+                                &VerifiedCrossingAuthorityAdmission::AuthorityBroker(
+                                    evidence.admission.clone(),
+                                ),
+                                Some(evidence.transaction.clone()),
+                                true,
+                            )
+                            .ok()?;
+                            (&evidence.transaction, expected)
+                        }
+                    };
+                    if verify_exact_proof_authority_projection(authority, &expected_authority)
+                        .is_err()
+                    {
+                        return None;
+                    }
+                    let expected_receipt_status =
+                        archive.proof.execution_id.as_deref().map(|execution_id| {
+                            format!("proof:{execution_id}:{}", archive.proof.proof_verdict)
+                        });
+                    if transaction.transaction_id != crossing.transaction_id
+                        || transaction.scope_identity != crossing.scope_identity
+                        || (archive.version >= 6
+                            && transaction.receipt_status.as_deref()
+                                != expected_receipt_status.as_deref())
+                        || archive.proof.ok != (transaction.state == "completed")
+                    {
+                        return None;
+                    }
+                } else {
+                    // Legacy runtime-proof archives point at the child run receipt that owned the
+                    // crossing transaction. New proof-wide archives carry authority directly.
+                    let (Some(receipt_archive_path), Some(receipt_archive_identity)) = (
+                        crossing.receipt_archive_path.as_ref(),
+                        crossing.receipt_archive_identity.as_ref(),
+                    ) else {
+                        return None;
+                    };
+                    let receipt_path = root.join(receipt_archive_path);
+                    let receipt = read_repo_receipt_archive_record(&receipt_path).ok()?;
+                    let authority = receipt
+                        .payload
+                        .receipt
+                        .crossing
+                        .as_ref()
+                        .and_then(|entry| entry.authority.as_ref())?;
+                    let archived_authority =
+                        serde_json::from_value::<ArchivedCrossingGrantEvidence>(
+                            authority.archive_evidence.clone(),
+                        )
+                        .ok()?;
+                    let transaction = archived_authority.transaction.as_ref()?;
+                    let receipt_bytes = fs::read(&receipt_path).ok()?;
+                    if transaction.transaction_id != crossing.transaction_id
+                        || archived_authority.admission.semantic_scope.identity
+                            != crossing.scope_identity
+                        || contract_snapshot_hash(&receipt_bytes) != *receipt_archive_identity
+                    {
+                        return None;
+                    }
                 }
             }
             (archive.kind == "runtime_proof"
-                && matches!(archive.version, 1 | 2 | 3 | 4 | 5)
+                && matches!(archive.version, 1 | 2 | 3 | 4 | 5 | 6)
                 && archive.replay_posture == "witness_only")
                 .then_some(crate::claim_assurance::ProofArchiveCandidate {
                     identity,
@@ -116401,12 +117623,25 @@ fn write_lifecycle_proof_archive(
     let contract_identity = repo_contract_identity(contract);
     let source_identity = git_head_identity(root).ok();
     let snapshot_ref = receipt_storage_path_display(snapshot_path);
+    let proof_invocations = contract
+        .selected_workflow(Some(workflow))
+        .and_then(|(_, workflow)| workflow.proof.lifecycle.as_ref())
+        .and_then(|lifecycle| lifecycle.assertion.as_ref())
+        .map(|assertion| {
+            vec![CrossingProofInvocation {
+                id: format!("lifecycle_assertion:{}", assertion.task),
+                kind: String::from("lifecycle_assertion"),
+                task: assertion.task.clone(),
+                order: 0,
+            }]
+        })
+        .unwrap_or_default();
     let execution_scope = proof_runtime_archive_scope(
         contract,
         contract_path,
         Some(workflow),
         overrides,
-        Vec::new(),
+        proof_invocations,
         None,
     );
     let boundary_identities = proof
@@ -116419,6 +117654,11 @@ fn write_lifecycle_proof_archive(
             "lifecycle proof services do not share one runner-owned boundary identity",
         ));
     }
+    let target_os = execution_scope
+        .target_platform
+        .as_ref()
+        .map(|platform| platform.os.clone())
+        .unwrap_or_else(|| current_os().to_string());
     let scope = LifecycleProofArchiveScope {
         workflow: workflow.to_string(),
         member: member.map(str::to_string),
@@ -116431,11 +117671,15 @@ fn write_lifecycle_proof_archive(
         provider: execution_scope.provider,
         lifecycle: execution_scope.lifecycle,
         target: execution_scope.target,
-        target_os: current_os().to_string(),
+        target_os,
+        target_platform: execution_scope.target_platform,
+        host_port: execution_scope.host_port,
+        memory: execution_scope.memory,
+        skip_dependencies: execution_scope.skip_dependencies,
     };
     let record = LifecycleProofArchiveRecord {
         kind: "lifecycle_proof",
-        version: 2,
+        version: 3,
         contract_identity: &contract_identity,
         contract_snapshot_hash: &snapshot.hash,
         contract_snapshot_ref: &snapshot_ref,
@@ -116525,6 +117769,163 @@ fn verify_lifecycle_proof_archive(
         return Err(String::from(
             "lifecycle proof archive contract identity does not match its semantic snapshot",
         ));
+    }
+    let archive_overrides = ExecutionOverrides {
+        backend: match archive.scope.backend.as_str() {
+            "native" => Some(Backend::Native),
+            "container" => Some(Backend::Container),
+            "remote" => Some(Backend::Remote),
+            _ => None,
+        },
+        lifecycle: match archive.scope.lifecycle.as_deref() {
+            Some("ephemeral") => Some(Lifecycle::Ephemeral),
+            Some("persistent") => Some(Lifecycle::Persistent),
+            None => None,
+            Some(_) => {
+                return Err(String::from(
+                    "lifecycle proof archive has invalid lifecycle",
+                ));
+            }
+        },
+        host_port: archive.scope.host_port,
+        memory: archive.scope.memory,
+        skip_deps: archive.scope.skip_dependencies,
+        ..ExecutionOverrides::default()
+    };
+    let declared_assertion = snapshot_contract
+        .selected_workflow(Some(archive.scope.workflow.as_str()))
+        .and_then(|(_, workflow)| workflow.proof.lifecycle.as_ref())
+        .and_then(|lifecycle| lifecycle.assertion.as_ref());
+    let proof_invocations = declared_assertion
+        .map(|assertion| {
+            vec![CrossingProofInvocation {
+                id: format!("lifecycle_assertion:{}", assertion.task),
+                kind: String::from("lifecycle_assertion"),
+                task: assertion.task.clone(),
+                order: 0,
+            }]
+        })
+        .unwrap_or_default();
+    let proof_roots = proof_invocations
+        .iter()
+        .map(|invocation| invocation.task.clone())
+        .collect::<Vec<_>>();
+    let proof_policy = crate::sandbox_policy::sandbox_policy_for_workflow_with_proof_roots(
+        &snapshot_contract,
+        Some(archive.scope.workflow.as_str()),
+        archive_overrides,
+        &proof_roots,
+    )?;
+    if archive.scope.mode != archive.scope.backend {
+        return Err(String::from(
+            "lifecycle proof archive mode does not match its selected backend",
+        ));
+    }
+    if archive.version == 3
+        && archive.scope.target_platform.as_ref() != Some(&proof_policy.target_platform)
+    {
+        return Err(format!(
+            "lifecycle proof archive has an invalid transaction binding: target platform recorded={:?} expected={:?}",
+            archive.scope.target_platform, proof_policy.target_platform
+        ));
+    }
+    if archive.scope.target_os != proof_policy.target_platform.os {
+        return Err(String::from(
+            "lifecycle proof archive target OS does not match its selected platform",
+        ));
+    }
+    let mut unsafe_closure_tasks = proof_policy
+        .segments
+        .iter()
+        .filter_map(|segment| {
+            (!task_effective_safety_with_overrides(
+                &snapshot_contract,
+                segment.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(segment.backend),
+                    ..archive_overrides
+                },
+            )
+            .effective_safe)
+                .then(|| segment.task.clone())
+        })
+        .collect::<Vec<_>>();
+    unsafe_closure_tasks.sort();
+    unsafe_closure_tasks.dedup();
+    let crossing_requirement = evaluate_crossing_requirement(
+        Some(unsafe_closure_tasks.is_empty()),
+        false,
+        &unsafe_closure_tasks,
+        "workflow",
+    );
+    let expected_crossing_scope = if archive.version == 3
+        && snapshot_contract.governance.crossing_authority.is_some()
+        && crossing_requirement.required == Some(true)
+    {
+        Some(
+            crossing_scope_from_policy(
+                proof_policy,
+                archive_overrides,
+                &[],
+                &[],
+                None,
+                Some("lifecycle_proof"),
+                None,
+                crossing_requirement
+                    .boundary_family
+                    .map(|family| family.label())
+                    .unwrap_or("unknown"),
+                crossing_requirement
+                    .classification
+                    .map(|classification| classification.label())
+                    .unwrap_or("unknown"),
+            )
+            .and_then(|scope| {
+                crossing_scope_with_workflow_instance_selection(
+                    scope,
+                    &snapshot_contract,
+                    Some(archive.scope.workflow.as_str()),
+                )
+            })
+            .and_then(|scope| crossing_scope_with_proof_invocations(scope, proof_invocations))
+            .and_then(|scope| {
+                crossing_scope_with_proof_transaction_selection(
+                    scope,
+                    CrossingProofTransactionSelection {
+                        selected_services: archive.scope.selected_services.clone(),
+                        service_closure: archive.scope.service_closure.clone(),
+                        ready_timeout_seconds: None,
+                    },
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    match (
+        expected_crossing_scope.as_ref(),
+        archive.proof.crossing_evidence.as_ref(),
+    ) {
+        (Some(expected), Some(crossing)) => verify_terminal_proof_crossing_evidence(
+            &snapshot_contract,
+            root,
+            crossing,
+            expected,
+            archive.proof.transaction_id.as_str(),
+            archive.proof.proof_verdict.as_str(),
+            archive.proof.ok,
+        )?,
+        (Some(_), None) => {
+            return Err(String::from(
+                "governed lifecycle proof archive omits required crossing authority",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(String::from(
+                "lifecycle proof archive carries crossing authority for an ungoverned lane",
+            ));
+        }
+        (None, None) => {}
     }
     let declared_lifecycle = snapshot_contract
         .selected_workflow(Some(archive.scope.workflow.as_str()))
@@ -116730,8 +118131,19 @@ fn verify_lifecycle_proof_archive(
         archive.proof.finalization.state.as_str(),
         "completed" | "completed_after_interruption"
     );
+    let valid_version_scope = match archive.version {
+        2 => {
+            archive.scope.target_platform.is_none()
+                && archive.scope.host_port.is_none()
+                && archive.scope.memory.is_none()
+                && !archive.scope.skip_dependencies
+                && archive.proof.crossing_evidence.is_none()
+        }
+        3 => archive.scope.target_platform.is_some(),
+        _ => false,
+    };
     if archive.kind != "lifecycle_proof"
-        || archive.version != 2
+        || !valid_version_scope
         || archive.scope.workflow != archive.proof.workflow
         || archive.proof.mode != "lifecycle-proof"
         || archive.proof.phase != "lifecycle"
@@ -116958,7 +118370,6 @@ fn spawn_proof_runtime_up_process(
     execution_boundary_trace_token: &str,
     crossing_handoff_path: &Path,
     policy_snapshot_path: Option<&Path>,
-    grant: Option<&str>,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
         format!("could not resolve the current ota executable for runtime proof: {error}")
@@ -117015,9 +118426,6 @@ fn spawn_proof_runtime_up_process(
     if let Some(workflow_name) = workflow_name {
         command.arg("--workflow").arg(workflow_name);
     }
-    if let Some(grant) = grant {
-        command.arg("--grant").arg(grant);
-    }
     if let Some(member) = member {
         command.arg("--member").arg(member);
     }
@@ -117036,8 +118444,13 @@ fn spawn_proof_runtime_up_process(
         command.process_group(0);
     }
 
-    command
-        .spawn()
+    let selected_workflow = workflow_name.unwrap_or("default");
+    let capability = active_proof_parent_authority_capability(ProofParentInvocation {
+        kind: String::from("workflow"),
+        name: selected_workflow.to_string(),
+        proof_invocation: None,
+    })?;
+    spawn_with_proof_parent_authority(&mut command, capability)
         .map_err(|error| format!("could not start detached `ota up` for runtime proof: {error}"))
 }
 
@@ -117116,10 +118529,10 @@ fn runtime_proof_child_env() -> BTreeMap<OsString, OsString> {
         }
     }
     for (name, value) in env::vars_os() {
-        if name
-            .to_str()
-            .is_some_and(|name| name.starts_with("OTA_") || name.starts_with("NPM_CONFIG_"))
-        {
+        if name.to_str().is_some_and(|name| {
+            (name.starts_with("OTA_") || name.starts_with("NPM_CONFIG_"))
+                && name != PROOF_PARENT_AUTHORITY_FD_ENV
+        }) {
             selected.entry(name).or_insert(value);
         }
     }
@@ -117200,8 +118613,20 @@ fn spawn_up_detached_run_process(
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
 
-    command
-        .spawn()
+    let capability = ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| {
+        active.borrow().as_ref().cloned().map(|mut capability| {
+            capability.parent_pid = std::process::id();
+            capability.invocation = ProofParentInvocation {
+                kind: String::from("workflow_task"),
+                name: task_name.to_string(),
+                proof_invocation: None,
+            };
+            capability.identity = proof_parent_authority_capability_identity(&capability)
+                .expect("verified proof parent authority should re-identify");
+            capability
+        })
+    });
+    spawn_with_proof_parent_authority(&mut command, capability)
         .map_err(|error| format!("could not start detached `ota run {task_name}`: {error}"))
 }
 
@@ -117723,7 +119148,27 @@ fn proof_runtime_execute_seam_observation(
         });
     }
     command.arg(".").stdin(Stdio::null());
-    match command.output() {
+    let invocation = match proof_parent_task_invocation(
+        format!("seam_observation:{}", observation.id).as_str(),
+        "seam_observation",
+        observation.task.as_str(),
+    ) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    let capability = match active_proof_parent_authority_capability(invocation) {
+        Ok(capability) => capability,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    match output_with_proof_parent_authority(&mut command, capability) {
         Ok(output) if output.status.success() => {
             let attestation = proof_runtime_read_seam_attestation(
                 &attestation_path,
@@ -117926,7 +119371,27 @@ fn proof_runtime_execute_negative_control(
         });
     }
     command.arg(".").stdin(Stdio::null());
-    match command.output() {
+    let invocation = match proof_parent_task_invocation(
+        format!("negative_control:{}", control.id).as_str(),
+        "negative_control",
+        control.task.as_str(),
+    ) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    let capability = match active_proof_parent_authority_capability(invocation) {
+        Ok(capability) => capability,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    match output_with_proof_parent_authority(&mut command, capability) {
         Ok(output) if output.status.success() => {
             let _ = fs::remove_file(&attestation_path);
             ProofRuntimeNegativeControl {

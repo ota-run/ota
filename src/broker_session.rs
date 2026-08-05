@@ -453,6 +453,37 @@ pub(crate) fn verify_broker_archive_evidence(
     Ok(admission)
 }
 
+pub(crate) fn verify_pending_broker_archive_evidence(
+    repo_root: &Path,
+    admission: &BrokerAdmissionEvidence,
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+) -> Result<CrossingAuthorityAdmission, String> {
+    let current_binding = match crate::crossing_authority::select_crossing_authority_binding(
+        repo_root,
+        admission.binding_snapshot.authority_id.as_str(),
+    )
+    .map_err(|error| error.public_details())?
+    {
+        crate::crossing_authority::SelectedCrossingAuthorityBinding::AuthorityBroker(binding) => {
+            binding
+        }
+        crate::crossing_authority::SelectedCrossingAuthorityBinding::PreboundFile(_) => {
+            return Err(String::from(
+                "broker proof authority is no longer selected by the protected authority root",
+            ));
+        }
+    };
+    if BrokerPublicAuthorityBinding::from_protected(&current_binding) != admission.binding_snapshot
+    {
+        return Err(String::from(
+            "broker proof authority does not match the protected current authority root",
+        ));
+    }
+    let verified = verify_broker_admission_evidence(admission)?;
+    verify_pending_broker_consumption_evidence(admission, transaction)?;
+    Ok(verified)
+}
+
 impl FrozenBrokerChallenge {
     pub(crate) fn nonce(&self) -> &[u8; 32] {
         &self.nonce
@@ -575,9 +606,28 @@ pub(crate) fn verify_broker_consumption_evidence(
     admission_evidence: &BrokerAdmissionEvidence,
     transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
 ) -> Result<String, String> {
-    let verification_binding = admission_evidence.binding_snapshot.verification_binding();
     let admission = verify_broker_admission_evidence(admission_evidence)?;
     crate::crossing_transaction::verify_crossing_transaction_evidence(transaction, &admission)?;
+    verify_broker_consumption_fields(admission_evidence, transaction)
+}
+
+pub(crate) fn verify_pending_broker_consumption_evidence(
+    admission_evidence: &BrokerAdmissionEvidence,
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+) -> Result<String, String> {
+    let admission = verify_broker_admission_evidence(admission_evidence)?;
+    crate::crossing_transaction::verify_pending_crossing_transaction_evidence(
+        transaction,
+        &admission,
+    )?;
+    verify_broker_consumption_fields(admission_evidence, transaction)
+}
+
+fn verify_broker_consumption_fields(
+    admission_evidence: &BrokerAdmissionEvidence,
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+) -> Result<String, String> {
+    let verification_binding = admission_evidence.binding_snapshot.verification_binding();
     let consumption = transaction.broker_consumption.as_ref().ok_or_else(|| {
         String::from("broker transaction omits required atomic consumption evidence")
     })?;

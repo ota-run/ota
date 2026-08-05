@@ -242,12 +242,13 @@ ship a signing CLI, provider-attested separation, or broker-backed one-use work-
 
 ## Unsupported or bounded behavior
 
-- Governed runtime and lifecycle proof refuse before start because the current proof carriers do
-  not yet retain one terminal crossing transaction for the complete proof invocation set.
+- Governed runtime and lifecycle proof retain one proof-owned terminal crossing transaction for
+  their complete invocation and cleanup sets. Their archives embed and re-derive the exact carrier
+  admission; selected task environments never receive the runner-private capability.
 - Free-form task inputs refuse because this carrier will not hash or expose potentially secret
   values to manufacture scope identity.
-- The carrier supports only bounded calendar TTL. Broker-backed, nonce-bound, one-use work-unit
-  leases remain future V11.7 work.
+- The `prebound_file` carrier supports only bounded calendar TTL. Broker-backed, nonce-bound,
+  one-use work-unit leases use the separate protected `authority_broker` carrier.
 - Provider-attested privilege separation, Windows ACL verification, and a public Ota signing CLI
   are not implemented. An authority issuer must be independently operated and should be reviewed
   before it provisions any runner state.

@@ -7,7 +7,7 @@
   "required": ["kind", "version", "contract_identity", "contract_snapshot_hash", "contract_snapshot_ref", "scope", "proof"],
   "properties": {
     "kind": { "const": "lifecycle_proof" },
-    "version": { "const": 2 },
+    "version": { "enum": [2, 3] },
     "contract_identity": { "type": "object", "minProperties": 1 },
     "contract_snapshot_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "contract_snapshot_ref": { "type": "string" },
@@ -28,9 +28,57 @@
         "provider": { "type": "string" },
         "lifecycle": { "type": "string" },
         "target": { "type": "string" },
-        "target_os": { "enum": ["linux", "macos", "windows"] }
-      }
+        "target_os": { "enum": ["linux", "macos", "windows"] },
+        "target_platform": { "$ref": "./receipt.json#/$defs/crossingSemanticScope/properties/target_platform" },
+        "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "memory": { "type": "integer", "minimum": 1 },
+        "skip_dependencies": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            { "properties": { "backend": { "const": "native" }, "mode": { "const": "native" } } },
+            { "properties": { "backend": { "const": "container" }, "mode": { "const": "container" } } },
+            { "properties": { "backend": { "const": "remote" }, "mode": { "const": "remote" } } }
+          ]
+        },
+        {
+          "oneOf": [
+            { "properties": { "target_os": { "const": "linux" }, "target_platform": { "properties": { "os": { "const": "linux" } } } } },
+            { "properties": { "target_os": { "const": "macos" }, "target_platform": { "properties": { "os": { "const": "macos" } } } } },
+            { "properties": { "target_os": { "const": "windows" }, "target_platform": { "properties": { "os": { "const": "windows" } } } } }
+          ]
+        }
+      ]
     },
     "proof": { "$ref": "proof-lifecycle.json" }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "version": { "const": 2 } }, "required": ["version"] },
+      "then": {
+        "properties": {
+          "scope": {
+            "not": {
+              "anyOf": [
+                { "required": ["target_platform"] },
+                { "required": ["host_port"] },
+                { "required": ["memory"] },
+                { "required": ["skip_dependencies"] }
+              ]
+            }
+          },
+          "proof": { "not": { "required": ["crossing_evidence"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "version": { "const": 3 } }, "required": ["version"] },
+      "then": {
+        "properties": {
+          "scope": { "required": ["target_platform", "skip_dependencies"] }
+        }
+      }
+    }
+  ]
 }

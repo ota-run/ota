@@ -41,7 +41,12 @@ provider-attested separation. Core now also implements the Unix launcher-session
 `authority_broker` carrier for governed `ota run` and `ota up`: it verifies challenge-bound
 launcher attestation, obtains a signed exact-scope authorization, durably creates the crossing
 transaction, and atomically consumes one lease before selected-lane work. Hosted broker pressure,
-proof-wide transaction coverage, and stronger provider-attested separation remain open.
+and stronger provider-attested separation remain open. Core proof-wide transaction coverage is
+independently reviewed and ready for hosted pressure: runtime and lifecycle proofs retain
+one authority transaction across their complete invocation sets and bind terminal authority into
+content-addressed proof archives. A fresh proof execution identity is separate from semantic scope
+and is bound into terminal transaction status, preventing another valid same-scope crossing from
+being substituted for the selected proof run.
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
@@ -54,7 +59,7 @@ Release target:
 
 - `v1.6.26` implementation branch; signed offline authority and its bounded pre-provisioned
   hardened non-root pressure are in Core, and broker-backed one-use authority is implemented for
-  `run`/`up`; hosted broker pressure, proof-wide transaction coverage, and stronger
+  `run`/`up` plus proof-wide transaction retention; hosted broker proof pressure and stronger
   provider-attested separation remain open
 
 Source direction:
@@ -624,14 +629,15 @@ The first carrier must not claim more attribution than Ota observes. Current Cor
 `local` environment. Those fields remain `unknown` unless the chosen authority adapter supplies
 transaction-bound evidence. A grant never bypasses V11.3 agent-safe admission.
 
-#### Broker-backed one-use work-unit leases (implemented for `run` and `up`)
+#### Broker-backed one-use work-unit leases (implemented across governed execution)
 
 A runner-verifiable work-unit lifetime is also required by the V11.7 acceptance bar. The second
-`authority_broker` carrier is now implemented for governed `ota run` and `ota up`; it is not an
+`authority_broker` carrier is now implemented for governed `ota run`, `ota up`, and proof
+transactions; it is not an
 Enterprise approval service and not an extension of caller-controlled policy. Its purpose is
 narrowly to make one independently issued authority lease usable once for one exact crossing
-transaction. Grant-required runtime and lifecycle proof still refuse before work because their
-complete invocation and cleanup sets do not yet share one terminal crossing transaction.
+transaction. Runtime and lifecycle proof bind their complete invocation and cleanup sets to one
+proof-owned terminal transaction.
 
 ##### Canonical broker binding and attestation record
 

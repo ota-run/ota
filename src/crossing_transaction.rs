@@ -333,7 +333,7 @@ mod tests {
     use super::{
         CrossingTransactionBinding, CrossingTransactionEvidence, CrossingTransactionGuard,
         transaction_identity, verify_crossing_transaction_evidence,
-        verify_crossing_transaction_outcome,
+        verify_crossing_transaction_outcome, verify_pending_crossing_transaction_journal,
     };
     use crate::crossing_authority::{CrossingAuthorityAdmission, CrossingAuthorityCarrier};
 
@@ -455,6 +455,43 @@ mod tests {
             completed[0].identity,
             transaction_identity(&completed[0]).expect("identity should derive")
         );
+    }
+
+    #[test]
+    fn pending_capability_refuses_a_changed_durable_journal() {
+        let root = tempdir().expect("tempdir should be available");
+        let transaction =
+            CrossingTransactionGuard::begin_with_binding(root.path(), &binding(&"6".repeat(64)))
+                .expect("transaction should begin");
+        verify_pending_crossing_transaction_journal(root.path(), &transaction.evidence())
+            .expect("unchanged pending journal should verify");
+
+        let journal_path = fs::read_dir(root.path().join(".ota/state/crossings"))
+            .expect("crossing state directory")
+            .next()
+            .expect("scope directory")
+            .expect("scope directory entry")
+            .path();
+        let journal_path = fs::read_dir(journal_path)
+            .expect("transaction state directory")
+            .next()
+            .expect("transaction journal")
+            .expect("transaction journal entry")
+            .path();
+        let mut changed = transaction.evidence();
+        changed.receipt_status = Some(String::from("forged-before-execution"));
+        changed.identity = transaction_identity(&changed).expect("changed identity should derive");
+        fs::write(
+            &journal_path,
+            serde_json::to_vec_pretty(&changed).expect("changed journal should serialize"),
+        )
+        .expect("changed journal should write");
+
+        assert!(
+            verify_pending_crossing_transaction_journal(root.path(), &transaction.evidence())
+                .is_err()
+        );
+        std::mem::forget(transaction);
     }
 
     #[test]
@@ -696,6 +733,72 @@ pub(crate) fn verify_crossing_transaction_evidence(
     {
         return Err(String::from(
             "crossing transaction evidence is incomplete or does not match grant admission",
+        ));
+    }
+    Ok(())
+}
+
+/// Verify a crossing transaction while its proof-wide owner still holds it open. Subordinate
+/// proof invocations may observe this state, but cannot finalize or widen it.
+pub(crate) fn verify_pending_crossing_transaction_evidence(
+    evidence: &CrossingTransactionEvidence,
+    admission: &CrossingAuthorityAdmission,
+) -> Result<(), String> {
+    let broker_consumption_valid = match admission.carrier {
+        crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile => {
+            evidence.broker_consumption.is_none()
+        }
+        crate::crossing_authority::CrossingAuthorityCarrier::AuthorityBroker => evidence
+            .broker_consumption
+            .as_ref()
+            .is_some_and(|consumption| {
+                broker_consumption_identity(consumption)
+                    .is_ok_and(|identity| consumption.identity == identity)
+            }),
+    };
+    if !transaction_matches_admission(evidence, admission, true)
+        || !broker_consumption_valid
+        || evidence.state != "pending"
+        || evidence.finalized_at.is_some()
+        || evidence.receipt_status.is_some()
+        || evidence.identity != transaction_identity(evidence)?
+    {
+        return Err(String::from(
+            "pending proof crossing transaction does not match its authority admission",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_pending_crossing_transaction_journal(
+    repo_root: &Path,
+    evidence: &CrossingTransactionEvidence,
+) -> Result<(), String> {
+    if !evidence.transaction_id.starts_with("crossing-")
+        || !evidence
+            .transaction_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err(String::from(
+            "pending proof crossing transaction identity is not canonical",
+        ));
+    }
+    let scope_token = evidence
+        .scope_identity
+        .strip_prefix("sha256:")
+        .unwrap_or(evidence.scope_identity.as_str());
+    let journal_path = repo_root
+        .join(".ota/state/crossings")
+        .join(scope_token)
+        .join(format!("{}.json", evidence.transaction_id));
+    let persisted = fs::read(&journal_path)
+        .map_err(|_| String::from("pending proof crossing transaction journal is unavailable"))?;
+    let persisted = serde_json::from_slice::<CrossingTransactionEvidence>(&persisted)
+        .map_err(|_| String::from("pending proof crossing transaction journal is invalid"))?;
+    if persisted != *evidence {
+        return Err(String::from(
+            "pending proof crossing transaction does not match its durable journal",
         ));
     }
     Ok(())

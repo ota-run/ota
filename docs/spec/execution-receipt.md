@@ -159,9 +159,10 @@ host-isolation claim beyond the attestation Ota verified.
 boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
 is not independently authenticated against another same-user process with write access to
 `.ota/state`. Archive verification proves signed grant admission plus internal transaction,
-crossing-record, and receipt reconciliation. Broker-backed `run`/`up` archives add independently
-signed per-use protocol evidence, while proof-wide broker transactions and hosted broker pressure
-remain open V11.7 work.
+crossing-record, and receipt reconciliation. Broker-backed `run`, `up`, runtime-proof, and
+lifecycle-proof archives add independently signed per-use protocol evidence. Proof archives own
+one transaction across their complete invocation set and embed the terminal carrier admission
+directly; hosted broker proof pressure remains open V11.7 work.
 Authority `actor_mode` is runner-observed as `agent` or `non_agent`; it does not claim a verified
 human identity merely because agent mode was absent.
 When grant admission refuses, the receipt carries no `crossing`. Its typed `refusal` instead names

@@ -3931,6 +3931,7 @@ fn apply_runner_owned_proof_env<I>(
                     // Parent/child crossing handoff is runner-private. Selected task code must
                     // never receive a writable evidence path or its transaction capability.
                     && !name.starts_with("OTA_PROOF_RUNTIME_CROSSING_")
+                    && name.as_str() != "OTA_PROOF_PARENT_AUTHORITY_FD"
             })
             .map(|(name, value)| (name.clone(), value.clone())),
     );
@@ -37725,6 +37726,10 @@ tasks:
                     String::from("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"),
                     String::from("capability"),
                 ),
+                (
+                    String::from("OTA_PROOF_PARENT_AUTHORITY_FD"),
+                    String::from("9"),
+                ),
             ],
             Some("verify"),
         );
@@ -37735,6 +37740,7 @@ tasks:
         );
         assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH"));
         assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"));
+        assert!(!task_env.contains_key("OTA_PROOF_PARENT_AUTHORITY_FD"));
     }
 
     #[test]

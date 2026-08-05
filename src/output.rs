@@ -3454,6 +3454,8 @@ pub struct ProofRuntimeNotProved {
 #[derive(Debug, Serialize)]
 pub struct ProofRuntimeStatus<'a> {
     pub ok: bool,
+    /// Runner-generated identity for this exact proof execution, distinct from semantic scope.
+    pub execution_id: &'a str,
     /// Terminal evaluation of the selected proof carrier. This is deliberately separate from
     /// `ok` so consumers cannot collapse a qualified proof into an unbounded pass.
     pub proof_verdict: &'a str,
@@ -3464,8 +3466,7 @@ pub struct ProofRuntimeStatus<'a> {
     pub phase: &'a str,
     pub stage_family: &'a str,
     pub proof_scope: ProofRuntimeScope,
-    /// Reserved linkage for a future proof transaction that can retain one terminal crossing
-    /// record across every selected runtime-proof invocation.
+    /// Terminal authority linkage for this exact proof execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3497,13 +3498,20 @@ pub struct ProofRuntimeStatus<'a> {
     pub next: Option<&'a str>,
 }
 
-/// Reserved linkage for a future runtime proof transaction spanning every selected invocation.
+/// Transaction linkage for one authority-governed proof invocation. Legacy runtime archives may
+/// point at a child receipt; proof-wide transactions carry terminal authority evidence directly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeCrossingEvidence {
-    pub receipt_archive_identity: String,
-    pub receipt_archive_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_archive_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_archive_path: Option<String>,
     pub transaction_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_execution_id: Option<String>,
     pub scope_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority: Option<ExecutionBoundaryCrossingAuthority>,
 }
 
 /// Runner-owned evidence for one manager-controlled lifecycle transition.
@@ -3566,6 +3574,8 @@ pub struct LifecycleProofStatus {
     pub stage_family: String,
     pub proof_scope: ProofRuntimeScope,
     pub transaction_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
     pub services: Vec<LifecycleProofServiceRecord>,
     pub finalization: LifecycleProofFinalization,
     #[serde(skip_serializing_if = "Option::is_none")]

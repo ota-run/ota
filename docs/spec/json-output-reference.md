@@ -998,11 +998,22 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
   local record binds the semantic contract snapshot and source identity when available, selected
   member/workflow/services plus the snapshot-derived dependency closure and teardown authority,
   transaction, complete service records, terminal verdict and finalization, exact isolated-boundary identity when used, and
-  effective backend/mode/provider/lifecycle/target/target OS. Its content-addressed filename,
+  effective backend/mode/provider/lifecycle/target, target platform, host-port, memory, and
+  dependency-selection posture. When authority is required, `crossing_evidence` embeds the exact
+  proof-owned terminal authority transaction; archive verification re-derives it from the archived
+  contract and selected service/assertion scope. Its content-addressed filename,
   content identity, contract identity, and archived
   semantic snapshot reference are verified before Ota accepts the record as locally well-formed.
   It does not establish application-output proof,
   CI eligibility, claim assurance, replay, or broader repo completion.
+- Runtime proof emits a fresh `execution_id` for the exact proof run. Direct
+  `crossing_evidence.proof_execution_id` must match it, and the terminal authority transaction
+  binds the same value in its finalized proof status. Semantic scope identity remains reusable
+  policy truth; execution identity prevents a different valid run with the same scope from being
+  substituted into a proof archive.
+- Lifecycle archive version `3` carries platform, execution-selection, and direct proof authority
+  bindings. Released version `2` archives remain inspectable only in their original ungoverned
+  shape; adding v3-only scope or crossing fields to a v2 record is rejected.
 - `--agent`, `--mode <native|container|remote>`, and `--member <name>` reuse the selected
   workflow's agent admission, task-mode resolution, and monorepo target loading. Service-manager
   commands retain their declared manager boundary; the mode applies to workflow prerequisite and
@@ -1065,10 +1076,12 @@ Notes:
   execution or readiness evaluation failed; parse/load failures do not enter this carrier
 - `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
-- `crossing_evidence` is reserved for a future runtime proof whose complete selected invocation
-  set shares one terminal crossing transaction. The current runner refuses any grant-required
-  runtime proof before start rather than emitting partial authority evidence. It never widens
-  proof to repository-wide safety or application correctness.
+- `crossing_evidence` binds a governed runtime proof to one proof-owned terminal crossing
+  transaction across the detached workflow, nested task, ordered seam observers, negative
+  controls, and cleanup. New archives embed the complete carrier admission and terminal
+  transaction; legacy archives may retain a child-receipt link. Archive verification re-derives
+  the exact scope and refuses missing, borrowed, mismatched, or nonterminal authority. This never
+  widens proof to repository-wide safety or application correctness.
 - `execution_boundary` is additive runner-authored prerequisite provenance. Its `identity` binds
   the sorted asserted-target and derivation-input closures, declared artifact/producer ownership,
   prerequisite records (including a verified precondition identity when state is reused), and
@@ -1152,7 +1165,8 @@ Notes:
   `.ota/proof/archives/` and returns additive `archive.identity` and `archive.path`. The archive
   is content-addressed and binds the terminal proof JSON to an archived semantic contract snapshot,
   clean Git source identity when available, resolved workflow/task/backend/provider/lifecycle,
-  target-platform, host-port, and normalized readiness-timeout selection scope, and explicit
+  target-platform, host-port, memory, dependency selection, and normalized readiness-timeout
+  selection scope, plus explicit
   `replay_posture: witness_only`. The
   mutable `.ota/proof/<lane>/` working
   bundle remains supporting evidence, not a replay-grade witness. Archive consumers also verify
@@ -2374,13 +2388,13 @@ commands require `--grant <id>` before any proof-owned side effect. Their refusa
 not expose protected authority-store, bundle, or sequence-state paths. Runtime proof scope always
 includes its carrier, every selected seam/control invocation by role and declaration order, and the
 normalized `--ready-timeout` selection. Lifecycle proof scope includes its selected-service closure
-and lifecycle assertion. Any grant-required runtime proof refuses before start until Ota can retain
-one terminal crossing transaction across that complete invocation set; it never silently inherits a
-workflow-only grant. Lifecycle assertions are likewise part of proof admission rather than an
-authority bypass.
-Lifecycle proof likewise verifies and refuses before state changes, but it currently refuses a
-governed grant as `crossing_grant_lifecycle_proof_unsupported` because its archive does not yet
-carry the required terminal crossing transaction evidence.
+and lifecycle assertion. Both proof commands retain one proof-owned crossing transaction across
+their complete invocation sets. Runtime authority covers the detached workflow/task path, ordered
+seam observers, negative controls, and cleanup. Lifecycle authority covers prerequisites, selected
+services and dependency closure, assertion, and cleanup. Runner-private authority travels only
+between Ota processes over a bounded Unix descriptor and is removed before selected code executes.
+Their terminal archives embed and re-derive the exact carrier admission and transaction rather
+than inheriting an ordinary workflow grant or trusting a child-produced claim.
 When an active org policy pack participates in the selected lane, receipt capture also adds
 `kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
 policy/ruleset drift as named input drift instead of leaving governance movement ambient.

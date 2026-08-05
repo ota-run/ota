@@ -8,6 +8,7 @@
       "additionalProperties": false,
       "required": [
         "ok",
+        "execution_id",
         "proof_verdict",
         "path",
         "mode",
@@ -21,6 +22,7 @@
           "type": "boolean",
           "description": "Execution/readiness success only. Consumers must use proof_verdict together with not_proved to interpret proof breadth."
         },
+        "execution_id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "proof_verdict": {
           "type": "string",
           "enum": ["passed", "passed_with_unproven_boundaries", "failed"]
@@ -111,8 +113,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "receipt_archive_identity",
-        "receipt_archive_path",
         "transaction_id",
         "scope_identity"
       ],
@@ -120,8 +120,30 @@
         "receipt_archive_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "receipt_archive_path": { "type": "string" },
         "transaction_id": { "type": "string" },
-        "scope_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
-      }
+        "proof_execution_id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "scope_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "authority": {
+          "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing/properties/authority"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["receipt_archive_identity", "receipt_archive_path"],
+          "not": { "required": ["authority"] }
+        },
+        {
+          "required": ["authority", "proof_execution_id"],
+          "properties": {
+            "authority": { "required": ["transaction"] }
+          },
+          "not": {
+            "anyOf": [
+              { "required": ["receipt_archive_identity"] },
+              { "required": ["receipt_archive_path"] }
+            ]
+          }
+        }
+      ]
     },
     "proofScope": {
       "type": "object",

@@ -414,6 +414,7 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     let artifacts = &success["artifacts"]["properties"];
 
     assert!(success.get("mode").is_some());
+    assert!(success.get("execution_id").is_some());
     assert!(success.get("workflow").is_some());
     assert!(success.get("phase").is_some());
     assert!(success.get("execution_boundary").is_some());
@@ -434,6 +435,18 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(not_proved.get("proof_obligation_id").is_some());
     assert!(not_proved.get("reason").is_some());
     let boundary = &schema["$defs"]["executionBoundary"];
+    let crossing = &schema["$defs"]["crossingEvidence"];
+    assert!(crossing["properties"].get("proof_execution_id").is_some());
+    assert!(
+        crossing["oneOf"][1]["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&serde_json::json!("proof_execution_id")))
+    );
+    assert!(
+        crossing["oneOf"][1]["properties"]["authority"]["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&serde_json::json!("transaction")))
+    );
     assert_eq!(boundary["properties"]["schema_version"]["const"], 1);
     assert_eq!(
         boundary["properties"]["target_freshness"]["enum"],

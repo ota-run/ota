@@ -55,12 +55,13 @@
 - Extended audited-crossing admission to `ota proof runtime` and `ota proof lifecycle`. Both
   commands now accept `--grant <id>` and refuse before creating proof artifacts, spawning a child,
   acquiring lifecycle ownership, starting a service, or running a proof task. Proof invocation
-  role and order are semantic scope. Grant-required runtime and lifecycle proofs refuse before
-  proof start until one terminal transaction can cover every invocation; they never inherit an
-  ordinary workflow grant. Governed lifecycle proof remains refused until its
-  archive can retain terminal crossing evidence. Public refusal JSON and receipt evidence now expose a
-  stable reason family and typed scope without leaking trust-store, bundle, or sequence-state
-  filesystem paths.
+  role and order, lifecycle service closure, target platform, host-port, memory, dependency
+  selection, and runtime readiness timeout are semantic scope. One proof-owned crossing
+  transaction now covers the complete runtime or lifecycle invocation set and cleanup. A bounded
+  runner-private Unix descriptor carries authority only between immediate Ota children and is
+  removed before selected code executes. Runtime archive v6 and lifecycle archive v3 embed and
+  re-derive terminal authority, rejecting stripped, borrowed, mismatched, or nonterminal evidence.
+  Public refusal JSON remains path-redacted and pre-side-effect.
 
 - Receipt-history verification now fails closed when an archived repo receipt omits its immutable
   contract snapshot reference or matching snapshot identity. Historical authority requirements are
@@ -123,8 +124,12 @@
   `ota up` now evaluates unrelated blockers and every ordered prerequisite-instance preflight
   before broker contact; prerequisite instances execute once in canonical order inside the same
   authorized work unit.
-  Grant-required runtime and lifecycle proof remain pre-side-effect refused until one transaction
-  can cover their complete invocation and cleanup sets.
+  Grant-required runtime and lifecycle proof now retain one authority transaction across the
+  complete proof invocation and cleanup set. The transaction terminal status binds a fresh
+  runner-generated proof execution identity, proof archives re-derive that exact linkage, and
+  ordinary post-admission failures finalize explicitly instead of relying on process teardown.
+  Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
+  v3 is required for platform-bound and direct crossing-authority evidence.
 
 - Added a pre-release operator guide for the first `prebound_file` carrier. It separates the
   Linux fixed trust store at `/etc/ota/crossing-authorities.json` from provisioner-owned signed
