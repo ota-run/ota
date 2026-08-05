@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Fixed source-build identity from Cargo Git checkouts so Cargo's exact root `.cargo-ok` marker no
+  longer creates a false `dirty: true` claim; every other tracked or untracked source change still
+  marks the binary dirty.
+
 - Moved the broker v1 wire structs, fixed protocol domains, bounded framing, and canonical nonce,
   message, and work-unit identity primitives into the public `ota-authority-protocol` crate pinned
   by immutable Git revision. Core retains trust-root selection, signature verification, admission,
