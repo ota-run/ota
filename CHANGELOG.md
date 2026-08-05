@@ -132,7 +132,8 @@
   verdict in broker-backed archive evidence. New runtime and lifecycle proof archives retain a
   canonical repo-relative contract-snapshot reference so later Doctor and archive verification do
   not depend on whether the producing command resolved the repository root absolutely; same-root
-  absolute references emitted by earlier builds remain readable.
+  absolute references emitted by earlier builds remain readable. Archive creation now refuses
+  unless the newly written record immediately passes the same semantic loader used by Doctor.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 

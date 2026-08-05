@@ -118333,6 +118333,14 @@ fn write_proof_runtime_archive(
         })?;
     }
     prune_proof_runtime_archives(&archive_dir)?;
+    if !load_proof_runtime_archive_candidates(root)
+        .iter()
+        .any(|candidate| candidate.identity == identity)
+    {
+        return Err(String::from(
+            "proof archive failed immediate semantic reconciliation",
+        ));
+    }
     Ok(ProofRuntimeArchive {
         identity,
         path: receipt_storage_path_display(&archive_path),

@@ -172,7 +172,8 @@ durable agent workflow belongs in the canonical Ota skill.
   lifecycle proof now retain one transaction across their complete invocation and cleanup sets;
   terminal runtime-proof transactions bind the final proof verdict rather than the intermediate
   readiness state. Proof archives now retain repo-relative contract-snapshot references while
-  preserving same-root compatibility for earlier absolute references. Hosted broker proof pressure
+  preserving same-root compatibility for earlier absolute references, and archive emission now
+  requires immediate reconciliation through Doctor's semantic loader. Hosted broker proof pressure
   is still open.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
