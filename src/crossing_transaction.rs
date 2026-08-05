@@ -52,12 +52,30 @@ pub(crate) struct CrossingTransactionEvidence {
     pub authorization_identity: Option<String>,
     pub scope_identity: String,
     pub contract_identity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_consumption: Option<BrokerConsumptionEvidence>,
     pub state: String,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finalized_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub receipt_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerConsumptionEvidence {
+    pub identity: String,
+    pub lease_identity: String,
+    pub consume_request_identity: String,
+    pub consume_response_identity: String,
+    pub broker_revision: u64,
+    pub consumed_at: String,
+    pub pending_transaction_identity: String,
+    pub consume_request: crate::broker_session::LeaseConsumeRequest,
+    pub consume_response: crate::broker_session::SignedBrokerMessage<
+        crate::broker_session::LeaseConsumeResponsePayload,
+    >,
 }
 
 pub(crate) struct CrossingTransactionGuard {
@@ -157,6 +175,7 @@ impl CrossingTransactionGuard {
             authorization_identity: Some(binding.authorization_identity.clone()),
             scope_identity: binding.scope_identity.clone(),
             contract_identity: binding.contract_identity.clone(),
+            broker_consumption: None,
             state: String::from("pending"),
             created_at: format_time(now)?,
             finalized_at: None,
@@ -176,6 +195,85 @@ impl CrossingTransactionGuard {
         self.evidence.clone()
     }
 
+    pub(crate) fn verified_pending_evidence(
+        &self,
+        admission: &CrossingAuthorityAdmission,
+    ) -> Result<CrossingTransactionEvidence, String> {
+        let persisted = read_transaction_evidence(&self.journal_path)?;
+        if persisted != self.evidence
+            || persisted.state != "pending"
+            || persisted.identity != transaction_identity(&persisted)?
+            || !transaction_matches_admission(&persisted, admission, false)
+        {
+            return Err(String::from(
+                "pending crossing transaction journal does not match broker admission",
+            ));
+        }
+        Ok(persisted)
+    }
+
+    pub(crate) fn record_broker_consumption(
+        &mut self,
+        verified: &crate::broker_session::VerifiedBrokerConsumption,
+    ) -> Result<(), String> {
+        let consume_request = verified.consume_request();
+        let consume_response = verified.consume_response();
+        if self.evidence.state != "pending"
+            || self.evidence.authority_carrier.as_deref() != Some("authority_broker")
+            || self.evidence.broker_consumption.is_some()
+            || self.evidence.identity != verified.pending_transaction_identity()
+            || consume_request.crossing_transaction_id != self.evidence.transaction_id
+            || consume_request.crossing_transaction_identity != self.evidence.identity
+            || consume_response.payload.crossing_transaction_id != self.evidence.transaction_id
+            || consume_response.payload.crossing_transaction_identity != self.evidence.identity
+            || consume_response.payload.consume_request_identity
+                != verified.consume_request_identity()
+            || consume_response.payload.lease_identity != verified.lease_identity()
+        {
+            return Err(String::from(
+                "broker consumption cannot attach to this crossing transaction",
+            ));
+        }
+        for (label, identity) in [
+            ("broker lease", verified.lease_identity()),
+            (
+                "broker consume request",
+                verified.consume_request_identity(),
+            ),
+            (
+                "broker consume response",
+                verified.consume_response_identity(),
+            ),
+            (
+                "pending crossing transaction",
+                verified.pending_transaction_identity(),
+            ),
+        ] {
+            validate_sha256_identity(identity, label)?;
+        }
+        let persisted = read_transaction_evidence(&self.journal_path)?;
+        if persisted != self.evidence {
+            return Err(String::from(
+                "crossing transaction journal changed before broker consumption was recorded",
+            ));
+        }
+        let mut consumption = BrokerConsumptionEvidence {
+            identity: String::new(),
+            lease_identity: verified.lease_identity().to_string(),
+            consume_request_identity: verified.consume_request_identity().to_string(),
+            consume_response_identity: verified.consume_response_identity().to_string(),
+            broker_revision: verified.broker_revision(),
+            consumed_at: verified.consumed_at().to_string(),
+            pending_transaction_identity: verified.pending_transaction_identity().to_string(),
+            consume_request: consume_request.clone(),
+            consume_response: consume_response.clone(),
+        };
+        consumption.identity = broker_consumption_identity(&consumption)?;
+        self.evidence.broker_consumption = Some(consumption);
+        self.evidence.identity = transaction_identity(&self.evidence)?;
+        atomic_write_json(&self.journal_path, &self.evidence)
+    }
+
     pub(crate) fn finalize(
         &mut self,
         state: &str,
@@ -187,6 +285,14 @@ impl CrossingTransactionGuard {
         if !matches!(state, "completed" | "failed" | "interrupted" | "incomplete") {
             return Err(format!(
                 "unsupported crossing transaction terminal state `{state}`"
+            ));
+        }
+        if self.evidence.authority_carrier.as_deref() == Some("authority_broker")
+            && state != "incomplete"
+            && self.evidence.broker_consumption.is_none()
+        {
+            return Err(String::from(
+                "broker crossing transaction cannot finalize without durable lease consumption",
             ));
         }
         let persisted = read_transaction_evidence(&self.journal_path)?;
@@ -213,6 +319,7 @@ pub(crate) fn legacy_prebound_file_evidence_for_tests(
     legacy.authority_carrier = None;
     legacy.grant_identity = Some(grant_identity);
     legacy.authorization_identity = None;
+    legacy.broker_consumption = None;
     legacy.identity = transaction_identity(&legacy).expect("legacy transaction identity");
     legacy
 }
@@ -255,6 +362,50 @@ mod tests {
             decision: String::from("allowed"),
             admitted_at: String::from("2026-01-01T00:00:00Z"),
         }
+    }
+
+    fn record_broker_consumption(transaction: &mut CrossingTransactionGuard) {
+        let pending_identity = transaction.evidence().identity;
+        let request = crate::broker_session::LeaseConsumeRequest {
+            message_kind: String::from("lease_consume"),
+            binding_identity: format!("sha256:{}", "a".repeat(64)),
+            lease_identity: format!("sha256:{}", "c".repeat(64)),
+            challenge_nonce_commitment: format!("sha256:{}", "b".repeat(64)),
+            work_unit_identity: format!("sha256:{}", "f".repeat(64)),
+            crossing_transaction_id: transaction.evidence().transaction_id,
+            crossing_transaction_identity: pending_identity.clone(),
+        };
+        let response = crate::broker_session::SignedBrokerMessage {
+            payload: crate::broker_session::LeaseConsumeResponsePayload {
+                message_kind: String::from("lease_consume_response"),
+                consume_request_identity: format!("sha256:{}", "d".repeat(64)),
+                binding_identity: request.binding_identity.clone(),
+                lease_identity: request.lease_identity.clone(),
+                challenge_nonce_commitment: request.challenge_nonce_commitment.clone(),
+                work_unit_identity: request.work_unit_identity.clone(),
+                crossing_transaction_id: request.crossing_transaction_id.clone(),
+                crossing_transaction_identity: pending_identity.clone(),
+                state: crate::broker_session::LeaseConsumeState::Consumed,
+                broker_revision: 7,
+                consumed_at: String::from("2026-01-01T00:00:01Z"),
+            },
+            key_id: String::from("broker-test"),
+            algorithm: String::from("ed25519"),
+            signature: String::from("test-signature"),
+        };
+        let verified = crate::broker_session::VerifiedBrokerConsumption::for_tests(
+            format!("sha256:{}", "c".repeat(64)),
+            format!("sha256:{}", "d".repeat(64)),
+            format!("sha256:{}", "e".repeat(64)),
+            7,
+            String::from("2026-01-01T00:00:01Z"),
+            pending_identity,
+            request,
+            response,
+        );
+        transaction
+            .record_broker_consumption(&verified)
+            .expect("broker consumption should persist");
     }
 
     fn journals(root: &std::path::Path) -> Vec<CrossingTransactionEvidence> {
@@ -312,6 +463,7 @@ mod tests {
         let admission = broker_admission(&"8".repeat(64));
         let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
             .expect("broker admission should create a transaction");
+        record_broker_consumption(&mut transaction);
         transaction
             .finalize("completed", Some("passed"))
             .expect("transaction should finalize");
@@ -329,11 +481,27 @@ mod tests {
     }
 
     #[test]
+    fn broker_transaction_cannot_complete_without_durable_consumption() {
+        let root = tempdir().expect("tempdir should be available");
+        let admission = broker_admission(&"f".repeat(64));
+        let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
+            .expect("broker admission should create a transaction");
+        let error = transaction
+            .finalize("completed", Some("passed"))
+            .expect_err("unconsumed broker transaction cannot complete");
+        assert!(error.contains("durable lease consumption"));
+        transaction
+            .finalize("incomplete", None)
+            .expect("unconsumed transaction can finalize incomplete");
+    }
+
+    #[test]
     fn v1_transaction_cannot_be_reinterpreted_as_broker_authority() {
         let root = tempdir().expect("tempdir should be available");
         let admission = broker_admission(&"9".repeat(64));
         let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
             .expect("broker admission should create a transaction");
+        record_broker_consumption(&mut transaction);
         transaction
             .finalize("completed", Some("passed"))
             .expect("transaction should finalize");
@@ -351,6 +519,7 @@ mod tests {
         let admission = broker_admission(&"a".repeat(64));
         let mut transaction = CrossingTransactionGuard::begin(root.path(), &admission)
             .expect("broker admission should create a transaction");
+        record_broker_consumption(&mut transaction);
         transaction
             .finalize("completed", Some("passed"))
             .expect("transaction should finalize");
@@ -515,6 +684,28 @@ pub(crate) fn verify_crossing_transaction_evidence(
     evidence: &CrossingTransactionEvidence,
     admission: &CrossingAuthorityAdmission,
 ) -> Result<(), String> {
+    let broker_consumption_valid = match evidence.broker_consumption.as_ref() {
+        Some(consumption) => consumption.identity == broker_consumption_identity(consumption)?,
+        None => true,
+    };
+    if !transaction_matches_admission(evidence, admission, true)
+        || !broker_consumption_valid
+        || evidence.state == "pending"
+        || evidence.finalized_at.is_none()
+        || evidence.identity != transaction_identity(evidence)?
+    {
+        return Err(String::from(
+            "crossing transaction evidence is incomplete or does not match grant admission",
+        ));
+    }
+    Ok(())
+}
+
+fn transaction_matches_admission(
+    evidence: &CrossingTransactionEvidence,
+    admission: &CrossingAuthorityAdmission,
+    require_broker_consumption: bool,
+) -> bool {
     let expected_carrier = match admission.carrier {
         crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile => "prebound_file",
         crate::crossing_authority::CrossingAuthorityCarrier::AuthorityBroker => "authority_broker",
@@ -532,24 +723,20 @@ pub(crate) fn verify_crossing_transaction_evidence(
                 && evidence.grant_identity.is_none()
                 && evidence.authorization_identity.as_deref()
                     == Some(admission.authorization_identity.as_str())
+                && if expected_carrier == "authority_broker" {
+                    !require_broker_consumption || evidence.broker_consumption.is_some()
+                } else {
+                    evidence.broker_consumption.is_none()
+                }
         }
         _ => false,
     };
-    if !carrier_matches
-        || evidence.authentication_posture != "runner_local_content_addressed"
-        || evidence.authority_id != admission.authority_id
-        || evidence.admission_identity != admission.admission_identity
-        || evidence.scope_identity != admission.scope_identity
-        || evidence.contract_identity != admission.contract_identity
-        || evidence.state == "pending"
-        || evidence.finalized_at.is_none()
-        || evidence.identity != transaction_identity(evidence)?
-    {
-        return Err(String::from(
-            "crossing transaction evidence is incomplete or does not match grant admission",
-        ));
-    }
-    Ok(())
+    carrier_matches
+        && evidence.authentication_posture == "runner_local_content_addressed"
+        && evidence.authority_id == admission.authority_id
+        && evidence.admission_identity == admission.admission_identity
+        && evidence.scope_identity == admission.scope_identity
+        && evidence.contract_identity == admission.contract_identity
 }
 
 pub(crate) fn verify_crossing_transaction_outcome(
@@ -614,6 +801,14 @@ fn recover_pending_transactions(state_dir: &Path, scope_identity: &str) -> Resul
         }
         if evidence.schema_version != CROSSING_TRANSACTION_SCHEMA_VERSION
             || evidence.authentication_posture != "runner_local_content_addressed"
+            || evidence
+                .broker_consumption
+                .as_ref()
+                .is_some_and(|consumption| {
+                    broker_consumption_identity(consumption)
+                        .map(|identity| identity != consumption.identity)
+                        .unwrap_or(true)
+                })
             || evidence.identity != transaction_identity(&evidence)?
         {
             return Err(format!(
@@ -645,6 +840,24 @@ fn transaction_identity(evidence: &CrossingTransactionEvidence) -> Result<String
     let mut unsigned = evidence.clone();
     unsigned.identity.clear();
     semantic_contract_identity(&unsigned)
+}
+
+fn broker_consumption_identity(evidence: &BrokerConsumptionEvidence) -> Result<String, String> {
+    let mut unsigned = evidence.clone();
+    unsigned.identity.clear();
+    semantic_contract_identity(&unsigned)
+}
+
+fn validate_sha256_identity(value: &str, label: &str) -> Result<(), String> {
+    let digest = value.strip_prefix("sha256:").unwrap_or_default();
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!("{label} must be a canonical sha256 identity"));
+    }
+    Ok(())
 }
 
 fn format_time(time: OffsetDateTime) -> Result<String, String> {

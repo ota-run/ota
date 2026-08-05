@@ -139,18 +139,29 @@ remains live now.
 Crossing transaction schema v2 records `authority_carrier` and the carrier-neutral
 `authorization_identity`; its archive evidence carries a re-derived carrier admission envelope.
 The earlier v1 `grant_identity` shape remains readable only as legacy `prebound_file` evidence.
-Neither form represents a broker lease until the broker carrier is implemented and independently
-verified.
-`authority.authority_separation_posture: current_process_filesystem_guarded` is also an explicit
-boundary: the signed-file carrier verifies root-owned paths against Ota's current unprivileged
-process, but it does not prove that the invoking job lacks administrative escalation. Strong
-authority separation requires a hardened launcher or provider attestation.
+For `authority_broker`, v2 additionally requires the signed consume request/response and binds the
+prepared one-use lease to the durable pending transaction before execution. Receipt history
+re-verifies the launcher attestation, authorization, lease, consumption, exact semantic scope, and
+terminal outcome against the protected broker binding.
+The exact scope includes the selected workflow instance, its ordered prerequisite-instance closure,
+ordinary workflow readiness timeout, and a runner-derived breadth record: closure node/edge counts,
+effect categories, and hashed resource identities/counts. Breadth is
+explanatory evidence, never authorization by itself, and archive verification re-derives it from
+the archived contract. The archived binding is a public verification snapshot and omits the live
+launcher descriptor. Signed protocol payloads are retained only with bounded public-safe
+invocation, principal, and authority-mount labels; raw nonces, descriptors, credentials,
+filesystem paths, and secret provider material are excluded from public evidence.
+`authority.authority_separation_posture` is an explicit boundary. `current_process_filesystem_guarded`
+describes the signed-file carrier. `launcher_attested_one_use` describes verified launcher protocol
+evidence plus atomic broker consumption; it does not by itself prove every provider privilege or
+host-isolation claim beyond the attestation Ota verified.
 `authority.transaction.authentication_posture: runner_local_content_addressed` is an explicit
 boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
 is not independently authenticated against another same-user process with write access to
 `.ota/state`. Archive verification proves signed grant admission plus internal transaction,
-crossing-record, and receipt reconciliation; broker-backed per-use attestation remains future
-V11.7 work.
+crossing-record, and receipt reconciliation. Broker-backed `run`/`up` archives add independently
+signed per-use protocol evidence, while proof-wide broker transactions and hosted broker pressure
+remain open V11.7 work.
 Authority `actor_mode` is runner-observed as `agent` or `non_agent`; it does not claim a verified
 human identity merely because agent mode was absent.
 When grant admission refuses, the receipt carries no `crossing`. Its typed `refusal` instead names

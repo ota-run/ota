@@ -1281,66 +1281,120 @@ pub struct ExecutionBoundaryCrossing {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionBoundaryCrossingAuthority {
     pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_carrier: Option<String>,
     pub authority_id: String,
-    /// The local signed-file carrier is guarded from the current process, not provider-attested.
     pub authority_separation_posture: String,
     pub authority_binding_identity: String,
-    pub issuer_id: String,
-    pub key_id: String,
-    pub key_fingerprint: String,
-    pub bundle_id: String,
-    pub bundle_identity: String,
-    pub bundle_sequence: u64,
-    pub grant_id: String,
-    pub grant_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broker: Option<ExecutionBoundaryBrokerAuthority>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_sequence: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_identity: Option<String>,
     pub scope_identity: String,
     pub contract_identity: String,
     pub boundary_family: String,
     pub classification: String,
     pub actor_mode: String,
-    pub environment_posture: String,
-    pub expiry_kind: String,
-    pub issued_at: String,
-    pub not_before: String,
-    pub next_update: String,
-    pub expires_at: String,
-    pub clock_evidence: String,
-    pub sequence_evidence: String,
-    pub revocation_evidence: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_posture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expiry_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_update: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_evidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence_evidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_evidence: Option<String>,
     pub admitted_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transaction: Option<serde_json::Value>,
     pub archive_evidence: serde_json::Value,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionBoundaryBrokerAuthority {
+    pub admission_identity: String,
+    pub attestation_identity: String,
+    pub authorization_decision_identity: String,
+    pub prepared_lease_identity: String,
+    pub work_unit_identity: String,
+    pub challenge_nonce_commitment: String,
+    pub broker_revision: u64,
+    pub runner_principal: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_reference: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct CrossingGrantAdmissionPreview {
     pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_carrier: Option<String>,
     pub authority_id: String,
     pub authority_binding_identity: String,
-    pub issuer_id: String,
-    pub key_id: String,
-    pub key_fingerprint: String,
-    pub bundle_id: String,
-    pub bundle_identity: String,
-    pub bundle_sequence: u64,
-    pub grant_id: String,
-    pub grant_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_sequence: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_identity: Option<String>,
     pub scope_identity: String,
     pub contract_identity: String,
     pub boundary_family: String,
     pub classification: String,
     pub actor_mode: String,
-    pub environment_posture: String,
-    pub expiry_kind: String,
-    pub issued_at: String,
-    pub not_before: String,
-    pub next_update: String,
-    pub expires_at: String,
-    pub clock_evidence: String,
-    pub sequence_evidence: String,
-    pub revocation_evidence: String,
-    pub admitted_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_posture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expiry_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_update: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_evidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence_evidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_evidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admitted_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

@@ -155,13 +155,28 @@ human text output:
   `crossing.evidence_classes`
   distinguishes caller-asserted fields such as `reason` from runner-derived or runner-attested
   fields. When a contract-bound signed grant admitted the crossing, `crossing.authority` carries
-  the verified authority, bundle, grant, exact semantic scope, freshness/revocation posture, and
-  archived signed evidence. Real execution also carries a terminal `authority.transaction`;
-  dry-run admission does not create one. Transaction schema v2 binds `authority_carrier` and a
-  carrier-neutral `authorization_identity`; its archive carries a matching admission envelope.
+  the verified authority, exact semantic scope, carrier-specific admission, and archived signed
+  evidence. `prebound_file` carries bundle/grant freshness and revocation posture.
+  `authority_broker` carries launcher attestation, signed authorization, prepared lease, atomic
+  consume exchange, and broker revision. Real execution also carries a terminal
+  `authority.transaction`; dry-run admission does not create one. Transaction schema v2 binds
+  `authority_carrier` and a carrier-neutral `authorization_identity`; broker transactions also
+  require `broker_consumption`. Its archive carries a matching carrier admission envelope.
+  The semantic scope binds the selected workflow instance and its ordered prerequisite-instance
+  closure. It also includes runner-derived `breadth`: selected closure node/edge counts, effect
+  categories, and content-addressed resource identities/counts. Archive verification re-derives
+  that breadth from the archived contract rather than trusting the summary. Ordinary workflow
+  `--ready-timeout` is also part of execution selection, so changing it changes authority scope.
+  The archived broker binding is a public verification snapshot that omits the protected live
+  launcher descriptor. Signed broker protocol payloads retained for re-verification accept only bounded public-safe
+  invocation, principal, and authority-mount labels. Raw nonce values, descriptors, credentials,
+  filesystem paths, and secret provider material are not public evidence.
   Legacy v1 transaction history remains `prebound_file`-only and uses `grant_identity` instead.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
-  fixed-authority admission with `decision: admissible_not_consumed` and no transaction. A grant
+  fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker
+  selection with `authority_carrier: authority_broker` and
+  `decision: requires_live_authorization`. Broker preview does not contact the launcher or consume
+  a lease. Neither form carries a transaction. A grant
   refusal instead returns `execution_started: false` plus
   `crossing_grant_admission.decision: refused`, `authority_source: prebound_file`, the configured
   authority and requested grant when present, a stable `reason_family`, and evaluation details.

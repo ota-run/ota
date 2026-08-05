@@ -7,10 +7,16 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "publicEvidenceLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]*$"
+    },
     "crossingSemanticScope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "identity", "contract_identity", "lane", "boundary_family", "classification", "target_platform", "execution_graph_identity", "segment_identities", "edge_identities", "execution_selection", "input_identity_posture"],
+      "required": ["schema_version", "identity", "contract_identity", "lane", "boundary_family", "classification", "target_platform", "execution_graph_identity", "breadth", "segment_identities", "edge_identities", "execution_selection", "input_identity_posture"],
       "properties": {
         "schema_version": { "const": 2 },
         "identity": { "$ref": "#/$defs/sha256Identity" },
@@ -37,6 +43,20 @@
           }
         },
         "execution_graph_identity": { "$ref": "#/$defs/sha256Identity" },
+        "breadth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema_version", "identity", "closure_node_count", "closure_edge_count", "effect_categories", "resource_count", "resource_identities"],
+          "properties": {
+            "schema_version": { "const": 1 },
+            "identity": { "$ref": "#/$defs/sha256Identity" },
+            "closure_node_count": { "type": "integer", "minimum": 0 },
+            "closure_edge_count": { "type": "integer", "minimum": 0 },
+            "effect_categories": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "resource_count": { "type": "integer", "minimum": 0 },
+            "resource_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } }
+          }
+        },
         "segment_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } },
         "edge_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } },
         "execution_selection": {
@@ -50,12 +70,358 @@
             "memory": { "type": "integer", "minimum": 1 },
             "skip_dependencies": { "type": "boolean" },
             "run_behavior": { "enum": ["auto", "attach", "detach"] },
+            "ready_timeout_seconds": { "type": "integer", "minimum": 1 },
             "sandbox_target": { "type": "string", "minLength": 1 },
-            "effect_overrides": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            "effect_overrides": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "workflow_instance": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["selector", "instance_identity"],
+              "properties": {
+                "selector": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" },
+                "instance_identity": { "$ref": "#/$defs/sha256Identity" },
+                "prerequisite_instances": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["selector", "instance_identity"],
+                    "properties": {
+                      "selector": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" },
+                      "instance_identity": { "$ref": "#/$defs/sha256Identity" }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "input_identity_posture": { "enum": ["not_applicable", "unknown_secret_posture"] },
         "unknown_dimensions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "brokerVerifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "public_key"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "public_key": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerPublicAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity", "authority_id", "broker_id", "origin", "server_name",
+        "protocol_version", "transport_authentication", "credential_delivery",
+        "broker_verifiers", "attestation", "message_domains",
+        "maximum_approval_wait_seconds", "minimum_post_approval_freshness_seconds",
+        "maximum_lease_seconds"
+      ],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "broker_id": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "minLength": 1 },
+        "server_name": { "type": "string", "minLength": 1 },
+        "protocol_version": { "const": "ota-crossing-broker/v1" },
+        "transport_authentication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "trust_bundle_identity", "credential_source_identity"],
+          "properties": {
+            "kind": { "enum": ["mtls", "provider_workload_identity"] },
+            "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+            "credential_source_identity": { "type": "string", "minLength": 1 }
+          }
+        },
+        "credential_delivery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "session_audience"],
+          "properties": {
+            "kind": { "const": "launcher_session_fd" },
+            "session_audience": { "type": "string", "minLength": 1 }
+          }
+        },
+        "broker_verifiers": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/brokerVerifier" }
+        },
+        "attestation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "issuer", "audience", "trust_bundle_identity", "verifiers",
+            "maximum_age_seconds", "maximum_clock_skew_seconds",
+            "key_rotation_overlap_seconds", "mandatory_protocol_claims",
+            "required_administrator_claims"
+          ],
+          "properties": {
+            "issuer": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+            "verifiers": {
+              "type": "array", "minItems": 1,
+              "items": { "$ref": "#/$defs/brokerVerifier" }
+            },
+            "maximum_age_seconds": { "type": "integer", "minimum": 1 },
+            "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+            "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+            "mandatory_protocol_claims": {
+              "const": [
+                "authenticated_origin", "authority_mounts", "binding_identity",
+                "challenge_nonce_commitment", "channel_delivery", "invocation_id",
+                "runner_principal", "semantic_scope_identity", "work_unit_identity"
+              ]
+            },
+            "required_administrator_claims": {
+              "type": "array", "maxItems": 0
+            }
+          }
+        },
+        "message_domains": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "challenge_request", "attestation_response", "authorization_request",
+            "authorization_decision", "lease_issuance", "lease_consume",
+            "lease_consume_response"
+          ],
+          "properties": {
+            "challenge_request": { "const": "ota-crossing-broker/challenge-request/v1" },
+            "attestation_response": { "const": "ota-crossing-broker/attestation-response/v1" },
+            "authorization_request": { "const": "ota-crossing-broker/authorization-request/v1" },
+            "authorization_decision": { "const": "ota-crossing-broker/authorization-decision/v1" },
+            "lease_issuance": { "const": "ota-crossing-broker/lease-issuance/v1" },
+            "lease_consume": { "const": "ota-crossing-broker/lease-consume/v1" },
+            "lease_consume_response": { "const": "ota-crossing-broker/lease-consume-response/v1" }
+          }
+        },
+        "maximum_approval_wait_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "minimum_post_approval_freshness_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_lease_seconds": { "type": "integer", "minimum": 1, "maximum": 600 }
+      }
+    },
+    "brokerChallenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_kind", "protocol_version", "binding_identity", "nonce_commitment",
+        "work_unit_identity", "semantic_scope_identity", "contract_identity"
+      ],
+      "properties": {
+        "message_kind": { "const": "challenge_request" },
+        "protocol_version": { "type": "string", "minLength": 1 },
+        "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "signedLauncherAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "binding_identity", "challenge_nonce_commitment",
+            "invocation_id", "work_unit_identity", "semantic_scope_identity",
+            "runner_principal", "channel_delivery", "authenticated_origin",
+            "authority_mounts", "issuer", "audience", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "attestation_response" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "invocation_id": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "channel_delivery": { "type": "string", "minLength": 1 },
+            "authenticated_origin": { "type": "string", "minLength": 1 },
+            "authority_mounts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/publicEvidenceLabel" } },
+            "issuer": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerAuthorizationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_kind", "binding_identity", "authority_id", "attestation_identity",
+        "challenge_nonce_commitment", "work_unit_identity", "contract_identity",
+        "semantic_scope_identity", "runner_principal", "actor_mode",
+        "requested_lifetime_seconds"
+      ],
+      "properties": {
+        "message_kind": { "const": "authorization_request" },
+        "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "requested_lifetime_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "signedAuthorizationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "request_identity", "binding_identity", "authority_id",
+            "attestation_identity", "challenge_nonce_commitment", "work_unit_identity",
+            "contract_identity", "semantic_scope_identity", "decision",
+            "broker_revision", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "authorization_decision" },
+            "request_identity": { "$ref": "#/$defs/sha256Identity" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "authority_id": { "type": "string", "minLength": 1 },
+            "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "decision": { "const": "allowed" },
+            "approval_reference": { "type": "string", "minLength": 1 },
+            "broker_revision": { "type": "integer", "minimum": 0 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signedPreparedLease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "authorization_decision_identity", "binding_identity",
+            "authority_id", "attestation_identity", "challenge_nonce_commitment",
+            "work_unit_identity", "contract_identity", "semantic_scope_identity",
+            "runner_principal", "broker_revision", "lease_sequence", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "lease_issuance" },
+            "authorization_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "authority_id": { "type": "string", "minLength": 1 },
+            "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "broker_revision": { "type": "integer", "minimum": 0 },
+            "lease_sequence": { "type": "integer", "minimum": 0 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerLeaseConsumeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_kind", "binding_identity", "lease_identity",
+        "challenge_nonce_commitment", "work_unit_identity",
+        "crossing_transaction_id", "crossing_transaction_identity"
+      ],
+      "properties": {
+        "message_kind": { "const": "lease_consume" },
+        "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "crossing_transaction_id": { "type": "string", "minLength": 1 },
+        "crossing_transaction_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "signedBrokerConsumeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "consume_request_identity", "binding_identity",
+            "lease_identity", "challenge_nonce_commitment", "work_unit_identity",
+            "crossing_transaction_id", "crossing_transaction_identity", "state",
+            "broker_revision", "consumed_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "lease_consume_response" },
+            "consume_request_identity": { "$ref": "#/$defs/sha256Identity" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "lease_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "crossing_transaction_id": { "type": "string", "minLength": 1 },
+            "crossing_transaction_identity": { "$ref": "#/$defs/sha256Identity" },
+            "state": { "const": "consumed" },
+            "broker_revision": { "type": "integer", "minimum": 0 },
+            "consumed_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerConsumptionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity", "lease_identity", "consume_request_identity",
+        "consume_response_identity", "broker_revision", "consumed_at",
+        "pending_transaction_identity", "consume_request", "consume_response"
+      ],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "consume_request_identity": { "$ref": "#/$defs/sha256Identity" },
+        "consume_response_identity": { "$ref": "#/$defs/sha256Identity" },
+        "broker_revision": { "type": "integer", "minimum": 0 },
+        "consumed_at": { "type": "string", "format": "date-time" },
+        "pending_transaction_identity": { "$ref": "#/$defs/sha256Identity" },
+        "consume_request": { "$ref": "#/$defs/brokerLeaseConsumeRequest" },
+        "consume_response": { "$ref": "#/$defs/signedBrokerConsumeResponse" }
       }
     },
     "crossingTransaction": {
@@ -88,6 +454,7 @@
         "authorization_identity": { "$ref": "#/$defs/sha256Identity" },
         "scope_identity": { "$ref": "#/$defs/sha256Identity" },
         "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "broker_consumption": { "$ref": "#/$defs/brokerConsumptionEvidence" },
         "state": {
           "enum": ["pending", "completed", "failed", "interrupted", "incomplete"]
         },
@@ -102,7 +469,8 @@
             "required": ["grant_identity"],
             "not": { "anyOf": [
               { "required": ["authority_carrier"] },
-              { "required": ["authorization_identity"] }
+              { "required": ["authorization_identity"] },
+              { "required": ["broker_consumption"] }
             ] }
           }
         },
@@ -112,6 +480,26 @@
             "required": ["authority_carrier", "authorization_identity"],
             "not": { "required": ["grant_identity"] }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": { "const": 2 },
+              "authority_carrier": { "const": "prebound_file" }
+            },
+            "required": ["schema_version", "authority_carrier"]
+          },
+          "then": { "not": { "required": ["broker_consumption"] } }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": { "const": 2 },
+              "authority_carrier": { "const": "authority_broker" }
+            },
+            "required": ["schema_version", "authority_carrier"]
+          },
+          "then": { "required": ["broker_consumption"] }
         }
       ]
     },
@@ -223,6 +611,77 @@
           }
         }
       ]
+    },
+    "brokerAdmissionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "identity", "binding_snapshot", "challenge", "attestation",
+        "attestation_identity", "authorization_request", "authorization_request_identity",
+        "authorization_decision", "authorization_decision_identity", "prepared_lease",
+        "prepared_lease_identity", "broker_revision", "actor_mode", "admitted_at",
+        "semantic_scope"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "binding_snapshot": { "$ref": "#/$defs/brokerPublicAuthorityBinding" },
+        "challenge": { "$ref": "#/$defs/brokerChallenge" },
+        "attestation": { "$ref": "#/$defs/signedLauncherAttestation" },
+        "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_request": { "$ref": "#/$defs/brokerAuthorizationRequest" },
+        "authorization_request_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_decision": { "$ref": "#/$defs/signedAuthorizationDecision" },
+        "authorization_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+        "prepared_lease": { "$ref": "#/$defs/signedPreparedLease" },
+        "prepared_lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "broker_revision": { "type": "integer", "minimum": 0 },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "admitted_at": { "type": "string", "format": "date-time" },
+        "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" }
+      }
+    },
+    "brokerArchiveEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "identity", "admission", "transaction"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "admission": { "$ref": "#/$defs/brokerAdmissionEvidence" },
+        "transaction": {
+          "allOf": [
+            { "$ref": "#/$defs/crossingTransaction" },
+            {
+              "properties": {
+                "schema_version": { "const": 2 },
+                "authority_carrier": { "const": "authority_broker" }
+              },
+              "required": ["broker_consumption"]
+            }
+          ]
+        }
+      }
+    },
+    "executionBoundaryBrokerAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "admission_identity", "attestation_identity", "authorization_decision_identity",
+        "prepared_lease_identity", "work_unit_identity", "challenge_nonce_commitment",
+        "broker_revision", "runner_principal"
+      ],
+      "properties": {
+        "admission_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+        "prepared_lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "broker_revision": { "type": "integer", "minimum": 0 },
+        "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "approval_reference": { "type": "string", "minLength": 1 }
+      }
     },
     "sandboxControlApplication": {
       "type": "object",
@@ -1196,37 +1655,24 @@
                     "authority_id",
                     "authority_separation_posture",
                     "authority_binding_identity",
-                    "issuer_id",
-                    "key_id",
-                    "key_fingerprint",
-                    "bundle_id",
-                    "bundle_identity",
-                    "bundle_sequence",
-                    "grant_id",
-                    "grant_identity",
                     "scope_identity",
                     "contract_identity",
                     "boundary_family",
                     "classification",
                     "actor_mode",
-                    "environment_posture",
-                    "expiry_kind",
-                    "issued_at",
-                    "not_before",
-                    "next_update",
-                    "expires_at",
-                    "clock_evidence",
-                    "sequence_evidence",
-                    "revocation_evidence",
                     "admitted_at",
                     "transaction",
                     "archive_evidence"
                   ],
                   "properties": {
                     "decision": { "const": "allowed" },
+                    "authority_carrier": { "const": "authority_broker" },
                     "authority_id": { "type": "string", "minLength": 1 },
-                    "authority_separation_posture": { "const": "current_process_filesystem_guarded" },
+                    "authority_separation_posture": {
+                      "enum": ["current_process_filesystem_guarded", "launcher_attested_one_use"]
+                    },
                     "authority_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "broker": { "$ref": "#/$defs/executionBoundaryBrokerAuthority" },
                     "issuer_id": { "type": "string", "minLength": 1 },
                     "key_id": { "type": "string", "minLength": 1 },
                     "key_fingerprint": { "$ref": "#/$defs/sha256Identity" },
@@ -1251,8 +1697,74 @@
                     "revocation_evidence": { "type": "string", "minLength": 1 },
                     "admitted_at": { "type": "string", "format": "date-time" },
                     "transaction": { "$ref": "#/$defs/crossingTransaction" },
-                    "archive_evidence": { "$ref": "#/$defs/crossingGrantArchiveEvidence" }
-                  }
+                    "archive_evidence": {
+                      "oneOf": [
+                        { "$ref": "#/$defs/crossingGrantArchiveEvidence" },
+                        { "$ref": "#/$defs/brokerArchiveEvidence" }
+                      ]
+                    }
+                  },
+                  "oneOf": [
+                    {
+                      "required": [
+                        "issuer_id", "key_id", "key_fingerprint", "bundle_id",
+                        "bundle_identity", "bundle_sequence", "grant_id", "grant_identity",
+                        "environment_posture", "expiry_kind", "issued_at", "not_before",
+                        "next_update", "expires_at", "clock_evidence", "sequence_evidence",
+                        "revocation_evidence"
+                      ],
+                      "properties": {
+                        "authority_separation_posture": { "const": "current_process_filesystem_guarded" },
+                        "transaction": {
+                          "properties": {
+                            "authority_carrier": { "const": "prebound_file" }
+                          }
+                        },
+                        "archive_evidence": { "$ref": "#/$defs/crossingGrantArchiveEvidence" }
+                      },
+                      "not": {
+                        "anyOf": [
+                          { "required": ["authority_carrier"] },
+                          { "required": ["broker"] }
+                        ]
+                      }
+                    },
+                    {
+                      "required": ["authority_carrier", "broker"],
+                      "properties": {
+                        "authority_carrier": { "const": "authority_broker" },
+                        "authority_separation_posture": { "const": "launcher_attested_one_use" },
+                        "transaction": {
+                          "properties": {
+                            "schema_version": { "const": 2 },
+                            "authority_carrier": { "const": "authority_broker" }
+                          },
+                          "required": ["broker_consumption"]
+                        },
+                        "archive_evidence": { "$ref": "#/$defs/brokerArchiveEvidence" }
+                      },
+                      "not": {
+                        "anyOf": [
+                          { "required": ["issuer_id"] },
+                          { "required": ["key_id"] },
+                          { "required": ["key_fingerprint"] },
+                          { "required": ["bundle_id"] },
+                          { "required": ["bundle_identity"] },
+                          { "required": ["bundle_sequence"] },
+                          { "required": ["grant_id"] },
+                          { "required": ["grant_identity"] },
+                          { "required": ["environment_posture"] },
+                          { "required": ["expiry_kind"] },
+                          { "required": ["issued_at"] },
+                          { "required": ["not_before"] },
+                          { "required": ["next_update"] },
+                          { "required": ["clock_evidence"] },
+                          { "required": ["sequence_evidence"] },
+                          { "required": ["revocation_evidence"] }
+                        ]
+                      }
+                    }
+                  ]
                 }
               }
             },

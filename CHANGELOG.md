@@ -29,7 +29,8 @@
 - Began the carrier-neutral audited-crossing evidence foundation. New transaction schema v2 binds
   the authority carrier and authorization identity, while receipt archives bind a re-derived common
   admission envelope. Legacy v1 receipt history remains limited to the existing `prebound_file`
-  carrier; no broker authority carrier is executable yet.
+  carrier. The later `authority_broker` entry below builds on this foundation for governed `run`
+  and `up` execution.
 
 - Added diagnostic-only `ota authority inspect [--json]` for the fixed `prebound_file` hardening
   profile. It reuses admission's canonical protected-file verifier across every fixed-store
@@ -91,9 +92,30 @@
   derived the complete scope, task-preview and workflow-refusal evidence also carry scope and
   contract identities, boundary family, and classification so an external issuer can create an
   exact grant without reconstructing Ota semantics or receiving task inputs or trust material.
-  Existing contracts
-  remain unchanged until they opt in, and no grant bypasses agent-safe refusal. Broker-backed
-  one-use work-unit authority remains an explicit open V11.7 boundary.
+  Existing contracts remain unchanged until they opt in, and no grant bypasses agent-safe
+  refusal. This first carrier remains bounded offline authority rather than one-use broker
+  authority.
+
+- added the Unix launcher-session `authority_broker` carrier for governed `ota run` and `ota up`.
+  Ota selects exactly one protected binding from `/etc/ota/crossing-brokers.json`, freezes the
+  semantic work unit, verifies challenge-bound launcher attestation and signed authorization,
+  creates a durable pending crossing transaction, and atomically consumes the prepared one-use
+  lease after deterministic admission and before provisioning or selected work. Task processes do
+  not inherit the launcher descriptor. Dry-run
+  performs no launcher interaction and reports `requires_live_authorization`. Transaction and
+  receipt schemas now bind carrier-specific broker admission, consumption, terminal outcome, and
+  archive re-verification; missing consumption, replay, or carrier substitution fail closed.
+  Ordinary workflow readiness timeout, selected workflow instance, ordered prerequisite-instance
+  closure, and runner-derived scope breadth are identity-bound. The archived binding is a public
+  verification snapshot and never serializes the live launcher descriptor. Signed
+  protocol payloads retained for archive verification accept only bounded public-safe principal,
+  invocation, and authority-mount labels; raw nonce, descriptor, credential, and path values remain
+  excluded.
+  `ota up` now evaluates unrelated blockers and every ordered prerequisite-instance preflight
+  before broker contact; prerequisite instances execute once in canonical order inside the same
+  authorized work unit.
+  Grant-required runtime and lifecycle proof remain pre-side-effect refused until one transaction
+  can cover their complete invocation and cleanup sets.
 
 - Added a pre-release operator guide for the first `prebound_file` carrier. It separates the
   Linux fixed trust store at `/etc/ota/crossing-authorities.json` from provisioner-owned signed

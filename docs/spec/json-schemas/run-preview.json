@@ -729,32 +729,15 @@
         "decision",
         "authority_id",
         "authority_binding_identity",
-        "issuer_id",
-        "key_id",
-        "key_fingerprint",
-        "bundle_id",
-        "bundle_identity",
-        "bundle_sequence",
-        "grant_id",
-        "grant_identity",
         "scope_identity",
         "contract_identity",
         "boundary_family",
         "classification",
-        "actor_mode",
-        "environment_posture",
-        "expiry_kind",
-        "issued_at",
-        "not_before",
-        "next_update",
-        "expires_at",
-        "clock_evidence",
-        "sequence_evidence",
-        "revocation_evidence",
-        "admitted_at"
+        "actor_mode"
       ],
       "properties": {
-        "decision": { "const": "admissible_not_consumed" },
+        "decision": { "enum": ["admissible_not_consumed", "requires_live_authorization"] },
+        "authority_carrier": { "const": "authority_broker" },
         "authority_id": { "type": "string", "minLength": 1 },
         "authority_binding_identity": {
           "$ref": "./receipt.json#/$defs/sha256Identity"
@@ -782,7 +765,34 @@
         "sequence_evidence": { "type": "string", "minLength": 1 },
         "revocation_evidence": { "type": "string", "minLength": 1 },
         "admitted_at": { "type": "string", "format": "date-time" }
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "issuer_id", "key_id", "key_fingerprint", "bundle_id", "bundle_identity",
+            "bundle_sequence", "grant_id", "grant_identity", "environment_posture",
+            "expiry_kind", "issued_at", "not_before", "next_update", "expires_at",
+            "clock_evidence", "sequence_evidence", "revocation_evidence", "admitted_at"
+          ],
+          "properties": { "decision": { "const": "admissible_not_consumed" } },
+          "not": { "required": ["authority_carrier"] }
+        },
+        {
+          "required": ["authority_carrier"],
+          "properties": {
+            "decision": { "const": "requires_live_authorization" },
+            "authority_carrier": { "const": "authority_broker" }
+          },
+          "not": {
+            "anyOf": [
+              { "required": ["grant_id"] },
+              { "required": ["grant_identity"] },
+              { "required": ["bundle_identity"] },
+              { "required": ["admitted_at"] }
+            ]
+          }
+        }
+      ]
     },
     "crossingGrantAdmissionFailure": {
       "type": "object",
@@ -815,7 +825,7 @@
           ],
           "properties": {
             "decision": { "const": "refused" },
-            "authority_source": { "const": "prebound_file" },
+            "authority_source": { "enum": ["prebound_file", "authority_broker"] },
             "authority_id": { "type": ["string", "null"] },
             "requested_grant_id": { "type": ["string", "null"] },
             "reason_family": { "type": "string", "minLength": 1 },

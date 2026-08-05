@@ -47,10 +47,59 @@ pub(crate) const CROSSING_AUTHORITY_SCHEMA_VERSION: u32 = 1;
 const BUNDLE_DOMAIN: &[u8] = b"ota.crossing-authority.bundle.v1\0";
 const GRANT_DOMAIN: &[u8] = b"ota.crossing-authority.grant.v1\0";
 const BINDING_DOMAIN: &[u8] = b"ota.crossing-authority.binding.v1\0";
+// The broker binding remains crate-private so repository and caller input cannot redirect the
+// fixed protected authority source or reinterpret its trust model.
+const BROKER_BINDING_DOMAIN: &[u8] = b"ota.crossing-broker.binding.v1\0";
+pub(crate) const CROSSING_BROKER_SCHEMA_VERSION: u32 = 1;
+const BROKER_PROTOCOL_VERSION: &str = "ota-crossing-broker/v1";
+#[allow(dead_code)]
+const MAX_BROKER_APPROVAL_WAIT_SECONDS: u64 = 600;
+#[allow(dead_code)]
+const MAX_BROKER_LEASE_SECONDS: u64 = 600;
+#[allow(dead_code)]
+const MAX_KEY_ROTATION_OVERLAP_SECONDS: u64 = 86_400;
+#[allow(dead_code)]
+const BROKER_MANDATORY_PROTOCOL_CLAIMS: &[&str] = &[
+    "authenticated_origin",
+    "authority_mounts",
+    "binding_identity",
+    "challenge_nonce_commitment",
+    "channel_delivery",
+    "invocation_id",
+    "runner_principal",
+    "semantic_scope_identity",
+    "work_unit_identity",
+];
+#[allow(dead_code)]
+const BROKER_MESSAGE_DOMAINS: &[(&str, &str)] = &[
+    (
+        "attestation_response",
+        "ota-crossing-broker/attestation-response/v1",
+    ),
+    (
+        "authorization_decision",
+        "ota-crossing-broker/authorization-decision/v1",
+    ),
+    (
+        "authorization_request",
+        "ota-crossing-broker/authorization-request/v1",
+    ),
+    (
+        "challenge_request",
+        "ota-crossing-broker/challenge-request/v1",
+    ),
+    ("lease_consume", "ota-crossing-broker/lease-consume/v1"),
+    (
+        "lease_consume_response",
+        "ota-crossing-broker/lease-consume-response/v1",
+    ),
+    ("lease_issuance", "ota-crossing-broker/lease-issuance/v1"),
+];
 
 #[cfg(test)]
 thread_local! {
     static TEST_SYSTEM_TRUST_STORE_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static TEST_BROKER_TRUST_STORE_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     static TEST_PROTECTED_AUTHORITY_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
@@ -58,6 +107,41 @@ thread_local! {
 pub(crate) struct TestSystemTrustStoreGuard {
     previous_store_path: Option<PathBuf>,
     previous_protected_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+pub(crate) struct TestBrokerTrustStoreGuard {
+    previous_store_path: Option<PathBuf>,
+    previous_protected_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl TestBrokerTrustStoreGuard {
+    pub(crate) fn install(path: PathBuf) -> Self {
+        let protected_root =
+            fs::canonicalize(path.parent().expect("test broker store must have a parent"))
+                .expect("test broker store parent must exist");
+        let previous_store_path =
+            TEST_BROKER_TRUST_STORE_PATH.with(|current| current.replace(Some(path)));
+        let previous_protected_root =
+            TEST_PROTECTED_AUTHORITY_ROOT.with(|current| current.replace(Some(protected_root)));
+        Self {
+            previous_store_path,
+            previous_protected_root,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestBrokerTrustStoreGuard {
+    fn drop(&mut self) {
+        TEST_BROKER_TRUST_STORE_PATH.with(|current| {
+            current.replace(self.previous_store_path.take());
+        });
+        TEST_PROTECTED_AUTHORITY_ROOT.with(|current| {
+            current.replace(self.previous_protected_root.take());
+        });
+    }
 }
 
 #[cfg(test)]
@@ -95,12 +179,197 @@ impl Drop for TestSystemTrustStoreGuard {
 const SYSTEM_TRUST_STORE_PATH: &str = "/etc/ota/crossing-authorities.json";
 #[cfg(target_os = "macos")]
 const SYSTEM_TRUST_STORE_PATH: &str = "/Library/Application Support/Ota/crossing-authorities.json";
+#[cfg(target_os = "linux")]
+const BROKER_TRUST_STORE_PATH: &str = "/etc/ota/crossing-brokers.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreboundAuthorityStore {
     pub schema_version: u32,
     pub bindings: Vec<PreboundAuthorityBinding>,
+}
+
+/// Administrator-owned broker configuration consumed only through the launcher-session,
+/// attested one-use lease protocol.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerAuthorityStore {
+    pub schema_version: u32,
+    pub bindings: Vec<BrokerAuthorityBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerAuthorityBinding {
+    pub identity: String,
+    pub authority_id: String,
+    pub broker_id: String,
+    pub origin: String,
+    pub server_name: String,
+    pub protocol_version: String,
+    pub transport_authentication: BrokerTransportAuthentication,
+    pub credential_delivery: BrokerCredentialDelivery,
+    pub broker_verifiers: Vec<BrokerVerifier>,
+    pub attestation: BrokerAttestationBinding,
+    pub message_domains: BrokerMessageDomains,
+    pub maximum_approval_wait_seconds: u64,
+    pub minimum_post_approval_freshness_seconds: u64,
+    pub maximum_lease_seconds: u64,
+}
+
+/// Public verification material retained in receipts and archives.
+///
+/// The live launcher descriptor is intentionally absent. Archive verification reconciles this
+/// snapshot with the current protected binding before using its verifier material.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerPublicAuthorityBinding {
+    pub identity: String,
+    pub authority_id: String,
+    pub broker_id: String,
+    pub origin: String,
+    pub server_name: String,
+    pub protocol_version: String,
+    pub transport_authentication: BrokerTransportAuthentication,
+    pub credential_delivery: BrokerPublicCredentialDelivery,
+    pub broker_verifiers: Vec<BrokerVerifier>,
+    pub attestation: BrokerAttestationBinding,
+    pub message_domains: BrokerMessageDomains,
+    pub maximum_approval_wait_seconds: u64,
+    pub minimum_post_approval_freshness_seconds: u64,
+    pub maximum_lease_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerPublicCredentialDelivery {
+    pub kind: BrokerCredentialDeliveryKind,
+    pub session_audience: String,
+}
+
+impl BrokerPublicAuthorityBinding {
+    pub(crate) fn from_protected(binding: &BrokerAuthorityBinding) -> Self {
+        Self {
+            identity: binding.identity.clone(),
+            authority_id: binding.authority_id.clone(),
+            broker_id: binding.broker_id.clone(),
+            origin: binding.origin.clone(),
+            server_name: binding.server_name.clone(),
+            protocol_version: binding.protocol_version.clone(),
+            transport_authentication: binding.transport_authentication.clone(),
+            credential_delivery: BrokerPublicCredentialDelivery {
+                kind: binding.credential_delivery.kind.clone(),
+                session_audience: binding.credential_delivery.session_audience.clone(),
+            },
+            broker_verifiers: binding.broker_verifiers.clone(),
+            attestation: binding.attestation.clone(),
+            message_domains: binding.message_domains.clone(),
+            maximum_approval_wait_seconds: binding.maximum_approval_wait_seconds,
+            minimum_post_approval_freshness_seconds: binding
+                .minimum_post_approval_freshness_seconds,
+            maximum_lease_seconds: binding.maximum_lease_seconds,
+        }
+    }
+
+    pub(crate) fn verification_binding(&self) -> BrokerAuthorityBinding {
+        BrokerAuthorityBinding {
+            identity: self.identity.clone(),
+            authority_id: self.authority_id.clone(),
+            broker_id: self.broker_id.clone(),
+            origin: self.origin.clone(),
+            server_name: self.server_name.clone(),
+            protocol_version: self.protocol_version.clone(),
+            transport_authentication: self.transport_authentication.clone(),
+            credential_delivery: BrokerCredentialDelivery {
+                kind: self.credential_delivery.kind.clone(),
+                // Verification never opens this descriptor. The protected binding supplies the
+                // live channel after archive reconciliation.
+                descriptor: 3,
+                session_audience: self.credential_delivery.session_audience.clone(),
+            },
+            broker_verifiers: self.broker_verifiers.clone(),
+            attestation: self.attestation.clone(),
+            message_domains: self.message_domains.clone(),
+            maximum_approval_wait_seconds: self.maximum_approval_wait_seconds,
+            minimum_post_approval_freshness_seconds: self.minimum_post_approval_freshness_seconds,
+            maximum_lease_seconds: self.maximum_lease_seconds,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub(crate) enum BrokerTransportAuthenticationKind {
+    Mtls,
+    ProviderWorkloadIdentity,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerTransportAuthentication {
+    pub kind: BrokerTransportAuthenticationKind,
+    pub trust_bundle_identity: String,
+    pub credential_source_identity: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub(crate) enum BrokerCredentialDeliveryKind {
+    LauncherSessionFd,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerCredentialDelivery {
+    pub kind: BrokerCredentialDeliveryKind,
+    pub descriptor: i32,
+    pub session_audience: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerVerifier {
+    pub key_id: String,
+    pub algorithm: String,
+    pub public_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerAttestationBinding {
+    pub issuer: String,
+    pub audience: String,
+    pub trust_bundle_identity: String,
+    pub verifiers: Vec<BrokerVerifier>,
+    pub maximum_age_seconds: u64,
+    pub maximum_clock_skew_seconds: u64,
+    pub key_rotation_overlap_seconds: u64,
+    pub mandatory_protocol_claims: Vec<String>,
+    pub required_administrator_claims: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerMessageDomains {
+    pub challenge_request: String,
+    pub attestation_response: String,
+    pub authorization_request: String,
+    pub authorization_decision: String,
+    pub lease_issuance: String,
+    pub lease_consume: String,
+    pub lease_consume_response: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SelectedCrossingAuthorityBinding {
+    PreboundFile(PreboundAuthorityBinding),
+    AuthorityBroker(BrokerAuthorityBinding),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -274,6 +543,7 @@ pub(crate) struct GrantAdmissionError {
     pub reason: &'static str,
     pub details: String,
     pub semantic_scope: Option<CrossingSemanticScope>,
+    pub authority_source: Option<&'static str>,
 }
 
 pub(crate) const AUTHORITY_INSPECT_PROFILE_ID: &str = "prebound_file_hardening";
@@ -390,11 +660,17 @@ impl GrantAdmissionError {
             reason,
             details: details.into(),
             semantic_scope: None,
+            authority_source: None,
         }
     }
 
     pub(crate) fn with_scope(mut self, semantic_scope: CrossingSemanticScope) -> Self {
         self.semantic_scope = Some(semantic_scope);
+        self
+    }
+
+    pub(crate) fn with_authority_source(mut self, authority_source: &'static str) -> Self {
+        self.authority_source = Some(authority_source);
         self
     }
 
@@ -847,35 +1123,24 @@ pub(crate) fn admit_prebound_file_grant(
             ),
         ));
     }
-    let store_path = system_trust_store_path().ok_or_else(|| {
-        error(
-            "crossing_authority_platform_unsupported",
-            "the prebound_file authority adapter is not supported on this platform",
-        )
-    })?;
-    let store: PreboundAuthorityStore =
-        read_protected_json(&store_path, repo_root, "authority trust store")?;
-    validate_store(&store)?;
-    let binding = store
-        .bindings
-        .iter()
-        .find(|binding| binding.authority_id == authority_id)
-        .ok_or_else(|| {
-            error(
-                "crossing_authority_unknown",
-                format!("system trust store has no authority `{authority_id}`"),
-            )
-        })?;
-    verify_binding_identity(binding)?;
+    let binding = match select_crossing_authority_binding(repo_root, authority_id)? {
+        SelectedCrossingAuthorityBinding::PreboundFile(binding) => binding,
+        SelectedCrossingAuthorityBinding::AuthorityBroker(_) => {
+            return Err(error(
+                "crossing_authority_carrier_mismatch",
+                "the selected authority uses the broker carrier and cannot be admitted as a prebound file grant",
+            ));
+        }
+    };
     let sequence_state_path = PathBuf::from(binding.sequence_state_path.as_str());
     let sequence_state: PreboundAuthoritySequenceState =
         read_protected_json(&sequence_state_path, repo_root, "authority sequence state")?;
     let bundle_path = PathBuf::from(binding.bundle_path.as_str());
     let envelope: SignedGrantBundleEnvelope =
         read_protected_json(&bundle_path, repo_root, "signed authority bundle")?;
-    validate_sequence_state(binding, &envelope.payload, &sequence_state, now)?;
+    validate_sequence_state(&binding, &envelope.payload, &sequence_state, now)?;
     let mut admission = verify_bundle_and_select_grant(
-        binding,
+        &binding,
         &envelope,
         scope,
         grant_id,
@@ -911,26 +1176,16 @@ pub(crate) fn verify_archived_grant_admission(
         ));
     }
 
-    let store_path = system_trust_store_path().ok_or_else(|| {
-        error(
-            "crossing_authority_platform_unsupported",
-            "the prebound_file authority adapter is not supported on this platform",
-        )
-    })?;
-    let store: PreboundAuthorityStore =
-        read_protected_json(&store_path, repo_root, "authority trust store")?;
-    validate_store(&store)?;
-    let current_binding = store
-        .bindings
-        .iter()
-        .find(|binding| binding.authority_id == configured_authority)
-        .ok_or_else(|| {
-            error(
-                "crossing_authority_unknown",
-                format!("system trust store has no authority `{configured_authority}`"),
-            )
-        })?;
-    verify_binding_identity(current_binding)?;
+    let current_binding = match select_crossing_authority_binding(repo_root, configured_authority)?
+    {
+        SelectedCrossingAuthorityBinding::PreboundFile(binding) => binding,
+        SelectedCrossingAuthorityBinding::AuthorityBroker(_) => {
+            return Err(error(
+                "crossing_authority_historical_root_unavailable",
+                "the archived prebound_file authority is no longer selected by the protected stores",
+            ));
+        }
+    };
     verify_binding_identity(&evidence.authority_binding_snapshot)?;
     if current_binding.identity != evidence.authority_binding_snapshot.identity {
         return Err(error(
@@ -987,6 +1242,7 @@ pub(crate) fn verify_archived_grant_admission(
             &selection.effect_overrides,
             selection.sandbox_target.as_deref(),
             selection.run_behavior.as_deref().unwrap_or("auto"),
+            selection.ready_timeout_seconds,
             evidence.boundary_family.as_str(),
             evidence.classification.as_str(),
         ),
@@ -1263,6 +1519,383 @@ fn validate_store(store: &PreboundAuthorityStore) -> Result<(), GrantAdmissionEr
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub(crate) fn validate_broker_store(
+    store: &BrokerAuthorityStore,
+) -> Result<(), GrantAdmissionError> {
+    if store.schema_version != CROSSING_BROKER_SCHEMA_VERSION {
+        return Err(error(
+            "crossing_broker_schema_unsupported",
+            format!(
+                "broker store schema version {} is unsupported",
+                store.schema_version
+            ),
+        ));
+    }
+    let mut authority_ids = BTreeSet::new();
+    let mut binding_identities = BTreeSet::new();
+    for binding in &store.bindings {
+        if binding.authority_id.trim().is_empty() || binding.broker_id.trim().is_empty() {
+            return Err(error(
+                "crossing_broker_binding_invalid",
+                "broker bindings require non-empty authority and broker identities",
+            ));
+        }
+        if !authority_ids.insert(binding.authority_id.as_str()) {
+            return Err(error(
+                "crossing_broker_authority_duplicate",
+                format!(
+                    "broker store contains duplicate authority `{}`",
+                    binding.authority_id
+                ),
+            ));
+        }
+        if !binding_identities.insert(binding.identity.as_str()) {
+            return Err(error(
+                "crossing_broker_binding_duplicate",
+                "broker store contains duplicate binding identities",
+            ));
+        }
+        verify_broker_binding_identity(binding)?;
+        validate_broker_binding(binding)?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub(crate) fn select_crossing_authority_binding(
+    repo_root: &Path,
+    authority_id: &str,
+) -> Result<SelectedCrossingAuthorityBinding, GrantAdmissionError> {
+    let authority_id = authority_id.trim();
+    if authority_id.is_empty() {
+        return Err(error(
+            "crossing_authority_missing",
+            "the selected contract has an empty crossing authority identity",
+        ));
+    }
+
+    let prebound = load_optional_prebound_store(repo_root)?
+        .and_then(|store| {
+            store
+                .bindings
+                .into_iter()
+                .find(|binding| binding.authority_id == authority_id)
+        })
+        .map(SelectedCrossingAuthorityBinding::PreboundFile);
+    let broker = load_optional_broker_store(repo_root)?
+        .and_then(|store| {
+            store
+                .bindings
+                .into_iter()
+                .find(|binding| binding.authority_id == authority_id)
+        })
+        .map(SelectedCrossingAuthorityBinding::AuthorityBroker);
+
+    match (prebound, broker) {
+        (Some(_), Some(_)) => Err(error(
+            "crossing_authority_ambiguous",
+            format!("authority `{authority_id}` is bound by more than one protected carrier store"),
+        )),
+        (Some(binding), None) | (None, Some(binding)) => Ok(binding),
+        (None, None) => Err(error(
+            "crossing_authority_unknown",
+            format!("no protected authority store binds `{authority_id}`"),
+        )),
+    }
+}
+
+fn load_optional_prebound_store(
+    repo_root: &Path,
+) -> Result<Option<PreboundAuthorityStore>, GrantAdmissionError> {
+    let Some(path) = system_trust_store_path() else {
+        return Ok(None);
+    };
+    let Some(store) = read_optional_protected_json(&path, repo_root, "authority trust store")?
+    else {
+        return Ok(None);
+    };
+    validate_store(&store)?;
+    Ok(Some(store))
+}
+
+fn load_optional_broker_store(
+    repo_root: &Path,
+) -> Result<Option<BrokerAuthorityStore>, GrantAdmissionError> {
+    let Some(path) = broker_trust_store_path() else {
+        return Ok(None);
+    };
+    let Some(store) = read_optional_protected_json(&path, repo_root, "broker authority store")?
+    else {
+        return Ok(None);
+    };
+    validate_broker_store(&store)?;
+    Ok(Some(store))
+}
+
+#[allow(dead_code)]
+pub(crate) fn load_broker_binding(
+    repo_root: &Path,
+    authority_id: &str,
+) -> Result<BrokerAuthorityBinding, GrantAdmissionError> {
+    let store_path = broker_trust_store_path().ok_or_else(|| {
+        error(
+            "crossing_broker_platform_unsupported",
+            "the launcher-session broker carrier is supported only on Linux",
+        )
+    })?;
+    let store: BrokerAuthorityStore =
+        read_protected_json(&store_path, repo_root, "broker authority store")?;
+    validate_broker_store(&store)?;
+    store
+        .bindings
+        .into_iter()
+        .find(|binding| binding.authority_id == authority_id)
+        .ok_or_else(|| {
+            error(
+                "crossing_broker_authority_unknown",
+                format!("broker authority store has no authority `{authority_id}`"),
+            )
+        })
+}
+
+fn read_optional_protected_json<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    repo_root: &Path,
+    label: &str,
+) -> Result<Option<T>, GrantAdmissionError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => read_protected_json(path, repo_root, label).map(Some),
+        Err(details) if details.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(details) => Err(error(
+            "crossing_authority_unavailable",
+            format!(
+                "failed to inspect protected {label} `{}`: {details}",
+                path.display()
+            ),
+        )),
+    }
+}
+
+#[allow(dead_code)]
+fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), GrantAdmissionError> {
+    if binding.protocol_version != BROKER_PROTOCOL_VERSION {
+        return Err(error(
+            "crossing_broker_protocol_unsupported",
+            "broker binding has an unsupported protocol version",
+        ));
+    }
+    validate_broker_origin(binding.origin.as_str(), binding.server_name.as_str())?;
+    validate_sha256_identity(
+        binding
+            .transport_authentication
+            .trust_bundle_identity
+            .as_str(),
+        "broker transport trust bundle identity",
+    )?;
+    if binding
+        .transport_authentication
+        .credential_source_identity
+        .trim()
+        .is_empty()
+        || binding
+            .credential_delivery
+            .session_audience
+            .trim()
+            .is_empty()
+    {
+        return Err(error(
+            "crossing_broker_binding_invalid",
+            "broker credential source and session audience must be non-empty",
+        ));
+    }
+    if binding.credential_delivery.descriptor < 3 || binding.credential_delivery.descriptor > 1024 {
+        return Err(error(
+            "crossing_broker_descriptor_unsupported",
+            "broker launcher descriptor must be between 3 and 1024",
+        ));
+    }
+    validate_broker_verifiers(&binding.broker_verifiers, "broker")?;
+    let attestation = &binding.attestation;
+    if attestation.issuer.trim().is_empty() || attestation.audience.trim().is_empty() {
+        return Err(error(
+            "crossing_broker_attestation_invalid",
+            "broker attestation issuer and audience must be non-empty",
+        ));
+    }
+    validate_sha256_identity(
+        attestation.trust_bundle_identity.as_str(),
+        "broker attestation trust bundle identity",
+    )?;
+    validate_broker_verifiers(&attestation.verifiers, "attestation")?;
+    if attestation.maximum_age_seconds == 0
+        || attestation.maximum_clock_skew_seconds > 60
+        || attestation.key_rotation_overlap_seconds > MAX_KEY_ROTATION_OVERLAP_SECONDS
+    {
+        return Err(error(
+            "crossing_broker_attestation_invalid",
+            "broker attestation freshness or key-rotation bounds are unsupported",
+        ));
+    }
+    let expected_claims = BROKER_MANDATORY_PROTOCOL_CLAIMS
+        .iter()
+        .map(|claim| (*claim).to_string())
+        .collect::<Vec<_>>();
+    if attestation.mandatory_protocol_claims != expected_claims
+        || !attestation.required_administrator_claims.is_empty()
+    {
+        return Err(error(
+            "crossing_broker_attestation_claims_invalid",
+            "broker attestation claims must use the canonical mandatory profile without unknown extensions",
+        ));
+    }
+    if binding.maximum_approval_wait_seconds == 0
+        || binding.maximum_approval_wait_seconds > MAX_BROKER_APPROVAL_WAIT_SECONDS
+        || binding.minimum_post_approval_freshness_seconds == 0
+        || binding.maximum_lease_seconds == 0
+        || binding.maximum_lease_seconds > MAX_BROKER_LEASE_SECONDS
+        || attestation.maximum_age_seconds
+            < binding.maximum_approval_wait_seconds
+                + binding.minimum_post_approval_freshness_seconds
+    {
+        return Err(error(
+            "crossing_broker_freshness_invalid",
+            "broker timing windows cannot cover the complete approval and issuance sequence",
+        ));
+    }
+    let actual_domains = [
+        (
+            "attestation_response",
+            binding.message_domains.attestation_response.as_str(),
+        ),
+        (
+            "authorization_decision",
+            binding.message_domains.authorization_decision.as_str(),
+        ),
+        (
+            "authorization_request",
+            binding.message_domains.authorization_request.as_str(),
+        ),
+        (
+            "challenge_request",
+            binding.message_domains.challenge_request.as_str(),
+        ),
+        (
+            "lease_consume",
+            binding.message_domains.lease_consume.as_str(),
+        ),
+        (
+            "lease_consume_response",
+            binding.message_domains.lease_consume_response.as_str(),
+        ),
+        (
+            "lease_issuance",
+            binding.message_domains.lease_issuance.as_str(),
+        ),
+    ];
+    if actual_domains != BROKER_MESSAGE_DOMAINS {
+        return Err(error(
+            "crossing_broker_message_domain_invalid",
+            "broker message domains must use the canonical phase-separated profile",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn validate_broker_origin(origin: &str, server_name: &str) -> Result<(), GrantAdmissionError> {
+    let authority = origin.strip_prefix("https://").ok_or_else(|| {
+        error(
+            "crossing_broker_origin_invalid",
+            "broker origin must be a normalized HTTPS origin",
+        )
+    })?;
+    if authority.is_empty()
+        || authority.contains(['/', '?', '#', '@'])
+        || server_name.trim().is_empty()
+        || authority.split(':').next() != Some(server_name)
+        || !server_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    {
+        return Err(error(
+            "crossing_broker_origin_invalid",
+            "broker origin and expected server name are not normalized",
+        ));
+    }
+    if let Some((_, port)) = authority.split_once(':') {
+        if port.parse::<u16>().ok().filter(|port| *port != 0).is_none() {
+            return Err(error(
+                "crossing_broker_origin_invalid",
+                "broker origin port is invalid",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn validate_broker_verifiers(
+    verifiers: &[BrokerVerifier],
+    label: &str,
+) -> Result<(), GrantAdmissionError> {
+    let key_ids = verifiers
+        .iter()
+        .map(|verifier| verifier.key_id.as_str())
+        .collect::<Vec<_>>();
+    if verifiers.is_empty() || !strictly_sorted_unique(&key_ids) {
+        return Err(error(
+            "crossing_broker_verifiers_invalid",
+            format!("{label} verifier keys must be non-empty, sorted, and unique"),
+        ));
+    }
+    for verifier in verifiers {
+        if verifier.algorithm != "ed25519" {
+            return Err(error(
+                "crossing_broker_verifier_algorithm_unsupported",
+                format!(
+                    "{label} verifier `{}` has an unsupported algorithm",
+                    verifier.key_id
+                ),
+            ));
+        }
+        decode_fixed::<32>(verifier.public_key.as_str(), "broker verifier public key")?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn validate_sha256_identity(value: &str, label: &str) -> Result<(), GrantAdmissionError> {
+    let digest = value.strip_prefix("sha256:").unwrap_or_default();
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(error(
+            "crossing_broker_identity_invalid",
+            format!("{label} must be a sha256 identity"),
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn verify_broker_binding_identity(
+    binding: &BrokerAuthorityBinding,
+) -> Result<(), GrantAdmissionError> {
+    let mut unsigned = binding.clone();
+    unsigned.identity.clear();
+    let expected = domain_identity(BROKER_BINDING_DOMAIN, &unsigned)?;
+    if binding.identity != expected {
+        return Err(error(
+            "crossing_broker_binding_identity_mismatch",
+            "broker binding identity does not match its semantic content",
+        ));
     }
     Ok(())
 }
@@ -1611,6 +2244,24 @@ fn system_trust_store_path() -> Option<PathBuf> {
     Some(PathBuf::from(SYSTEM_TRUST_STORE_PATH))
 }
 
+#[cfg(target_os = "linux")]
+fn broker_trust_store_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = TEST_BROKER_TRUST_STORE_PATH.with(|current| current.borrow().clone()) {
+        return Some(path);
+    }
+    Some(PathBuf::from(BROKER_TRUST_STORE_PATH))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn broker_trust_store_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = TEST_BROKER_TRUST_STORE_PATH.with(|current| current.borrow().clone()) {
+        return Some(path);
+    }
+    None
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn system_trust_store_path() -> Option<PathBuf> {
     None
@@ -1621,6 +2272,7 @@ fn error(reason: &'static str, details: impl Into<String>) -> GrantAdmissionErro
         reason,
         details: details.into(),
         semantic_scope: None,
+        authority_source: None,
     }
 }
 
@@ -1798,6 +2450,248 @@ tasks:
         )
         .expect("test grant admission");
         (guard, contract, admission)
+    }
+
+    pub(crate) fn broker_binding_with_signing_key() -> (BrokerAuthorityBinding, SigningKey) {
+        let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
+        let public_key = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes());
+        let identity = format!("sha256:{}", "a".repeat(64));
+        let verifier = BrokerVerifier {
+            key_id: String::from("broker-2026-01"),
+            algorithm: String::from("ed25519"),
+            public_key: public_key.clone(),
+        };
+        let mut binding = BrokerAuthorityBinding {
+            identity: String::new(),
+            authority_id: String::from("platform-release-authority"),
+            broker_id: String::from("platform-crossing-broker"),
+            origin: String::from("https://broker.example.internal"),
+            server_name: String::from("broker.example.internal"),
+            protocol_version: String::from(BROKER_PROTOCOL_VERSION),
+            transport_authentication: BrokerTransportAuthentication {
+                kind: BrokerTransportAuthenticationKind::Mtls,
+                trust_bundle_identity: identity.clone(),
+                credential_source_identity: String::from("launcher:workload-session/v1"),
+            },
+            credential_delivery: BrokerCredentialDelivery {
+                kind: BrokerCredentialDeliveryKind::LauncherSessionFd,
+                descriptor: 3,
+                session_audience: String::from("ota-crossing-broker"),
+            },
+            broker_verifiers: vec![verifier.clone()],
+            attestation: BrokerAttestationBinding {
+                issuer: String::from("runner-launcher"),
+                audience: String::from("ota-crossing-broker"),
+                trust_bundle_identity: identity,
+                verifiers: vec![verifier],
+                maximum_age_seconds: 180,
+                maximum_clock_skew_seconds: 5,
+                key_rotation_overlap_seconds: 120,
+                mandatory_protocol_claims: BROKER_MANDATORY_PROTOCOL_CLAIMS
+                    .iter()
+                    .map(|claim| (*claim).to_string())
+                    .collect(),
+                required_administrator_claims: Vec::new(),
+            },
+            message_domains: BrokerMessageDomains {
+                challenge_request: String::from("ota-crossing-broker/challenge-request/v1"),
+                attestation_response: String::from("ota-crossing-broker/attestation-response/v1"),
+                authorization_request: String::from("ota-crossing-broker/authorization-request/v1"),
+                authorization_decision: String::from(
+                    "ota-crossing-broker/authorization-decision/v1",
+                ),
+                lease_issuance: String::from("ota-crossing-broker/lease-issuance/v1"),
+                lease_consume: String::from("ota-crossing-broker/lease-consume/v1"),
+                lease_consume_response: String::from(
+                    "ota-crossing-broker/lease-consume-response/v1",
+                ),
+            },
+            maximum_approval_wait_seconds: 120,
+            minimum_post_approval_freshness_seconds: 30,
+            maximum_lease_seconds: 300,
+        };
+        binding.identity =
+            domain_identity(BROKER_BINDING_DOMAIN, &binding).expect("test broker binding identity");
+        (binding, signing_key)
+    }
+
+    pub(crate) fn set_broker_binding_descriptor_for_tests(
+        binding: &mut BrokerAuthorityBinding,
+        descriptor: i32,
+    ) {
+        binding.credential_delivery.descriptor = descriptor;
+        binding.identity.clear();
+        binding.identity =
+            domain_identity(BROKER_BINDING_DOMAIN, binding).expect("test broker binding identity");
+    }
+
+    #[test]
+    fn broker_store_requires_canonical_binding_and_attestation_posture() {
+        let (binding, _) = broker_binding_with_signing_key();
+        validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![binding.clone()],
+        })
+        .expect("canonical broker binding should validate");
+
+        let mut invalid_origin = binding.clone();
+        invalid_origin.origin = String::from("http://broker.example.internal");
+        invalid_origin.identity.clear();
+        invalid_origin.identity = domain_identity(BROKER_BINDING_DOMAIN, &invalid_origin)
+            .expect("test broker binding identity");
+        let error = validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![invalid_origin],
+        })
+        .expect_err("non-HTTPS broker origin must refuse");
+        assert_eq!(error.reason, "crossing_broker_origin_invalid");
+
+        let mut invalid_claims = binding.clone();
+        invalid_claims
+            .attestation
+            .mandatory_protocol_claims
+            .pop()
+            .expect("claim fixture");
+        invalid_claims.identity.clear();
+        invalid_claims.identity = domain_identity(BROKER_BINDING_DOMAIN, &invalid_claims)
+            .expect("test broker binding identity");
+        let error = validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![invalid_claims],
+        })
+        .expect_err("missing mandatory attestation claim must refuse");
+        assert_eq!(error.reason, "crossing_broker_attestation_claims_invalid");
+
+        let error = validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![binding.clone(), binding],
+        })
+        .expect_err("duplicate broker authority must refuse");
+        assert_eq!(error.reason, "crossing_broker_authority_duplicate");
+
+        let mut uppercase_identity = broker_binding_with_signing_key().0;
+        uppercase_identity
+            .transport_authentication
+            .trust_bundle_identity = format!("sha256:{}", "A".repeat(64));
+        uppercase_identity.identity.clear();
+        uppercase_identity.identity = domain_identity(BROKER_BINDING_DOMAIN, &uppercase_identity)
+            .expect("test broker binding identity");
+        let error = validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![uppercase_identity],
+        })
+        .expect_err("canonical identities must use lowercase hexadecimal");
+        assert_eq!(error.reason, "crossing_broker_identity_invalid");
+    }
+
+    #[test]
+    fn broker_binding_loads_only_from_the_fixed_protected_store() {
+        let authority_root = tempfile::tempdir().expect("authority root");
+        let repo_root = tempfile::tempdir().expect("repo root");
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        let (binding, _) = broker_binding_with_signing_key();
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _guard = TestBrokerTrustStoreGuard::install(store_path);
+        assert_eq!(
+            load_broker_binding(repo_root.path(), binding.authority_id.as_str())
+                .expect("fixed protected broker binding"),
+            binding
+        );
+        let error = load_broker_binding(repo_root.path(), "unknown")
+            .expect_err("unknown authority must refuse");
+        assert_eq!(error.reason, "crossing_broker_authority_unknown");
+    }
+
+    #[test]
+    fn carrier_selection_requires_exactly_one_protected_binding() {
+        let authority_root = tempfile::tempdir().expect("authority root");
+        let repo_root = tempfile::tempdir().expect("repo root");
+        let prebound_path = authority_root.path().join("crossing-authorities.json");
+        let broker_path = authority_root.path().join("crossing-brokers.json");
+        let now = OffsetDateTime::now_utc();
+        let (prebound, _, scope) = fixture(now);
+        let (broker, _) = broker_binding_with_signing_key();
+        fs::write(
+            &prebound_path,
+            serde_json::to_vec(&PreboundAuthorityStore {
+                schema_version: CROSSING_AUTHORITY_SCHEMA_VERSION,
+                bindings: vec![prebound],
+            })
+            .expect("prebound store JSON"),
+        )
+        .expect("write prebound store");
+        fs::write(
+            &broker_path,
+            serde_json::to_vec(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![broker.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _prebound_guard = TestSystemTrustStoreGuard::install(prebound_path.clone());
+        let _broker_guard = TestBrokerTrustStoreGuard::install(broker_path.clone());
+
+        let error =
+            select_crossing_authority_binding(repo_root.path(), "platform-release-authority")
+                .expect_err("cross-carrier authority collision must refuse");
+        assert_eq!(error.reason, "crossing_authority_ambiguous");
+
+        fs::remove_file(&prebound_path).expect("remove prebound store");
+        assert_eq!(
+            select_crossing_authority_binding(repo_root.path(), "platform-release-authority",)
+                .expect("single broker binding"),
+            SelectedCrossingAuthorityBinding::AuthorityBroker(broker)
+        );
+        let error = admit_prebound_file_grant(
+            &contract(),
+            repo_root.path(),
+            &scope,
+            "diagnostic-label",
+            "unsafe_task",
+            "escalated",
+            "non_agent",
+            now,
+        )
+        .expect_err("broker-only authority must remain non-executable");
+        assert_eq!(error.reason, "crossing_authority_carrier_mismatch");
+        let error = select_crossing_authority_binding(repo_root.path(), "unknown")
+            .expect_err("zero matching authorities must refuse");
+        assert_eq!(error.reason, "crossing_authority_unknown");
+    }
+
+    #[test]
+    fn present_malformed_store_refuses_even_when_another_carrier_matches() {
+        let authority_root = tempfile::tempdir().expect("authority root");
+        let repo_root = tempfile::tempdir().expect("repo root");
+        let prebound_path = authority_root.path().join("crossing-authorities.json");
+        let broker_path = authority_root.path().join("crossing-brokers.json");
+        let (prebound, _, _) = fixture(OffsetDateTime::now_utc());
+        fs::write(
+            &prebound_path,
+            serde_json::to_vec(&PreboundAuthorityStore {
+                schema_version: CROSSING_AUTHORITY_SCHEMA_VERSION,
+                bindings: vec![prebound],
+            })
+            .expect("prebound store JSON"),
+        )
+        .expect("write prebound store");
+        fs::write(&broker_path, b"{not-json").expect("write malformed broker store");
+        let _prebound_guard = TestSystemTrustStoreGuard::install(prebound_path);
+        let _broker_guard = TestBrokerTrustStoreGuard::install(broker_path);
+
+        let error =
+            select_crossing_authority_binding(repo_root.path(), "platform-release-authority")
+                .expect_err("a malformed present store must fail closed");
+        assert_eq!(error.reason, "crossing_authority_invalid");
     }
 
     #[test]

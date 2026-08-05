@@ -2061,12 +2061,19 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         json!("#/$defs/crossingTransaction")
     );
     assert_eq!(
-        authority["properties"]["authority_separation_posture"]["const"],
-        json!("current_process_filesystem_guarded")
+        authority["properties"]["authority_separation_posture"]["enum"],
+        json!([
+            "current_process_filesystem_guarded",
+            "launcher_attested_one_use"
+        ])
     );
     assert_eq!(
-        authority["properties"]["archive_evidence"]["$ref"],
-        json!("#/$defs/crossingGrantArchiveEvidence")
+        authority["properties"]["archive_evidence"]["oneOf"][1]["$ref"],
+        json!("#/$defs/brokerArchiveEvidence")
+    );
+    assert_eq!(
+        authority["properties"]["broker"]["$ref"],
+        json!("#/$defs/executionBoundaryBrokerAuthority")
     );
     assert_eq!(
         receipt["$defs"]["crossingGrantArchiveEvidence"]["additionalProperties"],
@@ -2091,8 +2098,12 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         json!("#/$defs/crossingGrantAdmission")
     );
     assert_eq!(
-        preview["$defs"]["crossingGrantAdmission"]["properties"]["decision"]["const"],
-        json!("admissible_not_consumed")
+        preview["$defs"]["crossingGrantAdmission"]["properties"]["decision"]["enum"],
+        json!(["admissible_not_consumed", "requires_live_authorization"])
+    );
+    assert_eq!(
+        preview["$defs"]["crossingGrantAdmission"]["properties"]["authority_carrier"]["const"],
+        json!("authority_broker")
     );
     assert_eq!(
         preview["$defs"]["crossingGrantAdmissionFailure"]["properties"]["crossing_grant_admission"]
@@ -2125,6 +2136,15 @@ fn receipt_crossing_archive_schema_enforces_carrier_version_branches() {
         "classification": "escalated",
         "target_platform": { "os": "linux", "architecture": "amd64" },
         "execution_graph_identity": identity,
+        "breadth": {
+            "schema_version": 1,
+            "identity": identity,
+            "closure_node_count": 1,
+            "closure_edge_count": 0,
+            "effect_categories": [],
+            "resource_count": 0,
+            "resource_identities": []
+        },
         "segment_identities": [identity],
         "edge_identities": [identity],
         "execution_selection": { "skip_dependencies": false },

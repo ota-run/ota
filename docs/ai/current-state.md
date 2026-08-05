@@ -144,20 +144,37 @@ durable agent workflow belongs in the canonical Ota skill.
   [30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
   The live artifact retains the exact transaction-bound receipt archive; every refusal preserves
   typed admission evidence and an unchanged checkout before and after dry-run and real refusal.
-  The current carrier-neutral transaction/archive foundation uses transaction schema v2 to bind
-  authority carrier, admission identity, and authorization identity. V1 archives remain legacy
-  `prebound_file` evidence without a carrier envelope; receipt history rejects carrier-envelope
-  injection into v1 and missing or substituted envelopes in v2. This is compatibility groundwork
-  only: Core has no executable `authority_broker` selector, admission path, or broker archive
-  format yet.
+  The carrier-neutral transaction/archive foundation uses transaction schema v2 to bind authority
+  carrier, admission identity, authorization identity, and terminal state. V1 archives remain
+  legacy `prebound_file` evidence without a carrier envelope; receipt history rejects
+  carrier-envelope injection into v1 and missing or substituted envelopes in v2. The Unix
+  launcher-session `authority_broker` carrier is now executable for governed `ota run` and
+  `ota up`. It selects exactly one protected binding from `/etc/ota/crossing-brokers.json`, freezes
+  the semantic work unit, verifies challenge-bound launcher attestation, obtains signed
+  authorization, creates the durable pending transaction, and atomically consumes the exact lease
+  after deterministic admission succeeds and before provisioning or selected work. `ota up`
+  evaluates unrelated blockers and the complete ordered prerequisite-instance preflight
+  before broker contact; those prerequisite instances execute once inside the parent work unit.
+  Ordinary workflow readiness timeout, selected workflow instance, ordered prerequisite-instance closure,
+  and runner-derived scope breadth are identity-bound; breadth retains only counts, categories,
+  and hashed resource identities. The archive retains a public verification binding, not the live
+  launcher descriptor. Signed protocol payloads retained for
+  archive re-verification accept only bounded public-safe labels, never raw paths, descriptors,
+  credentials, or secret provider material. Dry-run performs no launcher interaction and reports
+  only `requires_live_authorization`; task processes do not inherit the protected descriptor. Receipts
+  and archives bind the broker admission, attestation, prepared lease, consume exchange, semantic
+  scope, and terminal transaction, and history re-verifies them against the protected binding.
+  Replay, missing consumption, and carrier substitution refuse. Grant-required runtime and
+  lifecycle proof remain pre-side-effect refused until one transaction can cover their complete
+  invocation and cleanup sets; hosted broker pressure is also still open.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
   material. Hardened-runner pressure now proves the carrier's bounded
   `current_process_filesystem_guarded` posture; the guide remains a preview because it does not
   claim provider-attested separation, reusable broker credentials, or one-use work-unit authority.
-  V11.7 also remains open for the separately pre-bound broker adapter that can issue and atomically
-  consume runner-nonce-bound one-use work-unit leases. V11.22 remains planning-only and inactive; it
-  does not consume crossing records as approval authority. See
+  V11.7 remains open for proof-wide broker transactions, hosted broker pressure, and stronger
+  provider/launcher-attested separation beyond the protocol evidence currently verified. V11.22
+  remains planning-only and inactive; it does not consume crossing records as approval authority. See
   [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
@@ -655,8 +672,9 @@ Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
 
 V11.21 is complete. V11.7 authority-source and semantic-crossing implementation is active and
 partially pressure-proven: GitHub-hosted missing-authority refusal plus the pre-provisioned
-Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green. The separate
-broker-backed one-use work-unit lifetime and provider-attested separation remain explicitly open.
+Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green. The Unix
+launcher-session broker carrier is implemented locally for governed `run`/`up`; hosted broker
+pressure, proof-wide broker transactions, and stronger provider-attested separation remain open.
 V11.22 remains planning-only and inactive. The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
@@ -666,11 +684,11 @@ prove the bounded stock-OCI subset against exact Core
 completion, targeted egress, managed isolated paths, typed preparation, services, lifecycle proof,
 or raw-shell governance.
 
-The V11.7 public example, canonical skill, global skill mirrors, and site reference are carried.
-Core crossing, schema, and JSON conformance tests plus first-party example/skill/site checks are
-green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7 open until the separate
-broker-backed work-unit carrier and provider-attested separation close its remaining acceptance
-bar; keep V11.22 planned until it is explicitly activated.
+The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
+Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
+example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
+open until hosted broker pressure, complete proof-transaction coverage, and stronger attested
+separation close its remaining acceptance bar; keep V11.22 planned until explicitly activated.
 
 ## Working Rules
 

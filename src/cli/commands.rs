@@ -4039,7 +4039,7 @@ pub fn proof_runtime_with_grant(
                             "crossing_grant_runtime_proof_unsupported",
                             "runtime proof cannot yet retain one terminal crossing transaction across its detached workflow and proof helper invocations",
                         )
-                        .with_scope(grant_admission.semantic_scope.clone()),
+                        .with_scope(grant_admission.semantic_scope().clone()),
                     );
                 }
                 let proof_archive_context = if archive {
@@ -4532,7 +4532,9 @@ pub fn proof_runtime_with_grant(
                     contract_working_dir(&target.contract_path),
                     &crossing_handoff_path,
                     &execution_boundary_trace_token,
-                    grant_admission.as_ref(),
+                    grant_admission
+                        .as_ref()
+                        .and_then(CrossingAuthorityPlan::prebound_admission),
                 ) {
                     Ok(evidence) => evidence,
                     Err(error) => return CommandOutput::failure(error),
@@ -15817,11 +15819,48 @@ use crate::crossing::{
     CrossingProofInvocation, CrossingProofTransactionSelection, crossing_preflight_posture,
     crossing_scope_for_task, crossing_scope_for_workflow, crossing_scope_from_policy,
     crossing_scope_with_proof_invocations, crossing_scope_with_proof_transaction_selection,
-    evaluate_crossing_requirement,
+    crossing_scope_with_workflow_instance_selection, evaluate_crossing_requirement,
 };
 use crate::crossing_authority::{
     GrantAdmissionError, GrantAdmissionEvidence, admit_prebound_file_grant,
 };
+
+#[derive(Debug, Clone)]
+enum VerifiedCrossingAuthorityAdmission {
+    PreboundFile(GrantAdmissionEvidence),
+    AuthorityBrokerPreview {
+        binding: crate::crossing_authority::BrokerAuthorityBinding,
+        semantic_scope: crate::crossing::CrossingSemanticScope,
+        actor_mode: String,
+    },
+    AuthorityBroker(crate::broker_session::BrokerAdmissionEvidence),
+}
+
+#[derive(Debug, Clone)]
+enum CrossingAuthorityPlan {
+    PreboundFile(GrantAdmissionEvidence),
+    AuthorityBroker {
+        binding: crate::crossing_authority::BrokerAuthorityBinding,
+        semantic_scope: crate::crossing::CrossingSemanticScope,
+        actor_mode: String,
+    },
+}
+
+impl CrossingAuthorityPlan {
+    fn semantic_scope(&self) -> &crate::crossing::CrossingSemanticScope {
+        match self {
+            Self::PreboundFile(admission) => &admission.semantic_scope,
+            Self::AuthorityBroker { semantic_scope, .. } => semantic_scope,
+        }
+    }
+
+    fn prebound_admission(&self) -> Option<&GrantAdmissionEvidence> {
+        match self {
+            Self::PreboundFile(admission) => Some(admission),
+            Self::AuthorityBroker { .. } => None,
+        }
+    }
+}
 
 fn governance_preflight_decision_basis(
     declared_safe_for_agent: Option<bool>,
@@ -16101,7 +16140,7 @@ fn crossing_evidence_classes(
 }
 
 thread_local! {
-    static ACTIVE_CROSSING_GRANT_ADMISSION: RefCell<Option<GrantAdmissionEvidence>> =
+    static ACTIVE_CROSSING_GRANT_ADMISSION: RefCell<Option<VerifiedCrossingAuthorityAdmission>> =
         const { RefCell::new(None) };
     static ACTIVE_CROSSING_TRANSACTION:
         RefCell<Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>> =
@@ -16109,13 +16148,30 @@ thread_local! {
 }
 
 struct ActiveCrossingGrantGuard {
-    previous: Option<GrantAdmissionEvidence>,
+    previous: Option<VerifiedCrossingAuthorityAdmission>,
 }
 
 impl ActiveCrossingGrantGuard {
-    fn activate(admission: Option<GrantAdmissionEvidence>) -> Self {
+    fn activate(admission: Option<VerifiedCrossingAuthorityAdmission>) -> Self {
         let previous = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.replace(admission));
         Self { previous }
+    }
+
+    fn activate_preview(plan: Option<CrossingAuthorityPlan>) -> Self {
+        Self::activate(plan.map(|plan| match plan {
+            CrossingAuthorityPlan::PreboundFile(admission) => {
+                VerifiedCrossingAuthorityAdmission::PreboundFile(admission)
+            }
+            CrossingAuthorityPlan::AuthorityBroker {
+                binding,
+                semantic_scope,
+                actor_mode,
+            } => VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview {
+                binding,
+                semantic_scope,
+                actor_mode,
+            },
+        }))
     }
 }
 
@@ -16133,12 +16189,12 @@ fn active_crossing_grant_authority() -> Option<crate::output::ExecutionBoundaryC
         let admission = active.borrow();
         let admission = admission.as_ref()?;
         let transaction = active_crossing_transaction_evidence()?;
-        Some(crossing_grant_authority_output_with_transaction(
-            admission,
-            Some(transaction),
-            true,
-        ))
+        crossing_authority_output_with_transaction(admission, Some(transaction), true).ok()
     })
+}
+
+fn active_crossing_authority_is_configured() -> bool {
+    ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.borrow().is_some())
 }
 
 fn active_crossing_grant_preview() -> Option<crate::output::CrossingGrantAdmissionPreview> {
@@ -16146,33 +16202,24 @@ fn active_crossing_grant_preview() -> Option<crate::output::CrossingGrantAdmissi
         active
             .borrow()
             .as_ref()
-            .map(|admission| crate::output::CrossingGrantAdmissionPreview {
-                decision: String::from("admissible_not_consumed"),
-                authority_id: admission.authority_id.clone(),
-                authority_binding_identity: admission.authority_binding_identity.clone(),
-                issuer_id: admission.issuer_id.clone(),
-                key_id: admission.key_id.clone(),
-                key_fingerprint: admission.key_fingerprint.clone(),
-                bundle_id: admission.bundle_id.clone(),
-                bundle_identity: admission.bundle_identity.clone(),
-                bundle_sequence: admission.bundle_sequence,
-                grant_id: admission.grant_id.clone(),
-                grant_identity: admission.grant_identity.clone(),
-                scope_identity: admission.scope_identity.clone(),
-                contract_identity: admission.contract_identity.clone(),
-                boundary_family: admission.boundary_family.clone(),
-                classification: admission.classification.clone(),
-                actor_mode: admission.actor_mode.clone(),
-                environment_posture: admission.environment_posture.clone(),
-                expiry_kind: admission.expiry_kind.clone(),
-                issued_at: admission.issued_at.clone(),
-                not_before: admission.not_before.clone(),
-                next_update: admission.next_update.clone(),
-                expires_at: admission.expires_at.clone(),
-                clock_evidence: admission.clock_evidence.clone(),
-                sequence_evidence: admission.sequence_evidence.clone(),
-                revocation_evidence: admission.revocation_evidence.clone(),
-                admitted_at: admission.admitted_at.clone(),
+            .and_then(|admission| match admission {
+                VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => {
+                    Some(crossing_authority_plan_preview(
+                        &CrossingAuthorityPlan::PreboundFile(admission.clone()),
+                    ))
+                }
+                VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview {
+                    binding,
+                    semantic_scope,
+                    actor_mode,
+                } => Some(crossing_authority_plan_preview(
+                    &CrossingAuthorityPlan::AuthorityBroker {
+                        binding: binding.clone(),
+                        semantic_scope: semantic_scope.clone(),
+                        actor_mode: actor_mode.clone(),
+                    },
+                )),
+                VerifiedCrossingAuthorityAdmission::AuthorityBroker(_) => None,
             })
     })
 }
@@ -16182,7 +16229,7 @@ struct ActiveCrossingTransactionGuard {
 }
 
 impl ActiveCrossingTransactionGuard {
-    fn activate(
+    fn activate_prebound(
         repo_root: &Path,
         admission: Option<&GrantAdmissionEvidence>,
     ) -> Result<Option<Self>, String> {
@@ -16198,6 +16245,153 @@ impl ActiveCrossingTransactionGuard {
         ));
         let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
         Ok(Some(Self { previous }))
+    }
+
+    fn activate_existing(
+        transaction: crate::crossing_transaction::CrossingTransactionGuard,
+    ) -> Self {
+        let transaction = Rc::new(RefCell::new(transaction));
+        let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
+        Self { previous }
+    }
+}
+
+fn crossing_authority_plan_preview(
+    plan: &CrossingAuthorityPlan,
+) -> crate::output::CrossingGrantAdmissionPreview {
+    match plan {
+        CrossingAuthorityPlan::PreboundFile(admission) => {
+            crate::output::CrossingGrantAdmissionPreview {
+                decision: String::from("admissible_not_consumed"),
+                authority_carrier: None,
+                authority_id: admission.authority_id.clone(),
+                authority_binding_identity: admission.authority_binding_identity.clone(),
+                issuer_id: Some(admission.issuer_id.clone()),
+                key_id: Some(admission.key_id.clone()),
+                key_fingerprint: Some(admission.key_fingerprint.clone()),
+                bundle_id: Some(admission.bundle_id.clone()),
+                bundle_identity: Some(admission.bundle_identity.clone()),
+                bundle_sequence: Some(admission.bundle_sequence),
+                grant_id: Some(admission.grant_id.clone()),
+                grant_identity: Some(admission.grant_identity.clone()),
+                scope_identity: admission.scope_identity.clone(),
+                contract_identity: admission.contract_identity.clone(),
+                boundary_family: admission.boundary_family.clone(),
+                classification: admission.classification.clone(),
+                actor_mode: admission.actor_mode.clone(),
+                environment_posture: Some(admission.environment_posture.clone()),
+                expiry_kind: Some(admission.expiry_kind.clone()),
+                issued_at: Some(admission.issued_at.clone()),
+                not_before: Some(admission.not_before.clone()),
+                next_update: Some(admission.next_update.clone()),
+                expires_at: Some(admission.expires_at.clone()),
+                clock_evidence: Some(admission.clock_evidence.clone()),
+                sequence_evidence: Some(admission.sequence_evidence.clone()),
+                revocation_evidence: Some(admission.revocation_evidence.clone()),
+                admitted_at: Some(admission.admitted_at.clone()),
+            }
+        }
+        CrossingAuthorityPlan::AuthorityBroker {
+            binding,
+            semantic_scope,
+            actor_mode,
+        } => crate::output::CrossingGrantAdmissionPreview {
+            decision: String::from("requires_live_authorization"),
+            authority_carrier: Some(String::from("authority_broker")),
+            authority_id: binding.authority_id.clone(),
+            authority_binding_identity: binding.identity.clone(),
+            issuer_id: None,
+            key_id: None,
+            key_fingerprint: None,
+            bundle_id: None,
+            bundle_identity: None,
+            bundle_sequence: None,
+            grant_id: None,
+            grant_identity: None,
+            scope_identity: semantic_scope.identity.clone(),
+            contract_identity: semantic_scope.contract_identity.clone(),
+            boundary_family: semantic_scope.boundary_family.clone(),
+            classification: semantic_scope.classification.clone(),
+            actor_mode: actor_mode.clone(),
+            environment_posture: None,
+            expiry_kind: None,
+            issued_at: None,
+            not_before: None,
+            next_update: None,
+            expires_at: None,
+            clock_evidence: None,
+            sequence_evidence: None,
+            revocation_evidence: None,
+            admitted_at: None,
+        },
+    }
+}
+
+fn activate_crossing_authority_plan(
+    repo_root: &Path,
+    plan: CrossingAuthorityPlan,
+) -> Result<(ActiveCrossingGrantGuard, ActiveCrossingTransactionGuard), GrantAdmissionError> {
+    match plan {
+        CrossingAuthorityPlan::PreboundFile(admission) => {
+            let transaction =
+                ActiveCrossingTransactionGuard::activate_prebound(repo_root, Some(&admission))
+                    .map_err(|details| {
+                        GrantAdmissionError::new("crossing_transaction_unavailable", details)
+                            .with_scope(admission.semantic_scope.clone())
+                    })?
+                    .expect("a verified prebound admission should create one transaction");
+            let authority = ActiveCrossingGrantGuard::activate(Some(
+                VerifiedCrossingAuthorityAdmission::PreboundFile(admission),
+            ));
+            Ok((authority, transaction))
+        }
+        CrossingAuthorityPlan::AuthorityBroker {
+            binding,
+            semantic_scope,
+            actor_mode,
+        } => {
+            #[cfg(unix)]
+            {
+                let interrupt_epoch = crate::runner::begin_command_interrupt_observation();
+                let prepared = crate::broker_session::PreparedBrokerCrossing::prepare(
+                    binding.clone(),
+                    &semantic_scope,
+                    actor_mode.as_str(),
+                    binding.maximum_lease_seconds,
+                    || crate::runner::command_interrupted_since(interrupt_epoch),
+                )
+                .map_err(|details| {
+                    GrantAdmissionError::new("crossing_broker_admission_refused", details)
+                        .with_authority_source("authority_broker")
+                        .with_scope(semantic_scope.clone())
+                })?;
+                let consumed = prepared
+                    .consume(repo_root, || {
+                        crate::runner::command_interrupted_since(interrupt_epoch)
+                    })
+                    .map_err(|details| {
+                        GrantAdmissionError::new("crossing_broker_consumption_refused", details)
+                            .with_authority_source("authority_broker")
+                            .with_scope(semantic_scope.clone())
+                    })?;
+                let (admission, transaction) = consumed.into_parts();
+                let transaction = ActiveCrossingTransactionGuard::activate_existing(transaction);
+                let authority = ActiveCrossingGrantGuard::activate(Some(
+                    VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission),
+                ));
+                Ok((authority, transaction))
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (binding, actor_mode, repo_root);
+                Err(GrantAdmissionError::new(
+                    "crossing_broker_platform_unsupported",
+                    "the launcher-session broker carrier is supported only on Unix platforms",
+                )
+                .with_authority_source("authority_broker")
+                .with_scope(semantic_scope))
+            }
+        }
     }
 }
 
@@ -16216,6 +16410,22 @@ struct ArchivedCrossingGrantEvidence {
     carrier_admission: Option<crate::crossing_authority::CrossingAuthorityAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+enum ArchivedCrossingAuthorityEvidence {
+    PreboundFile(ArchivedCrossingGrantEvidence),
+    AuthorityBroker(crate::broker_session::BrokerArchiveEvidence),
+}
+
+impl ArchivedCrossingAuthorityEvidence {
+    fn semantic_scope(&self) -> &crate::crossing::CrossingSemanticScope {
+        match self {
+            Self::PreboundFile(evidence) => &evidence.admission.semantic_scope,
+            Self::AuthorityBroker(evidence) => &evidence.admission.semantic_scope,
+        }
+    }
 }
 
 fn active_crossing_transaction_evidence()
@@ -16287,31 +16497,33 @@ fn crossing_grant_authority_output_with_transaction(
 ) -> crate::output::ExecutionBoundaryCrossingAuthority {
     crate::output::ExecutionBoundaryCrossingAuthority {
         decision: admission.decision.clone(),
+        authority_carrier: None,
         authority_id: admission.authority_id.clone(),
         authority_separation_posture: String::from("current_process_filesystem_guarded"),
         authority_binding_identity: admission.authority_binding_identity.clone(),
-        issuer_id: admission.issuer_id.clone(),
-        key_id: admission.key_id.clone(),
-        key_fingerprint: admission.key_fingerprint.clone(),
-        bundle_id: admission.bundle_id.clone(),
-        bundle_identity: admission.bundle_identity.clone(),
-        bundle_sequence: admission.bundle_sequence,
-        grant_id: admission.grant_id.clone(),
-        grant_identity: admission.grant_identity.clone(),
+        broker: None,
+        issuer_id: Some(admission.issuer_id.clone()),
+        key_id: Some(admission.key_id.clone()),
+        key_fingerprint: Some(admission.key_fingerprint.clone()),
+        bundle_id: Some(admission.bundle_id.clone()),
+        bundle_identity: Some(admission.bundle_identity.clone()),
+        bundle_sequence: Some(admission.bundle_sequence),
+        grant_id: Some(admission.grant_id.clone()),
+        grant_identity: Some(admission.grant_identity.clone()),
         scope_identity: admission.scope_identity.clone(),
         contract_identity: admission.contract_identity.clone(),
         boundary_family: admission.boundary_family.clone(),
         classification: admission.classification.clone(),
         actor_mode: admission.actor_mode.clone(),
-        environment_posture: admission.environment_posture.clone(),
-        expiry_kind: admission.expiry_kind.clone(),
-        issued_at: admission.issued_at.clone(),
-        not_before: admission.not_before.clone(),
-        next_update: admission.next_update.clone(),
-        expires_at: admission.expires_at.clone(),
-        clock_evidence: admission.clock_evidence.clone(),
-        sequence_evidence: admission.sequence_evidence.clone(),
-        revocation_evidence: admission.revocation_evidence.clone(),
+        environment_posture: Some(admission.environment_posture.clone()),
+        expiry_kind: Some(admission.expiry_kind.clone()),
+        issued_at: Some(admission.issued_at.clone()),
+        not_before: Some(admission.not_before.clone()),
+        next_update: Some(admission.next_update.clone()),
+        expires_at: Some(admission.expires_at.clone()),
+        clock_evidence: Some(admission.clock_evidence.clone()),
+        sequence_evidence: Some(admission.sequence_evidence.clone()),
+        revocation_evidence: Some(admission.revocation_evidence.clone()),
         admitted_at: admission.admitted_at.clone(),
         transaction: transaction
             .as_ref()
@@ -16329,6 +16541,86 @@ fn crossing_grant_authority_output_with_transaction(
     }
 }
 
+fn crossing_authority_output_with_transaction(
+    admission: &VerifiedCrossingAuthorityAdmission,
+    transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+    include_carrier_admission: bool,
+) -> Result<crate::output::ExecutionBoundaryCrossingAuthority, String> {
+    match admission {
+        VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => {
+            Ok(crossing_grant_authority_output_with_transaction(
+                admission,
+                transaction,
+                include_carrier_admission,
+            ))
+        }
+        VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview { .. } => Err(String::from(
+            "broker preview evidence cannot be attached to an execution receipt",
+        )),
+        VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission) => {
+            let transaction = transaction.ok_or_else(|| {
+                String::from("broker authority output requires a consumed crossing transaction")
+            })?;
+            let archive =
+                crate::broker_session::build_broker_archive_evidence(admission, &transaction)?;
+            Ok(crate::output::ExecutionBoundaryCrossingAuthority {
+                decision: String::from("allowed"),
+                authority_carrier: Some(String::from("authority_broker")),
+                authority_id: admission.binding_snapshot.authority_id.clone(),
+                authority_separation_posture: String::from("launcher_attested_one_use"),
+                authority_binding_identity: admission.binding_snapshot.identity.clone(),
+                broker: Some(crate::output::ExecutionBoundaryBrokerAuthority {
+                    admission_identity: admission.identity.clone(),
+                    attestation_identity: admission.attestation_identity.clone(),
+                    authorization_decision_identity: admission
+                        .authorization_decision_identity
+                        .clone(),
+                    prepared_lease_identity: admission.prepared_lease_identity.clone(),
+                    work_unit_identity: admission.challenge.work_unit_identity.clone(),
+                    challenge_nonce_commitment: admission.challenge.nonce_commitment.clone(),
+                    broker_revision: admission.broker_revision,
+                    runner_principal: admission.attestation.payload.runner_principal.clone(),
+                    approval_reference: admission
+                        .authorization_decision
+                        .payload
+                        .approval_reference
+                        .clone(),
+                }),
+                issuer_id: None,
+                key_id: None,
+                key_fingerprint: None,
+                bundle_id: None,
+                bundle_identity: None,
+                bundle_sequence: None,
+                grant_id: None,
+                grant_identity: None,
+                scope_identity: admission.semantic_scope.identity.clone(),
+                contract_identity: admission.semantic_scope.contract_identity.clone(),
+                boundary_family: admission.semantic_scope.boundary_family.clone(),
+                classification: admission.semantic_scope.classification.clone(),
+                actor_mode: admission.actor_mode.clone(),
+                environment_posture: None,
+                expiry_kind: None,
+                issued_at: None,
+                not_before: None,
+                next_update: None,
+                expires_at: Some(admission.prepared_lease.payload.expires_at.clone()),
+                clock_evidence: None,
+                sequence_evidence: None,
+                revocation_evidence: None,
+                admitted_at: admission.admitted_at.clone(),
+                transaction: Some(
+                    serde_json::to_value(&transaction).map_err(|error| {
+                        format!("failed to serialize broker transaction: {error}")
+                    })?,
+                ),
+                archive_evidence: serde_json::to_value(archive)
+                    .map_err(|error| format!("failed to serialize broker archive: {error}"))?,
+            })
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn evaluate_task_crossing_grant(
     contract: &Contract,
@@ -16340,7 +16632,7 @@ fn evaluate_task_crossing_grant(
     agent: bool,
     grant: Option<&str>,
     sandbox_target: Option<&str>,
-) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
     let authority_configured = contract.governance.crossing_authority.is_some();
     if !authority_configured {
         return match grant {
@@ -16393,10 +16685,11 @@ fn evaluate_workflow_crossing_grant(
     overrides: ExecutionOverrides,
     effect_overrides: &[String],
     run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
     agent: bool,
     grant: Option<&str>,
     sandbox_target: Option<&str>,
-) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
     let authority_configured = contract.governance.crossing_authority.is_some();
     if !authority_configured {
         return match grant {
@@ -16431,6 +16724,7 @@ fn evaluate_workflow_crossing_grant(
             effect_overrides,
             sandbox_target,
             up_run_behavior_preference_label(run_behavior_preference),
+            ready_timeout.map(|timeout| timeout.as_secs()),
             requirement
                 .boundary_family
                 .map(|family| family.label())
@@ -16460,7 +16754,7 @@ fn evaluate_proof_workflow_crossing_grant(
     proof_kind: &str,
     agent: bool,
     grant: Option<&str>,
-) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
     let authority_configured = contract.governance.crossing_authority.is_some();
     if !authority_configured {
         return match grant {
@@ -16527,6 +16821,7 @@ fn evaluate_proof_workflow_crossing_grant(
             &[],
             None,
             Some(proof_kind),
+            None,
             requirement
                 .boundary_family
                 .map(|family| family.label())
@@ -16536,6 +16831,9 @@ fn evaluate_proof_workflow_crossing_grant(
                 .map(|classification| classification.label())
                 .unwrap_or("unknown"),
         )
+        .and_then(|scope| {
+            crossing_scope_with_workflow_instance_selection(scope, contract, workflow_name)
+        })
         .and_then(|scope| crossing_scope_with_proof_invocations(scope, proof_invocations.to_vec()))
         .and_then(|scope| {
             crossing_scope_with_proof_transaction_selection(scope, proof_transaction_selection)
@@ -16553,7 +16851,7 @@ fn evaluate_selected_crossing_grant(
     requirement: crate::crossing::CrossingRequirement,
     agent: bool,
     grant: Option<&str>,
-) -> Result<Option<GrantAdmissionEvidence>, GrantAdmissionError> {
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
     match requirement.required {
         Some(false) => {
             return match grant {
@@ -16578,13 +16876,6 @@ fn evaluate_selected_crossing_grant(
             format!("failed to derive the canonical crossing scope: {details}"),
         )
     })?;
-    let grant = grant.ok_or_else(|| {
-        GrantAdmissionError::new(
-            "crossing_grant_required",
-            "the selected execution closure crosses a governed boundary and requires `--grant <id>`",
-        )
-        .with_scope(scope.clone())
-    })?;
     let boundary_family = requirement
         .boundary_family
         .map(|family| family.label())
@@ -16603,18 +16894,73 @@ fn evaluate_selected_crossing_grant(
                 "a required crossing is missing its derived classification",
             )
         })?;
-    admit_prebound_file_grant(
-        contract,
+    let authority_id = contract
+        .governance
+        .crossing_authority
+        .as_ref()
+        .map(|authority| authority.authority_id.trim())
+        .filter(|authority| !authority.is_empty())
+        .ok_or_else(|| {
+            GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "the selected contract does not name a crossing authority",
+            )
+        })?;
+    let selected = crate::crossing_authority::select_crossing_authority_binding(
         contract_working_dir(contract_path),
-        &scope,
-        grant,
-        boundary_family,
-        classification,
-        grant_actor_mode_label(agent),
-        OffsetDateTime::now_utc(),
+        authority_id,
     )
-    .map(Some)
-    .map_err(|error| error.with_scope(scope))
+    .or_else(|error| {
+        if grant.is_none() && error.reason == "crossing_authority_unknown" {
+            Err(GrantAdmissionError::new(
+                "crossing_grant_required",
+                "the selected execution closure crosses a governed boundary and requires `--grant <id>` unless the contract authority resolves to a protected broker binding",
+            )
+            .with_scope(scope.clone()))
+        } else {
+            Err(error.with_scope(scope.clone()))
+        }
+    })?;
+    match selected {
+        crate::crossing_authority::SelectedCrossingAuthorityBinding::PreboundFile(_) => {
+            let grant = grant.ok_or_else(|| {
+                GrantAdmissionError::new(
+                    "crossing_grant_required",
+                    "the selected execution closure crosses a governed boundary and requires `--grant <id>`",
+                )
+                .with_scope(scope.clone())
+            })?;
+            admit_prebound_file_grant(
+                contract,
+                contract_working_dir(contract_path),
+                &scope,
+                grant,
+                boundary_family,
+                classification,
+                grant_actor_mode_label(agent),
+                OffsetDateTime::now_utc(),
+            )
+            .map(|admission| Some(CrossingAuthorityPlan::PreboundFile(admission)))
+            .map_err(|error| error.with_scope(scope))
+        }
+        crate::crossing_authority::SelectedCrossingAuthorityBinding::AuthorityBroker(binding) => {
+            if let Some(selected_authority) = grant
+                && selected_authority != authority_id
+            {
+                return Err(GrantAdmissionError::new(
+                    "crossing_authority_selection_mismatch",
+                    "`--grant` may only select the contract-bound broker authority label; broker lease identities are not caller inputs",
+                )
+                .with_authority_source("authority_broker")
+                .with_scope(scope));
+            }
+            Ok(Some(CrossingAuthorityPlan::AuthorityBroker {
+                binding,
+                semantic_scope: scope,
+                actor_mode: grant_actor_mode_label(agent).to_string(),
+            }))
+        }
+    }
 }
 
 fn build_task_crossing_record(
@@ -21553,7 +21899,7 @@ fn render_run_preview_target(
         &preconditions_report,
         overrides,
     );
-    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate(grant_admission);
+    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate_preview(grant_admission);
     if let Some(refusal) = refusal.as_ref() {
         summary.verdict = DoctorVerdict::AgentBlocked;
         summary.agent_verdict = DoctorVerdict::AgentBlocked;
@@ -21602,7 +21948,12 @@ fn render_run_preview_target(
     if let Some(authority) = active_crossing_grant_preview() {
         text.push_str(&format!(
             "\n\nCrossing Grant: admitted `{}` from authority `{}`\nScope: `{}`",
-            authority.grant_id, authority.authority_id, authority.scope_identity
+            authority
+                .grant_id
+                .as_deref()
+                .unwrap_or("broker_authorization"),
+            authority.authority_id,
+            authority.scope_identity
         ));
     }
 
@@ -21769,7 +22120,7 @@ fn render_crossing_grant_preview_refusal(
             "execution_started": false,
             "crossing_grant_admission": {
                 "decision": "refused",
-                "authority_source": "prebound_file",
+                "authority_source": error.authority_source.unwrap_or("prebound_file"),
                 "authority_id": contract.governance.crossing_authority.as_ref().map(|authority| authority.authority_id.as_str()),
                 "requested_grant_id": grant,
                 "reason_family": error.reason,
@@ -21960,6 +22311,47 @@ fn preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
                     .iter()
                     .any(|target| finding_targets_toolchain_run_fulfillment(finding, target))
         })
+}
+
+fn pre_authority_errors_are_fully_resolvable(
+    findings: &[Finding],
+    provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+    activation_actions: &[RequirementActivationAction],
+    toolchain_fulfillment_targets: &[ToolchainRunFulfillmentTarget],
+    workflow_preparation_available: bool,
+) -> bool {
+    let error_findings = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .collect::<Vec<_>>();
+    !error_findings.is_empty()
+        && error_findings.iter().all(|finding| {
+            provisioning_actions
+                .iter()
+                .any(|action| finding_targets_provisioning_action(finding, action))
+                || activation_actions
+                    .iter()
+                    .any(|action| finding_targets_activation_action(finding, action))
+                || toolchain_fulfillment_targets
+                    .iter()
+                    .any(|target| finding_targets_toolchain_run_fulfillment(finding, target))
+                || (workflow_preparation_available
+                    && workflow_preparation_may_resolve_finding(finding))
+        })
+}
+
+fn workflow_preparation_may_resolve_finding(finding: &Finding) -> bool {
+    is_workflow_surface_readiness_finding(finding)
+        || matches!(
+            finding.code(),
+            "OTA_CHECK_FAILED"
+                | "OTA_CHECK_TIMED_OUT"
+                | "OTA_FILE_CHECK_FAILED"
+                | "OTA_FILE_CHECK_TIMED_OUT"
+                | "OTA_SERVICE_READINESS_FAILED"
+                | "OTA_SERVICE_CHECK_FAILED"
+                | "OTA_SERVICE_CHECK_TIMED_OUT"
+        )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -39074,7 +39466,7 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
         _ => {}
     }
     if let Some(authority) = crossing.and_then(|crossing| crossing.authority.as_ref()) {
-        let archived = serde_json::from_value::<ArchivedCrossingGrantEvidence>(
+        let archived = serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
             authority.archive_evidence.clone(),
         )
         .map_err(|error| {
@@ -39083,43 +39475,6 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                 compact_path(path, ".")
             )
         })?;
-        let transaction = archived.transaction.as_ref().ok_or_else(|| {
-            format!(
-                "receipt archive `{}` carries crossing authority without terminal transaction evidence",
-                compact_path(path, ".")
-            )
-        })?;
-        match transaction.schema_version {
-            1 if archived.carrier_admission.is_some() => {
-                return Err(format!(
-                    "receipt archive `{}` carries carrier admission evidence incompatible with a legacy v1 transaction",
-                    compact_path(path, ".")
-                ));
-            }
-            crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION
-                if archived.carrier_admission.is_none() =>
-            {
-                return Err(format!(
-                    "receipt archive `{}` omits carrier admission evidence required by its v2 transaction",
-                    compact_path(path, ".")
-                ));
-            }
-            _ => {}
-        }
-        if let Some(carrier_admission) = archived.carrier_admission.as_ref() {
-            let expected_carrier_admission = archived.admission.crossing_admission().map_err(|error| {
-                format!(
-                    "receipt archive `{}` cannot derive its carrier-neutral crossing admission: {error}",
-                    compact_path(path, ".")
-                )
-            })?;
-            if carrier_admission != &expected_carrier_admission {
-                return Err(format!(
-                    "receipt archive `{}` carries carrier-neutral admission evidence that does not match its signed file-grant admission",
-                    compact_path(path, ".")
-                ));
-            }
-        }
         let archive_scope = record
             .payload
             .archive_context
@@ -39131,46 +39486,107 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                     compact_path(path, ".")
                 )
             })?;
-        if archive_scope != &archived.admission.semantic_scope {
+        if archive_scope != archived.semantic_scope() {
             return Err(format!(
-                "receipt archive `{}` selected-invocation scope does not match its signed crossing admission",
+                "receipt archive `{}` selected-invocation scope does not match its crossing authority admission",
                 compact_path(path, ".")
             ));
         }
-        let expected = crossing_grant_authority_output_with_transaction(
-            &archived.admission,
-            Some(transaction.clone()),
-            transaction.schema_version
-                == crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION,
-        );
+        let repo_root = repo_root_from_archive_path(path).ok_or_else(|| {
+            format!(
+                "receipt archive `{}` is not under the canonical repo archive root",
+                compact_path(path, ".")
+            )
+        })?;
+        let (transaction, transaction_admission, expected) = match &archived {
+            ArchivedCrossingAuthorityEvidence::PreboundFile(archived) => {
+                let transaction = archived.transaction.as_ref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` carries crossing authority without terminal transaction evidence",
+                        compact_path(path, ".")
+                    )
+                })?;
+                match transaction.schema_version {
+                    1 if archived.carrier_admission.is_some() => {
+                        return Err(format!(
+                            "receipt archive `{}` carries carrier admission evidence incompatible with a legacy v1 transaction",
+                            compact_path(path, ".")
+                        ));
+                    }
+                    crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION
+                        if archived.carrier_admission.is_none() =>
+                    {
+                        return Err(format!(
+                            "receipt archive `{}` omits carrier admission evidence required by its v2 transaction",
+                            compact_path(path, ".")
+                        ));
+                    }
+                    _ => {}
+                }
+                let transaction_admission = archived.admission.crossing_admission().map_err(|error| {
+                    format!(
+                        "receipt archive `{}` cannot derive its carrier-neutral crossing admission: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                if let Some(carrier_admission) = archived.carrier_admission.as_ref()
+                    && carrier_admission != &transaction_admission
+                {
+                    return Err(format!(
+                        "receipt archive `{}` carries carrier-neutral admission evidence that does not match its signed file-grant admission",
+                        compact_path(path, ".")
+                    ));
+                }
+                crate::crossing_authority::verify_archived_grant_admission(
+                    &crossing_contract,
+                    repo_root,
+                    &archived.admission,
+                )
+                .map_err(|error| {
+                    format!(
+                        "receipt archive `{}` contains unreconciled crossing authority evidence: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let expected = crossing_grant_authority_output_with_transaction(
+                    &archived.admission,
+                    Some(transaction.clone()),
+                    transaction.schema_version
+                        == crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION,
+                );
+                (transaction, transaction_admission, expected)
+            }
+            ArchivedCrossingAuthorityEvidence::AuthorityBroker(archived) => {
+                let transaction_admission =
+                    crate::broker_session::verify_broker_archive_evidence(repo_root, archived)
+                        .map_err(|error| {
+                            format!(
+                                "receipt archive `{}` contains unreconciled broker authority evidence: {error}",
+                                compact_path(path, ".")
+                            )
+                        })?;
+                let expected = crossing_authority_output_with_transaction(
+                    &VerifiedCrossingAuthorityAdmission::AuthorityBroker(
+                        archived.admission.clone(),
+                    ),
+                    Some(archived.transaction.clone()),
+                    true,
+                )
+                .map_err(|error| {
+                    format!(
+                        "receipt archive `{}` cannot project broker authority evidence: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                (&archived.transaction, transaction_admission, expected)
+            }
+        };
         if &expected != authority {
             return Err(format!(
-                "receipt archive `{}` contains crossing authority fields that do not match its signed archive evidence",
+                "receipt archive `{}` contains crossing authority fields that do not match its carrier archive evidence",
                 compact_path(path, ".")
             ));
         }
-        crate::crossing_authority::verify_archived_grant_admission(
-            &crossing_contract,
-            repo_root_from_archive_path(path).ok_or_else(|| {
-                format!(
-                    "receipt archive `{}` is not under the canonical repo archive root",
-                    compact_path(path, ".")
-                )
-            })?,
-            &archived.admission,
-        )
-        .map_err(|error| {
-            format!(
-                "receipt archive `{}` contains unreconciled crossing authority evidence: {error}",
-                compact_path(path, ".")
-            )
-        })?;
-        let transaction_admission = archived.admission.crossing_admission().map_err(|error| {
-            format!(
-                "receipt archive `{}` cannot derive its carrier-neutral crossing admission: {error}",
-                compact_path(path, ".")
-            )
-        })?;
         crate::crossing_transaction::verify_crossing_transaction_evidence(
             transaction,
             &transaction_admission,
@@ -39187,7 +39603,12 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                 compact_path(path, ".")
             )
         })?;
-        verify_archived_crossing_record(crossing, &archived.admission).map_err(|error| {
+        verify_archived_crossing_record(
+            crossing,
+            archived.semantic_scope(),
+            transaction_admission.actor_mode.as_str(),
+        )
+        .map_err(|error| {
             format!(
                 "receipt archive `{}` contains a crossing record that does not match its admitted semantic scope: {error}",
                 compact_path(path, ".")
@@ -39431,6 +39852,7 @@ fn rederive_archived_crossing_scope(
                 &selection.effect_overrides,
                 selection.sandbox_target.as_deref(),
                 up_run_behavior_preference_label(run_behavior),
+                selection.ready_timeout_seconds,
                 requirement
                     .boundary_family
                     .map(|family| family.label())
@@ -39465,13 +39887,14 @@ fn rederive_archived_crossing_scope(
 
 fn verify_archived_crossing_record(
     crossing: &crate::output::ExecutionBoundaryCrossing,
-    admission: &GrantAdmissionEvidence,
+    semantic_scope: &crate::crossing::CrossingSemanticScope,
+    admitted_actor_mode: &str,
 ) -> Result<(), String> {
-    let lane_kind = match admission.semantic_scope.lane.kind {
+    let lane_kind = match semantic_scope.lane.kind {
         crate::sandbox_policy::SandboxLaneKind::Task => "task",
         crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
     };
-    let lane_id = format!("{lane_kind}:{}", admission.semantic_scope.lane.name);
+    let lane_id = format!("{lane_kind}:{}", semantic_scope.lane.name);
     let actor_mode = match crossing.actor_mode.as_str() {
         "agent" | "non_agent" => crossing.actor_mode.as_str(),
         _ => {
@@ -39482,9 +39905,9 @@ fn verify_archived_crossing_record(
     };
     if crossing.lane_kind != lane_kind
         || crossing.lane_id != lane_id
-        || crossing.boundary_family != admission.boundary_family
-        || crossing.classification != admission.classification
-        || actor_mode != admission.actor_mode
+        || crossing.boundary_family != semantic_scope.boundary_family
+        || crossing.classification != semantic_scope.classification
+        || actor_mode != admitted_actor_mode
         || crossing.requirement_source != "derived"
         || crossing.principal_attribution_state != "runner_mode_only"
         || crossing.evidence_attachment_state != "receipt_attached"
@@ -58687,7 +59110,12 @@ fn render_up_preview_result(
             if let Some(authority) = crossing_grant_admission {
                 stdout.push_str(&format!(
                     "\n\nCrossing Grant: admissible `{}` from authority `{}`\nScope: `{}`",
-                    authority.grant_id, authority.authority_id, authority.scope_identity
+                    authority
+                        .grant_id
+                        .as_deref()
+                        .unwrap_or("broker_authorization"),
+                    authority.authority_id,
+                    authority.scope_identity
                 ));
             }
             CommandOutput {
@@ -59237,11 +59665,14 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::os::{fd::IntoRawFd, unix::net::UnixStream};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::thread;
     use std::time::{Duration, Instant};
 
+    use jsonschema::{Draft, JSONSchema};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -71090,6 +71521,796 @@ tasks:
     }
 
     #[test]
+    fn broker_authority_dry_run_selects_scope_without_contact_or_consumption() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-preview
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    safe_for_agent: false
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            None,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("broker preview JSON");
+        super::validate_payload_with_schema("run-preview.json", &json)
+            .expect("broker preview must match the published schema");
+        let admission = &json["crossing_grant_admission"];
+        assert_eq!(admission["decision"], "requires_live_authorization");
+        assert_eq!(admission["authority_carrier"], "authority_broker");
+        assert_eq!(admission["authority_id"], binding.authority_id);
+        assert!(admission.get("grant_id").is_none());
+        assert!(admission.get("admitted_at").is_none());
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_does_not_consume_before_run_interaction_refusal() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-run-interaction
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+      interaction: required
+    safe_for_agent: false
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("interactive release"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        // SAFETY: the test transferred ownership out of `ota` and no launcher session was opened.
+        unsafe { libc::close(descriptor) };
+
+        assert_eq!(output.exit_code, 1);
+        let rendered = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            rendered.contains("declares `interaction: required`"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("crossing_broker_admission_refused"));
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_does_not_consume_before_up_interaction_refusal() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-up-interaction
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  prepare:
+    run: touch should-not-exist
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "true"]
+      interaction: required
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: prepare
+    run:
+      task: publish
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release"),
+            &[],
+            false,
+            None,
+            Some("interactive release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow refusal result");
+        // SAFETY: the test transferred ownership out of `ota` and no launcher session was opened.
+        unsafe { libc::close(descriptor) };
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert!(result.report.findings.iter().any(|finding| {
+            finding
+                .identity
+                .as_ref()
+                .is_some_and(|identity| identity.code == "OTA_INTERACTION_REQUIRED")
+        }));
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_does_not_consume_for_unresolvable_up_preflight() {
+        let _env_guard = env_mutex_lock();
+        unsafe {
+            std::env::remove_var("OTA_TEST_BROKER_UP_REQUIRED");
+        }
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-up-preflight
+governance:
+  crossing_authority:
+    authority_id: {}
+env:
+  vars:
+    OTA_TEST_BROKER_UP_REQUIRED:
+      required: true
+tasks:
+  prepare:
+    run: touch preparation-should-not-exist
+  publish:
+    run: touch should-not-exist
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: prepare
+    run:
+      task: publish
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release"),
+            &[],
+            false,
+            None,
+            Some("governed release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow preflight result");
+        // SAFETY: no launcher session was opened, so the test still owns the transferred fd.
+        unsafe { libc::close(descriptor) };
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert!(
+            result
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.contains("OTA_TEST_BROKER_UP_REQUIRED"))
+        );
+        assert!(!repo.path().join("preparation-should-not-exist").exists());
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_preflights_prerequisite_instances_before_consumption() {
+        let _env_guard = env_mutex_lock();
+        unsafe {
+            std::env::remove_var("OTA_TEST_BROKER_INSTANCE_REQUIRED");
+        }
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-instance-preflight
+governance:
+  crossing_authority:
+    authority_id: {}
+env:
+  vars:
+    OTA_TEST_BROKER_INSTANCE_REQUIRED:
+      required: true
+tasks:
+  publish:
+    run: touch should-not-exist
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+    instances:
+      default: west
+      base: {{}}
+      west:
+        topology:
+          requires_instances: [base]
+        env:
+          OTA_TEST_BROKER_INSTANCE_REQUIRED: selected-instance-value
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release@west"),
+            &[],
+            false,
+            None,
+            Some("governed instance release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow prerequisite preflight result");
+        // SAFETY: prerequisite refusal occurs before the launcher session takes ownership.
+        unsafe { libc::close(descriptor) };
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert!(result.report.findings.iter().any(|finding| {
+            finding
+                .summary
+                .contains("OTA_TEST_BROKER_INSTANCE_REQUIRED")
+        }));
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_consumes_once_before_run_and_keeps_launcher_fd_private() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, signing_key) =
+            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-run
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "( true <&{} ) 2>/dev/null && exit 42; touch broker-executed"]
+    safe_for_agent: false
+"#,
+                binding.authority_id, descriptor
+            ),
+        )
+        .expect("write contract");
+        let broker = crate::broker_session::tests::spawn_allowing_test_broker(
+            launcher,
+            binding,
+            signing_key,
+            time::OffsetDateTime::now_utc(),
+        );
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("approved release"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        broker.join().expect("broker thread");
+
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
+        assert!(repo.path().join("broker-executed").exists());
+        let rendered = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(rendered.contains("Status:      success"), "{rendered}");
+        fs::remove_file(repo.path().join("broker-executed")).expect("remove first-run sentinel");
+        let replay = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("replay attempt"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        assert_eq!(replay.exit_code, 1);
+        assert!(
+            strip_ansi_codes(replay.stderr.as_deref().unwrap_or_default())
+                .contains("crossing_broker_admission_refused")
+        );
+        assert!(!repo.path().join("broker-executed").exists());
+        let archives = super::scan_repo_receipt_archives(repo.path()).expect("receipt history");
+        assert_eq!(archives.archives.len(), 1);
+        assert!(archives.invalid_archives.is_empty());
+        let authority = archives.archives[0]
+            .payload
+            .receipt
+            .crossing
+            .as_ref()
+            .and_then(|crossing| crossing.authority.as_ref())
+            .expect("broker authority receipt");
+        assert_eq!(
+            authority.authority_carrier.as_deref(),
+            Some("authority_broker")
+        );
+        assert_eq!(
+            authority
+                .transaction
+                .as_ref()
+                .and_then(|transaction| transaction.get("state"))
+                .and_then(serde_json::Value::as_str),
+            Some("completed")
+        );
+        let archive_path = archives.archives[0].archive_path.clone();
+        let original_archive = fs::read(&archive_path).expect("broker archive bytes");
+
+        let mut stripped_consumption: serde_json::Value =
+            serde_json::from_slice(&original_archive).expect("broker archive JSON");
+        stripped_consumption["receipt"]["crossing"]["authority"]["archive_evidence"]["transaction"]
+            .as_object_mut()
+            .expect("archived broker transaction")
+            .remove("broker_consumption");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&stripped_consumption).expect("stripped archive JSON"),
+        )
+        .expect("write stripped broker archive");
+        let stripped_scan = super::scan_repo_receipt_archives(repo.path()).expect("stripped scan");
+        assert!(stripped_scan.archives.is_empty());
+        assert_eq!(stripped_scan.invalid_archives.len(), 1);
+
+        let mut substituted_carrier: serde_json::Value =
+            serde_json::from_slice(&original_archive).expect("broker archive JSON");
+        substituted_carrier["receipt"]["crossing"]["authority"]["archive_evidence"]["transaction"]
+            ["authority_carrier"] = serde_json::Value::String(String::from("prebound_file"));
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&substituted_carrier).expect("substituted archive JSON"),
+        )
+        .expect("write substituted broker archive");
+        let substituted_scan =
+            super::scan_repo_receipt_archives(repo.path()).expect("substituted scan");
+        assert!(substituted_scan.archives.is_empty());
+        assert_eq!(substituted_scan.invalid_archives.len(), 1);
+
+        fs::write(&archive_path, original_archive).expect("restore broker archive");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_consumption_covers_real_workflow_execution() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, signing_key) =
+            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            ota.into_raw_fd(),
+        );
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-up
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch broker-workflow-executed"]
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: publish
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+        let broker = crate::broker_session::tests::spawn_allowing_test_broker(
+            launcher,
+            binding,
+            signing_key,
+            time::OffsetDateTime::now_utc(),
+        );
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release"),
+            &[],
+            false,
+            None,
+            Some("approved release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow result");
+        broker.join().expect("broker thread");
+
+        assert!(
+            result.ok,
+            "status={} phase={} stderr={} findings={:?} receipt={:?}",
+            result.status, result.phase, result.stderr, result.report.findings, result.receipt
+        );
+        assert!(repo.path().join("broker-workflow-executed").exists());
+        let authority = result
+            .receipt
+            .crossing
+            .as_ref()
+            .and_then(|crossing| crossing.authority.as_ref())
+            .expect("workflow broker authority");
+        assert_eq!(
+            authority.authority_carrier.as_deref(),
+            Some("authority_broker")
+        );
+
+        let receipt_schema = super::load_json_value(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/receipt.json"),
+        )
+        .expect("receipt schema");
+        let mut authority_schema = receipt_schema["oneOf"][0]["properties"]["receipt"]
+            ["properties"]["crossing"]["properties"]["authority"]
+            .clone();
+        authority_schema["$defs"] = receipt_schema["$defs"].clone();
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft202012)
+            .compile(&authority_schema)
+            .expect("broker authority schema");
+        let authority_json = serde_json::to_value(authority).expect("broker authority JSON");
+        assert!(
+            authority_json
+                .pointer(
+                    "/archive_evidence/admission/binding_snapshot/credential_delivery/descriptor"
+                )
+                .is_none(),
+            "public broker evidence must not serialize the protected launcher descriptor"
+        );
+        if let Err(errors) = compiled.validate(&authority_json) {
+            panic!(
+                "broker authority must match the published receipt schema: {}",
+                errors
+                    .map(|error| error.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+
+        let mut missing_consumption = authority_json.clone();
+        missing_consumption["transaction"]
+            .as_object_mut()
+            .expect("transaction object")
+            .remove("broker_consumption");
+        missing_consumption["archive_evidence"]["transaction"]
+            .as_object_mut()
+            .expect("archive transaction object")
+            .remove("broker_consumption");
+        assert!(compiled.validate(&missing_consumption).is_err());
+
+        let mut invalid_descriptor = authority_json.clone();
+        invalid_descriptor["archive_evidence"]["admission"]["binding_snapshot"]["credential_delivery"]
+            ["descriptor"] = serde_json::json!(0);
+        assert!(compiled.validate(&invalid_descriptor).is_err());
+
+        let mut unsupported_claim_extension = authority_json.clone();
+        unsupported_claim_extension["archive_evidence"]["admission"]["binding_snapshot"]["attestation"]
+            ["required_administrator_claims"] = serde_json::json!(["custom_claim"]);
+        assert!(compiled.validate(&unsupported_claim_extension).is_err());
+
+        let mut changed_mandatory_claims = authority_json.clone();
+        changed_mandatory_claims["archive_evidence"]["admission"]["binding_snapshot"]["attestation"]
+            ["mandatory_protocol_claims"] = serde_json::json!(["binding_identity"]);
+        assert!(compiled.validate(&changed_mandatory_claims).is_err());
+
+        let mut zero_freshness_margin = authority_json.clone();
+        zero_freshness_margin["archive_evidence"]["admission"]["binding_snapshot"]["minimum_post_approval_freshness_seconds"] =
+            serde_json::json!(0);
+        assert!(compiled.validate(&zero_freshness_margin).is_err());
+
+        let mut changed_message_domain = authority_json.clone();
+        changed_message_domain["archive_evidence"]["admission"]["binding_snapshot"]["message_domains"]
+            ["lease_consume"] = serde_json::json!("custom-domain");
+        assert!(compiled.validate(&changed_message_domain).is_err());
+
+        let mut path_like_principal = authority_json.clone();
+        path_like_principal["archive_evidence"]["admission"]["attestation"]["payload"]["runner_principal"] =
+            serde_json::json!("/etc/ota/operator");
+        assert!(compiled.validate(&path_like_principal).is_err());
+
+        let mut missing_breadth = authority_json.clone();
+        missing_breadth["archive_evidence"]["admission"]["semantic_scope"]
+            .as_object_mut()
+            .expect("semantic scope object")
+            .remove("breadth");
+        assert!(compiled.validate(&missing_breadth).is_err());
+
+        let mut substituted_carrier = authority_json;
+        substituted_carrier["transaction"]["authority_carrier"] =
+            serde_json::Value::String(String::from("prebound_file"));
+        substituted_carrier["archive_evidence"]["transaction"]["authority_carrier"] =
+            serde_json::Value::String(String::from("prebound_file"));
+        assert!(compiled.validate(&substituted_carrier).is_err());
+    }
+
+    #[test]
     fn governed_receipt_archive_refuses_when_crossing_evidence_is_removed() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let contract: Contract = serde_yaml::from_str(
@@ -81547,6 +82768,12 @@ workflows:
             - ws0
         env:
           INSTANCE: ws1
+      ws2:
+        topology:
+          requires_instances:
+            - ws1
+        env:
+          INSTANCE: ws2
 "#,
         );
         fs::write(&contract_path, &contents).expect("contract should write");
@@ -81557,7 +82784,7 @@ workflows:
             &contract,
             &contract_path,
             ExecutionOverrides::default(),
-            Some("app@ws1"),
+            Some("app@ws2"),
             None,
             false,
             RepoExecutionMode::Capture,
@@ -81569,7 +82796,7 @@ workflows:
         assert!(result);
 
         let rendered = fs::read_to_string(&log_path).expect("instance log should read");
-        assert_eq!(rendered, "ws0\nws1\n");
+        assert_eq!(rendered, "ws0\nws1\nws2\n");
     }
 
     #[test]
@@ -82689,6 +83916,48 @@ url = "http://localhost:${SERENA_MCP_PORT}/mcp"
         assert!(!super::finding_targets_provisioning_action(
             &finding,
             &other_action
+        ));
+    }
+
+    #[test]
+    fn mixed_resolvable_and_unresolvable_preflight_findings_refuse_before_work() {
+        let provisionable = Finding {
+            identity: None,
+            severity: FindingSeverity::Error,
+            summary: String::from("Missing runtime: java"),
+            why: String::from("java is declared but unavailable"),
+            next: String::from("install java"),
+        };
+        let unresolved = Finding {
+            identity: None,
+            severity: FindingSeverity::Error,
+            summary: String::from("Missing required environment variable: RELEASE_TOKEN"),
+            why: String::from("RELEASE_TOKEN is required"),
+            next: String::from("provide RELEASE_TOKEN"),
+        };
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: String::from("java"),
+            requested_version: String::from("21"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("sdkman"),
+            source_config: None,
+            approved_version: Some(String::from("21")),
+            policy_match: None,
+        };
+
+        assert!(super::preview_errors_are_fully_resolvable(
+            std::slice::from_ref(&provisionable),
+            std::slice::from_ref(&action),
+            &[],
+        ));
+        assert!(!super::preview_errors_are_fully_resolvable(
+            &[provisionable, unresolved],
+            &[action],
+            &[],
         ));
     }
 
@@ -100887,6 +102156,7 @@ workflows:
             &[],
             None,
             "auto",
+            None,
             "heavier_workflow",
             "escalated",
         )
@@ -100988,6 +102258,7 @@ workflows:
             &[],
             None,
             "auto",
+            None,
             "heavier_workflow",
             "escalated",
         )
@@ -103337,27 +104608,44 @@ fn run_single_contract_target(
     } else {
         None
     };
-    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate(grant_admission);
-    let _crossing_transaction_guard = ActiveCrossingTransactionGuard::activate(
-        contract_working_dir(&target.contract_path),
-        ACTIVE_CROSSING_GRANT_ADMISSION
-            .with(|active| active.borrow().clone())
-            .as_ref(),
-    )
-    .map_err(|details| {
-        crossing_grant_run_failure(
+    if grant_admission.is_some()
+        && let Some(failure) = run_selected_precondition_failure(
+            selected_task_name.as_str(),
+            overrides,
+            member,
             &target.contract,
             &target.contract_path,
-            task_name,
-            member,
-            overrides,
             show_receipt,
+            &replay_input_preflight,
             agent,
             reason,
-            grant,
-            &GrantAdmissionError::new("crossing_transaction_unavailable", details),
+            false,
         )
-    })?;
+    {
+        return Err(failure);
+    }
+    let (_crossing_grant_guard, _crossing_transaction_guard) = match grant_admission {
+        Some(plan) => {
+            let (authority, transaction) =
+                activate_crossing_authority_plan(contract_working_dir(&target.contract_path), plan)
+                    .map_err(|error| {
+                        crossing_grant_run_failure(
+                            &target.contract,
+                            &target.contract_path,
+                            task_name,
+                            member,
+                            overrides,
+                            show_receipt,
+                            agent,
+                            reason,
+                            grant,
+                            &error,
+                        )
+                    })?;
+            (Some(authority), Some(transaction))
+        }
+        None => (None, None),
+    };
     let crossing_failure_contract = target.contract.clone();
     let crossing_failure_contract_path = target.contract_path.clone();
     let result = crate::runner::with_oci_local_application_plan(
@@ -103375,6 +104663,7 @@ fn run_single_contract_target(
                 &replay_input_preflight,
                 agent,
                 reason,
+                true,
             ) {
                 return Err(failure);
             }
@@ -104043,7 +105332,12 @@ fn crossing_grant_refusal_record(
         blocked_task: lane_name.to_string(),
         closure_path: vec![lane_name.to_string()],
         evidence_class: String::from("runner_evaluated"),
-        authority_source: Some(String::from("prebound_file")),
+        authority_source: Some(
+            error
+                .authority_source
+                .unwrap_or("prebound_file")
+                .to_string(),
+        ),
         authority_id: contract
             .governance
             .crossing_authority
@@ -104370,6 +105664,7 @@ fn run_selected_precondition_failure(
     replay_input_preflight: &TaskReplayInputPreflight,
     agent: bool,
     reason: Option<&str>,
+    allow_provisioning: bool,
 ) -> Option<RunCommandFailure> {
     let task_name = canonical_declared_task_name(contract, task_name);
     if resolve_execution_plan_for_task(contract, contract_path, task_name.as_str(), overrides)
@@ -104428,15 +105723,35 @@ fn run_selected_precondition_failure(
             current_requirement_platform(),
         );
         if !native_actions.is_empty() {
+            if !allow_provisioning {
+                // Provisioning belongs to the authorized work unit. Defer only the native
+                // prerequisite findings; every independent deterministic blocker must still
+                // refuse before broker contact.
+                let unresolved_report = run_non_provisionable_preconditions(&preconditions_report);
+                let unresolved_summary = run_preview_summary(
+                    contract,
+                    task_name.as_str(),
+                    member,
+                    &env_report,
+                    &unresolved_report,
+                    overrides,
+                );
+                if !doctor_verdict_blocks_preview(unresolved_summary.verdict) {
+                    return None;
+                }
+                summary = unresolved_summary;
+            }
             let request = crate::policy_pack::ProvisioningBackendRequest {
                 actions: native_actions,
             };
-            if best_effort_apply_provisioning_request_with_adapter_bootstrap(
-                contract_path,
-                &request,
-                &ProvisioningExecutionTarget::Native,
-                replay_input_preflight.loaded_policy.as_ref(),
-            ) {
+            if allow_provisioning
+                && best_effort_apply_provisioning_request_with_adapter_bootstrap(
+                    contract_path,
+                    &request,
+                    &ProvisioningExecutionTarget::Native,
+                    replay_input_preflight.loaded_policy.as_ref(),
+                )
+            {
                 let refreshed_report = run_execution_preconditions_report(
                     contract,
                     contract_path,
@@ -104841,6 +106156,26 @@ fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
         || is_effect_governance_policy_block_summary(summary)
 }
 
+fn run_non_provisionable_preconditions(report: &DoctorReport) -> DoctorReport {
+    DoctorReport {
+        ok: false,
+        provisioning: report.provisioning.clone(),
+        adapter_bootstrap: report.adapter_bootstrap.clone(),
+        execution_target: report.execution_target.clone(),
+        findings: report
+            .findings
+            .iter()
+            .filter(|finding| {
+                !matches!(
+                    finding.code(),
+                    "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+                )
+            })
+            .cloned()
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn run_precondition_blocker_stops_for_effect_policy_block() {
@@ -104849,6 +106184,44 @@ fn run_precondition_blocker_stops_for_effect_policy_block() {
     ));
     assert!(run_precondition_blocker_should_stop_execution(
         "Effect governance policy blocked task effect `network:broad`",
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn run_pre_authority_filter_defers_only_native_provisioning_findings() {
+    let report = DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![
+            Finding::identified(
+                "OTA_NATIVE_PREREQUISITE_MISSING",
+                "environment",
+                "host",
+                FindingSeverity::Error,
+                "Native prerequisite missing: build-tools",
+                "build tools are missing",
+                "install build tools",
+            ),
+            Finding::identified(
+                "OTA_EFFECT_POLICY_DENY",
+                "policy",
+                "organization",
+                FindingSeverity::Error,
+                "Effect governance policy blocked task effect `network:broad`",
+                "the selected effect is denied",
+                "narrow the effect",
+            ),
+        ],
+    };
+
+    let unresolved = run_non_provisionable_preconditions(&report);
+
+    assert_eq!(unresolved.findings.len(), 1);
+    assert!(run_precondition_blocker_should_stop_execution(
+        unresolved.findings[0].summary.as_str()
     ));
 }
 
@@ -105753,6 +107126,7 @@ pub(crate) fn replay_baseline_record(
             &replay_input_preflight,
             false,
             None,
+            true,
         ) {
             return Err(failure.message);
         }
@@ -111326,10 +112700,10 @@ fn archive_sandbox_execution_receipt(
         });
     let authority_scope = crossing_authority
         .map(|authority| {
-            serde_json::from_value::<ArchivedCrossingGrantEvidence>(
+            serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
                 authority.archive_evidence.clone(),
             )
-            .map(|archived| archived.admission.semantic_scope)
+            .map(|archived| archived.semantic_scope().clone())
             .map_err(|error| {
                 format!("crossing authority evidence cannot supply an archive scope: {error}")
             })
@@ -114897,6 +116271,7 @@ fn proof_runtime_archive_crossing_scope(
         &[],
         None,
         Some("runtime_proof"),
+        None,
         requirement
             .boundary_family
             .map(|family| family.label())
@@ -126884,7 +128259,6 @@ fn up_success_execution_context(
     )
 }
 
-#[cfg(test)]
 fn is_workflow_surface_readiness_finding(finding: &Finding) -> bool {
     finding.summary.starts_with("Surface readiness failed:")
         || finding.summary.starts_with("Surface readiness timed out:")
@@ -128979,6 +130353,7 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
         overrides,
         effect_overrides,
         run_behavior_preference,
+        ready_timeout,
         agent,
         grant,
         sandbox_target,
@@ -128999,33 +130374,35 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
         }
     };
     let has_grant_admission = grant_admission.is_some();
-    let _crossing_transaction_guard = if dry_run {
+    let mut pending_grant_admission = if dry_run {
         None
     } else {
-        match ActiveCrossingTransactionGuard::activate(
-            contract_working_dir(resolved_path),
-            grant_admission.as_ref(),
-        ) {
-            Ok(guard) => guard,
-            Err(details) => {
-                return Ok(crossing_grant_up_result(
-                    contract,
-                    resolved_path,
-                    workflow_name,
-                    overrides,
-                    dry_run,
-                    agent,
-                    run_behavior_preference,
-                    grant,
-                    GrantAdmissionError::new("crossing_transaction_unavailable", details),
-                ));
+        grant_admission.clone()
+    };
+    let mut crossing_grant_guard =
+        dry_run.then(|| ActiveCrossingGrantGuard::activate_preview(grant_admission));
+    let mut crossing_transaction_guard = None;
+    let mut crossing_activation_error = None;
+    let mut activate_crossing_authority = || -> Result<(), String> {
+        let Some(plan) = pending_grant_admission.take() else {
+            return Ok(());
+        };
+        match activate_crossing_authority_plan(contract_working_dir(resolved_path), plan) {
+            Ok((authority, transaction)) => {
+                crossing_grant_guard = Some(authority);
+                crossing_transaction_guard = Some(transaction);
+                Ok(())
+            }
+            Err(error) => {
+                let details = error.public_details();
+                crossing_activation_error = Some(error);
+                Err(details)
             }
         }
     };
-    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate(grant_admission);
     // Keep the orchestration wrapper's frame small while the nested up path is active.
     let mut result = Box::new(
-        match execute_repo_up_with_behavior_with_agent(
+        match execute_repo_up_with_behavior_with_agent_and_authority_activation(
             contract,
             resolved_path,
             overrides,
@@ -129037,6 +130414,8 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
             mode,
             run_behavior_preference,
             ready_timeout,
+            true,
+            &mut activate_crossing_authority,
         ) {
             Ok(result) => result,
             Err(error) if has_grant_admission => crossing_execution_up_failure_result(
@@ -129049,6 +130428,19 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
             Err(error) => return Err(error),
         },
     );
+    if let Some(error) = crossing_activation_error {
+        return Ok(crossing_grant_up_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            dry_run,
+            agent,
+            run_behavior_preference,
+            grant,
+            error,
+        ));
+    }
     if dry_run {
         if let Some(preview) = result.preview.as_mut() {
             preview.crossing_grant_admission = active_crossing_grant_preview().map(Box::new);
@@ -129087,6 +130479,40 @@ fn execute_repo_up_with_behavior_with_agent(
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
+    let mut activate_authority = || Ok(());
+    execute_repo_up_with_behavior_with_agent_and_authority_activation(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        agent,
+        sandbox_target,
+        policy_env,
+        dry_run,
+        mode,
+        run_behavior_preference,
+        ready_timeout,
+        true,
+        &mut activate_authority,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    sandbox_target: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+    execute_instance_prerequisites: bool,
+    activate_authority: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<RepoUpResult, String> {
     let replay_input_preflight =
         workflow_replay_input_preflight(contract, resolved_path, workflow_name);
@@ -129209,6 +130635,8 @@ fn execute_repo_up_with_behavior_with_agent(
                 run_behavior_preference,
                 ready_timeout,
                 &replay_input_preflight,
+                execute_instance_prerequisites,
+                activate_authority,
             );
             (
                 result,
@@ -129231,7 +130659,7 @@ fn execute_repo_up_with_behavior_with_agent(
     result.receipt.replay_input_policy = replay_input_policy;
     if !dry_run {
         result.receipt.witnessed_observations.sandbox_application = sandbox_application;
-        if active_crossing_grant_authority().is_none() {
+        if !active_crossing_authority_is_configured() {
             archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt)
                 .map_err(|error| {
                     format!("sandbox enforcement evidence could not be archived: {error}")
@@ -129239,6 +130667,83 @@ fn execute_repo_up_with_behavior_with_agent(
         }
     }
     Ok(result)
+}
+
+fn unresolved_workflow_instance_prerequisite_preflight_before_authority(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    replay_input_preflight: &TaskReplayInputPreflight,
+) -> Option<DoctorReport> {
+    for selector in contract.selected_workflow_instance_prerequisite_selectors(workflow_name) {
+        let adjusted =
+            contract_adjusted_for_selected_workflow_env_profile(contract, Some(selector.as_str()));
+        let prerequisite_contract = adjusted.as_ref().unwrap_or(contract);
+        let doctor_mode = up_doctor_mode(prerequisite_contract, overrides, Some(selector.as_str()));
+        let mut report =
+            diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                prerequisite_contract,
+                resolved_path,
+                doctor_mode,
+                Some(selector.as_str()),
+                overrides,
+                replay_input_preflight.policy.as_ref(),
+                replay_input_preflight.doctor_policy_snapshot(),
+            );
+        append_up_safe_task_effect_policy_findings(
+            prerequisite_contract,
+            Some(selector.as_str()),
+            overrides,
+            replay_input_preflight.loaded_policy.as_ref(),
+            &mut report,
+        );
+        if report.ok {
+            continue;
+        }
+        let provisioning_actions = selected_up_provisioning_actions(
+            prerequisite_contract,
+            overrides,
+            Some(selector.as_str()),
+            &report,
+        );
+        let activation_actions = selected_up_activation_actions(
+            prerequisite_contract,
+            overrides,
+            Some(selector.as_str()),
+            &report,
+        );
+        let fallback_backend =
+            selected_up_primary_task_name(prerequisite_contract, Some(selector.as_str()))
+                .map(|task_name| {
+                    effective_task_execution(prerequisite_contract, task_name, overrides).backend
+                })
+                .unwrap_or_else(|| effective_execution(prerequisite_contract, overrides).0);
+        let toolchain_targets = selected_up_toolchain_run_fulfillment_targets(
+            prerequisite_contract,
+            overrides,
+            Some(selector.as_str()),
+            fallback_backend,
+        );
+        let preparation_available =
+            selected_up_setup_task_name(prerequisite_contract, Some(selector.as_str())).is_some()
+                || selected_up_prepare_task_name(prerequisite_contract, Some(selector.as_str()))
+                    .is_some()
+                || selected_up_prepare_action(prerequisite_contract, Some(selector.as_str()))
+                    .is_some();
+        if has_effect_governance_policy_blocker(&report)
+            || !pre_authority_errors_are_fully_resolvable(
+                &report.findings,
+                &provisioning_actions,
+                &activation_actions,
+                &toolchain_targets,
+                preparation_available,
+            )
+        {
+            return Some(report);
+        }
+    }
+    None
 }
 
 fn execute_repo_up_with_behavior_with_agent_inner(
@@ -129254,6 +130759,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
     replay_input_preflight: &TaskReplayInputPreflight,
+    execute_instance_prerequisites: bool,
+    activate_authority: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<RepoUpResult, String> {
     let replay_input_policy = replay_input_preflight.policy.as_ref();
     let adjusted_contract =
@@ -129753,6 +131260,107 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         workflow_name,
         fallback_backend,
     );
+    let initial_activation_actions =
+        selected_up_activation_actions(contract, overrides, workflow_name, &preflight);
+    if !preflight.ok
+        && !pre_authority_errors_are_fully_resolvable(
+            &preflight.findings,
+            &provisioning_actions,
+            &initial_activation_actions,
+            &toolchain_fulfillment_targets,
+            setup_task.is_some() || prepare_task.is_some() || prepare_action.is_some(),
+        )
+    {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            governance_preflight: Some(derive_preflight(&preflight, None)),
+            receipt: repo_execution_receipt_with_policy_snapshot(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &preflight,
+                ),
+                "NOT READY",
+                "preconditions",
+                workflow_name,
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
+            ),
+            report: preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
+    if let Some(prerequisite_preflight) =
+        unresolved_workflow_instance_prerequisite_preflight_before_authority(
+            contract,
+            resolved_path,
+            overrides,
+            workflow_name,
+            replay_input_preflight,
+        )
+    {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            governance_preflight: Some(derive_preflight(&prerequisite_preflight, None)),
+            receipt: repo_execution_receipt_with_policy_snapshot(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &prerequisite_preflight,
+                ),
+                "NOT READY",
+                "preconditions",
+                workflow_name,
+                None,
+                None,
+                &prerequisite_preflight.findings,
+                None,
+                prerequisite_preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
+            ),
+            report: prerequisite_preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
+    if !dry_run {
+        activate_authority()?;
+    }
     if !provisioning_actions.is_empty() {
         let provisioning_request = crate::policy_pack::ProvisioningBackendRequest {
             actions: provisioning_actions.clone(),
@@ -130345,22 +131953,27 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         });
     }
 
-    for prerequisite_selector in
-        selected_workflow_instance_prerequisite_selectors(contract, workflow_name)
+    for prerequisite_selector in execute_instance_prerequisites
+        .then(|| selected_workflow_instance_prerequisite_selectors(contract, workflow_name))
+        .unwrap_or_default()
     {
-        let prerequisite_result = execute_repo_up_with_behavior_with_agent(
-            contract,
-            resolved_path,
-            overrides,
-            Some(prerequisite_selector.as_str()),
-            agent,
-            sandbox_target,
-            policy_env,
-            false,
-            mode,
-            run_behavior_preference,
-            ready_timeout,
-        )?;
+        let mut no_authority_activation = || Ok(());
+        let prerequisite_result =
+            execute_repo_up_with_behavior_with_agent_and_authority_activation(
+                contract,
+                resolved_path,
+                overrides,
+                Some(prerequisite_selector.as_str()),
+                agent,
+                sandbox_target,
+                policy_env,
+                false,
+                mode,
+                run_behavior_preference,
+                ready_timeout,
+                false,
+                &mut no_authority_activation,
+            )?;
         stdout.push_str(&prerequisite_result.stdout);
         stderr.push_str(&prerequisite_result.stderr);
         if !prerequisite_result.ok {

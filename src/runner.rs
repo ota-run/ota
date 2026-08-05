@@ -6574,6 +6574,15 @@ fn interruption_observed_since(epoch: u64) -> bool {
     current_run_interrupt_epoch() != epoch
 }
 
+pub(crate) fn begin_command_interrupt_observation() -> u64 {
+    install_run_interrupt_handler();
+    current_run_interrupt_epoch()
+}
+
+pub(crate) fn command_interrupted_since(epoch: u64) -> bool {
+    interruption_observed_since(epoch)
+}
+
 #[cfg(test)]
 pub(crate) fn simulate_run_interrupt_for_test() {
     RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);

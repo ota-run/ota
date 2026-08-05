@@ -37,8 +37,11 @@ controls in [30862934335](https://github.com/bobaikato/create-chrome-extension/a
 [30863024099](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863024099), and
 [30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
 This proves only the first carrier's `current_process_filesystem_guarded` posture, not
-provider-attested separation. The separate broker-backed, runner-verifiable work-unit lifetime
-remains open.
+provider-attested separation. Core now also implements the Unix launcher-session
+`authority_broker` carrier for governed `ota run` and `ota up`: it verifies challenge-bound
+launcher attestation, obtains a signed exact-scope authorization, durably creates the crossing
+transaction, and atomically consumes one lease before selected-lane work. Hosted broker pressure,
+proof-wide transaction coverage, and stronger provider-attested separation remain open.
 
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
@@ -47,7 +50,8 @@ be redirected by repository content, `OTA_POLICY`, environment variables, or cal
 Release target:
 
 - `v1.6.26` implementation branch; signed offline authority and its bounded pre-provisioned
-  hardened non-root pressure are in Core, while broker-backed work-unit authority and
+  hardened non-root pressure are in Core, and broker-backed one-use authority is implemented for
+  `run`/`up`; hosted broker pressure, proof-wide transaction coverage, and stronger
   provider-attested separation remain open
 
 Source direction:
@@ -508,7 +512,8 @@ The canonical crossing evaluator must emit a content-addressed scope before gran
 identity includes:
 
 - the semantic contract identity;
-- the exact task or workflow lane and selected workflow instance;
+- the exact task or workflow lane, selected workflow instance, and ordered prerequisite-instance
+  closure;
 - the complete ordered conditional execution graph, including dependencies, aggregates, preparation,
   and `after_success`, `after_failure`, and `after_always` edges;
 - service provisioning, readiness, lifecycle, teardown, and cleanup invocations reachable from the
@@ -616,16 +621,18 @@ The first carrier must not claim more attribution than Ota observes. Current Cor
 `local` environment. Those fields remain `unknown` unless the chosen authority adapter supplies
 transaction-bound evidence. A grant never bypasses V11.3 agent-safe admission.
 
-#### Broker-backed one-use work-unit leases (planned second carrier)
+#### Broker-backed one-use work-unit leases (implemented for `run` and `up`)
 
-A runner-verifiable work-unit lifetime is also required by the V11.7 acceptance bar. This is a
-planned second `authority_broker` carrier, not an Enterprise approval service and not an extension
-of caller-controlled policy. Its purpose is narrowly to make one independently issued authority
-lease usable once for one exact crossing transaction.
+A runner-verifiable work-unit lifetime is also required by the V11.7 acceptance bar. The second
+`authority_broker` carrier is now implemented for governed `ota run` and `ota up`; it is not an
+Enterprise approval service and not an extension of caller-controlled policy. Its purpose is
+narrowly to make one independently issued authority lease usable once for one exact crossing
+transaction. Grant-required runtime and lifecycle proof still refuse before work because their
+complete invocation and cleanup sets do not yet share one terminal crossing transaction.
 
 ##### Canonical broker binding and attestation record
 
-Before implementing `authority_broker`, Ota must define one versioned, administrator-owned binding
+The implemented `authority_broker` carrier uses one versioned, administrator-owned binding
 record at the fixed protected Linux path `/etc/ota/crossing-brokers.json`. It is root-owned, outside
 the repository, and has no repository, environment, policy, workflow, or CLI override. Every
 adapter consumes this record; adapters must not invent their own endpoint, credential, or
@@ -641,9 +648,10 @@ attestation model. Its canonical identity includes:
   provider through a non-delegable channel: a launcher-held one-shot capability, non-inheritable
   descriptor, or provider exchange cryptographically bound to this Ota invocation. The selected
   task must not inherit or be able to reacquire that credential, its metadata path, or its session;
-- attestation trust-bundle identity, verifier key set and key IDs, issuer/audience, mandatory
-  protocol claims, administrator-added claims, maximum age/skew, and attestation key-rotation
-  posture; and
+- attestation trust-bundle identity, verifier key set and key IDs, issuer/audience, the fixed
+  mandatory protocol claim set, maximum age/skew, and attestation key-rotation posture. The first
+  carrier rejects administrator claim extensions until they have canonical validation semantics;
+  and
 - phase-separated message domains, maximum approval wait, minimum post-approval freshness, maximum
   lease duration, and replay-binding requirements.
 
@@ -680,8 +688,10 @@ The descriptor is an Ota-only transport channel, not caller authority:
   channel. Only after Ota verifies that response does it treat the channel as authority-capable,
   send the authorization or lease request, and verify each signed response against the binding
   before creating a crossing transaction; and
-- Ota never serializes a channel handle, nonce, request, or response payload into
-  public output; and
+- Ota never serializes a channel handle, raw nonce, credential, or secret provider material into
+  public output. Receipts and archives retain the signed public-safe protocol payloads required for
+  re-verification. `invocation_id`, `runner_principal`, and `authority_mounts` are bounded non-secret
+  labels, never filesystem paths, tokens, user-supplied text, or credential material; and
 - a launcher/provider attestation must state that the channel was delivered for this Ota invocation
   and cannot be reacquired by selected task code. If that assertion is absent, the broker carrier
   refuses rather than treating a same-user descriptor as authority separation.
@@ -694,8 +704,8 @@ reuse this binding and request/response model rather than defining new authority
 
 Core must not overload the first carrier's `GrantAdmissionEvidence` with broker fields. Its signed
 bundle, protected sequence-state, and calendar-TTL claims are specific to `prebound_file`; filling
-them with broker placeholders would make receipts lie. Before wiring the broker into `run`, `up`,
-or proof commands, Core introduces one carrier-neutral `CrossingAuthorityAdmission` envelope with
+them with broker placeholders would make receipts lie. Core uses one carrier-neutral
+`CrossingAuthorityAdmission` envelope with
 strict variants:
 
 - `prebound_file`: the existing signed-bundle admission evidence unchanged;
@@ -825,18 +835,16 @@ does not prove that the runner executed that image.
 - `--grant <id>` is an explicit diagnostic or disambiguation request for a configured authority
   label. It cannot name a lease, inject issuer data, or select an endpoint. Missing or
   inapplicable labels refuse before broker mutation. This does not change the first
-  `prebound_file` carrier: it continues to require its explicit `--grant` admission surface until
-  the broker carrier ships.
+  `prebound_file` carrier: it continues to require its explicit `--grant` admission surface.
 - Ota sends the verified attestation identity, nonce commitment, work-unit identity, contract
   identity, exact scope identity, requested action/resource, runner-observed actor posture, and a
   bounded requested lifetime. Unavailable required runner identity or challenge-bound attestation
   refuses rather than being represented as a caller assertion.
 
-##### Authority-selection UX (planned broker carrier)
+##### Authority-selection UX (broker carrier)
 
-The broker carrier should make the routine governed path operable without callers copying a raw
-grant or lease identifier. This is a future broker admission semantic, not a relaxation of the
-current `prebound_file` rules above:
+The broker carrier makes the routine governed path operable without callers copying a raw grant or
+lease identifier. This does not relax the current `prebound_file` rules above:
 
 - Default-safe execution has no authority request and no crossing.
 - For a crossing-required lane, Ota resolves the contract-selected `authority_id` and asks the
@@ -909,14 +917,12 @@ fresh evidence and actionable pre-side-effect refusal.
 
 ##### Scope-breadth evidence
 
-Every broker crossing records a runner-derived scope-breadth summary alongside, but never in place
-of, the canonical semantic scope identity. Its `breadth_identity` is the SHA-256 digest of the
-JCS-normalized summary under `ota.crossing-broker.scope-breadth.v1`; receipts bind that identity and
-archive verification re-derives it from the archived semantic scope. The summary contains the
-selected closure's node and edge counts, declared effect categories, and bounded resource identities
-or counts. Resource values must use the same redaction/identity rules as execution evidence: task
-inputs, secrets, raw authority data, and unbounded provider resource strings never enter public
-JSON, receipts, or archives.
+Every broker crossing records a runner-derived scope-breadth summary inside, but never in place of,
+the canonical semantic scope. Its content-addressed identity binds the selected closure's node and
+edge counts, declared effect categories, and bounded resource identities/counts. Raw resource
+values do not enter the summary. Receipt evidence carries that scope, and archive verification
+re-derives the complete scope and breadth from the archived contract. Task inputs, secrets, raw
+authority data, and unbounded provider resource strings never enter breadth evidence.
 
 Breadth evidence explains the shape of an authorization to an operator and helps pressure tests
 detect catch-all requests. It is not an approval metric: one declared workflow may truthfully be
@@ -1023,8 +1029,9 @@ JSON rather than duplicate its in-scope checks in shell; its remaining worktree-
 receipt assertions stay pressure-specific.
 
 The `prebound_file` adapter intentionally supports bounded calendar TTL only. It is the first grant
-carrier, not evidence that the work-unit acceptance bar is complete. V11.7 remains open until the
-broker-backed one-use lifetime is implemented and pressure-proven.
+carrier, not evidence that the work-unit acceptance bar is complete. The broker-backed one-use
+lifetime is implemented for `run`/`up`; V11.7 remains open until that carrier is pressure-proven,
+proof commands bind complete transactions, and the stronger attested-separation bar is met.
 
 #### `--grant` admission semantics
 

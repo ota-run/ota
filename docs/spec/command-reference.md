@@ -1513,20 +1513,28 @@ Current behavior:
 - `--reason <text>` attaches operator intent when the selected task path crosses a heavier
   audited execution boundary; the current shipped slice records that reason only when ota derives
   `crossing_required` for the selected lane instead of attaching free-form narration to every run
-- when the contract declares `governance.crossing_authority`, a non-agent invocation of a heavier task
-  closure requires `--grant <id>`. Ota derives the exact semantic closure first, verifies the
-  selected grant through the fixed system-bound authority, and refuses before sandbox admission,
-  dependencies, setup, or child execution when authority, signature, freshness, revocation, or
-  scope evidence does not reconcile. After admission, real execution creates a durable
-  runner-owned crossing transaction before selected-lane side effects and finalizes it for every
-  terminal outcome. The initial transaction is explicitly
+- when the contract declares `governance.crossing_authority`, a non-agent invocation of a heavier
+  task closure requires independently managed authority. The `prebound_file` carrier requires
+  `--grant <id>`. The Unix `authority_broker` carrier automatically selects the one protected
+  binding matching the contract's `authority_id`; optional `--grant <authority-id>` only confirms
+  or disambiguates that non-secret label and never supplies a lease. Ota derives the exact semantic
+  closure first. The selected workflow instance and its ordered prerequisite-instance closure are
+  scope-bound; ordinary workflow `--ready-timeout` also changes that authority scope. Receipts
+  include runner-derived breadth counts and hashed resource identities without publishing raw
+  resource values, and retain a public verification binding without the live launcher descriptor.
+  Ota refuses before provisioning, dependencies, setup, or child execution when
+  authority, attestation, signature, freshness, revocation, consumption, or scope evidence does not
+  reconcile. After admission, real execution creates a durable runner-owned crossing transaction
+  before selected-lane side effects and finalizes it for every terminal outcome. The transaction is
+  explicitly
   `runner_local_content_addressed`: it is locked and internally reconciled, but is not independent
   same-user tamper attestation. A grant never bypasses `--agent` safety refusal
 - supplying `--grant` to a contract without a crossing authority, or to a selected closure that
   does not require a crossing, is an input error rather than ignored intent
-- `--dry-run` uses the same grant-admission decision. Successful preview JSON carries
-  `crossing_grant_admission.decision: admissible_not_consumed` without creating a crossing
-  transaction or crossing record; refusal JSON and admission-produced refusal receipts carry the
+- `--dry-run` uses the same semantic scope and carrier selection without consuming authority. A
+  successful prebound preview carries `decision: admissible_not_consumed`; a broker preview carries
+  `decision: requires_live_authorization` and does not contact the launcher or broker. Neither
+  creates a crossing transaction or crossing record. Refusal JSON and admission-produced refusal receipts carry the
   fixed authority source, configured authority/requested grant when present, typed reason,
   evaluation detail, and `execution_started: false`. When Ota derived an exact scope before
   refusal, it also publishes its scope identity, contract identity, boundary family, and

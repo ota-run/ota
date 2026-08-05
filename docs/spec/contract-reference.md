@@ -4540,16 +4540,19 @@ boundary.
 The independently managed platform-authority process advances the signed bundle and sequence state;
 Ota reads and verifies them but does not run as root or mutate authority state.
 
-For the version-matched operator specification, see
-[Crossing authority operations](crossing-authority-operations.md). For the public provisioning
-flow, protected file layout, and explicit limits, see
-[Prebound Crossing Authority (Preview)](https://ota.run/docs/reference/prebound-crossing-authority).
+For version-matched operator specifications, see
+[Prebound crossing authority operations](crossing-authority-operations.md) and
+[Broker crossing authority operations](broker-crossing-authority-operations.md). Public operator
+references are [Prebound Crossing Authority (Preview)](https://ota.run/docs/reference/prebound-crossing-authority)
+and [Broker Crossing Authority (Preview)](https://ota.run/docs/reference/broker-crossing-authority).
 
 When configured:
 
 - routine agent-safe closures run normally without a grant;
-- non-agent execution of a derived heavier closure requires `--grant <id>`;
-- `--grant` must match the exact semantic contract and selected execution graph;
+- non-agent execution of a derived heavier closure requires independently managed authority;
+- `prebound_file` requires `--grant <id>`; `authority_broker` resolves exactly one protected
+  binding and may accept `--grant <authority-id>` only as a non-secret label check;
+- every authorization must match the exact semantic contract and selected execution graph;
 - unresolved free-form task-input identity refuses instead of hashing or exposing secret values;
 - authority attribution is runner-observed as `agent` or `non_agent`; Core does not infer human
   identity merely because `--agent` was omitted;
@@ -4562,9 +4565,12 @@ When configured:
 - a grant never weakens `ota run --agent` or `ota up --agent` refusal.
 
 The signed-file carrier uses short calendar validity and protected sequence/clock high-water
-evidence. It is bounded offline authority, not an online approval system. V11.7 remains open for a
-separately pre-bound broker adapter that can issue and atomically consume runner-nonce-bound
-one-use work-unit leases.
+evidence. It is bounded offline authority, not an online approval system. The Unix broker carrier
+uses a protected fixed binding and launcher-session descriptor to verify a challenge-bound
+attestation, signed exact-scope decision, prepared lease, and atomic one-use consumption before
+`ota run` or `ota up` starts selected work. Dry-run never contacts the launcher. Grant-required
+runtime and lifecycle proof remain unsupported until one terminal broker transaction can cover the
+complete proof invocation and cleanup set.
 
 ## `metadata`
 
