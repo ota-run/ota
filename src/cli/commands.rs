@@ -103624,6 +103624,42 @@ tasks:
     }
 
     #[test]
+    fn proof_archive_snapshot_reference_is_repo_relative_and_accepts_same_root_legacy_absolute() {
+        let repo = TempDir::new().expect("repo tempdir");
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let relative = super::proof_archive_contract_snapshot_ref(&hash);
+        let expected = repo
+            .path()
+            .join(".ota/contracts")
+            .join(super::contract_snapshot_archive_file_name(&hash));
+
+        assert_eq!(
+            relative,
+            format!(".ota/contracts/sha256-{}.json", "a".repeat(64))
+        );
+        assert_eq!(
+            super::resolve_proof_archive_contract_snapshot(repo.path(), &relative, &hash),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            super::resolve_proof_archive_contract_snapshot(
+                repo.path(),
+                expected.to_str().expect("absolute snapshot path"),
+                &hash,
+            ),
+            Some(expected)
+        );
+        assert!(
+            super::resolve_proof_archive_contract_snapshot(
+                repo.path(),
+                "/tmp/substituted-snapshot.json",
+                &hash,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn doctor_claim_assurance_requires_a_matching_immutable_runtime_proof_archive() {
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
@@ -117173,7 +117209,7 @@ fn build_proof_runtime_archive_context(
     ready_timeout: Option<Duration>,
 ) -> Result<ProofRuntimeArchiveContext, String> {
     let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
-    let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
+    snapshot.archive_path.as_deref().ok_or_else(|| {
         String::from("proof archive requires an archived semantic contract snapshot")
     })?;
     let scope = proof_runtime_archive_scope(
@@ -117184,13 +117220,41 @@ fn build_proof_runtime_archive_context(
         proof_invocations,
         ready_timeout,
     );
+    let contract_snapshot_ref = proof_archive_contract_snapshot_ref(&snapshot.hash);
     Ok(ProofRuntimeArchiveContext {
         contract_identity: repo_contract_identity(contract),
         contract_snapshot_hash: snapshot.hash,
-        contract_snapshot_ref: receipt_storage_path_display(snapshot_path),
+        contract_snapshot_ref,
         source_identity: git_head_identity(root).ok(),
         scope,
     })
+}
+
+fn proof_archive_contract_snapshot_ref(snapshot_hash: &str) -> String {
+    receipt_storage_path_display(
+        &PathBuf::from(".ota")
+            .join("contracts")
+            .join(contract_snapshot_archive_file_name(snapshot_hash)),
+    )
+}
+
+fn resolve_proof_archive_contract_snapshot(
+    root: &Path,
+    snapshot_ref: &str,
+    snapshot_hash: &str,
+) -> Option<PathBuf> {
+    let relative = PathBuf::from(proof_archive_contract_snapshot_ref(snapshot_hash));
+    let expected = contract_snapshot_archive_dir(root)
+        .join(contract_snapshot_archive_file_name(snapshot_hash));
+    let recorded = Path::new(snapshot_ref);
+    if recorded == relative {
+        Some(root.join(relative))
+    } else if recorded == expected {
+        // Compatibility for archives emitted before proof references became repo-relative.
+        Some(expected)
+    } else {
+        None
+    }
 }
 
 fn proof_runtime_archive_scope(
@@ -117486,12 +117550,11 @@ fn load_proof_runtime_archive_candidates(
                 return None;
             }
             let archive = serde_json::from_slice::<ProofRuntimeArchiveReadRecord>(&bytes).ok()?;
-            let expected_snapshot_path = contract_snapshot_archive_dir(root).join(
-                contract_snapshot_archive_file_name(&archive.contract_snapshot_hash),
-            );
-            if Path::new(&archive.contract_snapshot_ref) != expected_snapshot_path {
-                return None;
-            }
+            let expected_snapshot_path = resolve_proof_archive_contract_snapshot(
+                root,
+                &archive.contract_snapshot_ref,
+                &archive.contract_snapshot_hash,
+            )?;
             let snapshot_bytes = fs::read(&expected_snapshot_path).ok()?;
             if contract_snapshot_hash(&snapshot_bytes) != archive.contract_snapshot_hash {
                 return None;
@@ -117655,12 +117718,12 @@ fn write_lifecycle_proof_archive(
     proof: &LifecycleProofStatus,
 ) -> Result<ProofRuntimeArchive, String> {
     let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
-    let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
+    snapshot.archive_path.as_deref().ok_or_else(|| {
         String::from("lifecycle proof archive requires an archived semantic contract snapshot")
     })?;
     let contract_identity = repo_contract_identity(contract);
     let source_identity = git_head_identity(root).ok();
-    let snapshot_ref = receipt_storage_path_display(snapshot_path);
+    let snapshot_ref = proof_archive_contract_snapshot_ref(&snapshot.hash);
     let proof_invocations = contract
         .selected_workflow(Some(workflow))
         .and_then(|(_, workflow)| workflow.proof.lifecycle.as_ref())
@@ -117786,14 +117849,12 @@ fn verify_lifecycle_proof_archive(
                 compact_path(archive_path, ".")
             )
         })?;
-    let expected_snapshot_path = contract_snapshot_archive_dir(root).join(
-        contract_snapshot_archive_file_name(&archive.contract_snapshot_hash),
-    );
-    if Path::new(&archive.contract_snapshot_ref) != expected_snapshot_path {
-        return Err(String::from(
-            "lifecycle proof archive snapshot reference is not canonical",
-        ));
-    }
+    let expected_snapshot_path = resolve_proof_archive_contract_snapshot(
+        root,
+        &archive.contract_snapshot_ref,
+        &archive.contract_snapshot_hash,
+    )
+    .ok_or_else(|| String::from("lifecycle proof archive snapshot reference is not canonical"))?;
     let snapshot = fs::read(&expected_snapshot_path)
         .map_err(|error| format!("failed to read lifecycle proof snapshot: {error}"))?;
     if contract_snapshot_hash(&snapshot) != archive.contract_snapshot_hash {

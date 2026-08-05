@@ -171,7 +171,9 @@ durable agent workflow belongs in the canonical Ota skill.
   Replay, missing consumption, and carrier substitution refuse. Grant-required runtime and
   lifecycle proof now retain one transaction across their complete invocation and cleanup sets;
   terminal runtime-proof transactions bind the final proof verdict rather than the intermediate
-  readiness state. Hosted broker proof pressure is still open.
+  readiness state. Proof archives now retain repo-relative contract-snapshot references while
+  preserving same-root compatibility for earlier absolute references. Hosted broker proof pressure
+  is still open.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
   material. Hardened-runner pressure now proves the carrier's bounded
