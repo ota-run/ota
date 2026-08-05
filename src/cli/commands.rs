@@ -118333,6 +118333,7 @@ fn write_proof_runtime_archive(
         })?;
     }
     prune_proof_runtime_archives(&archive_dir)?;
+    verify_emitted_proof_runtime_archive(root, &archive_path, &identity)?;
     if !load_proof_runtime_archive_candidates(root)
         .iter()
         .any(|candidate| candidate.identity == identity)
@@ -118345,6 +118346,71 @@ fn write_proof_runtime_archive(
         identity,
         path: receipt_storage_path_display(&archive_path),
     })
+}
+
+fn verify_emitted_proof_runtime_archive(
+    root: &Path,
+    archive_path: &Path,
+    identity: &str,
+) -> Result<(), String> {
+    verify_proof_runtime_archive_identity(archive_path, identity)?;
+    let bytes = fs::read(archive_path)
+        .map_err(|error| format!("failed to read emitted proof archive: {error}"))?;
+    let archive = serde_json::from_slice::<ProofRuntimeArchiveReadRecord>(&bytes)
+        .map_err(|error| format!("emitted proof archive is invalid: {error}"))?;
+    if archive.kind != "runtime_proof"
+        || archive.version != 6
+        || archive.replay_posture != "witness_only"
+    {
+        return Err(String::from(
+            "emitted proof archive has an invalid current-version envelope",
+        ));
+    }
+    let snapshot_path = resolve_proof_archive_contract_snapshot(
+        root,
+        &archive.contract_snapshot_ref,
+        &archive.contract_snapshot_hash,
+    )
+    .ok_or_else(|| String::from("emitted proof archive has an invalid snapshot reference"))?;
+    let snapshot = fs::read(snapshot_path)
+        .map_err(|error| format!("emitted proof archive snapshot is unavailable: {error}"))?;
+    if contract_snapshot_hash(&snapshot) != archive.contract_snapshot_hash {
+        return Err(String::from(
+            "emitted proof archive snapshot identity does not match its content",
+        ));
+    }
+    let contract = serde_json::from_slice::<Contract>(&snapshot)
+        .map_err(|error| format!("emitted proof archive snapshot is invalid: {error}"))?;
+    let (crossing_required, expected_scope) =
+        proof_runtime_archive_crossing_scope(&contract, &archive.scope, archive.version)
+            .ok_or_else(|| String::from("emitted proof archive scope does not re-derive"))?;
+    let crossing = archive.proof.crossing_evidence.as_ref();
+    if crossing_required && crossing.is_none() {
+        return Err(String::from(
+            "emitted governed proof archive omits crossing authority",
+        ));
+    }
+    if let Some(crossing) = crossing {
+        let execution_id = archive
+            .proof
+            .execution_id
+            .as_deref()
+            .ok_or_else(|| String::from("emitted proof archive omits execution identity"))?;
+        let expected_scope = expected_scope.as_ref().ok_or_else(|| {
+            String::from("emitted proof archive carries authority for an ungoverned scope")
+        })?;
+        verify_terminal_proof_crossing_evidence(
+            &contract,
+            root,
+            crossing,
+            expected_scope,
+            execution_id,
+            archive.proof.proof_verdict.as_str(),
+            archive.proof.ok,
+        )
+        .map_err(|error| format!("emitted proof archive authority is invalid: {error}"))?;
+    }
+    Ok(())
 }
 
 fn verify_proof_runtime_archive_identity(
