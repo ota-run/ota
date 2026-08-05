@@ -176,15 +176,21 @@ durable agent workflow belongs in the canonical Ota skill.
   terminal runtime-proof transactions bind the final proof verdict rather than the intermediate
   readiness state. Proof archives now retain repo-relative contract-snapshot references while
   preserving same-root compatibility for earlier absolute references, and archive emission now
-  requires immediate reconciliation through Doctor's semantic loader. Hosted broker proof pressure
-  is still open.
+  requires immediate reconciliation through Doctor's semantic loader. Authority launcher run
+  [31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) is green
+  against exact Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. It proves one live broker run,
+  expired/revoked/wrong-scope/replayed refusal, same-scope missing-launcher proof refusal, runtime
+  archive consumption by Doctor, and completed runtime and lifecycle proof transactions. The
+  lifecycle fixture uses a root-owned deterministic pressure control because Docker remains
+  inaccessible to the job principal; it proves Ota lifecycle authority/finalization, not Docker
+  provider behavior.
   The public operator guide now documents the fixed trust-store, separately protected bundle and
   sequence-state layout, and the provisioner/runner boundary without publishing usable authority
   material. Hardened-runner pressure now proves the carrier's bounded
   `current_process_filesystem_guarded` posture; the guide remains a preview because it does not
   claim provider-attested separation, reusable broker credentials, or one-use work-unit authority.
-  V11.7 remains open for hosted broker pressure and stronger provider/launcher-attested separation
-  beyond the protocol evidence currently verified. V11.22
+  V11.7 remains open for the broader broker-unavailable, interruption/recovery,
+  approval-wait/cancellation, ambiguity, and provider/launcher-attested pressure bar. V11.22
   remains planning-only and inactive; it does not consume crossing records as approval authority. See
   [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
@@ -684,9 +690,11 @@ Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
 V11.21 is complete. V11.7 authority-source and semantic-crossing implementation is active and
 partially pressure-proven: GitHub-hosted missing-authority refusal plus the pre-provisioned
 Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green. The Unix
-launcher-session broker carrier is implemented locally for governed `run`/`up`; hosted broker
-pressure and stronger provider-attested separation remain open. Proof-wide runtime and lifecycle
-transactions passed independent review and are ready for hosted pressure.
+launcher-session broker carrier is implemented for governed `run`/`up`. Its initial hosted
+live/refusal/proof-wide pressure set is green in authority-launcher run
+[31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) against exact
+Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. Stronger provider-attested separation and the
+remaining adversarial broker matrix remain open.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
@@ -702,8 +710,9 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until hosted broker pressure, complete proof-transaction coverage, and stronger attested
-separation close its remaining acceptance bar; keep V11.22 planned until explicitly activated.
+open until the remaining broker-unavailable, interruption/recovery, approval-wait/cancellation,
+ambiguity, and stronger attested-separation gates close its acceptance bar; keep V11.22 planned
+until explicitly activated.
 
 ## Working Rules
 

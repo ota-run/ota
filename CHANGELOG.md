@@ -137,6 +137,13 @@
   Runtime and lifecycle archives preserve requested backend and lifecycle overrides separately
   from effective execution values, so implicit defaults cannot be reinterpreted as explicit
   authority scope.
+  Initial hosted broker pressure is green in authority-launcher run
+  [31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) against exact
+  Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. It covers live and typed adversarial run
+  admission, runtime archive reconciliation through Doctor, and completed runtime/lifecycle proof
+  authority. The lifecycle fixture deliberately uses a root-owned deterministic pressure control
+  while Docker remains inaccessible, so it proves Ota transaction/finalization behavior rather
+  than Docker-provider behavior.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 

@@ -40,13 +40,18 @@ This proves only the first carrier's `current_process_filesystem_guarded` postur
 provider-attested separation. Core now also implements the Unix launcher-session
 `authority_broker` carrier for governed `ota run` and `ota up`: it verifies challenge-bound
 launcher attestation, obtains a signed exact-scope authorization, durably creates the crossing
-transaction, and atomically consumes one lease before selected-lane work. Hosted broker pressure,
-and stronger provider-attested separation remain open. Core proof-wide transaction coverage is
-independently reviewed and ready for hosted pressure: runtime and lifecycle proofs retain
-one authority transaction across their complete invocation sets and bind terminal authority into
-content-addressed proof archives. A fresh proof execution identity is separate from semantic scope
-and is bound into terminal transaction status, preventing another valid same-scope crossing from
-being substituted for the selected proof run.
+transaction, and atomically consumes one lease before selected-lane work. Authority launcher run
+[31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) is green
+against exact Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`: it proves one live
+broker-backed run, expired/revoked/wrong-scope/replayed refusals, same-scope missing-launcher
+runtime-proof refusal, runtime archive reconciliation through Doctor, and completed runtime and
+lifecycle proof transactions. The lifecycle case uses a root-owned deterministic pressure control
+stub because the job principal deliberately lacks Docker socket access; it proves Ota-owned
+selection, assertion ordering, finalization, and cleanup, not Docker-provider behavior. A fresh
+proof execution identity is separate from semantic scope and is bound into terminal transaction
+status, preventing another valid same-scope crossing from being substituted for the selected proof
+run. The broader broker-unavailable, interruption/recovery, approval-wait/cancellation, ambiguity,
+and provider-attestation pressure bar remains open.
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
@@ -59,8 +64,9 @@ Release target:
 
 - `v1.6.26` implementation branch; signed offline authority and its bounded pre-provisioned
   hardened non-root pressure are in Core, and broker-backed one-use authority is implemented for
-  `run`/`up` plus proof-wide transaction retention; hosted broker proof pressure and stronger
-  provider-attested separation remain open
+  `run`/`up` plus proof-wide transaction retention; the initial hosted live/refusal/proof-wide set
+  is green, while the remaining adversarial broker matrix and stronger provider-attested
+  separation remain open
 
 Source direction:
 
