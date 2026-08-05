@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "e3203e5e215ab69a24ccb4783dd952f6231f7a3a"
-consumer_commit: "7134027adb23c02fe93064888997d2b8d2845d97"
+reviewed_ota_commit: "562f0bc39e2772c06fd9933f459e95578029442d8"
+consumer_commit: "8d6db37c036ecde6b6e29ffc3527dc8118bd3598"
 waiver_reason: ""
 notes: >
-  Synced the prebound crossing-authority operator boundary: fixed Linux trust-store binding,
-  separately protected bundle and sequence state, and the hardened-runner limitation.
+  Synced V11.7 broker carrier selection, non-consuming dry-run, atomic one-use run/up admission,
+  proof refusal, evidence interpretation, and bounded launcher-attestation claims.
