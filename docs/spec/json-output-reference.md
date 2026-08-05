@@ -998,7 +998,8 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
   local record binds the semantic contract snapshot and source identity when available, selected
   member/workflow/services plus the snapshot-derived dependency closure and teardown authority,
   transaction, complete service records, terminal verdict and finalization, exact isolated-boundary identity when used, and
-  effective backend/mode/provider/lifecycle/target, target platform, host-port, memory, and
+  effective backend/mode/provider/lifecycle/target, requested backend/lifecycle overrides, target
+  platform, host-port, memory, and
   dependency-selection posture. When authority is required, `crossing_evidence` embeds the exact
   proof-owned terminal authority transaction; archive verification re-derives it from the archived
   contract and selected service/assertion scope. Its content-addressed filename,

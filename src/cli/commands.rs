@@ -103169,6 +103169,25 @@ workflows:
                 .and_then(|selection| selection.ready_timeout_seconds),
             Some(45)
         );
+        let live_scope = super::evaluate_proof_workflow_crossing_grant(
+            &contract,
+            &contract_path,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &scope.proof_invocations,
+            CrossingProofTransactionSelection {
+                selected_services: Vec::new(),
+                service_closure: Vec::new(),
+                ready_timeout_seconds: Some(45),
+            },
+            "runtime_proof",
+            false,
+            None,
+        )
+        .expect_err("governed proof without a grant must refuse")
+        .semantic_scope
+        .expect("live proof admission scope");
+        assert_eq!(proof_scope, live_scope);
         let mut timeout_mismatch = scope.clone();
         timeout_mismatch.ready_timeout_seconds = Some(90);
         let timeout_scope =
@@ -103604,8 +103623,10 @@ tasks:
             workflow: Some(String::from("verify")),
             task: Some(String::from("verify")),
             backend: String::from("container"),
+            backend_override: Some(String::from("container")),
             provider: None,
             lifecycle: Some(String::from("ephemeral")),
+            lifecycle_override: Some(String::from("ephemeral")),
             target: None,
             target_platform: None,
             host_port: Some(3001),
@@ -117041,10 +117062,16 @@ struct ProofRuntimeArchiveScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     task: Option<String>,
     backend: String,
+    /// Preserve caller selection separately from the effective backend. An implicit native
+    /// default and an explicit native override are different authority scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lifecycle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117299,8 +117326,21 @@ fn proof_runtime_archive_scope(
         workflow: workflow_name.map(str::to_string),
         task,
         backend: phase.backend.unwrap_or_else(|| String::from("native")),
+        backend_override: overrides.backend.map(|backend| {
+            String::from(match backend {
+                Backend::Native => "native",
+                Backend::Container => "container",
+                Backend::Remote => "remote",
+            })
+        }),
         provider: phase.provider,
         lifecycle: phase.lifecycle,
+        lifecycle_override: overrides.lifecycle.map(|lifecycle| {
+            String::from(match lifecycle {
+                Lifecycle::Ephemeral => "ephemeral",
+                Lifecycle::Persistent => "persistent",
+            })
+        }),
         target: phase.target,
         target_platform,
         host_port: overrides.host_port,
@@ -117329,20 +117369,21 @@ fn claim_assurance_proof_scope(
 }
 
 fn proof_runtime_archive_overrides(scope: &ProofRuntimeArchiveScope) -> Option<ExecutionOverrides> {
-    let backend = match scope.backend.as_str() {
-        "native" => Backend::Native,
-        "container" => Backend::Container,
-        "remote" => Backend::Remote,
-        _ => return None,
+    let backend = match scope.backend_override.as_deref() {
+        None => None,
+        Some("native") => Some(Backend::Native),
+        Some("container") => Some(Backend::Container),
+        Some("remote") => Some(Backend::Remote),
+        Some(_) => return None,
     };
-    let lifecycle = match scope.lifecycle.as_deref() {
+    let lifecycle = match scope.lifecycle_override.as_deref() {
         None => None,
         Some("ephemeral") => Some(Lifecycle::Ephemeral),
         Some("persistent") => Some(Lifecycle::Persistent),
         Some(_) => return None,
     };
     Some(ExecutionOverrides {
-        backend: Some(backend),
+        backend,
         lifecycle,
         host_port: scope.host_port,
         memory: scope.memory,
@@ -117518,6 +117559,9 @@ fn proof_runtime_archive_crossing_scope(
             .map(|classification| classification.label())
             .unwrap_or("unknown"),
     )
+    .and_then(|scope| {
+        crossing_scope_with_workflow_instance_selection(scope, contract, workflow_name)
+    })
     .and_then(|scope| crossing_scope_with_proof_invocations(scope, expected))
     .and_then(|scope| {
         crossing_scope_with_proof_transaction_selection(scope, proof_transaction_selection)

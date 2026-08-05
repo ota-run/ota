@@ -713,7 +713,8 @@ Current behavior:
 - when `governance.crossing_authority` governs the selected proof scope, requires `--grant <id>`
   before creating `.ota/proof` or spawning `ota up`. Proof scope binds the runtime carrier plus
   every seam/control invocation by role and declaration order plus the normalized
-  `--ready-timeout`, memory, dependency-selection, host-port, and target-platform choices. One
+  `--ready-timeout`, memory, dependency-selection, host-port, and target-platform choices. Archive
+  verification also distinguishes implicit backend/lifecycle defaults from explicit overrides. One
   proof-owned crossing transaction covers the detached workflow, its nested task execution,
   post-readiness observers, negative controls, and cleanup. Runner-private authority is delivered
   only to the immediate Ota child over a bounded Unix descriptor with close-on-exec restored before
