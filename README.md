@@ -487,7 +487,7 @@ Use `--debug` when you want command traces for `ota up`, `ota run <task>`, `ota 
 Commands like `ota validate`, `ota tasks`, `ota workspace validate`, `ota workspace tasks`, and
 `ota workspace list` should usually stay quiet unless you are actively debugging.
 
-Current behavior:
+## Current behavior and command reference
 
 | Surface | Current behavior |
 | --- | --- |
