@@ -4612,10 +4612,11 @@ pub fn proof_runtime_with_grant(
                     &dependency_evidence,
                     effective_workflow_selector.as_deref(),
                 );
+                let proof_verdict = proof_runtime_verdict(ok, &not_proved);
                 let crossing_evidence = match finalize_active_proof_crossing_transaction(
                     ok,
                     status == "interrupted",
-                    status,
+                    proof_verdict,
                     proof_execution_id.as_str(),
                 ) {
                     Ok(evidence) => evidence,
@@ -4626,7 +4627,6 @@ pub fn proof_runtime_with_grant(
                         );
                     }
                 };
-                let proof_verdict = proof_runtime_verdict(ok, &not_proved);
 
                 match format {
                     OutputFormat::Text => {
@@ -103394,6 +103394,44 @@ workflows:
         assert_eq!(
             terminal.receipt_status.as_deref(),
             Some(format!("proof:{execution_id}:failed_before_terminal_output").as_str())
+        );
+    }
+
+    #[test]
+    fn proof_crossing_terminal_status_uses_the_final_proof_verdict() {
+        let root = TempDir::new().expect("repo tempdir");
+        let admission = crate::crossing_authority::CrossingAuthorityAdmission {
+            carrier: crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile,
+            authority_id: String::from("authority:test"),
+            admission_identity: format!("sha256:{}", "1".repeat(64)),
+            authorization_identity: format!("sha256:{}", "2".repeat(64)),
+            scope_identity: format!("sha256:{}", "3".repeat(64)),
+            contract_identity: format!("sha256:{}", "4".repeat(64)),
+            boundary_family: String::from("unsafe_task"),
+            classification: String::from("escalated"),
+            actor_mode: String::from("non_agent"),
+            decision: String::from("allowed"),
+            admitted_at: String::from("2026-01-01T00:00:00Z"),
+        };
+        let transaction =
+            crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
+                .expect("pending transaction");
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction);
+        let execution_id = format!("sha256:{}", "5".repeat(64));
+
+        let _ = super::finalize_active_proof_crossing_transaction(
+            true,
+            false,
+            "passed_with_unproven_boundaries",
+            execution_id.as_str(),
+        );
+        let terminal =
+            super::active_crossing_transaction_evidence().expect("terminal transaction evidence");
+
+        assert_eq!(terminal.state, "completed");
+        assert_eq!(
+            terminal.receipt_status.as_deref(),
+            Some(format!("proof:{execution_id}:passed_with_unproven_boundaries").as_str())
         );
     }
 

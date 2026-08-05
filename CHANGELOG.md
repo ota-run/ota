@@ -126,8 +126,10 @@
   authorized work unit.
   Grant-required runtime and lifecycle proof now retain one authority transaction across the
   complete proof invocation and cleanup set. The transaction terminal status binds a fresh
-  runner-generated proof execution identity, proof archives re-derive that exact linkage, and
-  ordinary post-admission failures finalize explicitly instead of relying on process teardown.
+  runner-generated proof execution identity and the final proof verdict, proof archives re-derive
+  that exact linkage, and ordinary post-admission failures finalize explicitly instead of relying
+  on process teardown. Runtime readiness state is no longer substituted for the terminal proof
+  verdict in broker-backed archive evidence.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 
