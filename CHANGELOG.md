@@ -134,8 +134,9 @@
   not depend on whether the producing command resolved the repository root absolutely; same-root
   absolute references emitted by earlier builds remain readable. Archive creation now refuses
   unless the newly written record immediately passes the same semantic loader used by Doctor.
-  Runtime archives preserve requested backend and lifecycle overrides separately from effective
-  execution values, so implicit defaults cannot be reinterpreted as explicit authority scope.
+  Runtime and lifecycle archives preserve requested backend and lifecycle overrides separately
+  from effective execution values, so implicit defaults cannot be reinterpreted as explicit
+  authority scope.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 

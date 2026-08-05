@@ -97,8 +97,9 @@ durable agent workflow belongs in the canonical Ota skill.
   Unix descriptor carries authority only between immediate Ota processes and is removed before
   selected code executes. Runtime archive v6 and lifecycle archive v3 embed and re-derive the
   exact terminal authority rather than inheriting a workflow-only grant. Runtime archive
-  reconciliation preserves requested backend and lifecycle overrides separately from effective
-  values, preventing an implicit default from changing authority identity during verification.
+  and lifecycle archive reconciliation preserve requested backend and lifecycle overrides
+  separately from effective values, preventing an implicit default from changing authority
+  identity during verification.
   The first `prebound_file` carrier reads only fixed system trust state protected from Ota's current
   unprivileged process; it does not claim hardened provider-attested privilege separation. It verifies an
   Ed25519/RFC-8785 signed bundle, exact contract/scope/family/classification/actor binding,

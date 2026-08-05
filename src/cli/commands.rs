@@ -103645,6 +103645,42 @@ tasks:
     }
 
     #[test]
+    fn lifecycle_archive_preserves_requested_overrides_separately_from_effective_values() {
+        let implicit =
+            serde_json::from_value::<super::LifecycleProofArchiveScope>(serde_json::json!({
+                "workflow": "smoke",
+                "member": null,
+                "selected_services": ["database"],
+                "service_closure": ["database"],
+                "transaction_id": "lifecycle-test",
+                "boundary_identity": null,
+                "backend": "native",
+                "mode": "native",
+                "provider": null,
+                "lifecycle": null,
+                "target": null,
+                "target_os": "linux",
+                "target_platform": null,
+                "host_port": null,
+                "memory": null,
+                "skip_dependencies": false
+            }))
+            .expect("implicit lifecycle archive scope");
+        let implicit_overrides = super::lifecycle_proof_archive_overrides(&implicit)
+            .expect("implicit lifecycle archive overrides");
+        assert_eq!(implicit_overrides.backend, None);
+        assert_eq!(implicit_overrides.lifecycle, None);
+
+        let mut explicit = implicit;
+        explicit.backend_override = Some(String::from("container"));
+        explicit.lifecycle_override = Some(String::from("ephemeral"));
+        let explicit_overrides = super::lifecycle_proof_archive_overrides(&explicit)
+            .expect("explicit lifecycle archive overrides");
+        assert_eq!(explicit_overrides.backend, Some(Backend::Container));
+        assert_eq!(explicit_overrides.lifecycle, Some(Lifecycle::Ephemeral));
+    }
+
+    #[test]
     fn proof_archive_snapshot_reference_is_repo_relative_and_accepts_same_root_legacy_absolute() {
         let repo = TempDir::new().expect("repo tempdir");
         let hash = format!("sha256:{}", "a".repeat(64));
@@ -117156,11 +117192,15 @@ struct LifecycleProofArchiveScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     boundary_identity: Option<String>,
     backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_override: Option<String>,
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lifecycle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<String>,
     target_os: String,
@@ -117383,6 +117423,40 @@ fn proof_runtime_archive_overrides(scope: &ProofRuntimeArchiveScope) -> Option<E
         Some(_) => return None,
     };
     Some(ExecutionOverrides {
+        backend,
+        lifecycle,
+        host_port: scope.host_port,
+        memory: scope.memory,
+        skip_deps: scope.skip_dependencies,
+        ..ExecutionOverrides::default()
+    })
+}
+
+fn lifecycle_proof_archive_overrides(
+    scope: &LifecycleProofArchiveScope,
+) -> Result<ExecutionOverrides, String> {
+    let backend = match scope.backend_override.as_deref() {
+        None => None,
+        Some("native") => Some(Backend::Native),
+        Some("container") => Some(Backend::Container),
+        Some("remote") => Some(Backend::Remote),
+        Some(_) => {
+            return Err(String::from(
+                "lifecycle proof archive has invalid backend override",
+            ));
+        }
+    };
+    let lifecycle = match scope.lifecycle_override.as_deref() {
+        None => None,
+        Some("ephemeral") => Some(Lifecycle::Ephemeral),
+        Some("persistent") => Some(Lifecycle::Persistent),
+        Some(_) => {
+            return Err(String::from(
+                "lifecycle proof archive has invalid lifecycle override",
+            ));
+        }
+    };
+    Ok(ExecutionOverrides {
         backend,
         lifecycle,
         host_port: scope.host_port,
@@ -117813,8 +117887,10 @@ fn write_lifecycle_proof_archive(
         boundary_identity: boundary_identities.into_iter().next().map(str::to_string),
         mode: execution_scope.backend.clone(),
         backend: execution_scope.backend,
+        backend_override: execution_scope.backend_override,
         provider: execution_scope.provider,
         lifecycle: execution_scope.lifecycle,
+        lifecycle_override: execution_scope.lifecycle_override,
         target: execution_scope.target,
         target_os,
         target_platform: execution_scope.target_platform,
@@ -117913,28 +117989,7 @@ fn verify_lifecycle_proof_archive(
             "lifecycle proof archive contract identity does not match its semantic snapshot",
         ));
     }
-    let archive_overrides = ExecutionOverrides {
-        backend: match archive.scope.backend.as_str() {
-            "native" => Some(Backend::Native),
-            "container" => Some(Backend::Container),
-            "remote" => Some(Backend::Remote),
-            _ => None,
-        },
-        lifecycle: match archive.scope.lifecycle.as_deref() {
-            Some("ephemeral") => Some(Lifecycle::Ephemeral),
-            Some("persistent") => Some(Lifecycle::Persistent),
-            None => None,
-            Some(_) => {
-                return Err(String::from(
-                    "lifecycle proof archive has invalid lifecycle",
-                ));
-            }
-        },
-        host_port: archive.scope.host_port,
-        memory: archive.scope.memory,
-        skip_deps: archive.scope.skip_dependencies,
-        ..ExecutionOverrides::default()
-    };
+    let archive_overrides = lifecycle_proof_archive_overrides(&archive.scope)?;
     let declared_assertion = snapshot_contract
         .selected_workflow(Some(archive.scope.workflow.as_str()))
         .and_then(|(_, workflow)| workflow.proof.lifecycle.as_ref())
