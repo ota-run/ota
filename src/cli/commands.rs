@@ -103188,6 +103188,13 @@ workflows:
         .semantic_scope
         .expect("live proof admission scope");
         assert_eq!(proof_scope, live_scope);
+        let mut explicit_native = scope.clone();
+        explicit_native.backend_override = Some(String::from("native"));
+        let explicit_native_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &explicit_native, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("explicit native override scope");
+        assert_ne!(proof_scope.identity, explicit_native_scope.identity);
         let mut timeout_mismatch = scope.clone();
         timeout_mismatch.ready_timeout_seconds = Some(90);
         let timeout_scope =

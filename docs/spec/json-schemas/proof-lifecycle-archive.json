@@ -24,9 +24,11 @@
         "transaction_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "boundary_identity": { "type": "string", "minLength": 1 },
         "backend": { "enum": ["native", "container", "remote"] },
+        "backend_override": { "enum": ["native", "container", "remote"] },
         "mode": { "enum": ["native", "container", "remote"] },
         "provider": { "type": "string" },
         "lifecycle": { "type": "string" },
+        "lifecycle_override": { "enum": ["ephemeral", "persistent"] },
         "target": { "type": "string" },
         "target_os": { "enum": ["linux", "macos", "windows"] },
         "target_platform": { "$ref": "./receipt.json#/$defs/crossingSemanticScope/properties/target_platform" },
@@ -64,7 +66,9 @@
                 { "required": ["target_platform"] },
                 { "required": ["host_port"] },
                 { "required": ["memory"] },
-                { "required": ["skip_dependencies"] }
+                { "required": ["skip_dependencies"] },
+                { "required": ["backend_override"] },
+                { "required": ["lifecycle_override"] }
               ]
             }
           },

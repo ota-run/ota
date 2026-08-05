@@ -612,6 +612,12 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
         }
     });
     assert_matches_schema("proof-lifecycle-archive.json", &payload);
+    let mut explicit_overrides = payload.clone();
+    explicit_overrides["scope"]["backend_override"] = serde_json::json!("container");
+    explicit_overrides["scope"]["lifecycle_override"] = serde_json::json!("ephemeral");
+    assert_matches_schema("proof-lifecycle-archive.json", &explicit_overrides);
+    explicit_overrides["scope"]["backend_override"] = serde_json::json!("host");
+    assert_rejects_schema("proof-lifecycle-archive.json", &explicit_overrides);
     let mut legacy_v2 = payload.clone();
     legacy_v2["version"] = serde_json::json!(2);
     legacy_v2["scope"]
@@ -625,6 +631,12 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
     assert_matches_schema("proof-lifecycle-archive.json", &legacy_v2);
     legacy_v2["scope"]["target_platform"] =
         serde_json::json!({ "os": "linux", "architecture": "amd64", "platform": "linux/amd64" });
+    assert_rejects_schema("proof-lifecycle-archive.json", &legacy_v2);
+    legacy_v2["scope"]
+        .as_object_mut()
+        .expect("legacy lifecycle scope")
+        .remove("target_platform");
+    legacy_v2["scope"]["backend_override"] = serde_json::json!("native");
     assert_rejects_schema("proof-lifecycle-archive.json", &legacy_v2);
     let mut mode_mismatch = payload.clone();
     mode_mismatch["scope"]["mode"] = serde_json::json!("native");
