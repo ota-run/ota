@@ -32,11 +32,15 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use ota_authority_protocol::{
-    ATTESTATION_RESPONSE_DOMAIN_V1, AUTHORIZATION_DECISION_DOMAIN_V1,
-    AUTHORIZATION_REQUEST_DOMAIN_V1, BROKER_BINDING_IDENTITY_DOMAIN_V1,
+    ATTESTATION_RESPONSE_DOMAIN_V1, ATTESTATION_RESPONSE_DOMAIN_V2,
+    AUTHORIZATION_DECISION_DOMAIN_V1, AUTHORIZATION_REQUEST_DOMAIN_V1,
+    BROKER_BINDING_IDENTITY_DOMAIN_V1, BROKER_BINDING_IDENTITY_DOMAIN_V2,
     CHALLENGE_REQUEST_DOMAIN_V1, LEASE_CONSUME_DOMAIN_V1, LEASE_CONSUME_RESPONSE_DOMAIN_V1,
     LEASE_CONSUMPTION_QUERY_DOMAIN_V1, LEASE_CONSUMPTION_STATUS_DOMAIN_V1,
-    LEASE_ISSUANCE_DOMAIN_V1, PROTOCOL_VERSION_V1,
+    LEASE_ISSUANCE_DOMAIN_V1, PROTECTED_LAUNCHER_IMAGE_PROFILE_ID_V1,
+    PROTECTED_LAUNCHER_PROFILE_ID_V1, PROTOCOL_VERSION_V1,
+    RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RuntimeBoundaryAttestorKind,
+    runtime_boundary_profile_by_id, runtime_boundary_profile_identity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -56,7 +60,6 @@ const GRANT_DOMAIN: &[u8] = b"ota.crossing-authority.grant.v1\0";
 const BINDING_DOMAIN: &[u8] = b"ota.crossing-authority.binding.v1\0";
 // The broker binding remains crate-private so repository and caller input cannot redirect the
 // fixed protected authority source or reinterpret its trust model.
-const BROKER_BINDING_DOMAIN: &[u8] = BROKER_BINDING_IDENTITY_DOMAIN_V1;
 pub(crate) const CROSSING_BROKER_SCHEMA_VERSION: u32 = 1;
 const BROKER_PROTOCOL_VERSION: &str = PROTOCOL_VERSION_V1;
 #[allow(dead_code)]
@@ -198,6 +201,8 @@ pub(crate) struct BrokerAuthorityStore {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BrokerAuthorityBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
     pub identity: String,
     pub authority_id: String,
     pub broker_id: String,
@@ -221,6 +226,8 @@ pub(crate) struct BrokerAuthorityBinding {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BrokerPublicAuthorityBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
     pub identity: String,
     pub authority_id: String,
     pub broker_id: String,
@@ -247,6 +254,7 @@ pub(crate) struct BrokerPublicCredentialDelivery {
 impl BrokerPublicAuthorityBinding {
     pub(crate) fn from_protected(binding: &BrokerAuthorityBinding) -> Self {
         Self {
+            schema_version: binding.schema_version,
             identity: binding.identity.clone(),
             authority_id: binding.authority_id.clone(),
             broker_id: binding.broker_id.clone(),
@@ -270,6 +278,7 @@ impl BrokerPublicAuthorityBinding {
 
     pub(crate) fn verification_binding(&self) -> BrokerAuthorityBinding {
         BrokerAuthorityBinding {
+            schema_version: self.schema_version,
             identity: self.identity.clone(),
             authority_id: self.authority_id.clone(),
             broker_id: self.broker_id.clone(),
@@ -307,7 +316,7 @@ impl BrokerPublicAuthorityBinding {
         legacy.message_domains.lease_consumption_query = None;
         legacy.message_domains.lease_consumption_status = None;
         legacy.identity.clear();
-        legacy.identity = domain_identity(BROKER_BINDING_DOMAIN, &legacy)
+        legacy.identity = domain_identity(broker_binding_domain(&legacy), &legacy)
             .map_err(|error| error.public_details())?;
         Ok(Self::from_protected(&legacy) == *self)
     }
@@ -356,8 +365,15 @@ pub(crate) struct BrokerVerifier {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub(crate) enum BrokerAttestationBinding {
+    V2(BrokerAttestationBindingV2),
+    V1(BrokerAttestationBindingV1),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct BrokerAttestationBinding {
+pub(crate) struct BrokerAttestationBindingV1 {
     pub issuer: String,
     pub audience: String,
     pub trust_bundle_identity: String,
@@ -367,6 +383,65 @@ pub(crate) struct BrokerAttestationBinding {
     pub key_rotation_overlap_seconds: u64,
     pub mandatory_protocol_claims: Vec<String>,
     pub required_administrator_claims: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerAttestationBindingV2 {
+    pub protocol_version: String,
+    pub profile_id: String,
+    pub profile_identity: String,
+    pub attestor_kind: RuntimeBoundaryAttestorKind,
+    pub adapter: String,
+    pub launcher_session_binding_identity: String,
+    pub issuer: String,
+    pub audience: String,
+    pub trust_bundle_identity: String,
+    pub verifiers: Vec<BrokerVerifier>,
+    pub maximum_age_seconds: u64,
+    pub maximum_clock_skew_seconds: u64,
+    pub key_rotation_overlap_seconds: u64,
+}
+
+impl BrokerAttestationBinding {
+    pub(crate) fn issuer(&self) -> &str {
+        match self {
+            Self::V1(value) => value.issuer.as_str(),
+            Self::V2(value) => value.issuer.as_str(),
+        }
+    }
+
+    pub(crate) fn audience(&self) -> &str {
+        match self {
+            Self::V1(value) => value.audience.as_str(),
+            Self::V2(value) => value.audience.as_str(),
+        }
+    }
+
+    pub(crate) fn verifiers(&self) -> &[BrokerVerifier] {
+        match self {
+            Self::V1(value) => value.verifiers.as_slice(),
+            Self::V2(value) => value.verifiers.as_slice(),
+        }
+    }
+
+    pub(crate) fn maximum_age_seconds(&self) -> u64 {
+        match self {
+            Self::V1(value) => value.maximum_age_seconds,
+            Self::V2(value) => value.maximum_age_seconds,
+        }
+    }
+
+    pub(crate) fn maximum_clock_skew_seconds(&self) -> u64 {
+        match self {
+            Self::V1(value) => value.maximum_clock_skew_seconds,
+            Self::V2(value) => value.maximum_clock_skew_seconds,
+        }
+    }
+
+    pub(crate) fn is_v2(&self) -> bool {
+        matches!(self, Self::V2(_))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1759,36 +1834,42 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
     }
     validate_broker_verifiers(&binding.broker_verifiers, "broker")?;
     let attestation = &binding.attestation;
-    if attestation.issuer.trim().is_empty() || attestation.audience.trim().is_empty() {
+    match (binding.schema_version, attestation) {
+        (None | Some(1), BrokerAttestationBinding::V1(_))
+        | (Some(2), BrokerAttestationBinding::V2(_)) => {}
+        _ => {
+            return Err(error(
+                "crossing_broker_binding_schema_mismatch",
+                "broker binding schema version does not match its attestation branch",
+            ));
+        }
+    }
+    if attestation.issuer().trim().is_empty() || attestation.audience().trim().is_empty() {
         return Err(error(
             "crossing_broker_attestation_invalid",
             "broker attestation issuer and audience must be non-empty",
         ));
     }
-    validate_sha256_identity(
-        attestation.trust_bundle_identity.as_str(),
-        "broker attestation trust bundle identity",
-    )?;
-    validate_broker_verifiers(&attestation.verifiers, "attestation")?;
-    if attestation.maximum_age_seconds == 0
-        || attestation.maximum_clock_skew_seconds > 60
-        || attestation.key_rotation_overlap_seconds > MAX_KEY_ROTATION_OVERLAP_SECONDS
-    {
-        return Err(error(
-            "crossing_broker_attestation_invalid",
-            "broker attestation freshness or key-rotation bounds are unsupported",
-        ));
-    }
-    let expected_claims = BROKER_MANDATORY_PROTOCOL_CLAIMS
+    validate_broker_attestation_binding(attestation)?;
+    let broker_key_ids = binding
+        .broker_verifiers
         .iter()
-        .map(|claim| (*claim).to_string())
-        .collect::<Vec<_>>();
-    if attestation.mandatory_protocol_claims != expected_claims
-        || !attestation.required_administrator_claims.is_empty()
+        .map(|verifier| verifier.key_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let broker_public_keys = binding
+        .broker_verifiers
+        .iter()
+        .map(|verifier| verifier.public_key.as_str())
+        .collect::<BTreeSet<_>>();
+    if attestation.is_v2()
+        && attestation.verifiers().iter().any(|verifier| {
+            broker_key_ids.contains(verifier.key_id.as_str())
+                || broker_public_keys.contains(verifier.public_key.as_str())
+        })
     {
         return Err(error(
-            "crossing_broker_attestation_claims_invalid",
-            "broker attestation claims must use the canonical mandatory profile without unknown extensions",
+            "crossing_broker_verifier_authority_overlap",
+            "broker and attestor verifier key identities must be disjoint",
         ));
     }
     if binding.maximum_approval_wait_seconds == 0
@@ -1796,7 +1877,7 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
         || binding.minimum_post_approval_freshness_seconds == 0
         || binding.maximum_lease_seconds == 0
         || binding.maximum_lease_seconds > MAX_BROKER_LEASE_SECONDS
-        || attestation.maximum_age_seconds
+        || attestation.maximum_age_seconds()
             < binding.maximum_approval_wait_seconds
                 + binding.minimum_post_approval_freshness_seconds
     {
@@ -1851,10 +1932,95 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
             binding.message_domains.lease_issuance.as_str(),
         ),
     ];
-    if actual_domains != BROKER_MESSAGE_DOMAINS {
+    let expected_attestation_domain = if attestation.is_v2() {
+        ATTESTATION_RESPONSE_DOMAIN_V2
+    } else {
+        ATTESTATION_RESPONSE_DOMAIN_V1
+    };
+    if actual_domains[0] != ("attestation_response", expected_attestation_domain)
+        || actual_domains[1..] != BROKER_MESSAGE_DOMAINS[1..]
+    {
         return Err(error(
             "crossing_broker_message_domain_invalid",
             "broker message domains must use the canonical phase-separated profile",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_broker_attestation_binding(
+    attestation: &BrokerAttestationBinding,
+) -> Result<(), GrantAdmissionError> {
+    let (trust_bundle_identity, key_rotation_overlap_seconds) = match attestation {
+        BrokerAttestationBinding::V1(value) => {
+            let expected_claims = BROKER_MANDATORY_PROTOCOL_CLAIMS
+                .iter()
+                .map(|claim| (*claim).to_string())
+                .collect::<Vec<_>>();
+            if value.mandatory_protocol_claims != expected_claims
+                || !value.required_administrator_claims.is_empty()
+            {
+                return Err(error(
+                    "crossing_broker_attestation_claims_invalid",
+                    "broker attestation claims must use the canonical mandatory profile without unknown extensions",
+                ));
+            }
+            (
+                value.trust_bundle_identity.as_str(),
+                value.key_rotation_overlap_seconds,
+            )
+        }
+        BrokerAttestationBinding::V2(value) => {
+            let profile =
+                runtime_boundary_profile_by_id(value.profile_id.as_str()).ok_or_else(|| {
+                    error(
+                        "crossing_broker_attestation_profile_unsupported",
+                        "broker attestation selects an unsupported runtime-boundary profile",
+                    )
+                })?;
+            let expected_profile_identity =
+                runtime_boundary_profile_identity(&profile).map_err(|details| {
+                    error(
+                        "crossing_broker_attestation_profile_invalid",
+                        format!("failed to derive runtime-boundary profile identity: {details}"),
+                    )
+                })?;
+            if value.protocol_version != RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2
+                || !matches!(
+                    value.profile_id.as_str(),
+                    PROTECTED_LAUNCHER_PROFILE_ID_V1 | PROTECTED_LAUNCHER_IMAGE_PROFILE_ID_V1
+                )
+                || value.profile_identity != expected_profile_identity
+                || value.attestor_kind != RuntimeBoundaryAttestorKind::ProtectedLauncher
+                || value.adapter != "launcher_session_peer/v1"
+            {
+                return Err(error(
+                    "crossing_broker_attestation_profile_invalid",
+                    "broker attestation profile does not match the canonical protected-launcher definition",
+                ));
+            }
+            validate_sha256_identity(
+                value.launcher_session_binding_identity.as_str(),
+                "launcher session binding identity",
+            )?;
+            (
+                value.trust_bundle_identity.as_str(),
+                value.key_rotation_overlap_seconds,
+            )
+        }
+    };
+    validate_sha256_identity(
+        trust_bundle_identity,
+        "broker attestation trust bundle identity",
+    )?;
+    validate_broker_verifiers(attestation.verifiers(), "attestation")?;
+    if attestation.maximum_age_seconds() == 0
+        || attestation.maximum_clock_skew_seconds() > 60
+        || key_rotation_overlap_seconds > MAX_KEY_ROTATION_OVERLAP_SECONDS
+    {
+        return Err(error(
+            "crossing_broker_attestation_invalid",
+            "broker attestation freshness or key-rotation bounds are unsupported",
         ));
     }
     Ok(())
@@ -1944,7 +2110,7 @@ fn verify_broker_binding_identity(
 ) -> Result<(), GrantAdmissionError> {
     let mut unsigned = binding.clone();
     unsigned.identity.clear();
-    let expected = domain_identity(BROKER_BINDING_DOMAIN, &unsigned)?;
+    let expected = domain_identity(broker_binding_domain(binding), &unsigned)?;
     if binding.identity != expected {
         return Err(error(
             "crossing_broker_binding_identity_mismatch",
@@ -1952,6 +2118,14 @@ fn verify_broker_binding_identity(
         ));
     }
     Ok(())
+}
+
+fn broker_binding_domain(binding: &BrokerAuthorityBinding) -> &'static [u8] {
+    if binding.schema_version == Some(2) {
+        BROKER_BINDING_IDENTITY_DOMAIN_V2
+    } else {
+        BROKER_BINDING_IDENTITY_DOMAIN_V1
+    }
 }
 
 fn validate_sorted_unique_bundle_entries(
@@ -2516,6 +2690,7 @@ tasks:
             public_key: public_key.clone(),
         };
         let mut binding = BrokerAuthorityBinding {
+            schema_version: None,
             identity: String::new(),
             authority_id: String::from("platform-release-authority"),
             broker_id: String::from("platform-crossing-broker"),
@@ -2533,7 +2708,7 @@ tasks:
                 session_audience: String::from("ota-crossing-broker"),
             },
             broker_verifiers: vec![verifier.clone()],
-            attestation: BrokerAttestationBinding {
+            attestation: BrokerAttestationBinding::V1(BrokerAttestationBindingV1 {
                 issuer: String::from("runner-launcher"),
                 audience: String::from("ota-crossing-broker"),
                 trust_bundle_identity: identity,
@@ -2546,7 +2721,7 @@ tasks:
                     .map(|claim| (*claim).to_string())
                     .collect(),
                 required_administrator_claims: Vec::new(),
-            },
+            }),
             message_domains: BrokerMessageDomains {
                 challenge_request: String::from("ota-crossing-broker/challenge-request/v1"),
                 attestation_response: String::from("ota-crossing-broker/attestation-response/v1"),
@@ -2570,9 +2745,48 @@ tasks:
             minimum_post_approval_freshness_seconds: 30,
             maximum_lease_seconds: 300,
         };
-        binding.identity =
-            domain_identity(BROKER_BINDING_DOMAIN, &binding).expect("test broker binding identity");
+        binding.identity = domain_identity(broker_binding_domain(&binding), &binding)
+            .expect("test broker binding identity");
         (binding, signing_key)
+    }
+
+    pub(crate) fn broker_binding_v2_with_signing_keys()
+    -> (BrokerAuthorityBinding, SigningKey, SigningKey) {
+        broker_binding_v2_for_profile_with_signing_keys(PROTECTED_LAUNCHER_PROFILE_ID_V1)
+    }
+
+    pub(crate) fn broker_binding_v2_for_profile_with_signing_keys(
+        profile_id: &str,
+    ) -> (BrokerAuthorityBinding, SigningKey, SigningKey) {
+        let (mut binding, broker_signing_key) = broker_binding_with_signing_key();
+        let attestor_signing_key = SigningKey::from_bytes(&[10_u8; 32]);
+        let profile = runtime_boundary_profile_by_id(profile_id).expect("runtime-boundary profile");
+        binding.attestation = BrokerAttestationBinding::V2(BrokerAttestationBindingV2 {
+            protocol_version: String::from(RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2),
+            profile_id: String::from(profile_id),
+            profile_identity: runtime_boundary_profile_identity(&profile)
+                .expect("runtime-boundary profile identity"),
+            attestor_kind: RuntimeBoundaryAttestorKind::ProtectedLauncher,
+            adapter: String::from("launcher_session_peer/v1"),
+            launcher_session_binding_identity: format!("sha256:{}", "b".repeat(64)),
+            issuer: String::from("runner-launcher"),
+            audience: String::from("ota-crossing-broker"),
+            trust_bundle_identity: format!("sha256:{}", "c".repeat(64)),
+            verifiers: vec![BrokerVerifier {
+                key_id: String::from("attestor-2026-01"),
+                algorithm: String::from("ed25519"),
+                public_key: URL_SAFE_NO_PAD.encode(attestor_signing_key.verifying_key().to_bytes()),
+            }],
+            maximum_age_seconds: 180,
+            maximum_clock_skew_seconds: 5,
+            key_rotation_overlap_seconds: 120,
+        });
+        binding.schema_version = Some(2);
+        binding.message_domains.attestation_response = String::from(ATTESTATION_RESPONSE_DOMAIN_V2);
+        binding.identity.clear();
+        binding.identity = domain_identity(broker_binding_domain(&binding), &binding)
+            .expect("test v2 broker binding identity");
+        (binding, broker_signing_key, attestor_signing_key)
     }
 
     pub(crate) fn set_broker_binding_descriptor_for_tests(
@@ -2581,8 +2795,8 @@ tasks:
     ) {
         binding.credential_delivery.descriptor = descriptor;
         binding.identity.clear();
-        binding.identity =
-            domain_identity(BROKER_BINDING_DOMAIN, binding).expect("test broker binding identity");
+        binding.identity = domain_identity(broker_binding_domain(binding), binding)
+            .expect("test broker binding identity");
     }
 
     pub(crate) fn legacy_broker_binding_for_tests(
@@ -2592,7 +2806,7 @@ tasks:
         legacy.message_domains.lease_consumption_query = None;
         legacy.message_domains.lease_consumption_status = None;
         legacy.identity.clear();
-        legacy.identity = domain_identity(BROKER_BINDING_DOMAIN, &legacy)
+        legacy.identity = domain_identity(broker_binding_domain(&legacy), &legacy)
             .expect("legacy broker binding identity");
         legacy
     }
@@ -2616,8 +2830,9 @@ tasks:
         let mut invalid_origin = binding.clone();
         invalid_origin.origin = String::from("http://broker.example.internal");
         invalid_origin.identity.clear();
-        invalid_origin.identity = domain_identity(BROKER_BINDING_DOMAIN, &invalid_origin)
-            .expect("test broker binding identity");
+        invalid_origin.identity =
+            domain_identity(broker_binding_domain(&invalid_origin), &invalid_origin)
+                .expect("test broker binding identity");
         let error = validate_broker_store(&BrokerAuthorityStore {
             schema_version: CROSSING_BROKER_SCHEMA_VERSION,
             bindings: vec![invalid_origin],
@@ -2626,14 +2841,17 @@ tasks:
         assert_eq!(error.reason, "crossing_broker_origin_invalid");
 
         let mut invalid_claims = binding.clone();
-        invalid_claims
-            .attestation
+        let BrokerAttestationBinding::V1(attestation) = &mut invalid_claims.attestation else {
+            panic!("test binding must use v1 attestation");
+        };
+        attestation
             .mandatory_protocol_claims
             .pop()
             .expect("claim fixture");
         invalid_claims.identity.clear();
-        invalid_claims.identity = domain_identity(BROKER_BINDING_DOMAIN, &invalid_claims)
-            .expect("test broker binding identity");
+        invalid_claims.identity =
+            domain_identity(broker_binding_domain(&invalid_claims), &invalid_claims)
+                .expect("test broker binding identity");
         let error = validate_broker_store(&BrokerAuthorityStore {
             schema_version: CROSSING_BROKER_SCHEMA_VERSION,
             bindings: vec![invalid_claims],
@@ -2653,14 +2871,109 @@ tasks:
             .transport_authentication
             .trust_bundle_identity = format!("sha256:{}", "A".repeat(64));
         uppercase_identity.identity.clear();
-        uppercase_identity.identity = domain_identity(BROKER_BINDING_DOMAIN, &uppercase_identity)
-            .expect("test broker binding identity");
+        uppercase_identity.identity = domain_identity(
+            broker_binding_domain(&uppercase_identity),
+            &uppercase_identity,
+        )
+        .expect("test broker binding identity");
         let error = validate_broker_store(&BrokerAuthorityStore {
             schema_version: CROSSING_BROKER_SCHEMA_VERSION,
             bindings: vec![uppercase_identity],
         })
         .expect_err("canonical identities must use lowercase hexadecimal");
         assert_eq!(error.reason, "crossing_broker_identity_invalid");
+    }
+
+    #[test]
+    fn broker_v2_binding_requires_exact_profile_domain_and_disjoint_attestor_authority() {
+        let (binding, _, _) = broker_binding_v2_with_signing_keys();
+        validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![binding.clone()],
+        })
+        .expect("canonical v2 broker binding should validate");
+
+        let mut unversioned_v2 = binding.clone();
+        unversioned_v2.schema_version = None;
+        unversioned_v2.identity.clear();
+        unversioned_v2.identity =
+            domain_identity(broker_binding_domain(&unversioned_v2), &unversioned_v2)
+                .expect("unversioned v2 binding identity");
+        assert_eq!(
+            validate_broker_store(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![unversioned_v2],
+            })
+            .expect_err("v2 attestation requires an explicit v2 binding marker")
+            .reason,
+            "crossing_broker_binding_schema_mismatch"
+        );
+
+        let mut versioned_v1 = broker_binding_with_signing_key().0;
+        versioned_v1.schema_version = Some(1);
+        versioned_v1.identity.clear();
+        versioned_v1.identity =
+            domain_identity(broker_binding_domain(&versioned_v1), &versioned_v1)
+                .expect("versioned v1 binding identity");
+        validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![versioned_v1],
+        })
+        .expect("explicit v1 broker binding should remain valid");
+
+        let mut downgraded = binding.clone();
+        downgraded.message_domains.attestation_response =
+            String::from(ATTESTATION_RESPONSE_DOMAIN_V1);
+        downgraded.identity.clear();
+        downgraded.identity = domain_identity(broker_binding_domain(&downgraded), &downgraded)
+            .expect("downgraded binding identity");
+        assert_eq!(
+            validate_broker_store(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![downgraded],
+            })
+            .expect_err("v2 attestation cannot use the v1 response domain")
+            .reason,
+            "crossing_broker_message_domain_invalid"
+        );
+
+        let mut wrong_profile = binding.clone();
+        let BrokerAttestationBinding::V2(attestation) = &mut wrong_profile.attestation else {
+            panic!("test binding must use v2 attestation");
+        };
+        attestation.profile_identity = format!("sha256:{}", "d".repeat(64));
+        wrong_profile.identity.clear();
+        wrong_profile.identity =
+            domain_identity(broker_binding_domain(&wrong_profile), &wrong_profile)
+                .expect("wrong-profile binding identity");
+        assert_eq!(
+            validate_broker_store(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![wrong_profile],
+            })
+            .expect_err("profile substitution must refuse")
+            .reason,
+            "crossing_broker_attestation_profile_invalid"
+        );
+
+        let mut overlapping = binding;
+        let broker_verifier = overlapping.broker_verifiers[0].clone();
+        let BrokerAttestationBinding::V2(attestation) = &mut overlapping.attestation else {
+            panic!("test binding must use v2 attestation");
+        };
+        attestation.verifiers = vec![broker_verifier];
+        overlapping.identity.clear();
+        overlapping.identity = domain_identity(broker_binding_domain(&overlapping), &overlapping)
+            .expect("overlapping-key binding identity");
+        assert_eq!(
+            validate_broker_store(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![overlapping],
+            })
+            .expect_err("broker and attestor key authority must remain disjoint")
+            .reason,
+            "crossing_broker_verifier_authority_overlap"
+        );
     }
 
     #[test]

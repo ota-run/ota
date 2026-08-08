@@ -2077,7 +2077,8 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         authority["properties"]["authority_separation_posture"]["enum"],
         json!([
             "current_process_filesystem_guarded",
-            "launcher_attested_one_use"
+            "launcher_attested_one_use",
+            "protected_launcher_attested_one_use"
         ])
     );
     assert_eq!(
@@ -2172,6 +2173,202 @@ fn receipt_broker_domain_schema_preserves_legacy_archive_profile() {
     assert!(compiled.validate(&legacy).is_err());
     legacy["lease_consumption_status"] = json!("ota-crossing-broker/lease-consumption-status/v1");
     assert!(compiled.validate(&legacy).is_ok());
+}
+
+#[test]
+fn receipt_runtime_boundary_attestation_schema_enforces_v2_profile_and_domain() {
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let specs = [
+        (
+            "job_principal_non_root",
+            "launcher_principal_binding",
+            false,
+        ),
+        (
+            "authority_binding_write_denied",
+            "target_principal_access_check",
+            false,
+        ),
+        (
+            "attestor_state_write_denied",
+            "target_principal_access_check",
+            false,
+        ),
+        (
+            "broker_credentials_absent_from_job",
+            "launcher_environment_exclusion",
+            false,
+        ),
+        (
+            "broker_credentials_absent_from_task",
+            "child_environment_exclusion",
+            false,
+        ),
+        (
+            "broker_session_non_inheritable",
+            "descriptor_cloexec_verification",
+            false,
+        ),
+        (
+            "broker_session_not_reacquirable",
+            "protected_session_lifetime",
+            false,
+        ),
+        (
+            "host_control_socket_unavailable",
+            "target_principal_access_check",
+            false,
+        ),
+        (
+            "privilege_escalation_unavailable",
+            "launcher_privilege_policy",
+            false,
+        ),
+        (
+            "launcher_binary_identity_bound",
+            "protected_binary_measurement",
+            true,
+        ),
+        (
+            "launcher_config_identity_bound",
+            "protected_config_measurement",
+            true,
+        ),
+    ];
+    let observations = specs
+        .iter()
+        .map(|(name, method, requires_identity)| {
+            let mut observation = json!({
+                "name": name,
+                "state": "verified",
+                "evidence_method": method,
+                "reason_code": "verified_by_protected_launcher"
+            });
+            if *requires_identity {
+                observation["semantic_identity"] = Value::String(identity.clone());
+            }
+            observation
+        })
+        .collect::<Vec<_>>();
+    let attestation = json!({
+        "payload": {
+            "message_kind": "attestation_response",
+            "attestation_protocol_version": "ota-runtime-boundary-attestation/v2",
+            "binding_identity": identity,
+            "challenge_nonce_commitment": identity,
+            "invocation_id": "launcher-invocation-2",
+            "work_unit_identity": identity,
+            "semantic_scope_identity": identity,
+            "runner_principal": "ota-runner",
+            "channel_delivery": "launcher_session_fd",
+            "authenticated_origin": "https://broker.example.internal",
+            "authority_mounts": ["authority-mount-profile:v2"],
+            "runtime_boundary": {
+                "schema_version": 1,
+                "profile_id": "ota.runtime-boundary.protected-launcher/v1",
+                "profile_identity": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8",
+                "attestor_kind": "protected_launcher",
+                "attestor_instance_identity": identity,
+                "launcher_session_binding_identity": identity,
+                "observations": observations
+            },
+            "issuer": "runner-launcher",
+            "audience": "ota-crossing-broker",
+            "issued_at": "2026-08-08T00:00:00Z",
+            "expires_at": "2026-08-08T00:02:00Z"
+        },
+        "key_id": "attestor-2026-01",
+        "algorithm": "ed25519",
+        "signature": "signature"
+    });
+    let attestation_schema = receipt_definition_schema("signedLauncherAttestation");
+    assert!(attestation_schema.validate(&attestation).is_ok());
+
+    let mut missing = attestation.clone();
+    missing["payload"]["runtime_boundary"]["observations"]
+        .as_array_mut()
+        .expect("observations")
+        .pop();
+    assert!(attestation_schema.validate(&missing).is_err());
+    let mut reordered = attestation.clone();
+    reordered["payload"]["runtime_boundary"]["observations"]
+        .as_array_mut()
+        .expect("observations")
+        .swap(0, 1);
+    assert!(attestation_schema.validate(&reordered).is_err());
+    let mut failed = attestation.clone();
+    failed["payload"]["runtime_boundary"]["observations"][0]["state"] = json!("failed");
+    assert!(attestation_schema.validate(&failed).is_err());
+    let mut missing_identity = attestation.clone();
+    missing_identity["payload"]["runtime_boundary"]["observations"][9]
+        .as_object_mut()
+        .expect("observation")
+        .remove("semantic_identity");
+    assert!(attestation_schema.validate(&missing_identity).is_err());
+
+    let binding = json!({
+        "schema_version": 2,
+        "identity": identity,
+        "authority_id": "platform-release-authority",
+        "broker_id": "platform-crossing-broker",
+        "origin": "https://broker.example.internal",
+        "server_name": "broker.example.internal",
+        "protocol_version": "ota-crossing-broker/v1",
+        "transport_authentication": {
+            "kind": "mtls",
+            "trust_bundle_identity": identity,
+            "credential_source_identity": "launcher:workload-session/v1"
+        },
+        "credential_delivery": {
+            "kind": "launcher_session_fd",
+            "session_audience": "ota-crossing-broker"
+        },
+        "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
+        "attestation": {
+            "protocol_version": "ota-runtime-boundary-attestation/v2",
+            "profile_id": "ota.runtime-boundary.protected-launcher/v1",
+            "profile_identity": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8",
+            "attestor_kind": "protected_launcher",
+            "adapter": "launcher_session_peer/v1",
+            "launcher_session_binding_identity": identity,
+            "issuer": "runner-launcher",
+            "audience": "ota-crossing-broker",
+            "trust_bundle_identity": identity,
+            "verifiers": [{ "key_id": "attestor", "algorithm": "ed25519", "public_key": "key" }],
+            "maximum_age_seconds": 180,
+            "maximum_clock_skew_seconds": 5,
+            "key_rotation_overlap_seconds": 120
+        },
+        "message_domains": {
+            "challenge_request": "ota-crossing-broker/challenge-request/v1",
+            "attestation_response": "ota-crossing-broker/attestation-response/v2",
+            "authorization_request": "ota-crossing-broker/authorization-request/v1",
+            "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+            "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
+            "lease_consume": "ota-crossing-broker/lease-consume/v1",
+            "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1",
+            "lease_consumption_query": "ota-crossing-broker/lease-consumption-query/v1",
+            "lease_consumption_status": "ota-crossing-broker/lease-consumption-status/v1"
+        },
+        "maximum_approval_wait_seconds": 120,
+        "minimum_post_approval_freshness_seconds": 30,
+        "maximum_lease_seconds": 300
+    });
+    let binding_schema = receipt_definition_schema("brokerPublicAuthorityBinding");
+    assert!(binding_schema.validate(&binding).is_ok());
+    let mut missing_version = binding.clone();
+    missing_version
+        .as_object_mut()
+        .expect("binding")
+        .remove("schema_version");
+    assert!(binding_schema.validate(&missing_version).is_err());
+    let mut downgraded_domain = binding.clone();
+    downgraded_domain["message_domains"]["attestation_response"] =
+        json!("ota-crossing-broker/attestation-response/v1");
+    assert!(binding_schema.validate(&downgraded_domain).is_err());
+    let mut downgraded_version = binding;
+    downgraded_version["schema_version"] = json!(1);
+    assert!(binding_schema.validate(&downgraded_version).is_err());
 }
 
 #[test]

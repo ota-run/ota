@@ -734,11 +734,17 @@ merge-gate confirmation in
 [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), closes late
 approval after terminal cancellation, insufficient pre-wait freshness, and repeated broad-closure
 work-unit pressure against the same exact Core revision. Stronger provider-attested separation
-remains open. The reviewed next implementation is an additive runtime-boundary attestation v2:
-strict binding/payload/domain branches, fixed protected-launcher observation profiles, signed
-launcher-session configuration identity, current-root or signed historical-bridge archive trust,
-and no reinterpretation of v1 evidence. Provider-specific attestation remains deferred until it
-has its own complete profile and adapter.
+remains open. The current branch now implements the additive runtime-boundary attestation v2
+verifier and archive path against immutable authority-protocol
+`bff47c2c79b145831a3b411614301d7e09d6f377`: strict binding/payload/domain branches, exact
+content-addressed protected-launcher profiles, signed launcher-session configuration identity,
+disjoint attestor and broker authorities, and no reinterpretation of v1 evidence. Complete v2
+evidence derives only `protected_launcher_attested_one_use`; v1 retains
+`launcher_attested_one_use`. Core adversarial regressions cover downgrade, profile mutation,
+missing/reordered/failed observations, required-identity removal, full one-use consumption, and
+archive re-verification. Authority-launcher v2 emission, immutable launcher repinning, and hosted
+protected-launcher pressure remain the next gate. Provider-specific attestation remains deferred
+until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.

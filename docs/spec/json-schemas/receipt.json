@@ -110,6 +110,101 @@
         "public_key": { "type": "string", "minLength": 1 }
       }
     },
+    "brokerAttestationBindingV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuer", "audience", "trust_bundle_identity", "verifiers",
+        "maximum_age_seconds", "maximum_clock_skew_seconds",
+        "key_rotation_overlap_seconds", "mandatory_protocol_claims",
+        "required_administrator_claims"
+      ],
+      "properties": {
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+        "verifiers": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/brokerVerifier" }
+        },
+        "maximum_age_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+        "mandatory_protocol_claims": {
+          "const": [
+            "authenticated_origin", "authority_mounts", "binding_identity",
+            "challenge_nonce_commitment", "channel_delivery", "invocation_id",
+            "runner_principal", "semantic_scope_identity", "work_unit_identity"
+          ]
+        },
+        "required_administrator_claims": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "brokerAttestationBindingV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version", "profile_id", "profile_identity", "attestor_kind", "adapter",
+        "launcher_session_binding_identity", "issuer", "audience", "trust_bundle_identity",
+        "verifiers", "maximum_age_seconds", "maximum_clock_skew_seconds",
+        "key_rotation_overlap_seconds"
+      ],
+      "properties": {
+        "protocol_version": { "const": "ota-runtime-boundary-attestation/v2" },
+        "profile_id": {
+          "enum": [
+            "ota.runtime-boundary.protected-launcher/v1",
+            "ota.runtime-boundary.protected-launcher-image/v1"
+          ]
+        },
+        "profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attestor_kind": { "const": "protected_launcher" },
+        "adapter": { "const": "launcher_session_peer/v1" },
+        "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+        "verifiers": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/brokerVerifier" }
+        },
+        "maximum_age_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "profile_id": { "const": "ota.runtime-boundary.protected-launcher/v1" }
+            },
+            "required": ["profile_id"]
+          },
+          "then": {
+            "properties": {
+              "profile_identity": {
+                "const": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "profile_id": { "const": "ota.runtime-boundary.protected-launcher-image/v1" }
+            },
+            "required": ["profile_id"]
+          },
+          "then": {
+            "properties": {
+              "profile_identity": {
+                "const": "sha256:8e59ecce1e92370ad682d9a73c4e710f86f302122f9bd1dc7c829f0b11aa5f7b"
+              }
+            }
+          }
+        }
+      ]
+    },
     "brokerPublicAuthorityBinding": {
       "type": "object",
       "additionalProperties": false,
@@ -121,6 +216,7 @@
         "maximum_lease_seconds"
       ],
       "properties": {
+        "schema_version": { "enum": [1, 2] },
         "identity": { "$ref": "#/$defs/sha256Identity" },
         "authority_id": { "type": "string", "minLength": 1 },
         "broker_id": { "type": "string", "minLength": 1 },
@@ -151,36 +247,10 @@
           "items": { "$ref": "#/$defs/brokerVerifier" }
         },
         "attestation": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "issuer", "audience", "trust_bundle_identity", "verifiers",
-            "maximum_age_seconds", "maximum_clock_skew_seconds",
-            "key_rotation_overlap_seconds", "mandatory_protocol_claims",
-            "required_administrator_claims"
-          ],
-          "properties": {
-            "issuer": { "type": "string", "minLength": 1 },
-            "audience": { "type": "string", "minLength": 1 },
-            "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
-            "verifiers": {
-              "type": "array", "minItems": 1,
-              "items": { "$ref": "#/$defs/brokerVerifier" }
-            },
-            "maximum_age_seconds": { "type": "integer", "minimum": 1 },
-            "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
-            "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
-            "mandatory_protocol_claims": {
-              "const": [
-                "authenticated_origin", "authority_mounts", "binding_identity",
-                "challenge_nonce_commitment", "channel_delivery", "invocation_id",
-                "runner_principal", "semantic_scope_identity", "work_unit_identity"
-              ]
-            },
-            "required_administrator_claims": {
-              "type": "array", "maxItems": 0
-            }
-          }
+          "oneOf": [
+            { "$ref": "#/$defs/brokerAttestationBindingV1" },
+            { "$ref": "#/$defs/brokerAttestationBindingV2" }
+          ]
         },
         "message_domains": {
           "type": "object",
@@ -205,7 +275,12 @@
           ],
           "properties": {
             "challenge_request": { "const": "ota-crossing-broker/challenge-request/v1" },
-            "attestation_response": { "const": "ota-crossing-broker/attestation-response/v1" },
+            "attestation_response": {
+              "enum": [
+                "ota-crossing-broker/attestation-response/v1",
+                "ota-crossing-broker/attestation-response/v2"
+              ]
+            },
             "authorization_request": { "const": "ota-crossing-broker/authorization-request/v1" },
             "authorization_decision": { "const": "ota-crossing-broker/authorization-decision/v1" },
             "lease_issuance": { "const": "ota-crossing-broker/lease-issuance/v1" },
@@ -218,7 +293,42 @@
         "maximum_approval_wait_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
         "minimum_post_approval_freshness_seconds": { "type": "integer", "minimum": 1 },
         "maximum_lease_seconds": { "type": "integer", "minimum": 1, "maximum": 600 }
-      }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "schema_version": { "const": 1 },
+            "attestation": { "$ref": "#/$defs/brokerAttestationBindingV1" },
+            "message_domains": {
+              "properties": {
+                "attestation_response": {
+                  "const": "ota-crossing-broker/attestation-response/v1"
+                }
+              }
+            }
+          },
+          "not": {
+            "properties": {
+              "schema_version": { "const": 2 }
+            },
+            "required": ["schema_version"]
+          }
+        },
+        {
+          "required": ["schema_version"],
+          "properties": {
+            "schema_version": { "const": 2 },
+            "attestation": { "$ref": "#/$defs/brokerAttestationBindingV2" },
+            "message_domains": {
+              "properties": {
+                "attestation_response": {
+                  "const": "ota-crossing-broker/attestation-response/v2"
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "brokerChallenge": {
       "type": "object",
@@ -237,7 +347,7 @@
         "contract_identity": { "$ref": "#/$defs/sha256Identity" }
       }
     },
-    "signedLauncherAttestation": {
+    "signedLauncherAttestationV1": {
       "type": "object",
       "additionalProperties": false,
       "required": ["payload", "key_id", "algorithm", "signature"],
@@ -272,6 +382,170 @@
         "algorithm": { "const": "ed25519" },
         "signature": { "type": "string", "minLength": 1 }
       }
+    },
+    "runtimeBoundaryObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "state", "evidence_method", "reason_code"],
+      "properties": {
+        "name": {
+          "enum": [
+            "job_principal_non_root", "authority_binding_write_denied",
+            "attestor_state_write_denied", "broker_credentials_absent_from_job",
+            "broker_credentials_absent_from_task", "broker_session_non_inheritable",
+            "broker_session_not_reacquirable", "host_control_socket_unavailable",
+            "privilege_escalation_unavailable", "launcher_binary_identity_bound",
+            "launcher_config_identity_bound", "runner_image_identity_bound",
+            "hardening_profile_identity_bound"
+          ]
+        },
+        "state": { "const": "verified" },
+        "evidence_method": {
+          "enum": [
+            "launcher_principal_binding", "target_principal_access_check",
+            "launcher_environment_exclusion", "child_environment_exclusion",
+            "descriptor_cloexec_verification", "protected_session_lifetime",
+            "launcher_privilege_policy", "protected_binary_measurement",
+            "protected_config_measurement", "protected_image_measurement",
+            "protected_profile_measurement"
+          ]
+        },
+        "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "semantic_identity": { "$ref": "#/$defs/sha256Identity" }
+      },
+      "oneOf": [
+        { "properties": { "name": { "const": "job_principal_non_root" }, "evidence_method": { "const": "launcher_principal_binding" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "authority_binding_write_denied" }, "evidence_method": { "const": "target_principal_access_check" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "attestor_state_write_denied" }, "evidence_method": { "const": "target_principal_access_check" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_credentials_absent_from_job" }, "evidence_method": { "const": "launcher_environment_exclusion" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_credentials_absent_from_task" }, "evidence_method": { "const": "child_environment_exclusion" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_session_non_inheritable" }, "evidence_method": { "const": "descriptor_cloexec_verification" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_session_not_reacquirable" }, "evidence_method": { "const": "protected_session_lifetime" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "host_control_socket_unavailable" }, "evidence_method": { "const": "target_principal_access_check" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "privilege_escalation_unavailable" }, "evidence_method": { "const": "launcher_privilege_policy" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "launcher_binary_identity_bound" }, "evidence_method": { "const": "protected_binary_measurement" } }, "required": ["semantic_identity"] },
+        { "properties": { "name": { "const": "launcher_config_identity_bound" }, "evidence_method": { "const": "protected_config_measurement" } }, "required": ["semantic_identity"] },
+        { "properties": { "name": { "const": "runner_image_identity_bound" }, "evidence_method": { "const": "protected_image_measurement" } }, "required": ["semantic_identity"] },
+        { "properties": { "name": { "const": "hardening_profile_identity_bound" }, "evidence_method": { "const": "protected_profile_measurement" } }, "required": ["semantic_identity"] }
+      ]
+    },
+    "runtimeBoundaryAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "profile_id", "profile_identity", "attestor_kind",
+        "attestor_instance_identity", "launcher_session_binding_identity", "observations"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "profile_id": {
+          "enum": [
+            "ota.runtime-boundary.protected-launcher/v1",
+            "ota.runtime-boundary.protected-launcher-image/v1"
+          ]
+        },
+        "profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attestor_kind": { "const": "protected_launcher" },
+        "attestor_instance_identity": { "$ref": "#/$defs/sha256Identity" },
+        "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "observations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runtimeBoundaryObservation" }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "profile_id": { "const": "ota.runtime-boundary.protected-launcher/v1" },
+            "profile_identity": { "const": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8" },
+            "observations": {
+              "minItems": 11, "maxItems": 11,
+              "prefixItems": [
+                { "properties": { "name": { "const": "job_principal_non_root" } } },
+                { "properties": { "name": { "const": "authority_binding_write_denied" } } },
+                { "properties": { "name": { "const": "attestor_state_write_denied" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_job" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_task" } } },
+                { "properties": { "name": { "const": "broker_session_non_inheritable" } } },
+                { "properties": { "name": { "const": "broker_session_not_reacquirable" } } },
+                { "properties": { "name": { "const": "host_control_socket_unavailable" } } },
+                { "properties": { "name": { "const": "privilege_escalation_unavailable" } } },
+                { "properties": { "name": { "const": "launcher_binary_identity_bound" } } },
+                { "properties": { "name": { "const": "launcher_config_identity_bound" } } }
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "profile_id": { "const": "ota.runtime-boundary.protected-launcher-image/v1" },
+            "profile_identity": { "const": "sha256:8e59ecce1e92370ad682d9a73c4e710f86f302122f9bd1dc7c829f0b11aa5f7b" },
+            "observations": {
+              "minItems": 13, "maxItems": 13,
+              "prefixItems": [
+                { "properties": { "name": { "const": "job_principal_non_root" } } },
+                { "properties": { "name": { "const": "authority_binding_write_denied" } } },
+                { "properties": { "name": { "const": "attestor_state_write_denied" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_job" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_task" } } },
+                { "properties": { "name": { "const": "broker_session_non_inheritable" } } },
+                { "properties": { "name": { "const": "broker_session_not_reacquirable" } } },
+                { "properties": { "name": { "const": "host_control_socket_unavailable" } } },
+                { "properties": { "name": { "const": "privilege_escalation_unavailable" } } },
+                { "properties": { "name": { "const": "launcher_binary_identity_bound" } } },
+                { "properties": { "name": { "const": "launcher_config_identity_bound" } } },
+                { "properties": { "name": { "const": "runner_image_identity_bound" } } },
+                { "properties": { "name": { "const": "hardening_profile_identity_bound" } } }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "signedLauncherAttestationV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "attestation_protocol_version", "binding_identity",
+            "challenge_nonce_commitment", "invocation_id", "work_unit_identity",
+            "semantic_scope_identity", "runner_principal", "channel_delivery",
+            "authenticated_origin", "authority_mounts", "runtime_boundary", "issuer",
+            "audience", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "attestation_response" },
+            "attestation_protocol_version": { "const": "ota-runtime-boundary-attestation/v2" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "invocation_id": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "channel_delivery": { "const": "launcher_session_fd" },
+            "authenticated_origin": { "type": "string", "minLength": 1 },
+            "authority_mounts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/publicEvidenceLabel" } },
+            "runtime_boundary": { "$ref": "#/$defs/runtimeBoundaryAttestation" },
+            "issuer": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signedLauncherAttestation": {
+      "oneOf": [
+        { "$ref": "#/$defs/signedLauncherAttestationV1" },
+        { "$ref": "#/$defs/signedLauncherAttestationV2" }
+      ]
     },
     "brokerAuthorizationRequest": {
       "type": "object",
@@ -654,7 +928,36 @@
         "actor_mode": { "enum": ["agent", "non_agent"] },
         "admitted_at": { "type": "string", "format": "date-time" },
         "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" }
-      }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "binding_snapshot": {
+              "properties": {
+                "schema_version": { "const": 1 },
+                "attestation": { "$ref": "#/$defs/brokerAttestationBindingV1" }
+              },
+              "not": {
+                "properties": { "schema_version": { "const": 2 } },
+                "required": ["schema_version"]
+              }
+            },
+            "attestation": { "$ref": "#/$defs/signedLauncherAttestationV1" }
+          }
+        },
+        {
+          "properties": {
+            "binding_snapshot": {
+              "required": ["schema_version"],
+              "properties": {
+                "schema_version": { "const": 2 },
+                "attestation": { "$ref": "#/$defs/brokerAttestationBindingV2" }
+              }
+            },
+            "attestation": { "$ref": "#/$defs/signedLauncherAttestationV2" }
+          }
+        }
+      ]
     },
     "brokerArchiveEvidence": {
       "type": "object",
@@ -1684,7 +1987,11 @@
                     "authority_carrier": { "const": "authority_broker" },
                     "authority_id": { "type": "string", "minLength": 1 },
                     "authority_separation_posture": {
-                      "enum": ["current_process_filesystem_guarded", "launcher_attested_one_use"]
+                      "enum": [
+                        "current_process_filesystem_guarded",
+                        "launcher_attested_one_use",
+                        "protected_launcher_attested_one_use"
+                      ]
                     },
                     "authority_binding_identity": { "$ref": "#/$defs/sha256Identity" },
                     "broker": { "$ref": "#/$defs/executionBoundaryBrokerAuthority" },
@@ -1748,7 +2055,12 @@
                       "required": ["authority_carrier", "broker"],
                       "properties": {
                         "authority_carrier": { "const": "authority_broker" },
-                        "authority_separation_posture": { "const": "launcher_attested_one_use" },
+                        "authority_separation_posture": {
+                          "enum": [
+                            "launcher_attested_one_use",
+                            "protected_launcher_attested_one_use"
+                          ]
+                        },
                         "transaction": {
                           "properties": {
                             "schema_version": { "const": 2 },

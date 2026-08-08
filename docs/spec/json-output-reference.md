@@ -178,6 +178,14 @@ human text output:
   invocation, principal, and authority-mount labels. Raw nonce values, descriptors, credentials,
   filesystem paths, and secret provider material are not public evidence.
   Legacy v1 transaction history remains `prebound_file`-only and uses `grant_identity` instead.
+  Broker attestation protocol v1 retains `authority_separation_posture:
+  launcher_attested_one_use`. A strict v2 binding and signed payload instead carry one exact
+  protocol-published protected-launcher profile, its content identity, ordered required
+  observations, launcher/session identities, and a distinct attestor authority. Only a completely
+  verified v2 profile emits `protected_launcher_attested_one_use`; missing, reordered, failed,
+  unknown, downgraded, or substituted profile evidence refuses. Archive verification preserves the
+  original v1/v2 binding, payload, response-domain, and identity-domain branch and cannot upgrade
+  v1 by injecting defaults. Neither posture implies provider-attested separation.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker
   selection with `authority_carrier: authority_broker` and

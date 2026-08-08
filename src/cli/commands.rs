@@ -17525,7 +17525,9 @@ fn crossing_authority_output_with_transaction(
                 decision: String::from("allowed"),
                 authority_carrier: Some(String::from("authority_broker")),
                 authority_id: admission.binding_snapshot.authority_id.clone(),
-                authority_separation_posture: String::from("launcher_attested_one_use"),
+                authority_separation_posture: String::from(
+                    admission.authority_separation_posture(),
+                ),
                 authority_binding_identity: admission.binding_snapshot.identity.clone(),
                 broker: Some(crate::output::ExecutionBoundaryBrokerAuthority {
                     admission_identity: admission.identity.clone(),
@@ -17537,7 +17539,7 @@ fn crossing_authority_output_with_transaction(
                     work_unit_identity: admission.challenge.work_unit_identity.clone(),
                     challenge_nonce_commitment: admission.challenge.nonce_commitment.clone(),
                     broker_revision: admission.broker_revision,
-                    runner_principal: admission.attestation.payload.runner_principal.clone(),
+                    runner_principal: admission.attestation.runner_principal().to_string(),
                     approval_reference: admission
                         .authorization_decision
                         .payload
@@ -72970,8 +72972,8 @@ workflows:
     fn broker_authority_consumes_once_before_run_and_keeps_launcher_fd_private() {
         let authority_root = tempfile::tempdir().expect("authority tempdir");
         let repo = tempfile::tempdir().expect("repo tempdir");
-        let (mut binding, signing_key) =
-            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (mut binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
         let (ota, launcher) = UnixStream::pair().expect("launcher pair");
         let descriptor = ota.into_raw_fd();
         crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
@@ -73003,7 +73005,7 @@ governance:
 tasks:
   publish:
     command:
-      exe: sh
+      exe: bash
       args: ["-c", "( true <&{} ) 2>/dev/null && exit 42; touch broker-executed"]
     safe_for_agent: false
 "#,
@@ -73011,10 +73013,11 @@ tasks:
             ),
         )
         .expect("write contract");
-        let broker = crate::broker_session::tests::spawn_allowing_test_broker(
+        let broker = crate::broker_session::tests::spawn_allowing_test_broker_with_attestor(
             launcher,
             binding,
-            signing_key,
+            broker_signing_key,
+            attestor_signing_key,
             time::OffsetDateTime::now_utc(),
         );
 
@@ -73086,6 +73089,10 @@ tasks:
             Some("authority_broker")
         );
         assert_eq!(
+            authority.authority_separation_posture,
+            "protected_launcher_attested_one_use"
+        );
+        assert_eq!(
             authority
                 .transaction
                 .as_ref()
@@ -73133,8 +73140,8 @@ tasks:
     fn broker_authority_consumption_covers_real_workflow_execution() {
         let authority_root = tempfile::tempdir().expect("authority tempdir");
         let repo = tempfile::tempdir().expect("repo tempdir");
-        let (mut binding, signing_key) =
-            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (mut binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
         let (ota, launcher) = UnixStream::pair().expect("launcher pair");
         crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
             &mut binding,
@@ -73166,7 +73173,7 @@ governance:
 tasks:
   publish:
     command:
-      exe: sh
+      exe: bash
       args: ["-c", "touch broker-workflow-executed"]
     safe_for_agent: false
 workflows:
@@ -73180,10 +73187,11 @@ workflows:
         )
         .expect("write contract");
         let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
-        let broker = crate::broker_session::tests::spawn_allowing_test_broker(
+        let broker = crate::broker_session::tests::spawn_allowing_test_broker_with_attestor(
             launcher,
             binding,
-            signing_key,
+            broker_signing_key,
+            attestor_signing_key,
             time::OffsetDateTime::now_utc(),
         );
 
@@ -73222,6 +73230,10 @@ workflows:
             authority.authority_carrier.as_deref(),
             Some("authority_broker")
         );
+        assert_eq!(
+            authority.authority_separation_posture,
+            "protected_launcher_attested_one_use"
+        );
 
         let receipt_schema = super::load_json_value(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/receipt.json"),
@@ -73253,6 +73265,26 @@ workflows:
                     .join("; ")
             );
         }
+
+        let mut missing_v2_binding_version = authority_json.clone();
+        missing_v2_binding_version["archive_evidence"]["admission"]["binding_snapshot"]
+            .as_object_mut()
+            .expect("v2 binding snapshot")
+            .remove("schema_version");
+        assert!(compiled.validate(&missing_v2_binding_version).is_err());
+
+        let mut v1_payload_under_v2_binding = authority_json.clone();
+        let archived_attestation =
+            &mut v1_payload_under_v2_binding["archive_evidence"]["admission"]["attestation"];
+        archived_attestation["payload"]
+            .as_object_mut()
+            .expect("attestation payload")
+            .remove("attestation_protocol_version");
+        archived_attestation["payload"]
+            .as_object_mut()
+            .expect("attestation payload")
+            .remove("runtime_boundary");
+        assert!(compiled.validate(&v1_payload_under_v2_binding).is_err());
 
         let mut missing_consumption = authority_json.clone();
         missing_consumption["transaction"]
@@ -74054,9 +74086,25 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn agent_run_dry_run_auto_selects_oci_for_compatible_authoritative_policy() {
+        let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
         fs::create_dir(repo.path().join("coverage")).expect("writable carveout");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -74106,6 +74154,10 @@ agent:
             false,
             false,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let json: serde_json::Value =
@@ -74202,9 +74254,25 @@ agent:
         assert!(!repo.path().join(".ota/state/managed-engines").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn agent_up_dry_run_carries_the_same_sandbox_admission_truth() {
+        let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
         fs::create_dir(repo.path().join("coverage")).expect("writable carveout");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -74260,6 +74328,10 @@ agent:
             false,
             None,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let json: serde_json::Value =
@@ -75281,6 +75353,20 @@ tasks:
     fn run_dry_run_json_returns_preview_shape() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "npm"),
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '11.0.0'; fi\nexit 0\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
         fs::write(
             repo.path().join("ota.yaml"),
             r#"
@@ -75309,6 +75395,10 @@ tasks:
             false,
             false,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
@@ -75348,6 +75438,20 @@ tasks:
     fn run_dry_run_json_includes_governance_modes_and_effects() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
         fs::write(
             repo.path().join("ota.yaml"),
             r#"
@@ -75411,6 +75515,10 @@ tasks:
             false,
             false,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
@@ -83739,11 +83847,15 @@ workflows:
 
     #[test]
     fn execute_repo_up_runs_prerequisite_workflow_instances_before_selected_instance() {
-        let fixture = tempdir().expect("tempdir");
-        let contract_path = fixture.path().join("ota.yaml");
-        let log_path = fixture.path().join("instances.log");
-        let contents = format!(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("up-prerequisite-workflow-instances"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let fixture = tempdir().expect("tempdir");
+                let contract_path = fixture.path().join("ota.yaml");
+                let log_path = fixture.path().join("instances.log");
+                let contents = format!(
+                    r#"
 version: 1
 project:
   name: workflow-instance-topology-up
@@ -83775,28 +83887,34 @@ workflows:
         env:
           INSTANCE: ws2
 "#,
-        );
-        fs::write(&contract_path, &contents).expect("contract should write");
-        let contract =
-            parse_contract_str(&contract_path, &contents).expect("contract should parse");
+                );
+                fs::write(&contract_path, &contents).expect("contract should write");
+                let contract =
+                    parse_contract_str(&contract_path, &contents).expect("contract should parse");
 
-        let result = super::execute_repo_up_with_behavior(
-            &contract,
-            &contract_path,
-            ExecutionOverrides::default(),
-            Some("app@ws2"),
-            None,
-            false,
-            RepoExecutionMode::Capture,
-            super::UpRunBehaviorPreference::Auto,
-            None,
-        )
-        .expect("up should execute")
-        .ok;
-        assert!(result);
+                let result = super::execute_repo_up_with_behavior(
+                    &contract,
+                    &contract_path,
+                    ExecutionOverrides::default(),
+                    Some("app@ws2"),
+                    None,
+                    false,
+                    RepoExecutionMode::Capture,
+                    super::UpRunBehaviorPreference::Auto,
+                    None,
+                )
+                .expect("up should execute")
+                .ok;
+                assert!(result);
 
-        let rendered = fs::read_to_string(&log_path).expect("instance log should read");
-        assert_eq!(rendered, "ws0\nws1\nws2\n");
+                let rendered = fs::read_to_string(&log_path).expect("instance log should read");
+                assert_eq!(rendered, "ws0\nws1\nws2\n");
+            })
+            .expect("spawn prerequisite workflow instance worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]

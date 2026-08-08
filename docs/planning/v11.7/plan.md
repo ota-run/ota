@@ -743,7 +743,7 @@ This adapter leaves direct Ota-to-broker mTLS and provider-workload-identity tra
 only if they can meet the same non-delegable delivery and task-isolation requirements. They must
 reuse this binding and request/response model rather than defining new authority semantics.
 
-##### Structured runtime-boundary attestation (remaining completion gate)
+##### Structured runtime-boundary attestation (implemented verifier; hosted pressure pending)
 
 Protocol v1 proves a fresh challenge-bound launcher session and one-use broker consumption, but its
 bounded labels do not establish the effective runtime separation required to complete V11.7. Its
@@ -792,7 +792,10 @@ Profile `ota.runtime-boundary.protected-launcher-image/v1` requires those eleven
 in order, `runner_image_identity_bound` through `protected_image_measurement` and
 `hardening_profile_identity_bound` through `protected_profile_measurement`. Each published profile
 has one stable `profile_id` and one exact SHA-256 `profile_identity` over its canonical ordered
-definition. The binding and signed runtime record carry both and must match the Core-published
+definition under domain `ota.runtime-boundary.profile.v1\0`. The base profile identity is
+`sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8`; the image profile
+identity is `sha256:8e59ecce1e92370ad682d9a73c4e710f86f302122f9bd1dc7c829f0b11aa5f7b`.
+The binding and signed runtime record carry both and must match the protocol-published
 definition. The profile defines requiredness; bindings and callers cannot make an observation
 optional. Observation names and evidence methods are closed enums; duplicates, omissions,
 reordering, unexpected observations, or inconsistent profile/kind combinations refuse. Every

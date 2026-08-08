@@ -47,19 +47,72 @@ use time::format_description::well_known::Rfc3339;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-#[cfg(test)]
-use ota_authority_protocol::LauncherAttestationPayload;
 use ota_authority_protocol::{
     AuthorizationDecision, AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge,
-    MAX_FRAME_BYTES, PreparedLeasePayload, SignedLauncherAttestation,
+    MAX_FRAME_BYTES, PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
+    RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
+    RuntimeBoundarySemanticIdentityPosture, SignedLauncherAttestation, SignedLauncherAttestationV2,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
-    message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
-    sha256_identity, signed_message_identity as protocol_signed_message_identity,
+    launcher_attestation_identity_v2, message_identity as protocol_message_identity,
+    nonce_commitment as protocol_nonce_commitment, runtime_boundary_profile_by_id,
+    runtime_boundary_profile_identity, sha256_identity,
+    signed_message_identity as protocol_signed_message_identity,
+};
+#[cfg(test)]
+use ota_authority_protocol::{
+    LauncherAttestationPayload, LauncherAttestationPayloadV2, RuntimeBoundaryAttestation,
+    RuntimeBoundaryObservation,
 };
 pub(crate) use ota_authority_protocol::{
     LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, LeaseConsumptionQuery,
     LeaseConsumptionStatus, LeaseConsumptionStatusPayload, SignedBrokerMessage,
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub(crate) enum LauncherAttestationEvidence {
+    V2(SignedLauncherAttestationV2),
+    V1(SignedLauncherAttestation),
+}
+
+impl LauncherAttestationEvidence {
+    fn expires_at(&self) -> &str {
+        match self {
+            Self::V1(value) => value.payload.expires_at.as_str(),
+            Self::V2(value) => value.payload.expires_at.as_str(),
+        }
+    }
+
+    fn issued_at(&self) -> &str {
+        match self {
+            Self::V1(value) => value.payload.issued_at.as_str(),
+            Self::V2(value) => value.payload.issued_at.as_str(),
+        }
+    }
+
+    pub(crate) fn runner_principal(&self) -> &str {
+        match self {
+            Self::V1(value) => value.payload.runner_principal.as_str(),
+            Self::V2(value) => value.payload.runner_principal.as_str(),
+        }
+    }
+
+    #[cfg(test)]
+    fn v1_mut(&mut self) -> &mut SignedLauncherAttestation {
+        match self {
+            Self::V1(value) => value,
+            Self::V2(_) => panic!("test fixture expected a v1 launcher attestation"),
+        }
+    }
+
+    #[cfg(test)]
+    fn v2_mut(&mut self) -> &mut SignedLauncherAttestationV2 {
+        match self {
+            Self::V2(value) => value,
+            Self::V1(_) => panic!("test fixture expected a v2 launcher attestation"),
+        }
+    }
+}
 
 use crate::crossing::CrossingSemanticScope;
 use crate::crossing_authority::{
@@ -165,7 +218,7 @@ pub(crate) struct BrokerAdmissionEvidence {
     pub identity: String,
     pub binding_snapshot: BrokerPublicAuthorityBinding,
     pub challenge: BrokerChallenge,
-    pub attestation: SignedLauncherAttestation,
+    pub attestation: LauncherAttestationEvidence,
     pub attestation_identity: String,
     pub authorization_request: AuthorizationRequest,
     pub authorization_request_identity: String,
@@ -198,7 +251,7 @@ pub(crate) struct PreparedBrokerCrossing {
     session: LauncherSession,
     binding: BrokerAuthorityBinding,
     challenge: FrozenBrokerChallenge,
-    attestation: SignedLauncherAttestation,
+    attestation: LauncherAttestationEvidence,
     authorization_request: AuthorizationRequest,
     authorization_decision: SignedBrokerMessage<AuthorizationDecisionPayload>,
     prepared_lease: SignedBrokerMessage<PreparedLeasePayload>,
@@ -398,6 +451,13 @@ impl ConsumedBrokerCrossing {
 }
 
 impl BrokerAdmissionEvidence {
+    pub(crate) fn authority_separation_posture(&self) -> &'static str {
+        match &self.attestation {
+            LauncherAttestationEvidence::V1(_) => "launcher_attested_one_use",
+            LauncherAttestationEvidence::V2(_) => "protected_launcher_attested_one_use",
+        }
+    }
+
     pub(crate) fn crossing_admission(&self) -> CrossingAuthorityAdmission {
         CrossingAuthorityAdmission {
             carrier: CrossingAuthorityCarrier::AuthorityBroker,
@@ -690,13 +750,10 @@ fn verify_broker_consumption_fields(
 
 pub(crate) fn verify_attestation_covers_approval_window(
     binding: &BrokerAuthorityBinding,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     now: OffsetDateTime,
 ) -> Result<(), String> {
-    let expires_at = parse_time(
-        attestation.payload.expires_at.as_str(),
-        "launcher attestation expires_at",
-    )?;
+    let expires_at = parse_time(attestation.expires_at(), "launcher attestation expires_at")?;
     let required = time::Duration::seconds(
         (binding.maximum_approval_wait_seconds + binding.minimum_post_approval_freshness_seconds)
             as i64,
@@ -712,7 +769,7 @@ pub(crate) fn verify_attestation_covers_approval_window(
 pub(crate) fn build_authorization_request(
     binding: &BrokerAuthorityBinding,
     challenge: &FrozenBrokerChallenge,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     attestation_identity: &str,
     scope: &CrossingSemanticScope,
     actor_mode: &str,
@@ -744,7 +801,7 @@ pub(crate) fn build_authorization_request(
         work_unit_identity: challenge.challenge.work_unit_identity.clone(),
         contract_identity: scope.contract_identity.clone(),
         semantic_scope_identity: scope.identity.clone(),
-        runner_principal: attestation.payload.runner_principal.clone(),
+        runner_principal: attestation.runner_principal().to_string(),
         actor_mode: actor_mode.to_string(),
         requested_lifetime_seconds,
     };
@@ -811,7 +868,7 @@ fn verify_authorization_decision_message(
 fn verify_prepared_lease(
     binding: &BrokerAuthorityBinding,
     challenge: &FrozenBrokerChallenge,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     request: &AuthorizationRequest,
     authorization_decision_identity: &str,
     authorization_decision_revision: u64,
@@ -849,10 +906,8 @@ fn verify_prepared_lease(
     )?;
     let (issued_at, expires_at) =
         verify_validity_window(payload.issued_at.as_str(), payload.expires_at.as_str(), now)?;
-    let attestation_expires_at = parse_time(
-        attestation.payload.expires_at.as_str(),
-        "launcher attestation expires_at",
-    )?;
+    let attestation_expires_at =
+        parse_time(attestation.expires_at(), "launcher attestation expires_at")?;
     if expires_at - issued_at > time::Duration::seconds(binding.maximum_lease_seconds as i64)
         || expires_at - issued_at
             > time::Duration::seconds(request.requested_lifetime_seconds as i64)
@@ -867,7 +922,7 @@ pub(crate) fn build_broker_admission(
     binding: &BrokerAuthorityBinding,
     scope: &CrossingSemanticScope,
     challenge: &FrozenBrokerChallenge,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     attestation_identity: &str,
     authorization_request: &AuthorizationRequest,
     authorization_request_identity: &str,
@@ -970,7 +1025,7 @@ pub(crate) fn build_lease_consume_request(
 
 fn verify_lease_consume_response(
     binding: &BrokerAuthorityBinding,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     prepared_lease: &SignedBrokerMessage<PreparedLeasePayload>,
     request: &LeaseConsumeRequest,
     request_identity: &str,
@@ -1002,14 +1057,10 @@ fn verify_lease_consume_response(
         prepared_lease.payload.expires_at.as_str(),
         "lease expires_at",
     )?;
-    let attestation_issued_at = parse_time(
-        attestation.payload.issued_at.as_str(),
-        "launcher attestation issued_at",
-    )?;
-    let attestation_expires_at = parse_time(
-        attestation.payload.expires_at.as_str(),
-        "launcher attestation expires_at",
-    )?;
+    let attestation_issued_at =
+        parse_time(attestation.issued_at(), "launcher attestation issued_at")?;
+    let attestation_expires_at =
+        parse_time(attestation.expires_at(), "launcher attestation expires_at")?;
     if request.lease_identity
         != signed_message_identity(
             binding.message_domains.lease_issuance.as_bytes(),
@@ -1026,7 +1077,7 @@ fn verify_lease_consume_response(
         ));
     }
     if let Some(now) = observed_at {
-        let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds as i64);
+        let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds() as i64);
         if consumed_at > now + skew || consumed_at < now - skew {
             return Err(String::from(
                 "broker consume response is outside the bounded freshness window",
@@ -1052,7 +1103,7 @@ fn verify_lease_consume_response(
 pub(crate) fn verify_and_record_lease_consumption(
     binding: &BrokerAuthorityBinding,
     challenge: &FrozenBrokerChallenge,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     authorization_request: &AuthorizationRequest,
     authorization_decision: &SignedBrokerMessage<AuthorizationDecisionPayload>,
     prepared_lease: &SignedBrokerMessage<PreparedLeasePayload>,
@@ -1135,7 +1186,7 @@ fn build_consumption_query(
 fn verify_consumption_status(
     binding: &BrokerAuthorityBinding,
     challenge: &FrozenBrokerChallenge,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     attestation_identity: &str,
     intent: &crate::crossing_transaction::BrokerConsumptionIntentEvidence,
     query: &LeaseConsumptionQuery,
@@ -1172,7 +1223,7 @@ fn verify_consumption_status(
         status.payload.observed_at.as_str(),
         "broker recovery observed_at",
     )?;
-    let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds as i64);
+    let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds() as i64);
     if observed_at > now + skew || observed_at < now - skew {
         return Err(String::from(
             "broker consumption status is outside the bounded freshness window",
@@ -1309,13 +1360,10 @@ fn complete_consumption_recovery(
 
 fn verify_attestation_post_approval_freshness(
     binding: &BrokerAuthorityBinding,
-    attestation: &SignedLauncherAttestation,
+    attestation: &LauncherAttestationEvidence,
     now: OffsetDateTime,
 ) -> Result<(), String> {
-    let expires_at = parse_time(
-        attestation.payload.expires_at.as_str(),
-        "launcher attestation expires_at",
-    )?;
+    let expires_at = parse_time(attestation.expires_at(), "launcher attestation expires_at")?;
     let required = time::Duration::seconds(binding.minimum_post_approval_freshness_seconds as i64);
     if expires_at < now + required {
         return Err(String::from(
@@ -1427,25 +1475,180 @@ fn parse_time(value: &str, label: &str) -> Result<OffsetDateTime, String> {
 pub(crate) fn verify_launcher_attestation(
     binding: &BrokerAuthorityBinding,
     challenge: &FrozenBrokerChallenge,
+    attestation: &LauncherAttestationEvidence,
+    now: OffsetDateTime,
+) -> Result<String, String> {
+    match (attestation, &binding.attestation) {
+        (
+            LauncherAttestationEvidence::V1(attestation),
+            crate::crossing_authority::BrokerAttestationBinding::V1(_),
+        ) => verify_launcher_attestation_v1(binding, challenge, attestation, now),
+        (
+            LauncherAttestationEvidence::V2(attestation),
+            crate::crossing_authority::BrokerAttestationBinding::V2(binding_attestation),
+        ) => verify_launcher_attestation_v2(
+            binding,
+            binding_attestation,
+            challenge,
+            attestation,
+            now,
+        ),
+        _ => Err(String::from(
+            "launcher attestation version does not match the protected broker binding",
+        )),
+    }
+}
+
+fn verify_launcher_attestation_v1(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
     attestation: &SignedLauncherAttestation,
     now: OffsetDateTime,
 ) -> Result<String, String> {
     let payload = &attestation.payload;
-    if attestation.algorithm != "ed25519"
-        || payload.message_kind != "attestation_response"
-        || payload.binding_identity != binding.identity
-        || payload.challenge_nonce_commitment != challenge.challenge.nonce_commitment
-        || payload.work_unit_identity != challenge.challenge.work_unit_identity
-        || payload.semantic_scope_identity != challenge.challenge.semantic_scope_identity
-        || payload.issuer != binding.attestation.issuer
-        || payload.audience != binding.attestation.audience
-        || payload.authenticated_origin != binding.origin
-        || payload.channel_delivery != "launcher_session_fd"
-        || !is_public_evidence_label(payload.invocation_id.as_str())
-        || !is_public_evidence_label(payload.runner_principal.as_str())
-        || payload.authority_mounts.is_empty()
-        || payload
-            .authority_mounts
+    verify_common_attestation_claims(
+        binding,
+        challenge,
+        payload.message_kind.as_str(),
+        payload.binding_identity.as_str(),
+        payload.challenge_nonce_commitment.as_str(),
+        payload.work_unit_identity.as_str(),
+        payload.semantic_scope_identity.as_str(),
+        payload.invocation_id.as_str(),
+        payload.runner_principal.as_str(),
+        payload.channel_delivery.as_str(),
+        payload.authenticated_origin.as_str(),
+        &payload.authority_mounts,
+        payload.issuer.as_str(),
+        payload.audience.as_str(),
+    )?;
+    verify_attestation_signature_and_time(
+        binding,
+        payload,
+        attestation.key_id.as_str(),
+        attestation.algorithm.as_str(),
+        attestation.signature.as_str(),
+        payload.issued_at.as_str(),
+        payload.expires_at.as_str(),
+        now,
+    )?;
+    let envelope = serde_jcs::to_vec(attestation)
+        .map_err(|error| format!("failed to canonicalize launcher attestation: {error}"))?;
+    Ok(sha256_identity(&domain_separated(
+        binding.message_domains.attestation_response.as_bytes(),
+        &envelope,
+    )))
+}
+
+fn verify_launcher_attestation_v2(
+    binding: &BrokerAuthorityBinding,
+    binding_attestation: &crate::crossing_authority::BrokerAttestationBindingV2,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &SignedLauncherAttestationV2,
+    now: OffsetDateTime,
+) -> Result<String, String> {
+    let payload = &attestation.payload;
+    verify_common_attestation_claims(
+        binding,
+        challenge,
+        payload.message_kind.as_str(),
+        payload.binding_identity.as_str(),
+        payload.challenge_nonce_commitment.as_str(),
+        payload.work_unit_identity.as_str(),
+        payload.semantic_scope_identity.as_str(),
+        payload.invocation_id.as_str(),
+        payload.runner_principal.as_str(),
+        payload.channel_delivery.as_str(),
+        payload.authenticated_origin.as_str(),
+        &payload.authority_mounts,
+        payload.issuer.as_str(),
+        payload.audience.as_str(),
+    )?;
+    let runtime = &payload.runtime_boundary;
+    let profile = runtime_boundary_profile_by_id(runtime.profile_id.as_str())
+        .ok_or_else(|| String::from("runtime-boundary attestation profile is unsupported"))?;
+    let profile_identity = runtime_boundary_profile_identity(&profile)
+        .map_err(|error| format!("failed to derive runtime-boundary profile identity: {error}"))?;
+    if payload.attestation_protocol_version != RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2
+        || runtime.schema_version != RUNTIME_BOUNDARY_SCHEMA_VERSION_V1
+        || runtime.profile_id != binding_attestation.profile_id
+        || runtime.profile_identity != binding_attestation.profile_identity
+        || runtime.profile_identity != profile_identity
+        || runtime.attestor_kind != binding_attestation.attestor_kind
+        || runtime.launcher_session_binding_identity
+            != binding_attestation.launcher_session_binding_identity
+        || !is_sha256_identity(runtime.attestor_instance_identity.as_str())
+        || runtime.observations.len() != profile.observations.len()
+    {
+        return Err(String::from(
+            "runtime-boundary attestation does not match the protected profile binding",
+        ));
+    }
+    for (observed, required) in runtime.observations.iter().zip(profile.observations.iter()) {
+        let identity_valid = match required.semantic_identity {
+            RuntimeBoundarySemanticIdentityPosture::Required => observed
+                .semantic_identity
+                .as_deref()
+                .is_some_and(is_sha256_identity),
+            RuntimeBoundarySemanticIdentityPosture::Forbidden => {
+                observed.semantic_identity.is_none()
+            }
+        };
+        if observed.name != required.name
+            || observed.evidence_method != required.evidence_method
+            || observed.state != RuntimeBoundaryObservationState::Verified
+            || !is_public_evidence_label(observed.reason_code.as_str())
+            || !identity_valid
+        {
+            return Err(String::from(
+                "runtime-boundary attestation observations do not satisfy the protected profile",
+            ));
+        }
+    }
+    verify_attestation_signature_and_time(
+        binding,
+        payload,
+        attestation.key_id.as_str(),
+        attestation.algorithm.as_str(),
+        attestation.signature.as_str(),
+        payload.issued_at.as_str(),
+        payload.expires_at.as_str(),
+        now,
+    )?;
+    launcher_attestation_identity_v2(attestation)
+        .map_err(|error| format!("failed to derive v2 launcher attestation identity: {error}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_common_attestation_claims(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    message_kind: &str,
+    binding_identity: &str,
+    nonce_commitment: &str,
+    work_unit_identity: &str,
+    semantic_scope_identity: &str,
+    invocation_id: &str,
+    runner_principal: &str,
+    channel_delivery: &str,
+    authenticated_origin: &str,
+    authority_mounts: &[String],
+    issuer: &str,
+    audience: &str,
+) -> Result<(), String> {
+    if message_kind != "attestation_response"
+        || binding_identity != binding.identity
+        || nonce_commitment != challenge.challenge.nonce_commitment
+        || work_unit_identity != challenge.challenge.work_unit_identity
+        || semantic_scope_identity != challenge.challenge.semantic_scope_identity
+        || issuer != binding.attestation.issuer()
+        || audience != binding.attestation.audience()
+        || authenticated_origin != binding.origin
+        || channel_delivery != "launcher_session_fd"
+        || !is_public_evidence_label(invocation_id)
+        || !is_public_evidence_label(runner_principal)
+        || authority_mounts.is_empty()
+        || authority_mounts
             .iter()
             .any(|value| !is_public_evidence_label(value))
     {
@@ -1453,12 +1656,31 @@ pub(crate) fn verify_launcher_attestation(
             "launcher attestation does not bind the required broker invocation claims",
         ));
     }
-    let issued_at = OffsetDateTime::parse(&payload.issued_at, &Rfc3339)
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_attestation_signature_and_time<T: Serialize>(
+    binding: &BrokerAuthorityBinding,
+    payload: &T,
+    key_id: &str,
+    algorithm: &str,
+    signature: &str,
+    issued_at: &str,
+    expires_at: &str,
+    now: OffsetDateTime,
+) -> Result<(), String> {
+    if algorithm != "ed25519" {
+        return Err(String::from(
+            "launcher attestation signature algorithm is unsupported",
+        ));
+    }
+    let issued_at = OffsetDateTime::parse(issued_at, &Rfc3339)
         .map_err(|_| String::from("launcher attestation issued_at is invalid"))?;
-    let expires_at = OffsetDateTime::parse(&payload.expires_at, &Rfc3339)
+    let expires_at = OffsetDateTime::parse(expires_at, &Rfc3339)
         .map_err(|_| String::from("launcher attestation expires_at is invalid"))?;
-    let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds as i64);
-    let maximum_age = time::Duration::seconds(binding.attestation.maximum_age_seconds as i64);
+    let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds() as i64);
+    let maximum_age = time::Duration::seconds(binding.attestation.maximum_age_seconds() as i64);
     if issued_at > now + skew
         || expires_at <= issued_at
         || expires_at - issued_at > maximum_age
@@ -1471,17 +1693,14 @@ pub(crate) fn verify_launcher_attestation(
     }
     let verifier = binding
         .attestation
-        .verifiers
+        .verifiers()
         .iter()
-        .find(|verifier| verifier.key_id == attestation.key_id)
+        .find(|verifier| verifier.key_id == key_id)
         .ok_or_else(|| {
             String::from("launcher attestation key is not trusted by the broker binding")
         })?;
     let public_key = decode_fixed::<32>(verifier.public_key.as_str(), "launcher attestation key")?;
-    let signature = decode_fixed::<64>(
-        attestation.signature.as_str(),
-        "launcher attestation signature",
-    )?;
+    let signature = decode_fixed::<64>(signature, "launcher attestation signature")?;
     let canonical = serde_jcs::to_vec(payload)
         .map_err(|error| format!("failed to canonicalize launcher attestation: {error}"))?;
     VerifyingKey::from_bytes(&public_key)
@@ -1493,13 +1712,16 @@ pub(crate) fn verify_launcher_attestation(
             ),
             &Signature::from_bytes(&signature),
         )
-        .map_err(|_| String::from("launcher attestation signature is invalid"))?;
-    let envelope = serde_jcs::to_vec(attestation)
-        .map_err(|error| format!("failed to canonicalize launcher attestation: {error}"))?;
-    Ok(sha256_identity(&domain_separated(
-        binding.message_domains.attestation_response.as_bytes(),
-        &envelope,
-    )))
+        .map_err(|_| String::from("launcher attestation signature is invalid"))
+}
+
+fn is_sha256_identity(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
 }
 
 fn is_public_evidence_label(value: &str) -> bool {
@@ -1674,7 +1896,7 @@ impl LauncherSession {
         binding: &BrokerAuthorityBinding,
         challenge: &FrozenBrokerChallenge,
         cancelled: impl FnMut() -> bool,
-    ) -> Result<(SignedLauncherAttestation, String), String> {
+    ) -> Result<(LauncherAttestationEvidence, String), String> {
         self.require_state(
             LauncherSessionState::AwaitingAttestation,
             "receive launcher attestation",
@@ -1685,10 +1907,10 @@ impl LauncherSession {
                 "launcher attestation does not follow this session's exact challenge",
             ));
         }
-        let result: Result<(SignedLauncherAttestation, String), String> = (|| {
+        let result: Result<(LauncherAttestationEvidence, String), String> = (|| {
             let frame = self.receive_frame_with_cancellation(cancelled, false)?;
-            let attestation =
-                serde_json::from_slice::<SignedLauncherAttestation>(&frame).map_err(|error| {
+            let attestation = serde_json::from_slice::<LauncherAttestationEvidence>(&frame)
+                .map_err(|error| {
                     format!("launcher session returned malformed attestation: {error}")
                 })?;
             let now = OffsetDateTime::now_utc();
@@ -1711,7 +1933,7 @@ impl LauncherSession {
         &mut self,
         binding: &BrokerAuthorityBinding,
         challenge: &FrozenBrokerChallenge,
-        attestation: &SignedLauncherAttestation,
+        attestation: &LauncherAttestationEvidence,
         attestation_identity: &str,
         mut recovery: crate::crossing_transaction::PendingBrokerConsumptionRecovery,
         cancelled: F,
@@ -1959,7 +2181,7 @@ impl LauncherSession {
         &mut self,
         binding: &BrokerAuthorityBinding,
         challenge: &FrozenBrokerChallenge,
-        attestation: &SignedLauncherAttestation,
+        attestation: &LauncherAttestationEvidence,
         request: &AuthorizationRequest,
         authorization_decision: &SignedBrokerMessage<AuthorizationDecisionPayload>,
         cancelled: impl FnMut() -> bool,
@@ -2074,7 +2296,7 @@ impl LauncherSession {
         &mut self,
         binding: &BrokerAuthorityBinding,
         challenge: &FrozenBrokerChallenge,
-        attestation: &SignedLauncherAttestation,
+        attestation: &LauncherAttestationEvidence,
         authorization_request: &AuthorizationRequest,
         authorization_decision: &SignedBrokerMessage<AuthorizationDecisionPayload>,
         prepared_lease: &SignedBrokerMessage<PreparedLeasePayload>,
@@ -2529,7 +2751,7 @@ pub(crate) mod tests {
         signing_key: &SigningKey,
         challenge: &FrozenBrokerChallenge,
         now: OffsetDateTime,
-    ) -> SignedLauncherAttestation {
+    ) -> LauncherAttestationEvidence {
         let payload = LauncherAttestationPayload {
             message_kind: String::from("attestation_response"),
             binding_identity: binding.identity.clone(),
@@ -2541,8 +2763,8 @@ pub(crate) mod tests {
             channel_delivery: String::from("launcher_session_fd"),
             authenticated_origin: binding.origin.clone(),
             authority_mounts: vec![String::from("authority-mount-profile:v1")],
-            issuer: binding.attestation.issuer.clone(),
-            audience: binding.attestation.audience.clone(),
+            issuer: binding.attestation.issuer().to_string(),
+            audience: binding.attestation.audience().to_string(),
             issued_at: formatted(now),
             expires_at: formatted(now + time::Duration::seconds(180)),
         };
@@ -2551,18 +2773,119 @@ pub(crate) mod tests {
             binding.message_domains.attestation_response.as_bytes(),
             &canonical,
         ));
-        SignedLauncherAttestation {
+        LauncherAttestationEvidence::V1(SignedLauncherAttestation {
             payload,
             key_id: String::from("broker-2026-01"),
             algorithm: String::from("ed25519"),
             signature: URL_SAFE_NO_PAD.encode(signature.to_bytes()),
-        }
+        })
+    }
+
+    fn signed_attestation_v2(
+        binding: &BrokerAuthorityBinding,
+        signing_key: &SigningKey,
+        challenge: &FrozenBrokerChallenge,
+        now: OffsetDateTime,
+    ) -> LauncherAttestationEvidence {
+        let crate::crossing_authority::BrokerAttestationBinding::V2(binding_attestation) =
+            &binding.attestation
+        else {
+            panic!("test binding must use v2 attestation");
+        };
+        let profile = runtime_boundary_profile_by_id(binding_attestation.profile_id.as_str())
+            .expect("runtime-boundary profile");
+        let observations = profile
+            .observations
+            .iter()
+            .map(|required| RuntimeBoundaryObservation {
+                name: required.name,
+                state: RuntimeBoundaryObservationState::Verified,
+                evidence_method: required.evidence_method,
+                reason_code: String::from("verified_by_protected_launcher"),
+                semantic_identity: (required.semantic_identity
+                    == RuntimeBoundarySemanticIdentityPosture::Required)
+                    .then(|| format!("sha256:{}", "d".repeat(64))),
+            })
+            .collect();
+        let payload = LauncherAttestationPayloadV2 {
+            message_kind: String::from("attestation_response"),
+            attestation_protocol_version: String::from(RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2),
+            binding_identity: binding.identity.clone(),
+            challenge_nonce_commitment: challenge.challenge.nonce_commitment.clone(),
+            invocation_id: String::from("launcher-invocation-2"),
+            work_unit_identity: challenge.challenge.work_unit_identity.clone(),
+            semantic_scope_identity: challenge.challenge.semantic_scope_identity.clone(),
+            runner_principal: String::from("ota-runner"),
+            channel_delivery: String::from("launcher_session_fd"),
+            authenticated_origin: binding.origin.clone(),
+            authority_mounts: vec![String::from("authority-mount-profile:v2")],
+            runtime_boundary: RuntimeBoundaryAttestation {
+                schema_version: RUNTIME_BOUNDARY_SCHEMA_VERSION_V1,
+                profile_id: binding_attestation.profile_id.clone(),
+                profile_identity: binding_attestation.profile_identity.clone(),
+                attestor_kind: binding_attestation.attestor_kind,
+                attestor_instance_identity: format!("sha256:{}", "e".repeat(64)),
+                launcher_session_binding_identity: binding_attestation
+                    .launcher_session_binding_identity
+                    .clone(),
+                observations,
+            },
+            issuer: binding.attestation.issuer().to_string(),
+            audience: binding.attestation.audience().to_string(),
+            issued_at: formatted(now),
+            expires_at: formatted(now + time::Duration::seconds(180)),
+        };
+        let canonical = serde_jcs::to_vec(&payload).expect("canonical v2 payload");
+        let signature = signing_key.sign(&domain_separated(
+            binding.message_domains.attestation_response.as_bytes(),
+            &canonical,
+        ));
+        LauncherAttestationEvidence::V2(SignedLauncherAttestationV2 {
+            payload,
+            key_id: String::from("attestor-2026-01"),
+            algorithm: String::from("ed25519"),
+            signature: URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+        })
+    }
+
+    fn resign_v2_attestation(
+        binding: &BrokerAuthorityBinding,
+        signing_key: &SigningKey,
+        attestation: &mut LauncherAttestationEvidence,
+    ) {
+        let attestation = attestation.v2_mut();
+        let canonical = serde_jcs::to_vec(&attestation.payload).expect("canonical v2 payload");
+        attestation.signature = URL_SAFE_NO_PAD.encode(
+            signing_key
+                .sign(&domain_separated(
+                    binding.message_domains.attestation_response.as_bytes(),
+                    &canonical,
+                ))
+                .to_bytes(),
+        );
     }
 
     pub(crate) fn spawn_allowing_test_broker(
-        mut launcher: UnixStream,
+        launcher: UnixStream,
         binding: BrokerAuthorityBinding,
         signing_key: SigningKey,
+        now: OffsetDateTime,
+    ) -> std::thread::JoinHandle<()> {
+        let attestor_signing_key = signing_key.clone();
+        spawn_allowing_test_broker_with_attestor(
+            launcher,
+            binding,
+            signing_key,
+            attestor_signing_key,
+            now,
+        )
+    }
+
+    pub(crate) fn spawn_allowing_test_broker_with_attestor(
+        mut launcher: UnixStream,
+        binding: BrokerAuthorityBinding,
+        broker_signing_key: SigningKey,
+        attestor_signing_key: SigningKey,
         now: OffsetDateTime,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
@@ -2571,7 +2894,11 @@ pub(crate) mod tests {
                 challenge,
                 nonce: [0_u8; 32],
             };
-            let attestation = signed_attestation(&binding, &signing_key, &frozen, now);
+            let attestation = if binding.attestation.is_v2() {
+                signed_attestation_v2(&binding, &attestor_signing_key, &frozen, now)
+            } else {
+                signed_attestation(&binding, &attestor_signing_key, &frozen, now)
+            };
             write_json_frame(&mut launcher, &attestation);
 
             let request: AuthorizationRequest = read_json_frame(&mut launcher);
@@ -2580,7 +2907,7 @@ pub(crate) mod tests {
                 &request,
             )
             .expect("request identity");
-            let mut broker = TestBroker::new(signing_key);
+            let mut broker = TestBroker::new(broker_signing_key);
             let decision = broker.authorization_decision(
                 &binding,
                 &request,
@@ -2718,15 +3045,16 @@ pub(crate) mod tests {
         verify_attestation_covers_approval_window(&binding, &attestation, now)
             .expect("attestation freshness covers the configured wait");
 
-        attestation.payload.work_unit_identity = String::from("sha256:substituted");
+        attestation.v1_mut().payload.work_unit_identity = String::from("sha256:substituted");
         let error = verify_launcher_attestation(&binding, &challenge, &attestation, now)
             .expect_err("substituted work unit must refuse");
         assert!(error.contains("required broker invocation claims"));
 
         let mut bad_nonce = signed_attestation(&binding, &signing_key, &challenge, now);
-        bad_nonce.payload.challenge_nonce_commitment = format!("sha256:{}", "f".repeat(64));
-        let canonical = serde_jcs::to_vec(&bad_nonce.payload).expect("canonical payload");
-        bad_nonce.signature = URL_SAFE_NO_PAD.encode(
+        bad_nonce.v1_mut().payload.challenge_nonce_commitment =
+            format!("sha256:{}", "f".repeat(64));
+        let canonical = serde_jcs::to_vec(&bad_nonce.v1_mut().payload).expect("canonical payload");
+        bad_nonce.v1_mut().signature = URL_SAFE_NO_PAD.encode(
             signing_key
                 .sign(&domain_separated(
                     binding.message_domains.attestation_response.as_bytes(),
@@ -2753,9 +3081,10 @@ pub(crate) mod tests {
         );
 
         let mut path_principal = signed_attestation(&binding, &signing_key, &challenge, now);
-        path_principal.payload.runner_principal = String::from("/etc/ota/operator");
-        let canonical = serde_jcs::to_vec(&path_principal.payload).expect("canonical payload");
-        path_principal.signature = URL_SAFE_NO_PAD.encode(
+        path_principal.v1_mut().payload.runner_principal = String::from("/etc/ota/operator");
+        let canonical =
+            serde_jcs::to_vec(&path_principal.v1_mut().payload).expect("canonical payload");
+        path_principal.v1_mut().signature = URL_SAFE_NO_PAD.encode(
             signing_key
                 .sign(&domain_separated(
                     binding.message_domains.attestation_response.as_bytes(),
@@ -2770,9 +3099,9 @@ pub(crate) mod tests {
         );
 
         let mut path_mount = signed_attestation(&binding, &signing_key, &challenge, now);
-        path_mount.payload.authority_mounts = vec![String::from("/var/lib/ota/authority")];
-        let canonical = serde_jcs::to_vec(&path_mount.payload).expect("canonical payload");
-        path_mount.signature = URL_SAFE_NO_PAD.encode(
+        path_mount.v1_mut().payload.authority_mounts = vec![String::from("/var/lib/ota/authority")];
+        let canonical = serde_jcs::to_vec(&path_mount.v1_mut().payload).expect("canonical payload");
+        path_mount.v1_mut().signature = URL_SAFE_NO_PAD.encode(
             signing_key
                 .sign(&domain_separated(
                     binding.message_domains.attestation_response.as_bytes(),
@@ -2784,6 +3113,146 @@ pub(crate) mod tests {
             verify_launcher_attestation(&binding, &challenge, &path_mount, now)
                 .expect_err("path-like authority mount label must refuse")
                 .contains("required broker invocation claims")
+        );
+    }
+
+    #[test]
+    fn runtime_boundary_attestation_v2_requires_the_exact_complete_profile() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, _, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("frozen challenge");
+        let attestation = signed_attestation_v2(&binding, &attestor_signing_key, &challenge, now);
+        verify_launcher_attestation(&binding, &challenge, &attestation, now)
+            .expect("complete v2 runtime-boundary attestation should verify");
+
+        let downgraded = signed_attestation(&binding, &attestor_signing_key, &challenge, now);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &downgraded, now)
+                .expect_err("v2 binding must refuse a signed v1 payload")
+                .contains("version does not match")
+        );
+
+        let mut missing = attestation.clone();
+        missing.v2_mut().payload.runtime_boundary.observations.pop();
+        resign_v2_attestation(&binding, &attestor_signing_key, &mut missing);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &missing, now)
+                .expect_err("missing required observation must refuse")
+                .contains("protected profile binding")
+        );
+
+        let mut reordered = attestation.clone();
+        reordered
+            .v2_mut()
+            .payload
+            .runtime_boundary
+            .observations
+            .swap(0, 1);
+        resign_v2_attestation(&binding, &attestor_signing_key, &mut reordered);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &reordered, now)
+                .expect_err("reordered observations must refuse")
+                .contains("observations")
+        );
+
+        let mut failed = attestation.clone();
+        failed.v2_mut().payload.runtime_boundary.observations[0].state =
+            RuntimeBoundaryObservationState::Failed;
+        resign_v2_attestation(&binding, &attestor_signing_key, &mut failed);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &failed, now)
+                .expect_err("failed required observation must refuse")
+                .contains("observations")
+        );
+
+        let mut missing_identity = attestation.clone();
+        missing_identity
+            .v2_mut()
+            .payload
+            .runtime_boundary
+            .observations[9]
+            .semantic_identity = None;
+        resign_v2_attestation(&binding, &attestor_signing_key, &mut missing_identity);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &missing_identity, now)
+                .expect_err("missing profile-required identity must refuse")
+                .contains("observations")
+        );
+
+        let mut substituted_session = attestation;
+        substituted_session
+            .v2_mut()
+            .payload
+            .runtime_boundary
+            .launcher_session_binding_identity = format!("sha256:{}", "f".repeat(64));
+        resign_v2_attestation(&binding, &attestor_signing_key, &mut substituted_session);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &substituted_session, now)
+                .expect_err("session-binding substitution must refuse")
+                .contains("protected profile binding")
+        );
+
+        let (image_binding, _, image_attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_for_profile_with_signing_keys(
+                ota_authority_protocol::PROTECTED_LAUNCHER_IMAGE_PROFILE_ID_V1,
+            );
+        let image_challenge =
+            freeze_broker_challenge(&image_binding, &scope).expect("image-profile challenge");
+        let image_attestation = signed_attestation_v2(
+            &image_binding,
+            &image_attestor_signing_key,
+            &image_challenge,
+            now,
+        );
+        verify_launcher_attestation(&image_binding, &image_challenge, &image_attestation, now)
+            .expect("complete protected-launcher image profile should verify");
+
+        let mut missing_image_observation = image_attestation.clone();
+        missing_image_observation
+            .v2_mut()
+            .payload
+            .runtime_boundary
+            .observations
+            .pop();
+        resign_v2_attestation(
+            &image_binding,
+            &image_attestor_signing_key,
+            &mut missing_image_observation,
+        );
+        assert!(
+            verify_launcher_attestation(
+                &image_binding,
+                &image_challenge,
+                &missing_image_observation,
+                now,
+            )
+            .expect_err("incomplete protected-launcher image profile must refuse")
+            .contains("protected profile binding")
+        );
+
+        let mut missing_image_identity = image_attestation;
+        missing_image_identity
+            .v2_mut()
+            .payload
+            .runtime_boundary
+            .observations[11]
+            .semantic_identity = None;
+        resign_v2_attestation(
+            &image_binding,
+            &image_attestor_signing_key,
+            &mut missing_image_identity,
+        );
+        assert!(
+            verify_launcher_attestation(
+                &image_binding,
+                &image_challenge,
+                &missing_image_identity,
+                now,
+            )
+            .expect_err("image-profile measurements require semantic identities")
+            .contains("observations")
         );
     }
 
@@ -4261,6 +4730,77 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn v2_runtime_boundary_survives_admission_consumption_and_archive_reverification() {
+        let now = OffsetDateTime::now_utc();
+        let (mut binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            ota.into_raw_fd(),
+        );
+        let trust_root = tempdir().expect("broker trust root");
+        let trust_store = trust_root.path().join("crossing-brokers.json");
+        std::fs::write(
+            &trust_store,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store"),
+        )
+        .expect("write broker store");
+        let _trust_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
+        let broker = spawn_allowing_test_broker_with_attestor(
+            launcher,
+            binding.clone(),
+            broker_signing_key,
+            attestor_signing_key,
+            now,
+        );
+
+        let root = tempdir().expect("transaction root");
+        let prepared =
+            PreparedBrokerCrossing::prepare(root.path(), binding, &scope, "non_agent", 60, || {
+                false
+            })
+            .expect("v2 protected-launcher authority should prepare");
+        assert_eq!(
+            prepared.admission().authority_separation_posture(),
+            "protected_launcher_attested_one_use"
+        );
+        let mut consumed = prepared
+            .consume(root.path(), || false)
+            .expect("v2 authority should consume exactly once");
+        consumed
+            .transaction_mut()
+            .finalize("completed", Some("passed"))
+            .expect("terminal transaction");
+        let archive =
+            build_broker_archive_evidence(consumed.admission(), &consumed.transaction().evidence())
+                .expect("v2 terminal broker archive");
+        verify_broker_archive_evidence(root.path(), &archive)
+            .expect("v2 broker archive should re-verify against protected authority");
+
+        let mut stripped = archive;
+        let LauncherAttestationEvidence::V2(attestation) = &mut stripped.admission.attestation
+        else {
+            panic!("v2 archive must retain v2 attestation evidence");
+        };
+        attestation.payload.runtime_boundary.observations.pop();
+        stripped.admission.identity =
+            broker_admission_identity(&stripped.admission).expect("stripped admission identity");
+        stripped.identity = broker_archive_identity(&stripped).expect("stripped archive identity");
+        verify_broker_archive_evidence(root.path(), &stripped)
+            .expect_err("stripped runtime-boundary evidence must refuse");
+        broker.join().expect("broker thread");
+    }
+
+    const LEGACY_SEVEN_DOMAIN_BROKER_ARCHIVE_JSON: &str = r#"{"schema_version":1,"identity":"sha256:a806bdae7ae67559d9932708da858aff0541ce882b3b6325b56535e4675447fe","admission":{"schema_version":1,"identity":"sha256:716e39dac6bcc24b056dd5992cb7218dfa8a4227bbf6c441c458860232884cc6","binding_snapshot":{"identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","authority_id":"platform-release-authority","broker_id":"platform-crossing-broker","origin":"https://broker.example.internal","server_name":"broker.example.internal","protocol_version":"ota-crossing-broker/v1","transport_authentication":{"kind":"mtls","trust_bundle_identity":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","credential_source_identity":"launcher:workload-session/v1"},"credential_delivery":{"kind":"launcher_session_fd","session_audience":"ota-crossing-broker"},"broker_verifiers":[{"key_id":"broker-2026-01","algorithm":"ed25519","public_key":"_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg"}],"attestation":{"issuer":"runner-launcher","audience":"ota-crossing-broker","trust_bundle_identity":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifiers":[{"key_id":"broker-2026-01","algorithm":"ed25519","public_key":"_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg"}],"maximum_age_seconds":180,"maximum_clock_skew_seconds":5,"key_rotation_overlap_seconds":120,"mandatory_protocol_claims":["authenticated_origin","authority_mounts","binding_identity","challenge_nonce_commitment","channel_delivery","invocation_id","runner_principal","semantic_scope_identity","work_unit_identity"],"required_administrator_claims":[]},"message_domains":{"challenge_request":"ota-crossing-broker/challenge-request/v1","attestation_response":"ota-crossing-broker/attestation-response/v1","authorization_request":"ota-crossing-broker/authorization-request/v1","authorization_decision":"ota-crossing-broker/authorization-decision/v1","lease_issuance":"ota-crossing-broker/lease-issuance/v1","lease_consume":"ota-crossing-broker/lease-consume/v1","lease_consume_response":"ota-crossing-broker/lease-consume-response/v1"},"maximum_approval_wait_seconds":120,"minimum_post_approval_freshness_seconds":30,"maximum_lease_seconds":300},"challenge":{"message_kind":"challenge_request","protocol_version":"ota-crossing-broker/v1","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","semantic_scope_identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","contract_identity":"sha256:d52eadc6b5d9793a9a5dc0ba45e5fa6843756b9c08330ec7348c870d6fdf3766"},"attestation":{"payload":{"message_kind":"attestation_response","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","challenge_nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","invocation_id":"launcher-invocation-1","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","semantic_scope_identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","runner_principal":"ota-runner","channel_delivery":"launcher_session_fd","authenticated_origin":"https://broker.example.internal","authority_mounts":["authority-mount-profile:v1"],"issuer":"runner-launcher","audience":"ota-crossing-broker","issued_at":"2026-08-08T16:08:19.082784Z","expires_at":"2026-08-08T16:11:19.082784Z"},"key_id":"broker-2026-01","algorithm":"ed25519","signature":"6hVddiOHLZhjK7Q82pmyz__6VDfvCTz28ElS0wgwL7EpTjur0m8n-urNlaizsDAhwWibtzBg0KJ_1fe9YAu6DA"},"attestation_identity":"sha256:f00d8983e7b0ce3df5ea377abc98ee07270be95ecb81359f4f0f6dc615ddd20d","authorization_request":{"message_kind":"authorization_request","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","authority_id":"platform-release-authority","attestation_identity":"sha256:f00d8983e7b0ce3df5ea377abc98ee07270be95ecb81359f4f0f6dc615ddd20d","challenge_nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","contract_identity":"sha256:d52eadc6b5d9793a9a5dc0ba45e5fa6843756b9c08330ec7348c870d6fdf3766","semantic_scope_identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","runner_principal":"ota-runner","actor_mode":"non_agent","requested_lifetime_seconds":60},"authorization_request_identity":"sha256:f33fec9e377e59c0369192f4dc897b4c8e36d8b603b9eb2c141e04c85562f9c5","authorization_decision":{"payload":{"message_kind":"authorization_decision","request_identity":"sha256:f33fec9e377e59c0369192f4dc897b4c8e36d8b603b9eb2c141e04c85562f9c5","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","authority_id":"platform-release-authority","attestation_identity":"sha256:f00d8983e7b0ce3df5ea377abc98ee07270be95ecb81359f4f0f6dc615ddd20d","challenge_nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","contract_identity":"sha256:d52eadc6b5d9793a9a5dc0ba45e5fa6843756b9c08330ec7348c870d6fdf3766","semantic_scope_identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","decision":"allowed","approval_reference":"approval:test","broker_revision":1,"issued_at":"2026-08-08T16:08:19.082784Z","expires_at":"2026-08-08T16:10:19.082784Z"},"key_id":"broker-2026-01","algorithm":"ed25519","signature":"KnwAmwS8Rtvy1TFq0k3Xsi_hRiJ-gktcXHJJeXaBQ5Sq1QC30N-ZA6F5JEbqXr3V4KyZ9x9tTlRHeKCw_nkKBQ"},"authorization_decision_identity":"sha256:9d9fdc5a73ede8e401243c77ad29721bb515abb6a734c9e030eca71b43711f89","prepared_lease":{"payload":{"message_kind":"lease_issuance","authorization_decision_identity":"sha256:9d9fdc5a73ede8e401243c77ad29721bb515abb6a734c9e030eca71b43711f89","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","authority_id":"platform-release-authority","attestation_identity":"sha256:f00d8983e7b0ce3df5ea377abc98ee07270be95ecb81359f4f0f6dc615ddd20d","challenge_nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","contract_identity":"sha256:d52eadc6b5d9793a9a5dc0ba45e5fa6843756b9c08330ec7348c870d6fdf3766","semantic_scope_identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","runner_principal":"ota-runner","broker_revision":1,"lease_sequence":1,"issued_at":"2026-08-08T16:08:19.082784Z","expires_at":"2026-08-08T16:09:19.082784Z"},"key_id":"broker-2026-01","algorithm":"ed25519","signature":"-TbhDvGFfua6tFiU0zFmEa5pWzcuYV5Av-Vdk4af8XZZXRpErcP1udcTNHvprQwu2D6tCIHTgujHm8B2FhAoDA"},"prepared_lease_identity":"sha256:90171d6a7f5af5465f343b573ab91b95366eca988df9d53d70f57ddf2ff4f675","broker_revision":1,"actor_mode":"non_agent","admitted_at":"2026-08-08T16:08:19.082784Z","semantic_scope":{"schema_version":2,"identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","contract_identity":"sha256:d52eadc6b5d9793a9a5dc0ba45e5fa6843756b9c08330ec7348c870d6fdf3766","lane":{"kind":"task","name":"publish"},"boundary_family":"unsafe_task","classification":"escalated","target_platform":{"os":"macos","architecture":"arm64"},"execution_graph_identity":"sha256:2af1d35e78614b13ea6bd9827ab9b39c2ef214f8f329e200b26001a57c1a807d","breadth":{"schema_version":1,"identity":"sha256:6cdf1bef8e9ea89c15a134f97b2cb2d48172c9fa6b296340479a805b8779cd73","closure_node_count":1,"closure_edge_count":0,"effect_categories":[],"resource_count":0,"resource_identities":[]},"segment_identities":["sha256:14a6ae5f03881aa9341c523043c3dd16118e44d8e0cf638b6741d674019bf5ac"],"edge_identities":[],"execution_selection":{"skip_dependencies":false},"input_identity_posture":"not_applicable"}},"transaction":{"schema_version":2,"identity":"sha256:1c3688255bc9ab6bc2989887cd2438b2b7c11d66b71524c6c1d131375da07e99","authentication_posture":"runner_local_content_addressed","transaction_id":"crossing-1786205299103185000-bc1910601afe5203e79c8dca0dac8419541b74cc9fbe9a129542b1f0258c7c82","authority_carrier":"authority_broker","authority_id":"platform-release-authority","admission_identity":"sha256:716e39dac6bcc24b056dd5992cb7218dfa8a4227bbf6c441c458860232884cc6","authorization_identity":"sha256:9d9fdc5a73ede8e401243c77ad29721bb515abb6a734c9e030eca71b43711f89","scope_identity":"sha256:0c875bbfebf45f0e324c866f7bb86a188c050d2bd02454a2a8a4a38bf47c0c26","contract_identity":"sha256:d52eadc6b5d9793a9a5dc0ba45e5fa6843756b9c08330ec7348c870d6fdf3766","broker_consumption":{"identity":"sha256:948b15236bfc361702b3dc855eaf0e8a77f6feddfe76a466efbb23f814851301","lease_identity":"sha256:90171d6a7f5af5465f343b573ab91b95366eca988df9d53d70f57ddf2ff4f675","consume_request_identity":"sha256:bc1c53b666bbd8b3f9435fb1927412d734a2354734aa3212ad66bafe5b421bdf","consume_response_identity":"sha256:bb98530d4893783a7f2183d91ea63d1a8ffafc3e5c560e6b034faad44689f086","broker_revision":1,"consumed_at":"2026-08-08T16:08:19.082784Z","pending_transaction_identity":"sha256:dbf708b7460153cabfba3102f7bc18b67ffc7befeb81641bafbaba4260ebba98","consume_request":{"message_kind":"lease_consume","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","lease_identity":"sha256:90171d6a7f5af5465f343b573ab91b95366eca988df9d53d70f57ddf2ff4f675","challenge_nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","crossing_transaction_id":"crossing-1786205299103185000-bc1910601afe5203e79c8dca0dac8419541b74cc9fbe9a129542b1f0258c7c82","crossing_transaction_identity":"sha256:dbf708b7460153cabfba3102f7bc18b67ffc7befeb81641bafbaba4260ebba98"},"consume_response":{"payload":{"message_kind":"lease_consume_response","consume_request_identity":"sha256:bc1c53b666bbd8b3f9435fb1927412d734a2354734aa3212ad66bafe5b421bdf","binding_identity":"sha256:136044892c4b52781f613a601e362a2cb7aea201e22a9eef67da6a7f9f77ecc7","lease_identity":"sha256:90171d6a7f5af5465f343b573ab91b95366eca988df9d53d70f57ddf2ff4f675","challenge_nonce_commitment":"sha256:4f8414d8b2cb78e36b9bf4cfb747d92d206d843e0e6343eb11b6968f8ad57400","work_unit_identity":"sha256:aae5f17e9595030b6f05fe225009cbabc3b7af30889fbe9560752834eba08309","crossing_transaction_id":"crossing-1786205299103185000-bc1910601afe5203e79c8dca0dac8419541b74cc9fbe9a129542b1f0258c7c82","crossing_transaction_identity":"sha256:dbf708b7460153cabfba3102f7bc18b67ffc7befeb81641bafbaba4260ebba98","state":"consumed","broker_revision":1,"consumed_at":"2026-08-08T16:08:19.082784Z"},"key_id":"broker-2026-01","algorithm":"ed25519","signature":"46pPB1Z-mNzJMY-3Ggb2d5PA23qH7Y-k0pPQZwVXEO-MnTCzQATFkmP_nom5mk6UZmW1WKcatbBXA2cUfWbcDw"}},"state":"completed","created_at":"2026-08-08T16:08:19.103185Z","finalized_at":"2026-08-08T16:08:19.159214Z","receipt_status":"passed"}}"#;
+
+    #[test]
     fn legacy_seven_domain_broker_archive_reconciles_against_current_binding() {
         let now = OffsetDateTime::now_utc();
         let (current_binding, signing_key) =
@@ -4359,6 +4899,33 @@ pub(crate) mod tests {
             .expect("legacy terminal transaction");
         let archive = build_broker_archive_evidence(&admission, &transaction.evidence())
             .expect("legacy archive");
+        let legacy_json = serde_json::to_value(&archive).expect("legacy archive JSON");
+        assert!(
+            legacy_json
+                .pointer("/admission/binding_snapshot/schema_version")
+                .is_none(),
+            "legacy binding serialization must remain unversioned"
+        );
+        assert!(
+            legacy_json
+                .pointer("/admission/attestation/payload/attestation_protocol_version")
+                .is_none(),
+            "legacy attestation must not acquire the v2 protocol marker"
+        );
+        assert!(
+            legacy_json
+                .pointer("/admission/attestation/payload/runtime_boundary")
+                .is_none(),
+            "legacy attestation must not acquire v2 runtime-boundary evidence"
+        );
+        let decoded: BrokerArchiveEvidence =
+            serde_json::from_str(LEGACY_SEVEN_DOMAIN_BROKER_ARCHIVE_JSON)
+                .expect("decode frozen pre-v2 legacy archive");
+        assert_eq!(
+            serde_json::to_string(&decoded).expect("re-encode legacy archive"),
+            LEGACY_SEVEN_DOMAIN_BROKER_ARCHIVE_JSON,
+            "legacy public archive shape must round-trip byte-for-byte"
+        );
         assert!(
             archive
                 .admission
@@ -4381,7 +4948,7 @@ pub(crate) mod tests {
         .expect("write current broker store");
         let _trust_guard =
             crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
-        verify_broker_archive_evidence(root.path(), &archive)
+        verify_broker_archive_evidence(root.path(), &decoded)
             .expect("legacy broker archive remains readable");
     }
 }

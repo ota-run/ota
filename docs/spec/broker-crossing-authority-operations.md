@@ -69,11 +69,17 @@ The store contains one or more versioned bindings. Each binding identifies:
 
 The protected file is a store, not a single binding:
 
+New v1 bindings should carry `"schema_version": 1` explicitly. Unversioned v1 bindings remain
+accepted only so already-issued bindings and archives preserve their original identity. A strict
+protected-launcher v2 binding must use `"schema_version": 2` and replace the nested `attestation`
+object with the v2 profile-bound shape. Ota does not infer v2 from nested fields.
+
 ```json
 {
   "schema_version": 1,
   "bindings": [
     {
+      "schema_version": 1,
       "identity": "sha256:<canonical binding digest>",
       "authority_id": "platform-release-authority",
       "broker_id": "platform-crossing-broker",
@@ -239,9 +245,16 @@ credentials, filesystem paths, and secret provider material are excluded from pu
 contract snapshot. Missing consumption, carrier substitution, scope drift, signature mismatch,
 replay, incomplete finalization, or altered identities invalidate the archive.
 
-`authority_separation_posture: launcher_attested_one_use` means Ota verified the signed launcher
-protocol evidence and one-use broker consumption described above. It does not independently prove
-every provider, host, namespace, or privilege-separation fact not carried by that attestation.
+`authority_separation_posture: launcher_attested_one_use` is the immutable v1 posture: Ota verified
+the challenge-bound launcher session and one-use broker consumption, but no structured runtime
+profile. V2 bindings require one exact protocol-published protected-launcher profile, ordered
+required observations, content-addressed launcher and configuration identities, and a separate
+attestor key authority. When every required observation verifies, receipts use
+`protected_launcher_attested_one_use`. That posture proves only the signed profile; it does not
+independently prove provider, host, namespace, or privilege-separation facts outside those exact
+observations. V1 and v2 payload, response-domain, identity-domain, and binding branches are
+mutually exclusive, and archive verification preserves the original branch without injecting
+defaults.
 
 ## Current limits
 
@@ -250,7 +263,8 @@ every provider, host, namespace, or privilege-separation fact not carried by tha
   helper/service/assertion and cleanup set.
 - The first adapter uses a launcher-supplied Unix stream; direct Ota-to-broker credentials are not
   supported.
-- Hosted interruption/recovery pressure and stronger provider-attested boundary claims remain
-  V11.7 completion gates. Core regression proof covers consume-intent durability, exact re-query,
-  consumed/not-consumed/unknown outcomes, and restart after a durably recorded status.
+- Hosted v2 protected-launcher pressure and stronger provider-attested boundary claims remain
+  V11.7 completion gates. Core regression proof covers the exact v2 profile, downgrade and profile
+  mutation refusal, consume-intent durability, exact re-query, consumed/not-consumed/unknown
+  outcomes, and restart after a durably recorded status.
 - Ota does not ship or operate the approval broker, provisioner, signing keys, or launcher.

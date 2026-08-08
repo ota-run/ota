@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Added strict runtime-boundary attestation v2 verification for the Unix broker carrier. Protected
+  bindings select one immutable protocol-published launcher profile and a separate attestor key
+  authority; signed payloads bind the exact launcher session plus ordered required observations and
+  content-addressed launcher/configuration identities. Complete v2 evidence emits
+  `protected_launcher_attested_one_use`. Missing, reordered, failed, unknown, downgraded, or
+  substituted evidence refuses, and receipt archives re-derive the exact v2 branch. Existing v1
+  launcher attestations remain readable and retain `launcher_attested_one_use`; they are never
+  reinterpreted as v2 or provider-attested separation. Hosted protected-launcher v2 pressure
+  remains open.
+
 - Fixed the Unix launcher-session authority module to compile on Windows while preserving its
   explicit unsupported-platform refusal. Cross-platform archive verification continues to use
   platform-neutral contract paths without exposing Unix descriptor behavior.

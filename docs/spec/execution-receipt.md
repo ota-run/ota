@@ -154,7 +154,12 @@ filesystem paths, and secret provider material are excluded from public evidence
 `authority.authority_separation_posture` is an explicit boundary. `current_process_filesystem_guarded`
 describes the signed-file carrier. `launcher_attested_one_use` describes verified launcher protocol
 evidence plus atomic broker consumption; it does not by itself prove every provider privilege or
-host-isolation claim beyond the attestation Ota verified.
+host-isolation claim. `protected_launcher_attested_one_use` requires the additive v2 attestation
+branch: one exact protocol-published protected-launcher profile, all ordered required observations
+verified, content-addressed launcher and configuration identities, and a separate attestor key
+authority. It proves only those signed observations and remains distinct from reserved
+provider-attested posture. Archive history preserves and re-verifies the original v1 or v2 branch;
+it never upgrades legacy v1 evidence by defaulting v2 fields.
 `authority.transaction.authentication_posture: runner_local_content_addressed` is an explicit
 boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
 is not independently authenticated against another same-user process with write access to
