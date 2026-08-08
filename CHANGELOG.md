@@ -170,9 +170,13 @@
   approval-timeout, local-cancellation, and conflicting-pending-response refusal before selected
   work. Every refusal retains an unchanged checkout and no receipt state. Hosted recovery run
   [31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) closes the
-  bounded post-consumption lost-acknowledgement gate. Late approval after cancellation,
-  pending-wait attestation expiry, catch-all work-unit pressure, and provider/launcher-attested
-  separation remain open.
+  bounded post-consumption lost-acknowledgement gate. Independent dispatch
+  [31260927337](https://github.com/ota-run/authority-launcher/actions/runs/31260927337), with final
+  merge-gate confirmation in
+  [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), proves
+  terminal cancellation before late approval, insufficient pre-wait attestation freshness,
+  repeated broad-closure execution under distinct work-unit authority, and two valid bounded
+  archives. Provider/launcher-attested separation remains open.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 

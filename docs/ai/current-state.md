@@ -209,8 +209,13 @@ durable agent workflow belongs in the canonical Ota skill.
   Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
   bounded approval-timeout, local-cancellation, and conflicting-pending-response refusal before
   selected work. Each refusal retains byte-identical checkout manifests and no receipt state.
-  V11.7 remains open for late approval after cancellation, attestation expiry during a pending
-  wait, catch-all work-unit pressure, and
+  Authority launcher dispatch
+  [31260927337](https://github.com/ota-run/authority-launcher/actions/runs/31260927337) against exact
+  Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a`, with final merge-gate confirmation in
+  [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), proves
+  terminal cancellation before an undeliverable late approval, insufficient pre-wait attestation
+  freshness refusing before authorization, and two executions of one broad three-task semantic
+  scope consuming distinct work units with two valid archives. V11.7 remains open for stronger
   provider/launcher-attested separation. V11.22
   remains planning-only and inactive; it does not consume crossing records as approval authority. See
   [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
@@ -723,8 +728,13 @@ state, or checkout mutation. Run
 Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and immutable protocol
 `242685d5b7c3904681f1c71d734fbe2d41679dda` proves bounded lost-acknowledgement recovery without
 resuming abandoned work, followed by one fresh authorized execution and a valid recovery archive.
-Stronger provider-attested separation, late approval after cancellation, pending-wait attestation
-expiry, and the remaining catch-all work-unit pressure remain open.
+Authority launcher dispatch
+[31260927337](https://github.com/ota-run/authority-launcher/actions/runs/31260927337), with final
+merge-gate confirmation in
+[31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), closes late
+approval after terminal cancellation, insufficient pre-wait freshness, and repeated broad-closure
+work-unit pressure against the same exact Core revision. Stronger provider-attested separation
+remains open.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
@@ -740,8 +750,7 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until the remaining late-approval, pending-attestation-expiry, catch-all work-unit, and
-stronger attested-separation gates close its acceptance bar; keep V11.22
+open until the stronger attested-separation gate closes its acceptance bar; keep V11.22
 planned until explicitly activated.
 
 ## Working Rules

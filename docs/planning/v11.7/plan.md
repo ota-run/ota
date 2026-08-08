@@ -67,9 +67,18 @@ fresh attestation to recover the consumed status, closes the abandoned transacti
 obtains fresh authorization, executes exactly once, and leaves one valid receipt archive and zero
 invalid archives. Independent dispatch
 [31257511093](https://github.com/ota-run/authority-launcher/actions/runs/31257511093) reproduced the
-same complete workflow at the same immutable launcher revision. Late approval after cancellation,
-attestation expiry during a pending wait, catch-all work-unit pressure, and
-provider/launcher-attested separation remain open.
+same complete workflow at the same immutable launcher revision. Independent authority-launcher
+dispatch [31260927337](https://github.com/ota-run/authority-launcher/actions/runs/31260927337)
+against exact Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a`, followed by green final
+merge-gate run [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968),
+closes the remaining bounded adversarial broker cases. It proves that an allowed decision created
+only after local cancellation reaches terminal launcher state cannot be delivered or start work;
+an attestation with 31 seconds remaining refuses before authorization because the configured wait
+plus post-approval margin requires 32 seconds; and two executions of the same broad three-task
+closure retain one three-node/two-edge semantic breadth with network and repository-write effects
+while consuming distinct work-unit authority and producing two valid archives. Refusal checkout
+manifests remain byte-identical and no receipt state is created. Stronger
+provider/launcher-attested separation remains open.
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
@@ -83,9 +92,9 @@ Release target:
 - `v1.6.26` implementation branch; signed offline authority and its bounded pre-provisioned
   hardened non-root pressure are in Core, and broker-backed one-use authority is implemented for
   `run`/`up` plus proof-wide transaction retention; the initial hosted live/refusal/proof-wide set
-  plus broker-unavailable, approval-timeout, cancellation, and ambiguous-response refusal are
-  green, while the remaining adversarial broker matrix and stronger provider-attested separation
-  remain open
+  plus broker-unavailable, approval-timeout, cancellation, late-approval, insufficient-freshness,
+  ambiguous-response, recovery, and repeated broad-closure work-unit pressure are green, while
+  stronger provider-attested separation remains open
 
 Source direction:
 
@@ -1005,8 +1014,9 @@ verified semantic scope and one work-unit identity per consumed lease.
   Every refusal must occur before task, service, provider, child-process, or repository mutation;
   the valid path must archive a broker-bound terminal crossing transaction.
 - Pressure must also prove pending-approval scope mutation, timeout, local cancellation followed by
-  late approval, attestation expiry during a pending wait, conflicting approval response, and a
-  deliberately broad catch-all workflow. One work unit is one exact selected invocation closure: a
+  late approval, insufficient attestation freshness refusing before a pending wait, the
+  post-approval freshness recheck, conflicting approval response, and a deliberately broad
+  catch-all workflow. One work unit is one exact selected invocation closure: a
   second invocation, including the same displayed lane, has a distinct work-unit identity and
   requires a distinct lease. A genuinely atomic declared workflow remains valid and retains its
   breadth summary as explanation rather than a refusal trigger; Ota introduces no atomicity
