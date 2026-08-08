@@ -148,6 +148,13 @@
   authority. The lifecycle fixture deliberately uses a root-owned deterministic pressure control
   while Docker remains inaccessible, so it proves Ota transaction/finalization behavior rather
   than Docker-provider behavior.
+  Follow-up authority-launcher run
+  [31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
+  Core `257be61dd91799237357390b145be950f2fc6b3f` proves broker-unavailable, bounded
+  approval-timeout, local-cancellation, and conflicting-pending-response refusal before selected
+  work. Every refusal retains an unchanged checkout and no receipt state. Late approval after
+  cancellation, pending-wait attestation expiry, post-consumption interruption/recovery, catch-all
+  work-unit pressure, and provider/launcher-attested separation remain open.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 

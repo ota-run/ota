@@ -189,8 +189,14 @@ durable agent workflow belongs in the canonical Ota skill.
   material. Hardened-runner pressure now proves the carrier's bounded
   `current_process_filesystem_guarded` posture; the guide remains a preview because it does not
   claim provider-attested separation, reusable broker credentials, or one-use work-unit authority.
-  V11.7 remains open for the broader broker-unavailable, interruption/recovery,
-  approval-wait/cancellation, ambiguity, and provider/launcher-attested pressure bar. V11.22
+  Authority launcher run
+  [31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
+  Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
+  bounded approval-timeout, local-cancellation, and conflicting-pending-response refusal before
+  selected work. Each refusal retains byte-identical checkout manifests and no receipt state.
+  V11.7 remains open for late approval after cancellation, attestation expiry during a pending
+  wait, post-consumption interruption/recovery, catch-all work-unit pressure, and
+  provider/launcher-attested separation. V11.22
   remains planning-only and inactive; it does not consume crossing records as approval authority. See
   [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
@@ -693,8 +699,13 @@ Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green.
 launcher-session broker carrier is implemented for governed `run`/`up`. Its initial hosted
 live/refusal/proof-wide pressure set is green in authority-launcher run
 [31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) against exact
-Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. Stronger provider-attested separation and the
-remaining adversarial broker matrix remain open.
+Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. Run
+[31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
+Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
+approval-timeout, cancellation, and ambiguous-response refusal without selected work, receipt
+state, or checkout mutation. Stronger provider-attested separation, late approval after
+cancellation, pending-wait attestation expiry, post-consumption interruption/recovery, and the
+remaining catch-all work-unit pressure remain open.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
@@ -710,9 +721,9 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until the remaining broker-unavailable, interruption/recovery, approval-wait/cancellation,
-ambiguity, and stronger attested-separation gates close its acceptance bar; keep V11.22 planned
-until explicitly activated.
+open until the remaining late-approval, pending-attestation-expiry, post-consumption recovery,
+catch-all work-unit, and stronger attested-separation gates close its acceptance bar; keep V11.22
+planned until explicitly activated.
 
 ## Working Rules
 

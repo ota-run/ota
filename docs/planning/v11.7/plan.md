@@ -50,8 +50,14 @@ stub because the job principal deliberately lacks Docker socket access; it prove
 selection, assertion ordering, finalization, and cleanup, not Docker-provider behavior. A fresh
 proof execution identity is separate from semantic scope and is bound into terminal transaction
 status, preventing another valid same-scope crossing from being substituted for the selected proof
-run. The broader broker-unavailable, interruption/recovery, approval-wait/cancellation, ambiguity,
-and provider-attestation pressure bar remains open.
+run. Authority launcher run
+[31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
+Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
+bounded approval-timeout, local-cancellation, and conflicting-pending-response refusal before
+selected work, with byte-identical checkout manifests and no receipt state for every refusal.
+This does not close late approval after cancellation, attestation expiry during a pending wait,
+post-consumption interruption/recovery, catch-all work-unit pressure, or provider/launcher-attested
+separation.
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
@@ -65,8 +71,9 @@ Release target:
 - `v1.6.26` implementation branch; signed offline authority and its bounded pre-provisioned
   hardened non-root pressure are in Core, and broker-backed one-use authority is implemented for
   `run`/`up` plus proof-wide transaction retention; the initial hosted live/refusal/proof-wide set
-  is green, while the remaining adversarial broker matrix and stronger provider-attested
-  separation remain open
+  plus broker-unavailable, approval-timeout, cancellation, and ambiguous-response refusal are
+  green, while the remaining adversarial broker matrix and stronger provider-attested separation
+  remain open
 
 Source direction:
 
