@@ -79,6 +79,18 @@ closure retain one three-node/two-edge semantic breadth with network and reposit
 while consuming distinct work-unit authority and producing two valid archives. Refusal checkout
 manifests remain byte-identical and no receipt state is created. Stronger
 provider/launcher-attested separation remains open.
+Runtime-boundary attestation v2 pressure is green in authority-launcher run
+[31269597378](https://github.com/ota-run/authority-launcher/actions/runs/31269597378) against exact
+Core `787ac35f7d0195d2adae85e1113e26ce4a30acc2`, protocol
+`bff47c2c79b145831a3b411614301d7e09d6f377`, and launcher
+`01efd331ca0d4dcf2f8899512b1e3705fc649c6d`. It proves challenge-bound observation of a dedicated
+non-root Ota principal, disjoint broker/attestor keys, the exact ordered protected-launcher
+profile, atomic one-use consumption, adversarial refusal and recovery, distinct catch-all work
+units, and terminal runtime/lifecycle proof archives. The root-only pressure peer and fixed public
+test keys make this bounded launcher conformance evidence; the workflow controller still
+provisions the test authority, so this is not provider-attested production-host separation and
+does not complete V11.7.
+
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
@@ -93,8 +105,8 @@ Release target:
   hardened non-root pressure are in Core, and broker-backed one-use authority is implemented for
   `run`/`up` plus proof-wide transaction retention; the initial hosted live/refusal/proof-wide set
   plus broker-unavailable, approval-timeout, cancellation, late-approval, insufficient-freshness,
-  ambiguous-response, recovery, and repeated broad-closure work-unit pressure are green, while
-  stronger provider-attested separation remains open
+  ambiguous-response, recovery, repeated broad-closure work-unit, and strict v2 protected-launcher
+  profile pressure are green, while stronger provider-attested separation remains open
 
 Source direction:
 

@@ -742,9 +742,16 @@ disjoint attestor and broker authorities, and no reinterpretation of v1 evidence
 evidence derives only `protected_launcher_attested_one_use`; v1 retains
 `launcher_attested_one_use`. Core adversarial regressions cover downgrade, profile mutation,
 missing/reordered/failed observations, required-identity removal, full one-use consumption, and
-archive re-verification. Authority-launcher v2 emission, immutable launcher repinning, and hosted
-protected-launcher pressure remain the next gate. Provider-specific attestation remains deferred
-until it has its own complete profile and adapter.
+archive re-verification. Authority-launcher run
+[31269597378](https://github.com/ota-run/authority-launcher/actions/runs/31269597378) is green
+against exact Core `787ac35f7d0195d2adae85e1113e26ce4a30acc2`, protocol
+`bff47c2c79b145831a3b411614301d7e09d6f377`, and launcher
+`01efd331ca0d4dcf2f8899512b1e3705fc649c6d`. It proves signed challenge-bound observation of the
+constrained Ota child, disjoint broker/attestor keys, one-use live/refusal/recovery behavior,
+distinct catch-all work units, and archive-valid runtime/lifecycle proof transactions. This is
+bounded pressure-peer conformance: the GitHub workflow controller provisions the root-only fixed
+test authority, so it does not prove independently administered provider/launcher separation.
+Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
