@@ -746,7 +746,10 @@ The descriptor is an Ota-only transport channel, not caller authority:
 - Ota never serializes a channel handle, raw nonce, credential, or secret provider material into
   public output. Receipts and archives retain the signed public-safe protocol payloads required for
   re-verification. `invocation_id`, `runner_principal`, and `authority_mounts` are bounded non-secret
-  labels, never filesystem paths, tokens, user-supplied text, or credential material; and
+  labels, never filesystem paths, tokens, user-supplied text, or credential material. The first
+  inherited-session adapter retains its existing runner label; the production systemd adapter below
+  uses a protected content-addressed principal-mapping identity instead of choosing only its client
+  or execution UID; and
 - a launcher/provider attestation must state that the channel was delivered for this Ota invocation
   and cannot be reacquired by selected task code. If that assertion is absent, the broker carrier
   refuses rather than treating a same-user descriptor as authority separation.
@@ -755,7 +758,7 @@ This adapter leaves direct Ota-to-broker mTLS and provider-workload-identity tra
 only if they can meet the same non-delegable delivery and task-isolation requirements. They must
 reuse this binding and request/response model rather than defining new authority semantics.
 
-##### Structured runtime-boundary attestation (implemented verifier; hosted pressure pending)
+##### Structured runtime-boundary attestation (implemented verifier and bounded pressure)
 
 Protocol v1 proves a fresh challenge-bound launcher session and one-use broker consumption, but its
 bounded labels do not establish the effective runtime separation required to complete V11.7. Its
@@ -845,6 +848,329 @@ attestor signing key and broker authorization key are separate authorities. Miss
 credentials, a caller-created stream, direct job access to the attestor, or an attestor key
 available to Ota or selected code refuses before authorization.
 
+##### First production protected-launcher adapter (planned)
+
+The first production authority-separation adapter is
+`systemd_protected_launcher/v1`. It is a Linux-only implementation of the existing
+`protected_launcher` attestor kind and profiles, not a provider attestor and not a new authority
+carrier. It reuses the broker protocol, semantic scope, one-use lease, transaction, receipt, and
+archive model above. `provider_attested_one_use` remains reserved.
+
+The adapter is split into an unprivileged client and an independently administered system service:
+
+- a root-owned `ota-authority-launcher.socket` is enabled at boot and socket-activates
+  `ota-authority-launcher.service` from one protected absolute binary path. The service accepts only
+  the inherited `AF_UNIX` stream listener whose path, inode, owner, mode, and socket-unit identity
+  match protected configuration; it never binds a caller-selected listener;
+- the fixed stream endpoint lives under `/run/ota`. An allowed job principal may connect to request
+  an Ota invocation, but cannot replace or administer the socket, service, executable,
+  configuration, attestor key, broker proxy, credential, or state. The client verifies the
+  connected server's root `SO_PEERCRED` identity and the protected socket identity before sending a
+  request;
+- the client sends only a bounded invocation request: authority label, supported Ota command and
+  arguments, and an absolute logical repository working directory.
+  The service derives caller UID/GID only through `SO_PEERCRED`; it never accepts caller-authored
+  identity or freshness. Protected configuration binds one exact job-peer UID/GID to one distinct
+  dedicated execution UID/GID; mappings are one-to-one and neither identity may appear in another
+  mapping. Environment inheritance, executable paths,
+  descriptors, trust roots, broker origin, profile selection, target principal, and signing
+  material are not request fields;
+- the service accepts only one canonical request frame, rejects unknown fields and duplicate or
+  concurrent request identities, and mints the authoritative per-request identity from OS
+  randomness. Protected configuration lists absolute allowed repository roots. A short-lived helper
+  first drops supplementary groups and adopts the configured target UID/GID, then opens the
+  requested directory beneath exactly one allowed root with full-component containment and no
+  magic-link or symlink escape. It returns only the directory descriptor through `SCM_RIGHTS`.
+  The service binds the canonical logical path plus device/inode identity into the invocation and
+  the child uses `fchdir` on that retained descriptor after dropping privilege, never resolving the
+  caller path again;
+- the service resolves the authority from fixed stores, connects only to the configured protected
+  local broker proxy and verifies its root-owned `SO_PEERCRED` identity, creates the Ota-only socket
+  pair, and launches the fixed Ota binary as the configured non-root principal with the configured
+  environment and `no_new_privs`. Before Ota performs any authority-protocol I/O it sets itself
+  non-dumpable, clears any ptracer allowance, and verifies that posture;
+- the service keeps the attestor key, broker-proxy descriptor, service
+  control socket, and request connection outside the Ota child. The Ota child receives only its
+  configured close-on-exec session descriptor. Every other descriptor is closed through one
+  centralized pre-exec sanitization path; and
+- the service observes and signs the exact v2 profile only after receiving Ota's frozen challenge.
+  It then relays authorization, lease, consume, recovery, and terminal protocol phases without
+  allowing the client or selected task to author or replace signed messages.
+
+The service admits at most one active invocation for the exact peer-to-execution-principal mapping.
+Before the
+child can execute, it durably creates and fsyncs one intent-stage active-slot journal under
+`/var/lib/ota/authority-launcher/active`, forks the child in a stopped state, then atomically
+updates and fsyncs the journal with the child identity. It asks systemd over its root-only manager
+channel to place that PID in
+`ota-authority-invocation-<request-identity>.scope` under the fixed
+`ota-authority-invocations.slice`. The scope uses `Delegate=no`, `KillMode=control-group`, and
+`CollectMode=inactive-or-failed`; only after systemd confirms the exact scope/PID/slice identity may
+the service atomically record and fsync the scope identity and continue the child. The staged
+journal binds effective principal, request, scope when known, child when known, working-directory,
+and launcher-session identities; every crash point is recoverable without inventing absent fields.
+
+The service does not release either mapped principal's slot until Ota is terminal, systemd has
+stopped the complete invocation scope, and the scope is observed empty. On service startup it
+reconciles every active-slot journal with systemd before accepting a client: a live or uncertain
+scope is stopped and observed empty, a missing or mismatched scope is retained as explicit failed
+recovery evidence, and no affected principal can start new work until recovery is terminal. The
+execution principal cannot migrate processes between cgroups, create delegated subgroups, or control
+the systemd manager.
+Selected code runs as the distinct execution UID/GID, has no permission to connect to the launcher
+socket, and cannot obtain another launcher session. Multiple peers cannot map to one execution
+principal in this adapter. A later operator
+invocation, including identical command bytes after a service restart, is a legitimate new request
+and creates a new service request identity, Ota work-unit identity, authorization, and lease; no
+prior launcher session becomes reusable authority.
+
+The local client is convenience, not authority. Possession of the public service socket permits a
+caller to request only the same governed Ota command it could request directly; it does not permit
+the caller to select a trust root, profile, principal, broker credential, grant, lease, or signed
+observation. The fixed service configuration identity is the protocol's
+`launcher_session_binding_identity`. The service-generated per-request identity, observed client
+peer identity, opened-directory identity, systemd invocation identity, and Ota child identity form
+the attestation's `attestor_instance_identity`. They never alter the fixed binding identity. No
+caller nonce is authority or freshness evidence.
+
+For this adapter, the existing protocol `runner_principal` value is exactly
+`sha256:<ota.launcher.principal-mapping.v1 identity>`. Its canonical protected input binds the
+job-peer real/effective/saved/filesystem UID/GID posture, the distinct execution UID/GID posture,
+job-principal profile identity, launcher-session binding identity, and one-to-one mapping rule. Raw
+account names or caller labels never enter broker policy. The same mapping identity is carried by
+attestation, authorization request, lease, consumption, receipt, and archive; broker policy
+therefore authorizes both sides of the launcher mapping or refuses.
+
+The production adapter adds one launcher-local preface before the existing broker challenge. After
+dropping privilege and before reading from or writing broker protocol frames, the fixed Ota binary
+must successfully apply `PR_SET_DUMPABLE(0)`, apply `PR_SET_PTRACER(0)`, measure
+`PR_GET_DUMPABLE == 0`, and emit one canonical length-bounded
+`ota_process_posture/v1` frame over the private launcher session. The frame binds its message kind,
+schema version, Ota PID/start-time identity, fixed Ota binary identity, `no_new_privs` posture,
+dumpable measurement, ptracer-clear operation result, principal-mapping identity, and its own
+content identity. It is adapter-local evidence consumed by the launcher and is never relayed as a
+broker message or accepted from the client connection.
+
+The launcher reconciles that frame with the child it created and the protected Ota binary, then
+corroborates it through the external process-access probes. The Ota-authored frame cannot establish
+separation alone; a missing/malformed/substituted frame, failed operation, nonzero dumpability,
+wrong process identity, or successful external access probe refuses before the launcher signs the
+runtime-boundary attestation. The frame identity enters `attestor_instance_identity` and the signed
+session non-reacquisition observation basis. Existing inherited-session evidence is not
+reinterpreted; the new preface is negotiated only by the fixed
+`systemd_protected_launcher/v1` adapter and requires an additive binding/profile version before
+implementation.
+
+Client disconnect does not let the launcher infer broker or transaction state. The service sends
+the same bounded interruption signal to the Ota process group that Core already handles; Ota alone
+classifies cancellation before consumption, uncertain consumption, or post-consumption
+finalization from its durable transaction state. The launcher then performs cgroup cleanup and
+never resumes or silently re-executes the abandoned work.
+
+The client protocol is non-interactive in the first adapter: no stdin or PTY is forwarded. One
+canonical length-bounded frame schema separates `stdout`, `stderr`, and a service-authored terminal
+frame; output bytes are opaque payload inside sequenced stream frames and can never be parsed as a
+terminal or launcher-control message. The client connection is never reused for broker frames,
+signed evidence, or authority state. Losing it cannot rewrite the Ota transaction outcome.
+
+The protected launcher configuration gains a versioned service branch rather than reinterpreting
+the existing inherited-session branch. Its semantic identity binds:
+
+- service adapter and schema version;
+- fixed client socket identity and exact one-to-one job-peer/execution UID/GID mapping;
+- fixed allowed repository roots and target-principal directory-resolution posture;
+- fixed Ota and launcher binary identities;
+- selected protected-launcher profile identity;
+- configured target UID/GID and complete child environment identity;
+- broker-proxy endpoint identity and expected root-owned peer identity. The proxy, not this service,
+  owns remote mTLS or workload credentials;
+- attestor key-set identity and one `LoadCredentialEncrypted=` credential name whose decrypted file
+  exists only in systemd's per-service credential directory, is never named in child environment,
+  and is closed before child execution;
+- launcher service/socket unit and drop-in identities plus one published
+  `ota.authority-launcher.systemd/v1` hardening-profile identity; and
+- one protected `ota.authority-job-principal.systemd/v1` identity for the service that owns the
+  connecting job principal; and
+- maximum request size, session count, startup time, and terminal wait bounds.
+
+`ota.authority-launcher.systemd/v1` is one closed profile, not a label for arbitrary hardened
+units. Before implementation, authority-protocol publishes its canonical ordered definition and
+content-addressed profile identity,
+`sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930`.
+The service unit requires these exact semantic settings:
+
+- `User=root`, `Group=root`, empty supplementary and ambient capabilities, `UMask=0077`,
+  `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`,
+  `MemoryDenyWriteExecute=no`, `RestrictRealtime=yes`, and native system-call architecture. The
+  profile deliberately does not claim executable-memory denial because selected language runtimes
+  may require JIT compilation;
+- capability bounding set exactly `CAP_SETUID CAP_SETGID CAP_KILL`; no other capability is
+  permitted. The launcher does not write the cgroup filesystem directly; the systemd manager
+  creates and stops child scopes through its root manager channel;
+- `PrivateTmp=yes`, `PrivateDevices=yes`, `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`,
+  `ProtectClock=yes`, `ProtectControlGroups=yes`, `ProtectProc=invisible`, and `ProcSubset=pid`;
+- address families restricted to `AF_UNIX`, `AF_INET`, and `AF_INET6`, preserving ordinary
+  contract-selected network behavior while excluding other families; namespace creation denied;
+- `ReadOnlyPaths=` restricted to the fixed `/etc/ota` stores, installation manifest, unit/drop-in files,
+  launcher/Ota executables, encrypted credential source, broker-proxy socket metadata, and the
+  per-service decrypted credential directory;
+- write access only to `/run/ota/authority-launcher`,
+  `/var/lib/ota/authority-launcher`, and the protected configuration's exact allowed repository
+  roots. No wildcard, relative path, caller path, home-directory expansion, or additional unit
+  drop-in may widen that set; and
+- `LoadCredentialEncrypted=` names exactly the protected attestor credential source; and
+- service termination uses `KillMode=control-group`, while each child invocation remains in its
+  separately named non-delegated scope and is recovered from the durable active-slot journal.
+
+Each transient invocation scope fixes `Slice=ota-authority-invocations.slice`, the one stopped child
+PID, `Delegate=no`, `KillMode=control-group`, and `CollectMode=inactive-or-failed`; no caller or
+selected task can add or replace scope properties.
+
+The socket unit requires `Accept=no`, the exact `/run/ota/authority-launcher.sock` path,
+root ownership, the configured job-peer group, mode `0660`, removal on stop, and the exact service
+unit. Unit and drop-in order is canonical; absent, duplicate, unknown, or administrator-added
+directives refuse profile reconciliation rather than being treated as harmless hardening.
+
+The root launcher service and systemd manager are explicit members of this adapter's trusted
+computing base. Root D-Bus access is not described as scope-limited merely because the launcher
+uses it only for the fixed child slice. Their protected binary/unit/configuration identities and
+the job principal's inability to control them are verified; compromise of either remains outside
+the signed protected-launcher claim. A later narrow mediator may reduce that trusted computing base
+without reinterpreting this profile.
+
+`ota.authority-job-principal.systemd/v1` is also closed and versioned. Protected configuration
+binds the exact job-peer account, distinct execution account, and runner-service identity.
+Its protocol-published profile identity is
+`sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d`.
+Admission requires all of these
+non-mutating observations immediately before accepting a request:
+
+Each ordered requirement hashes its closed allowed evidence methods. In particular, one-to-one
+mapping and peer matching require both the protected mapping configuration and live process/account
+observations; process state alone cannot establish configuration-wide uniqueness.
+
+- peer real/effective/saved/filesystem UID and GID equal the fixed non-root job principal;
+  supplementary
+  groups and inheritable/permitted/effective/ambient capabilities are empty; and peer
+  `NoNewPrivs` is `1` in `/proc/<peer-pid>/status`;
+- the peer belongs to the expected protected runner service/cgroup whose active unit and drop-in
+  identities match the fixed job-principal profile and whose effective `NoNewPrivileges` posture
+  is enabled. Every currently live process with the job-peer UID must belong to that runner service;
+  every live process with the execution UID must belong to the one active launcher invocation
+  scope. Any unrelated process under either identity refuses admission;
+- both accounts are locked against password authentication, have no configured supplementary
+  administrative group, use the configured non-login shell, and have no allowed command in the
+  canonical non-interactive `sudo -n -l -U <principal>` policy query. The query may list policy only; it must never execute an
+  elevated command. Missing sudo is an allowed verified-absent posture; malformed or ambiguous
+  output is `unknown` and refuses;
+- systemd and Polkit authorization checks show that neither principal can start, stop, reload, replace,
+  signal, or inspect the launcher, broker proxy, credential state, job-principal service, child
+  slice, or invocation scopes; and
+- job- and execution-principal access checks confirm neither can write any protected launcher,
+  broker, attestor, systemd-unit, executable, credential, or state path or access configured host
+  control sockets. The execution principal also cannot connect to the launcher client socket; and
+- before authority protocol begins, the service verifies Ota's measured pre-authority posture and
+  corroborates that it is non-dumpable with its ptracer allowance cleared. Access to
+  `/proc/<ota-pid>/fd`, `/proc/<ota-pid>/mem`, `ptrace`,
+  `process_vm_readv`, and `pidfd_getfd` from both mapped unprivileged principals must fail.
+
+This is bounded host-principal evidence, not proof against kernel compromise, an already-compromised
+root administrator, unknown privileged software outside the inspected policy sources, or a cloud
+provider control plane. Any unobservable host-principal posture refuses
+`protected_launcher_attested_one_use`; it is not converted to a warning.
+
+Runtime reconciliation uses only defined evidence sources: `SO_PEERCRED` and socket metadata for
+client/proxy/listener identity; protected-file verification plus canonical content identities for
+units, drop-ins, binaries, stores, encrypted credential source, and configuration; systemd manager
+properties for active unit, invocation, slice, scope, cgroup, effective directive, and Polkit
+control posture; account/group and non-interactive sudo policy queries for bounded host-principal
+posture; `/proc/<pid>/status`, `/proc/<pid>/fd`, and `/proc/net/unix` for peer/child identities,
+groups, capabilities, `no_new_privs`, dumpability/ptracer posture, descriptor inheritance, and
+session lifetime; the Ota process-posture preface for measured dumpability and successful ptracer
+clear; explicit non-mutating process-access probes for `/proc`, ptrace,
+`process_vm_readv`, and `pidfd_getfd`; and
+target-principal access probes for protected paths and host-control sockets. Unsupported systemd
+versions or unavailable observation sources refuse the profile.
+
+Those sources map to the existing protected-launcher observations without adding new meaning:
+
+- principal status supplies `job_principal_non_root`;
+- target-principal access probes supply authority/attestor-state write denial and host-control
+  socket unavailability;
+- protected environment, credential-directory, proxy, and child-FD checks supply both broker
+  credential-absence observations;
+- descriptor, Ota process-posture identity, non-dumpable process-access probes, distinct
+  peer/execution identities, launcher
+  socket denial, and active-slot/scope reconciliation supply session non-inheritance and
+  non-reacquisition;
+- peer/child status, account lock, administrative-group and sudo-policy denial, runner-service and
+  all-live-process containment, plus effective systemd/Polkit properties supply
+  privilege-escalation unavailability;
+  and
+- protected content identities supply launcher binary and configuration binding, plus image/profile
+  identities only when the image profile is selected.
+
+The protected installation manifest contains the exact identities of the service unit, socket unit,
+all drop-ins, executable, configuration, encrypted credential source, and hardening profile. At
+startup the service reconciles those protected files, its inherited listener, systemd invocation
+identity, and current cgroup with the manifest. The job principal must have no permission through
+systemd or Polkit to start, stop, reload, replace, signal, inspect protected credentials, or manage
+the child slice/scopes. Unit text alone is configuration evidence, not runtime proof; the service
+must also observe each enforceable runtime property.
+
+At startup and for every invocation the service reconciles the active boundary and child process
+observations required by the selected profile. Missing `SO_PEERCRED`, an unexpected listener,
+writable protected parents, wrong executable or active-unit identity, an unprotected key,
+unexpected supplementary groups or capabilities, missing `no_new_privs`, task-visible launcher
+credentials, a reacquirable broker session, accessible host-control sockets, job control over the
+service, or an unverifiable required observation refuses before broker authorization.
+The signed record remains bounded to its exact ordered observations and does not imply host-wide,
+kernel, hypervisor, or cloud-provider integrity.
+
+The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
+repository job cannot administer the service or read its keys. It must prove:
+
+- valid exact-scope authority succeeds once through the public client socket and archives the exact
+  launcher profile, service-binding identity, consumed lease, and terminal transaction;
+- direct execution without the launcher, a caller-created or substituted socket, wrong peer,
+  altered request, directory outside an allowed root, target-principal-inaccessible directory,
+  symlinked parent escape, changed path after descriptor binding, duplicate job-peer or execution
+  configuration, selected-child reconnection, and a second concurrent use refuse before selected
+  work. An identical request after terminal cleanup is a new invocation and must consume a new work
+  unit rather than being mistaken for protocol replay;
+- missing, unreadable, substituted, or writable launcher config, unit profile, executable, key,
+  broker proxy, and state refuse before authorization;
+- active service/socket unit or drop-in mutation, systemd or Polkit control by the job principal,
+  wrong inherited listener, output-frame injection, forged terminal frames, and unexpected active
+  cgroup state refuse or remain untrusted without changing authority outcome;
+- peer capability, group, `no_new_privs`, runner-service, locked-account, sudo-policy, and protected
+  path posture mismatch refuse before authorization; one ordinary network-requiring selected lane
+  proves that the launcher does not silently replace contract network truth, while one
+  Ota-enforced network-denied lane remains bounded to Ota's runtime provider rather than this
+  authority profile;
+- Ota dumpability or ptracer mismatch and successful job-peer or execution-principal access through
+  `/proc/<pid>/fd`, `/proc/<pid>/mem`, ptrace, `process_vm_readv`, or `pidfd_getfd` refuse before
+  authorization. Selected code cannot reconnect because its execution identity has no launcher
+  socket permission;
+- missing, malformed, replayed, or substituted Ota process-posture frames and any disagreement
+  among principal-mapping identity, signed `runner_principal`, authorization, lease, receipt, and
+  archive refuse before work or fail archive verification;
+- selected code cannot inspect the attestor key, broker credential, service descriptor, client
+  request channel, or consumed Ota session, and cannot ask the service to sign an arbitrary
+  challenge;
+- service restart; client disconnect before consume, while consume is in flight, after broker
+  response, and after durable consumption; process interruption after consumption; lost consume
+  acknowledgement; service restart with live, empty, missing, and identity-mismatched child scopes;
+  and host reboot preserve the established recovery rules; and
+- archive history re-authorizes the historical attestor key/profile through current protected
+  trust state and rejects stripped or substituted service, profile, attestation, lease, and
+  terminal evidence.
+
+This adapter may satisfy V11.7's hardened-launcher completion branch only after that independently
+administered pressure is durable and reviewable. It does not make the provider-attested branch true,
+and the pressure-only peer cannot be promoted or installed as this service.
+
 Ota verifies the complete v2 payload before sending an authorization request, then binds its
 identity into broker authorization, consumption, crossing receipt, and archive evidence. History
 re-derives semantic scope and runtime-boundary identity from the archived contract and invocation,
@@ -852,6 +1178,18 @@ then authorizes the historical attestor key/profile through the current protecte
 independently signed historical bridge. The archive-authored binding snapshot is evidence only; it
 cannot authorize itself. Only after trust authorization does Ota reconcile the archived binding
 identity. Missing, stripped, or substituted runtime-boundary evidence refuses.
+
+The production adapter's archive carrier must retain the complete immutable
+`SystemdProtectedLauncherInstanceEvidenceV1`, not only its digest. That record contains the exact
+`LauncherPrincipalMappingV1`, `OtaProcessPostureV1`, launcher/job profile identities, fixed launcher
+session binding, and bounded systemd invocation, opened-directory, and child-process identities.
+History validates each V1 record before identity derivation, recomputes every nested and outer
+identity, requires the mapping identity to equal signed `runner_principal` throughout
+attestation/authorization/lease/consumption, and requires the outer instance identity to equal the
+signed `attestor_instance_identity`. Numeric UID/GID and PID are bounded machine evidence; account
+names, working-directory paths, credentials, tokens, and raw process contents are not archived.
+Missing, malformed, future-version, non-uniform, same-principal, or substituted instance evidence
+refuses rather than falling back to the signed digest.
 
 `launcher_attested_one_use` remains the honest v1 posture. A fully verified v2 profile derives
 `protected_launcher_attested_one_use`; it does not imply host-wide security beyond its exact signed

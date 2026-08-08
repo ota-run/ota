@@ -751,6 +751,15 @@ constrained Ota child, disjoint broker/attestor keys, one-use live/refusal/recov
 distinct catch-all work units, and archive-valid runtime/lifecycle proof transactions. This is
 bounded pressure-peer conformance: the GitHub workflow controller provisions the root-only fixed
 test authority, so it does not prove independently administered provider/launcher separation.
+The next V11.7 gate is now planned as the Linux-only
+`systemd_protected_launcher/v1` production adapter: an independently administered socket-activated
+service that derives a fixed job-peer identity through `SO_PEERCRED`, maps it one-to-one onto a
+distinct non-dumpable execution principal, binds a target-principal-opened repository-directory
+identity, keeps attestor and broker material outside the child, and signs only the existing
+complete protected-launcher profile after Ota's challenge. Its design has passed independent
+review. The immutable authority-protocol identity/profile foundation is the active implementation
+slice; no production launcher execution path exists yet, and it does not make
+`provider_attested_one_use` true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
