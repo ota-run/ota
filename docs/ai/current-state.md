@@ -734,7 +734,11 @@ merge-gate confirmation in
 [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), closes late
 approval after terminal cancellation, insufficient pre-wait freshness, and repeated broad-closure
 work-unit pressure against the same exact Core revision. Stronger provider-attested separation
-remains open.
+remains open. The reviewed next implementation is an additive runtime-boundary attestation v2:
+strict binding/payload/domain branches, fixed protected-launcher observation profiles, signed
+launcher-session configuration identity, current-root or signed historical-bridge archive trust,
+and no reinterpretation of v1 evidence. Provider-specific attestation remains deferred until it
+has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.

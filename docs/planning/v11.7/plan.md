@@ -743,6 +743,123 @@ This adapter leaves direct Ota-to-broker mTLS and provider-workload-identity tra
 only if they can meet the same non-delegable delivery and task-isolation requirements. They must
 reuse this binding and request/response model rather than defining new authority semantics.
 
+##### Structured runtime-boundary attestation (remaining completion gate)
+
+Protocol v1 proves a fresh challenge-bound launcher session and one-use broker consumption, but its
+bounded labels do not establish the effective runtime separation required to complete V11.7. Its
+wire types, domains, binding schema, identities, and archives remain immutable. Stronger separation
+uses an additive attestation protocol, not a reinterpretation of broker protocol v1:
+
+- binding schema v1 accepts only the existing public Rust type `LauncherAttestationPayload`
+  (referred to here as the conceptual v1 payload),
+  `ota-crossing-broker/attestation-response/v1`, and the existing response-domain identity
+  computation;
+- binding schema v2 still uses `ota-crossing-broker/v1` for authorization and consumption, but
+  requires `attestation.protocol_version: ota-runtime-boundary-attestation/v2`,
+  `LauncherAttestationPayloadV2`, response domain
+  `ota-crossing-broker/attestation-response/v2`, identity domain
+  `ota.crossing-broker.attestation.v2\0`, and binding identity domain
+  `ota.crossing-broker.binding.v2\0`; and
+- schema v2 cannot omit its profile binding or accept a v1 response. Schema v1 rejects every v2
+  field. Archive readers preserve the original branch and never inject defaults before identity
+  verification.
+
+The v2 signed payload retains every v1 challenge, work-unit, scope, principal, origin, channel,
+issuer, audience, and freshness binding. It adds
+`attestation_protocol_version: ota-runtime-boundary-attestation/v2` and one canonical
+`runtime_boundary` record containing schema version 1, stable `profile_id`, content-addressed
+`profile_identity`, attestor kind `protected_launcher`, attestor-instance identity, signed
+`launcher_session_binding_identity`, and an ordered observation array.
+Observation states are the closed enum `verified | failed | unknown`; an unknown or failed required
+observation refuses the stronger posture.
+
+Profile `ota.runtime-boundary.protected-launcher/v1` requires exactly these observations in this
+order:
+
+1. `job_principal_non_root` via `launcher_principal_binding`;
+2. `authority_binding_write_denied` via `target_principal_access_check`;
+3. `attestor_state_write_denied` via `target_principal_access_check`;
+4. `broker_credentials_absent_from_job` via `launcher_environment_exclusion`;
+5. `broker_credentials_absent_from_task` via `child_environment_exclusion`;
+6. `broker_session_non_inheritable` via `descriptor_cloexec_verification`;
+7. `broker_session_not_reacquirable` via `protected_session_lifetime`;
+8. `host_control_socket_unavailable` via `target_principal_access_check`;
+9. `privilege_escalation_unavailable` via `launcher_privilege_policy`;
+10. `launcher_binary_identity_bound` via `protected_binary_measurement`; and
+11. `launcher_config_identity_bound` via `protected_config_measurement`.
+
+Profile `ota.runtime-boundary.protected-launcher-image/v1` requires those eleven observations plus,
+in order, `runner_image_identity_bound` through `protected_image_measurement` and
+`hardening_profile_identity_bound` through `protected_profile_measurement`. Each published profile
+has one stable `profile_id` and one exact SHA-256 `profile_identity` over its canonical ordered
+definition. The binding and signed runtime record carry both and must match the Core-published
+definition. The profile defines requiredness; bindings and callers cannot make an observation
+optional. Observation names and evidence methods are closed enums; duplicates, omissions,
+reordering, unexpected observations, or inconsistent profile/kind combinations refuse. Every
+separation-critical observation, including privilege escalation, must be `verified`.
+
+Provider attestation is deliberately outside the first implementation. A later
+`provider_attested_one_use` posture requires a provider-specific complete profile, authenticated
+adapter, and provider job/run identity model; it must not inherit launcher evidence methods or
+compose two authorities implicitly.
+
+Each observation carries only its name, state, evidence method, stable reason code, and a bounded
+semantic identity where the profile requires one. Raw paths, socket names, tokens, provider
+documents, nested credential signatures, or mutable caller text do not enter public evidence.
+Image, hardening-profile, launcher, runtime-profile, and attestor claims are content-addressed
+bounded identities, never display strings trusted for authorization.
+
+Binding schema v2 selects one exact `profile_id` plus `profile_identity`, attestor kind, attestor
+issuer/audience, attestor key set and rotation posture. Attestor and broker authorization key sets
+are disjoint and key IDs may not overlap. Repository content, environment variables, policy,
+workflow input, and CLI flags
+cannot select a weaker profile, change the attestor, or disable a required observation.
+
+The first protected attestor adapter is `launcher_session_peer/v1`. It has no repository or
+environment discovery. The fixed `/etc/ota/authority-launcher.json` session binding names the
+inherited descriptor and expected Unix peer UID/GID; only the root-owned launcher supervisor may
+supply that connected stream. Its canonical configuration identity and authority-specific session
+binding identity cover `authority_id`, descriptor selection, expected peer, protected Ota binary
+identity, target principal, and bounded environment. The v2 broker binding carries the expected
+session-binding identity. Launcher startup requires exact `authority_id` and descriptor agreement
+between both protected files before IPC, and the signed v2 payload carries the same identity without
+exposing the descriptor. The attestor receives Ota's frozen challenge on that stream, obtains or
+derives the exact profile observations outside the job principal, and returns the signed v2
+payload before broker authorization. The same protected stream may relay broker phases, but the
+attestor signing key and broker authorization key are separate authorities. Missing peer
+credentials, a caller-created stream, direct job access to the attestor, or an attestor key
+available to Ota or selected code refuses before authorization.
+
+Ota verifies the complete v2 payload before sending an authorization request, then binds its
+identity into broker authorization, consumption, crossing receipt, and archive evidence. History
+re-derives semantic scope and runtime-boundary identity from the archived contract and invocation,
+then authorizes the historical attestor key/profile through the current protected trust root or an
+independently signed historical bridge. The archive-authored binding snapshot is evidence only; it
+cannot authorize itself. Only after trust authorization does Ota reconcile the archived binding
+identity. Missing, stripped, or substituted runtime-boundary evidence refuses.
+
+`launcher_attested_one_use` remains the honest v1 posture. A fully verified v2 profile derives
+`protected_launcher_attested_one_use`; it does not imply host-wide security beyond its exact signed
+observations. `provider_attested_one_use` is reserved and cannot be emitted by this slice. A
+launcher self-check, image signature, root-owned file, or successful pressure peer cannot
+independently upgrade the posture.
+
+The first OSS implementation is verifier-side and carrier-neutral: protocol publishes the v2 wire
+record, Core validates and archives it, and authority-launcher relays it without owning an
+organization signing key or approval policy. Operators or providers supply the protected attestor.
+The pressure-only peer may emit deterministic v2 fixtures, but it remains test code and cannot be
+presented as a production issuer.
+
+Hosted completion pressure requires a pre-provisioned non-root runner where the job cannot invoke
+the attestor directly, alter its profile, or cause it to sign outside the one launcher-bound
+challenge. It must prove a valid v2 profile succeeds once; v1 downgrade, wrong
+profile/profile-identity/image/hardening-profile/principal/session-binding,
+missing/duplicate/reordered observation, stale attestation, writable
+authority state, exposed credential/session, overlapping attestor/broker key, and unavailable
+required control all refuse before work. Selected code must be unable to read attestor credentials
+or reacquire the consumed session, and receipt history must re-verify the exact v2 attestation and
+terminal one-use transaction.
+
 ##### Core admission model
 
 Core must not overload the first carrier's `GrantAdmissionEvidence` with broker fields. Its signed
@@ -772,7 +889,7 @@ The broker consume record links the prepared lease to that transaction only afte
 created the journal.
 
 The first broker binding record is read only from `/etc/ota/crossing-brokers.json`, is addressed by
-the existing contract `authority_id` only, and has this canonical shape:
+the existing contract `authority_id` only, and retains this canonical schema-v1 shape:
 
 ```json
 {
@@ -836,8 +953,46 @@ the existing contract `authority_id` only, and has this canonical shape:
 }
 ```
 
+Binding schema v2 retains every non-attestation v1 field and changes only these canonical fields:
+
+```json
+{
+  "schema_version": 2,
+  "identity": "sha256:<ota.crossing-broker.binding.v2 digest>",
+  "protocol_version": "ota-crossing-broker/v1",
+  "attestation": {
+    "protocol_version": "ota-runtime-boundary-attestation/v2",
+    "profile_id": "ota.runtime-boundary.protected-launcher/v1",
+    "profile_identity": "sha256:<published profile definition>",
+    "attestor_kind": "protected_launcher",
+    "adapter": "launcher_session_peer/v1",
+    "launcher_session_binding_identity": "sha256:<protected launcher session binding>",
+    "issuer": "runner-launcher",
+    "audience": "ota-crossing-broker",
+    "trust_bundle_identity": "sha256:<launcher attestation trust bundle>",
+    "verifiers": [
+      { "key_id": "launcher-2026-01", "algorithm": "ed25519", "public_key": "..." }
+    ],
+    "maximum_age_seconds": 180,
+    "maximum_clock_skew_seconds": 5,
+    "key_rotation_overlap_seconds": 300
+  },
+  "message_domains": {
+    "attestation_response": "ota-crossing-broker/attestation-response/v2"
+  }
+}
+```
+
+That fragment is a version delta, not a standalone binding: all unchanged required v1 broker,
+transport, credential-delivery, authorization, lease, recovery-domain, and bounded-window fields
+remain mandatory. Schema v2 removes configurable `mandatory_protocol_claims` and
+`required_administrator_claims`; the selected profile fixes the complete claim and observation
+set. Its attestor verifier keys must be disjoint from the unchanged `broker_verifiers`. A profile
+identity is accepted only with its fixed matching `attestor_kind` and adapter.
+
 `identity` is the SHA-256 digest of JCS-normalized content with its own value blank and the
-`ota.crossing-broker.binding.v1` domain prefix. Broker and attestation verifier entries are sorted
+schema-matched `ota.crossing-broker.binding.v1\0` or `ota.crossing-broker.binding.v2\0` domain
+prefix. Broker and attestation verifier entries are sorted
 by unique `key_id`; the binding rejects duplicates, unsupported algorithms, non-HTTPS origins,
 redirects, non-absolute launcher-owned paths, unknown administrator claims, unsupported descriptor
 values, duplicate or missing message domains, or windows outside the bounded maximum. Every signed
@@ -858,9 +1013,10 @@ uses store ordering, fallback, or a repository declaration to choose a carrier. 
 store is not an error for an existing unambiguous `prebound_file` authority; a present broker store
 must be structurally valid before any authority decision.
 
-`image_identity` and `hardening_profile_identity` become required attestation claims only when the
-administrator binding selects a reference-image profile. They are not universal requirements for a
-broker carrier running on another attested platform.
+`image_identity` and `hardening_profile_identity` are the mandatory bounded identities behind the
+`runner_image_identity_bound` and `hardening_profile_identity_bound` observations when the binding
+selects `ota.runtime-boundary.protected-launcher-image/v1`. They are absent from the base
+protected-launcher profile rather than becoming optional fields inside one profile.
 
 When a reference runner image is selected, the same protected attestation must additionally bind
 its exact immutable OCI digest and hardening-profile identity. Ota binds those verified identities
