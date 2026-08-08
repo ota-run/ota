@@ -57,7 +57,8 @@ use ota_authority_protocol::{
     sha256_identity, signed_message_identity as protocol_signed_message_identity,
 };
 pub(crate) use ota_authority_protocol::{
-    LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, SignedBrokerMessage,
+    LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, LeaseConsumptionQuery,
+    LeaseConsumptionStatus, LeaseConsumptionStatusPayload, SignedBrokerMessage,
 };
 
 use crate::crossing::CrossingSemanticScope;
@@ -134,8 +135,7 @@ impl VerifiedBrokerConsumption {
         &self.consume_response
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_tests(
+    pub(crate) fn new(
         lease_identity: String,
         consume_request_identity: String,
         consume_response_identity: String,
@@ -215,6 +215,7 @@ pub(crate) struct ConsumedBrokerCrossing {
 #[cfg(unix)]
 impl PreparedBrokerCrossing {
     pub(crate) fn prepare<F>(
+        repo_root: &Path,
         binding: BrokerAuthorityBinding,
         scope: &CrossingSemanticScope,
         actor_mode: &str,
@@ -234,6 +235,19 @@ impl PreparedBrokerCrossing {
         session.send_challenge(&challenge.challenge)?;
         let (attestation, attestation_identity) =
             session.receive_verified_attestation(&binding, &challenge, &mut cancelled)?;
+        if let Some(recovery) = crate::crossing_transaction::pending_broker_consumption_recovery(
+            repo_root,
+            scope.identity.as_str(),
+        )? {
+            session.recover_pending_consumption(
+                &binding,
+                &challenge,
+                &attestation,
+                &attestation_identity,
+                recovery,
+                &mut cancelled,
+            )?;
+        }
         let request_time = OffsetDateTime::now_utc();
         let (authorization_request, authorization_request_identity) = build_authorization_request(
             &binding,
@@ -332,7 +346,7 @@ impl PreparedBrokerCrossing {
             ));
         }
         let (consume_request, consume_request_identity) =
-            session.prepare_and_send_consumption(&admission, &transaction)?;
+            session.prepare_and_send_consumption(&admission, &mut transaction)?;
         session.receive_and_record_consumption(
             &binding,
             &challenge,
@@ -440,8 +454,10 @@ pub(crate) fn verify_broker_archive_evidence(
             ));
         }
     };
-    if BrokerPublicAuthorityBinding::from_protected(&current_binding)
-        != evidence.admission.binding_snapshot
+    if !evidence
+        .admission
+        .binding_snapshot
+        .matches_protected_archive_binding(&current_binding)?
     {
         return Err(String::from(
             "broker archive binding does not match the protected current authority root",
@@ -1087,6 +1103,210 @@ pub(crate) fn verify_and_record_lease_consumption(
     Ok(response_identity)
 }
 
+fn build_consumption_query(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    attestation_identity: &str,
+    intent: &crate::crossing_transaction::BrokerConsumptionIntentEvidence,
+) -> Result<(LeaseConsumptionQuery, String), String> {
+    let request = &intent.consume_request;
+    let query = LeaseConsumptionQuery {
+        message_kind: String::from("lease_consumption_query"),
+        binding_identity: binding.identity.clone(),
+        attestation_identity: attestation_identity.to_string(),
+        recovery_challenge_nonce_commitment: challenge.challenge.nonce_commitment.clone(),
+        recovery_work_unit_identity: challenge.challenge.work_unit_identity.clone(),
+        lease_identity: request.lease_identity.clone(),
+        consume_request_identity: intent.consume_request_identity.clone(),
+        original_work_unit_identity: request.work_unit_identity.clone(),
+        crossing_transaction_id: request.crossing_transaction_id.clone(),
+        crossing_transaction_identity: request.crossing_transaction_identity.clone(),
+    };
+    let identity = message_identity(
+        binding
+            .message_domains
+            .lease_consumption_query()?
+            .as_bytes(),
+        &query,
+    )?;
+    Ok((query, identity))
+}
+
+fn verify_consumption_status(
+    binding: &BrokerAuthorityBinding,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &SignedLauncherAttestation,
+    attestation_identity: &str,
+    intent: &crate::crossing_transaction::BrokerConsumptionIntentEvidence,
+    query: &LeaseConsumptionQuery,
+    query_identity: &str,
+    status: &SignedBrokerMessage<LeaseConsumptionStatusPayload>,
+    now: OffsetDateTime,
+) -> Result<String, String> {
+    if verify_launcher_attestation(binding, challenge, attestation, now)? != attestation_identity
+        || query.message_kind != "lease_consumption_query"
+        || query.binding_identity != binding.identity
+        || query.attestation_identity != attestation_identity
+        || query.recovery_challenge_nonce_commitment != challenge.challenge.nonce_commitment
+        || query.recovery_work_unit_identity != challenge.challenge.work_unit_identity
+        || query.lease_identity != intent.consume_request.lease_identity
+        || query.consume_request_identity != intent.consume_request_identity
+        || query.original_work_unit_identity != intent.consume_request.work_unit_identity
+        || query.crossing_transaction_id != intent.consume_request.crossing_transaction_id
+        || query.crossing_transaction_identity
+            != intent.consume_request.crossing_transaction_identity
+        || message_identity(
+            binding
+                .message_domains
+                .lease_consumption_query()?
+                .as_bytes(),
+            query,
+        )? != query_identity
+    {
+        return Err(String::from(
+            "broker consumption status does not bind the exact recovery query",
+        ));
+    }
+    let identity = verify_recorded_consumption_status(binding, intent, query, status)?;
+    let observed_at = parse_time(
+        status.payload.observed_at.as_str(),
+        "broker recovery observed_at",
+    )?;
+    let skew = time::Duration::seconds(binding.attestation.maximum_clock_skew_seconds as i64);
+    if observed_at > now + skew || observed_at < now - skew {
+        return Err(String::from(
+            "broker consumption status is outside the bounded freshness window",
+        ));
+    }
+    Ok(identity)
+}
+
+fn verify_recorded_consumption_status(
+    binding: &BrokerAuthorityBinding,
+    intent: &crate::crossing_transaction::BrokerConsumptionIntentEvidence,
+    query: &LeaseConsumptionQuery,
+    status: &SignedBrokerMessage<LeaseConsumptionStatusPayload>,
+) -> Result<String, String> {
+    let payload = &status.payload;
+    let query_identity = message_identity(
+        binding
+            .message_domains
+            .lease_consumption_query()?
+            .as_bytes(),
+        query,
+    )?;
+    if query.binding_identity != binding.identity
+        || query.lease_identity != intent.consume_request.lease_identity
+        || query.consume_request_identity != intent.consume_request_identity
+        || query.original_work_unit_identity != intent.consume_request.work_unit_identity
+        || query.crossing_transaction_id != intent.consume_request.crossing_transaction_id
+        || query.crossing_transaction_identity
+            != intent.consume_request.crossing_transaction_identity
+        || payload.message_kind != "lease_consumption_status"
+        || payload.query_identity != query_identity
+        || payload.binding_identity != query.binding_identity
+        || payload.attestation_identity != query.attestation_identity
+        || payload.recovery_challenge_nonce_commitment != query.recovery_challenge_nonce_commitment
+        || payload.recovery_work_unit_identity != query.recovery_work_unit_identity
+        || payload.lease_identity != query.lease_identity
+        || payload.consume_request_identity != query.consume_request_identity
+        || payload.original_work_unit_identity != query.original_work_unit_identity
+        || payload.crossing_transaction_id != query.crossing_transaction_id
+        || payload.crossing_transaction_identity != query.crossing_transaction_identity
+        || payload.broker_revision < intent.admission.broker_revision
+    {
+        return Err(String::from(
+            "recorded broker consumption status does not bind the exact recovery intent",
+        ));
+    }
+    verify_signed_broker_message(
+        binding,
+        binding
+            .message_domains
+            .lease_consumption_status()?
+            .as_bytes(),
+        status,
+    )?;
+    parse_time(payload.observed_at.as_str(), "broker recovery observed_at")?;
+    if let LeaseConsumptionStatus::Consumed { consume_response } = &payload.status {
+        verify_lease_consume_response(
+            &intent.admission.binding_snapshot.verification_binding(),
+            &intent.admission.attestation,
+            &intent.admission.prepared_lease,
+            &intent.consume_request,
+            intent.consume_request_identity.as_str(),
+            consume_response,
+            None,
+        )?;
+    }
+    signed_message_identity(
+        binding
+            .message_domains
+            .lease_consumption_status()?
+            .as_bytes(),
+        status,
+    )
+}
+
+pub(crate) fn verify_persisted_consumption_recovery(
+    intent: &crate::crossing_transaction::BrokerConsumptionIntentEvidence,
+    recovery: &crate::crossing_transaction::BrokerConsumptionRecoveryEvidence,
+) -> Result<(), String> {
+    let binding = intent.admission.binding_snapshot.verification_binding();
+    let query_identity = message_identity(
+        binding
+            .message_domains
+            .lease_consumption_query()?
+            .as_bytes(),
+        &recovery.query,
+    )?;
+    let status_identity =
+        verify_recorded_consumption_status(&binding, intent, &recovery.query, &recovery.status)?;
+    if recovery.query_identity != query_identity || recovery.status_identity != status_identity {
+        return Err(String::from(
+            "recorded broker recovery identities do not match their signed messages",
+        ));
+    }
+    Ok(())
+}
+
+fn complete_consumption_recovery(
+    intent: &crate::crossing_transaction::BrokerConsumptionIntentEvidence,
+    mut recovery: crate::crossing_transaction::PendingBrokerConsumptionRecovery,
+    status: &SignedBrokerMessage<LeaseConsumptionStatusPayload>,
+) -> Result<(), String> {
+    let receipt_status = match &status.payload.status {
+        LeaseConsumptionStatus::Consumed { consume_response } => {
+            let response_identity = signed_message_identity(
+                intent
+                    .admission
+                    .binding_snapshot
+                    .message_domains
+                    .lease_consume_response
+                    .as_bytes(),
+                consume_response,
+            )?;
+            let verified = VerifiedBrokerConsumption::new(
+                intent.consume_request.lease_identity.clone(),
+                intent.consume_request_identity.clone(),
+                response_identity,
+                consume_response.payload.broker_revision,
+                consume_response.payload.consumed_at.clone(),
+                intent.pending_transaction_identity.clone(),
+                intent.consume_request.clone(),
+                consume_response.as_ref().clone(),
+            );
+            recovery
+                .transaction_mut()
+                .record_recovered_broker_consumption(&verified)?;
+            "broker_consumption_recovered_without_execution"
+        }
+        LeaseConsumptionStatus::NotConsumed => "broker_consumption_not_consumed",
+        LeaseConsumptionStatus::Unknown => "broker_consumption_unknown",
+    };
+    recovery.finalize(receipt_status)
+}
+
 fn verify_attestation_post_approval_freshness(
     binding: &BrokerAuthorityBinding,
     attestation: &SignedLauncherAttestation,
@@ -1145,7 +1365,7 @@ fn verify_message_signature<T: Serialize>(
         .map_err(|_| String::from("broker message signature is invalid"))
 }
 
-fn message_identity<T: Serialize>(domain: &[u8], payload: &T) -> Result<String, String> {
+pub(crate) fn message_identity<T: Serialize>(domain: &[u8], payload: &T) -> Result<String, String> {
     protocol_message_identity(domain, payload)
         .map_err(|error| format!("failed to canonicalize broker message: {error}"))
 }
@@ -1487,6 +1707,87 @@ impl LauncherSession {
         Ok((attestation, identity))
     }
 
+    pub(crate) fn recover_pending_consumption<F>(
+        &mut self,
+        binding: &BrokerAuthorityBinding,
+        challenge: &FrozenBrokerChallenge,
+        attestation: &SignedLauncherAttestation,
+        attestation_identity: &str,
+        mut recovery: crate::crossing_transaction::PendingBrokerConsumptionRecovery,
+        cancelled: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut() -> bool,
+    {
+        self.require_state(
+            LauncherSessionState::AuthorizationReady,
+            "recover an uncertain broker consumption",
+        )?;
+        let intent = recovery.intent().clone();
+        if verify_broker_admission_evidence(&intent.admission)?.scope_identity
+            != challenge.challenge.semantic_scope_identity
+            || intent.admission.binding_snapshot.identity != binding.identity
+        {
+            self.state = LauncherSessionState::Refused;
+            return Err(String::from(
+                "pending broker consumption does not match the current protected scope",
+            ));
+        }
+        if let Some(recorded) = recovery.recorded_recovery().cloned() {
+            if let Err(error) = verify_persisted_consumption_recovery(&intent, &recorded) {
+                self.state = LauncherSessionState::Refused;
+                return Err(error);
+            }
+            complete_consumption_recovery(&intent, recovery, &recorded.status)?;
+            self.state = LauncherSessionState::AuthorizationReady;
+            return Ok(());
+        }
+        let (query, query_identity) =
+            build_consumption_query(binding, challenge, attestation_identity, &intent)?;
+        self.send_json(&query).map_err(|error| {
+            self.state = LauncherSessionState::Refused;
+            error
+        })?;
+        let status = self
+            .receive_json_with_cancellation::<SignedBrokerMessage<LeaseConsumptionStatusPayload>, _>(
+                cancelled, false,
+            )
+            .map_err(|error| {
+                self.state = LauncherSessionState::Refused;
+                error
+            })?;
+        let now = OffsetDateTime::now_utc();
+        let status_identity = verify_consumption_status(
+            binding,
+            challenge,
+            attestation,
+            attestation_identity,
+            &intent,
+            &query,
+            &query_identity,
+            &status,
+            now,
+        )
+        .map_err(|error| {
+            self.state = LauncherSessionState::Refused;
+            error
+        })?;
+        recovery
+            .transaction_mut()
+            .record_broker_consumption_recovery(
+                crate::crossing_transaction::BrokerConsumptionRecoveryEvidence {
+                    identity: String::new(),
+                    query_identity,
+                    status_identity,
+                    query,
+                    status: status.clone(),
+                },
+            )?;
+        complete_consumption_recovery(&intent, recovery, &status)?;
+        self.state = LauncherSessionState::AuthorizationReady;
+        Ok(())
+    }
+
     pub(crate) fn send_authorization_request(
         &mut self,
         binding: &BrokerAuthorityBinding,
@@ -1727,7 +2028,7 @@ impl LauncherSession {
     pub(crate) fn prepare_and_send_consumption(
         &mut self,
         admission_evidence: &BrokerAdmissionEvidence,
-        transaction: &crate::crossing_transaction::CrossingTransactionGuard,
+        transaction: &mut crate::crossing_transaction::CrossingTransactionGuard,
     ) -> Result<(LeaseConsumeRequest, String), String> {
         self.require_state(
             LauncherSessionState::ConsumeReady,
@@ -1754,6 +2055,11 @@ impl LauncherSession {
                 "broker admission does not match this launcher's verified phase identities",
             ));
         }
+        transaction.record_broker_consumption_intent(
+            admission_evidence,
+            &request,
+            &request_identity,
+        )?;
         if let Err(error) = self.send_json(&request) {
             self.state = LauncherSessionState::Refused;
             return Err(error);
@@ -2147,6 +2453,41 @@ pub(crate) mod tests {
                     state,
                     broker_revision: self.revision,
                     consumed_at: formatted(now),
+                },
+            )
+        }
+
+        fn consumption_status(
+            &self,
+            binding: &BrokerAuthorityBinding,
+            query: &LeaseConsumptionQuery,
+            query_identity: &str,
+            status: LeaseConsumptionStatus,
+            now: OffsetDateTime,
+        ) -> SignedBrokerMessage<LeaseConsumptionStatusPayload> {
+            self.sign(
+                binding
+                    .message_domains
+                    .lease_consumption_status()
+                    .expect("test binding supports recovery status")
+                    .as_bytes(),
+                LeaseConsumptionStatusPayload {
+                    message_kind: String::from("lease_consumption_status"),
+                    query_identity: query_identity.to_string(),
+                    binding_identity: query.binding_identity.clone(),
+                    attestation_identity: query.attestation_identity.clone(),
+                    recovery_challenge_nonce_commitment: query
+                        .recovery_challenge_nonce_commitment
+                        .clone(),
+                    recovery_work_unit_identity: query.recovery_work_unit_identity.clone(),
+                    lease_identity: query.lease_identity.clone(),
+                    consume_request_identity: query.consume_request_identity.clone(),
+                    original_work_unit_identity: query.original_work_unit_identity.clone(),
+                    crossing_transaction_id: query.crossing_transaction_id.clone(),
+                    crossing_transaction_identity: query.crossing_transaction_identity.clone(),
+                    broker_revision: self.revision,
+                    observed_at: formatted(now),
+                    status,
                 },
             )
         }
@@ -2826,7 +3167,7 @@ pub(crate) mod tests {
         )
         .expect("durable pending transaction");
         let (consume_request, consume_request_identity) = session
-            .prepare_and_send_consumption(&admission_evidence, &transaction)
+            .prepare_and_send_consumption(&admission_evidence, &mut transaction)
             .expect("send consume request after durable journal");
         let response = broker.consume(
             &binding,
@@ -2853,6 +3194,591 @@ pub(crate) mod tests {
             .expect("atomic consumption response is durably recorded");
         assert_eq!(session.state(), LauncherSessionState::Complete);
         assert!(transaction.evidence().broker_consumption.is_some());
+    }
+
+    fn pending_consumption_fixture(
+        now: OffsetDateTime,
+    ) -> (
+        BrokerAuthorityBinding,
+        CrossingSemanticScope,
+        BrokerAdmissionEvidence,
+        TestBroker,
+        SignedBrokerMessage<LeaseConsumeResponsePayload>,
+        tempfile::TempDir,
+    ) {
+        let (binding, signing_key) =
+            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let old_challenge = freeze_broker_challenge(&binding, &scope).expect("old challenge");
+        let old_attestation = signed_attestation(&binding, &signing_key, &old_challenge, now);
+        let old_attestation_identity =
+            verify_launcher_attestation(&binding, &old_challenge, &old_attestation, now)
+                .expect("old attestation");
+        let (authorization_request, authorization_request_identity) = build_authorization_request(
+            &binding,
+            &old_challenge,
+            &old_attestation,
+            &old_attestation_identity,
+            &scope,
+            "non_agent",
+            60,
+            now,
+        )
+        .expect("old authorization request");
+        let mut broker = TestBroker::new(signing_key);
+        let decision = broker.authorization_decision(
+            &binding,
+            &authorization_request,
+            &authorization_request_identity,
+            now,
+        );
+        let decision_identity = signed_message_identity(
+            binding.message_domains.authorization_decision.as_bytes(),
+            &decision,
+        )
+        .expect("decision identity");
+        let lease =
+            broker.prepared_lease(&binding, &authorization_request, &decision_identity, now);
+        let lease_identity =
+            signed_message_identity(binding.message_domains.lease_issuance.as_bytes(), &lease)
+                .expect("lease identity");
+        let admission = build_broker_admission(
+            &binding,
+            &scope,
+            &old_challenge,
+            &old_attestation,
+            &old_attestation_identity,
+            &authorization_request,
+            &authorization_request_identity,
+            &decision,
+            &decision_identity,
+            &lease,
+            &lease_identity,
+            "non_agent",
+            now,
+        )
+        .expect("old broker admission");
+        let root = tempdir().expect("transaction root");
+        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
+            root.path(),
+            &admission.crossing_admission(),
+        )
+        .expect("old transaction");
+        let (consume_request, consume_request_identity) =
+            build_lease_consume_request(&admission, &transaction).expect("consume request");
+        transaction
+            .record_broker_consumption_intent(
+                &admission,
+                &consume_request,
+                &consume_request_identity,
+            )
+            .expect("durable consume intent");
+        let consume_response = broker.consume(
+            &binding,
+            &lease,
+            &lease_identity,
+            &consume_request,
+            &consume_request_identity,
+            now,
+        );
+        drop(transaction);
+        (binding, scope, admission, broker, consume_response, root)
+    }
+
+    fn recover_pending_fixture(
+        recovery_state: &str,
+        persist_status_before_restart: bool,
+    ) -> crate::crossing_transaction::CrossingTransactionEvidence {
+        let now = OffsetDateTime::now_utc();
+        let (binding, scope, _admission, broker, consume_response, root) =
+            pending_consumption_fixture(now);
+        let recovery_challenge =
+            freeze_broker_challenge(&binding, &scope).expect("recovery challenge");
+        let recovery_attestation =
+            signed_attestation(&binding, &broker.signing_key, &recovery_challenge, now);
+        let recovery_attestation_identity =
+            verify_launcher_attestation(&binding, &recovery_challenge, &recovery_attestation, now)
+                .expect("recovery attestation");
+        let status_for =
+            |response: SignedBrokerMessage<LeaseConsumeResponsePayload>| match recovery_state {
+                "consumed" => LeaseConsumptionStatus::Consumed {
+                    consume_response: Box::new(response),
+                },
+                "not_consumed" => LeaseConsumptionStatus::NotConsumed,
+                "unknown" => LeaseConsumptionStatus::Unknown,
+                other => panic!("unsupported recovery state {other}"),
+            };
+
+        if persist_status_before_restart {
+            let mut recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+                root.path(),
+                scope.identity.as_str(),
+            )
+            .expect("recovery lookup")
+            .expect("pending recovery");
+            let intent = recovery.intent().clone();
+            let (query, query_identity) = build_consumption_query(
+                &binding,
+                &recovery_challenge,
+                &recovery_attestation_identity,
+                &intent,
+            )
+            .expect("recovery query");
+            let status = broker.consumption_status(
+                &binding,
+                &query,
+                &query_identity,
+                status_for(consume_response.clone()),
+                now,
+            );
+            let status_identity = verify_consumption_status(
+                &binding,
+                &recovery_challenge,
+                &recovery_attestation,
+                &recovery_attestation_identity,
+                &intent,
+                &query,
+                &query_identity,
+                &status,
+                now,
+            )
+            .expect("verified recovery status");
+            recovery
+                .transaction_mut()
+                .record_broker_consumption_recovery(
+                    crate::crossing_transaction::BrokerConsumptionRecoveryEvidence {
+                        identity: String::new(),
+                        query_identity,
+                        status_identity,
+                        query,
+                        status,
+                    },
+                )
+                .expect("durable recovery status");
+            drop(recovery);
+        }
+
+        let (mut launcher, ota) = UnixStream::pair().expect("recovery pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("recovery session");
+        session.state = LauncherSessionState::AuthorizationReady;
+        session.challenge = Some(recovery_challenge.challenge.clone());
+        session.attestation_identity = Some(recovery_attestation_identity.clone());
+        let broker_thread = if persist_status_before_restart {
+            drop(launcher);
+            None
+        } else {
+            let broker_binding = binding.clone();
+            let status = status_for(consume_response);
+            Some(std::thread::spawn(move || {
+                let query: LeaseConsumptionQuery = read_json_frame(&mut launcher);
+                let query_identity = message_identity(
+                    broker_binding
+                        .message_domains
+                        .lease_consumption_query()
+                        .expect("test binding supports recovery queries")
+                        .as_bytes(),
+                    &query,
+                )
+                .expect("query identity");
+                let signed = broker.consumption_status(
+                    &broker_binding,
+                    &query,
+                    &query_identity,
+                    status,
+                    OffsetDateTime::now_utc(),
+                );
+                write_json_frame(&mut launcher, &signed);
+            }))
+        };
+        let recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+            root.path(),
+            scope.identity.as_str(),
+        )
+        .expect("recovery lookup")
+        .expect("pending recovery");
+        session
+            .recover_pending_consumption(
+                &binding,
+                &recovery_challenge,
+                &recovery_attestation,
+                &recovery_attestation_identity,
+                recovery,
+                || false,
+            )
+            .expect("recovery result");
+        if let Some(thread) = broker_thread {
+            thread.join().expect("recovery broker");
+        }
+
+        let state_dir = root
+            .path()
+            .join(".ota/state/crossings")
+            .join(scope.identity.trim_start_matches("sha256:"));
+        std::fs::read_dir(state_dir)
+            .expect("crossing state")
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .filter_map(|bytes| {
+                serde_json::from_slice::<crate::crossing_transaction::CrossingTransactionEvidence>(
+                    &bytes,
+                )
+                .ok()
+            })
+            .find(|evidence| evidence.broker_consumption_recovery.is_some())
+            .expect("recovered journal")
+    }
+
+    #[test]
+    fn non_consumed_and_unknown_recovery_never_authorize_abandoned_work() {
+        for (state, receipt_status) in [
+            ("not_consumed", "broker_consumption_not_consumed"),
+            ("unknown", "broker_consumption_unknown"),
+        ] {
+            let recovered = recover_pending_fixture(state, false);
+            assert_eq!(recovered.state, "incomplete");
+            assert_eq!(recovered.receipt_status.as_deref(), Some(receipt_status));
+            assert!(recovered.broker_consumption.is_none());
+            assert!(recovered.broker_consumption_recovery.is_some());
+        }
+    }
+
+    #[test]
+    fn persisted_recovery_status_completes_without_a_second_broker_query() {
+        let recovered = recover_pending_fixture("consumed", true);
+        assert_eq!(recovered.state, "incomplete");
+        assert_eq!(
+            recovered.receipt_status.as_deref(),
+            Some("broker_consumption_recovered_without_execution")
+        );
+        assert!(recovered.broker_consumption.is_some());
+        assert!(recovered.broker_consumption_recovery.is_some());
+    }
+
+    #[test]
+    fn consumed_recovery_survives_a_crash_before_terminal_finalization() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, scope, _admission, broker, consume_response, root) =
+            pending_consumption_fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("recovery challenge");
+        let attestation = signed_attestation(&binding, &broker.signing_key, &challenge, now);
+        let attestation_identity =
+            verify_launcher_attestation(&binding, &challenge, &attestation, now)
+                .expect("recovery attestation");
+        let mut recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+            root.path(),
+            scope.identity.as_str(),
+        )
+        .expect("recovery lookup")
+        .expect("pending recovery");
+        let intent = recovery.intent().clone();
+        let (query, query_identity) =
+            build_consumption_query(&binding, &challenge, &attestation_identity, &intent)
+                .expect("recovery query");
+        let status = broker.consumption_status(
+            &binding,
+            &query,
+            &query_identity,
+            LeaseConsumptionStatus::Consumed {
+                consume_response: Box::new(consume_response.clone()),
+            },
+            now,
+        );
+        let status_identity = verify_consumption_status(
+            &binding,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &intent,
+            &query,
+            &query_identity,
+            &status,
+            now,
+        )
+        .expect("verified recovery status");
+        recovery
+            .transaction_mut()
+            .record_broker_consumption_recovery(
+                crate::crossing_transaction::BrokerConsumptionRecoveryEvidence {
+                    identity: String::new(),
+                    query_identity,
+                    status_identity,
+                    query,
+                    status,
+                },
+            )
+            .expect("durable recovery status");
+        drop(recovery);
+        let state_dir = root.path().join(".ota/state/crossings").join(
+            scope
+                .identity
+                .strip_prefix("sha256:")
+                .unwrap_or(scope.identity.as_str()),
+        );
+        let journal_path = std::fs::read_dir(&state_dir)
+            .expect("crossing state")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+            .expect("recovery journal");
+        let original_journal = std::fs::read(&journal_path).expect("recovery journal bytes");
+        for identity_field in ["query", "status"] {
+            let mut inconsistent: crate::crossing_transaction::CrossingTransactionEvidence =
+                serde_json::from_slice(&original_journal).expect("recovery journal JSON");
+            let recorded = inconsistent
+                .broker_consumption_recovery
+                .as_mut()
+                .expect("recorded recovery");
+            if identity_field == "query" {
+                recorded.query_identity = format!("sha256:{}", "f".repeat(64));
+            } else {
+                recorded.status_identity = format!("sha256:{}", "f".repeat(64));
+            }
+            recorded.identity.clear();
+            recorded.identity = crate::semantic_identity::semantic_contract_identity(recorded)
+                .expect("recovery wrapper identity");
+            inconsistent.identity.clear();
+            inconsistent.identity =
+                crate::semantic_identity::semantic_contract_identity(&inconsistent)
+                    .expect("transaction wrapper identity");
+            std::fs::write(
+                &journal_path,
+                serde_json::to_vec_pretty(&inconsistent).expect("inconsistent recovery JSON"),
+            )
+            .expect("write inconsistent recovery");
+            let error = match crate::crossing_transaction::pending_broker_consumption_recovery(
+                root.path(),
+                scope.identity.as_str(),
+            ) {
+                Ok(_) => panic!("inconsistent recorded {identity_field} identity must refuse"),
+                Err(error) => error,
+            };
+            assert!(error.contains("ambiguous or invalid"), "{error}");
+        }
+        std::fs::write(&journal_path, original_journal).expect("restore recovery journal");
+        let mut recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+            root.path(),
+            scope.identity.as_str(),
+        )
+        .expect("restored recovery lookup")
+        .expect("restored pending recovery");
+        let response_identity = signed_message_identity(
+            binding.message_domains.lease_consume_response.as_bytes(),
+            &consume_response,
+        )
+        .expect("consume response identity");
+        let verified = VerifiedBrokerConsumption::new(
+            intent.consume_request.lease_identity.clone(),
+            intent.consume_request_identity.clone(),
+            response_identity,
+            consume_response.payload.broker_revision,
+            consume_response.payload.consumed_at.clone(),
+            intent.pending_transaction_identity.clone(),
+            intent.consume_request.clone(),
+            consume_response,
+        );
+        recovery
+            .transaction_mut()
+            .record_recovered_broker_consumption(&verified)
+            .expect("durable recovered consumption");
+        drop(recovery);
+
+        let recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+            root.path(),
+            scope.identity.as_str(),
+        )
+        .expect("restart recovery lookup")
+        .expect("intermediate consumed recovery remains dedicated recovery state");
+        let (launcher, ota) = UnixStream::pair().expect("recovery pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("recovery session");
+        session.state = LauncherSessionState::AuthorizationReady;
+        session.challenge = Some(challenge.challenge.clone());
+        session.attestation_identity = Some(attestation_identity.clone());
+        session
+            .recover_pending_consumption(
+                &binding,
+                &challenge,
+                &attestation,
+                &attestation_identity,
+                recovery,
+                || false,
+            )
+            .expect("persisted consumed recovery terminalizes after restart");
+        drop(launcher);
+
+        let recovered = std::fs::read_dir(state_dir)
+            .expect("crossing state")
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .filter_map(|bytes| {
+                serde_json::from_slice::<crate::crossing_transaction::CrossingTransactionEvidence>(
+                    &bytes,
+                )
+                .ok()
+            })
+            .find(|evidence| evidence.broker_consumption_recovery.is_some())
+            .expect("recovered journal");
+        assert_eq!(recovered.state, "incomplete");
+        assert_eq!(
+            recovered.receipt_status.as_deref(),
+            Some("broker_consumption_recovered_without_execution")
+        );
+        assert!(recovered.broker_consumption.is_some());
+        assert!(recovered.broker_consumption_intent.is_none());
+    }
+
+    #[test]
+    fn substituted_signed_recovery_status_refuses_and_preserves_pending_intent() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, scope, _admission, broker, consume_response, root) =
+            pending_consumption_fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("recovery challenge");
+        let attestation = signed_attestation(&binding, &broker.signing_key, &challenge, now);
+        let attestation_identity =
+            verify_launcher_attestation(&binding, &challenge, &attestation, now)
+                .expect("recovery attestation");
+        let recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+            root.path(),
+            scope.identity.as_str(),
+        )
+        .expect("recovery lookup")
+        .expect("pending recovery");
+        let intent = recovery.intent().clone();
+        let (query, query_identity) =
+            build_consumption_query(&binding, &challenge, &attestation_identity, &intent)
+                .expect("recovery query");
+        let valid = broker.consumption_status(
+            &binding,
+            &query,
+            &query_identity,
+            LeaseConsumptionStatus::Consumed {
+                consume_response: Box::new(consume_response),
+            },
+            now,
+        );
+        let mut substituted_payload = valid.payload;
+        substituted_payload.query_identity = format!("sha256:{}", "f".repeat(64));
+        let substituted = broker.sign(
+            binding
+                .message_domains
+                .lease_consumption_status()
+                .expect("test binding supports recovery status")
+                .as_bytes(),
+            substituted_payload,
+        );
+        let error = verify_consumption_status(
+            &binding,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &intent,
+            &query,
+            &query_identity,
+            &substituted,
+            now,
+        )
+        .expect_err("signed status for another query must refuse");
+        assert!(error.contains("exact recovery intent"));
+        drop(recovery);
+        assert!(
+            crate::crossing_transaction::pending_broker_consumption_recovery(
+                root.path(),
+                scope.identity.as_str(),
+            )
+            .expect("recovery remains inspectable")
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn uncertain_consumption_is_requeried_and_never_resumes_old_work() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, scope, admission, broker, consume_response, root) =
+            pending_consumption_fixture(now);
+
+        let recovery_challenge =
+            freeze_broker_challenge(&binding, &scope).expect("recovery challenge");
+        let recovery_attestation =
+            signed_attestation(&binding, &broker.signing_key, &recovery_challenge, now);
+        let recovery_attestation_identity =
+            verify_launcher_attestation(&binding, &recovery_challenge, &recovery_attestation, now)
+                .expect("recovery attestation");
+        let (mut launcher, ota) = UnixStream::pair().expect("recovery pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("recovery session");
+        session.state = LauncherSessionState::AuthorizationReady;
+        session.challenge = Some(recovery_challenge.challenge.clone());
+        session.attestation_identity = Some(recovery_attestation_identity.clone());
+        let broker_binding = binding.clone();
+        let broker_thread = std::thread::spawn(move || {
+            let query: LeaseConsumptionQuery = read_json_frame(&mut launcher);
+            let query_identity = message_identity(
+                broker_binding
+                    .message_domains
+                    .lease_consumption_query()
+                    .expect("test binding supports recovery queries")
+                    .as_bytes(),
+                &query,
+            )
+            .expect("query identity");
+            let status = broker.consumption_status(
+                &broker_binding,
+                &query,
+                &query_identity,
+                LeaseConsumptionStatus::Consumed {
+                    consume_response: Box::new(consume_response),
+                },
+                OffsetDateTime::now_utc(),
+            );
+            write_json_frame(&mut launcher, &status);
+        });
+        let recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
+            root.path(),
+            scope.identity.as_str(),
+        )
+        .expect("recovery lookup")
+        .expect("pending recovery");
+        session
+            .recover_pending_consumption(
+                &binding,
+                &recovery_challenge,
+                &recovery_attestation,
+                &recovery_attestation_identity,
+                recovery,
+                || false,
+            )
+            .expect("recovery result");
+        broker_thread.join().expect("recovery broker");
+
+        let next = crate::crossing_transaction::CrossingTransactionGuard::begin(
+            root.path(),
+            &admission.crossing_admission(),
+        )
+        .expect("recovered transaction no longer blocks a fresh authorization");
+        drop(next);
+        let state_dir = root
+            .path()
+            .join(".ota/state/crossings")
+            .join(scope.identity.trim_start_matches("sha256:"));
+        let recovered = std::fs::read_dir(state_dir)
+            .expect("crossing state")
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .filter_map(|bytes| {
+                serde_json::from_slice::<crate::crossing_transaction::CrossingTransactionEvidence>(
+                    &bytes,
+                )
+                .ok()
+            })
+            .find(|evidence| {
+                evidence.receipt_status.as_deref()
+                    == Some("broker_consumption_recovered_without_execution")
+            })
+            .expect("recovered journal");
+        assert_eq!(recovered.state, "incomplete");
+        assert!(recovered.broker_consumption.is_some());
+        assert!(recovered.broker_consumption_recovery.is_some());
     }
 
     #[test]
@@ -2937,6 +3863,13 @@ pub(crate) mod tests {
         let (consume_request, consume_request_identity) =
             build_lease_consume_request(&admission_evidence, &transaction)
                 .expect("transaction-bound consume request");
+        transaction
+            .record_broker_consumption_intent(
+                &admission_evidence,
+                &consume_request,
+                &consume_request_identity,
+            )
+            .expect("durable consume intent");
         let after_lease_expiry = now + time::Duration::seconds(61);
         let dishonest_late_consumption = broker.sign(
             binding.message_domains.lease_consume_response.as_bytes(),
@@ -3267,13 +4200,16 @@ pub(crate) mod tests {
             write_json_frame(&mut launcher, &response);
         });
 
-        let prepared = PreparedBrokerCrossing::prepare(binding, &scope, "non_agent", 60, || false)
+        let root = tempdir().expect("transaction root");
+        let prepared =
+            PreparedBrokerCrossing::prepare(root.path(), binding, &scope, "non_agent", 60, || {
+                false
+            })
             .expect("prepared broker authority");
         assert_eq!(
             prepared.admission().crossing_admission().carrier,
             CrossingAuthorityCarrier::AuthorityBroker
         );
-        let root = tempdir().expect("transaction root");
         let mut consumed = prepared
             .consume(root.path(), || false)
             .expect("atomically consumed broker authority");
@@ -3322,5 +4258,130 @@ pub(crate) mod tests {
         verify_broker_archive_evidence(root.path(), &substituted)
             .expect_err("self-consistent actor substitution must refuse");
         broker.join().expect("broker thread");
+    }
+
+    #[test]
+    fn legacy_seven_domain_broker_archive_reconciles_against_current_binding() {
+        let now = OffsetDateTime::now_utc();
+        let (current_binding, signing_key) =
+            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let legacy_binding =
+            crate::crossing_authority::tests::legacy_broker_binding_for_tests(&current_binding);
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let challenge = freeze_broker_challenge(&legacy_binding, &scope).expect("challenge");
+        let attestation = signed_attestation(&legacy_binding, &signing_key, &challenge, now);
+        let attestation_identity =
+            verify_launcher_attestation(&legacy_binding, &challenge, &attestation, now)
+                .expect("legacy attestation");
+        let (request, request_identity) = build_authorization_request(
+            &legacy_binding,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &scope,
+            "non_agent",
+            60,
+            now,
+        )
+        .expect("legacy authorization request");
+        let mut broker = TestBroker::new(signing_key);
+        let decision =
+            broker.authorization_decision(&legacy_binding, &request, &request_identity, now);
+        let decision_identity = signed_message_identity(
+            legacy_binding
+                .message_domains
+                .authorization_decision
+                .as_bytes(),
+            &decision,
+        )
+        .expect("legacy decision identity");
+        let lease = broker.prepared_lease(&legacy_binding, &request, &decision_identity, now);
+        let lease_identity = signed_message_identity(
+            legacy_binding.message_domains.lease_issuance.as_bytes(),
+            &lease,
+        )
+        .expect("legacy lease identity");
+        let admission = build_broker_admission(
+            &legacy_binding,
+            &scope,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &request,
+            &request_identity,
+            &decision,
+            &decision_identity,
+            &lease,
+            &lease_identity,
+            "non_agent",
+            now,
+        )
+        .expect("legacy broker admission");
+        let root = tempdir().expect("transaction root");
+        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
+            root.path(),
+            &admission.crossing_admission(),
+        )
+        .expect("legacy transaction");
+        let (consume_request, consume_request_identity) =
+            build_lease_consume_request(&admission, &transaction).expect("consume request");
+        transaction
+            .record_broker_consumption_intent(
+                &admission,
+                &consume_request,
+                &consume_request_identity,
+            )
+            .expect("consume intent");
+        let response = broker.consume(
+            &legacy_binding,
+            &lease,
+            &lease_identity,
+            &consume_request,
+            &consume_request_identity,
+            now,
+        );
+        verify_and_record_lease_consumption(
+            &legacy_binding,
+            &challenge,
+            &attestation,
+            &request,
+            &decision,
+            &lease,
+            &consume_request,
+            &consume_request_identity,
+            &response,
+            now,
+            &mut transaction,
+        )
+        .expect("legacy consumption");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("legacy terminal transaction");
+        let archive = build_broker_archive_evidence(&admission, &transaction.evidence())
+            .expect("legacy archive");
+        assert!(
+            archive
+                .admission
+                .binding_snapshot
+                .message_domains
+                .lease_consumption_query
+                .is_none()
+        );
+
+        let trust_root = tempdir().expect("broker trust root");
+        let trust_store = trust_root.path().join("crossing-brokers.json");
+        std::fs::write(
+            &trust_store,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![current_binding],
+            })
+            .expect("current broker store"),
+        )
+        .expect("write current broker store");
+        let _trust_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
+        verify_broker_archive_evidence(root.path(), &archive)
+            .expect("legacy broker archive remains readable");
     }
 }

@@ -35,6 +35,7 @@ use ota_authority_protocol::{
     ATTESTATION_RESPONSE_DOMAIN_V1, AUTHORIZATION_DECISION_DOMAIN_V1,
     AUTHORIZATION_REQUEST_DOMAIN_V1, BROKER_BINDING_IDENTITY_DOMAIN_V1,
     CHALLENGE_REQUEST_DOMAIN_V1, LEASE_CONSUME_DOMAIN_V1, LEASE_CONSUME_RESPONSE_DOMAIN_V1,
+    LEASE_CONSUMPTION_QUERY_DOMAIN_V1, LEASE_CONSUMPTION_STATUS_DOMAIN_V1,
     LEASE_ISSUANCE_DOMAIN_V1, PROTOCOL_VERSION_V1,
 };
 use serde::{Deserialize, Serialize};
@@ -84,6 +85,11 @@ const BROKER_MESSAGE_DOMAINS: &[(&str, &str)] = &[
     ("challenge_request", CHALLENGE_REQUEST_DOMAIN_V1),
     ("lease_consume", LEASE_CONSUME_DOMAIN_V1),
     ("lease_consume_response", LEASE_CONSUME_RESPONSE_DOMAIN_V1),
+    ("lease_consumption_query", LEASE_CONSUMPTION_QUERY_DOMAIN_V1),
+    (
+        "lease_consumption_status",
+        LEASE_CONSUMPTION_STATUS_DOMAIN_V1,
+    ),
     ("lease_issuance", LEASE_ISSUANCE_DOMAIN_V1),
 ];
 
@@ -286,6 +292,25 @@ impl BrokerPublicAuthorityBinding {
             maximum_lease_seconds: self.maximum_lease_seconds,
         }
     }
+
+    pub(crate) fn matches_protected_archive_binding(
+        &self,
+        current: &BrokerAuthorityBinding,
+    ) -> Result<bool, String> {
+        if !self
+            .message_domains
+            .uses_legacy_consumption_domain_profile()
+        {
+            return Ok(Self::from_protected(current) == *self);
+        }
+        let mut legacy = current.clone();
+        legacy.message_domains.lease_consumption_query = None;
+        legacy.message_domains.lease_consumption_status = None;
+        legacy.identity.clear();
+        legacy.identity = domain_identity(BROKER_BINDING_DOMAIN, &legacy)
+            .map_err(|error| error.public_details())?;
+        Ok(Self::from_protected(&legacy) == *self)
+    }
 }
 
 #[allow(dead_code)]
@@ -354,6 +379,28 @@ pub(crate) struct BrokerMessageDomains {
     pub lease_issuance: String,
     pub lease_consume: String,
     pub lease_consume_response: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_consumption_query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_consumption_status: Option<String>,
+}
+
+impl BrokerMessageDomains {
+    pub(crate) fn lease_consumption_query(&self) -> Result<&str, String> {
+        self.lease_consumption_query.as_deref().ok_or_else(|| {
+            String::from("broker binding does not support consumption recovery queries")
+        })
+    }
+
+    pub(crate) fn lease_consumption_status(&self) -> Result<&str, String> {
+        self.lease_consumption_status.as_deref().ok_or_else(|| {
+            String::from("broker binding does not support consumption recovery status")
+        })
+    }
+
+    fn uses_legacy_consumption_domain_profile(&self) -> bool {
+        self.lease_consumption_query.is_none() && self.lease_consumption_status.is_none()
+    }
 }
 
 #[allow(dead_code)]
@@ -1784,6 +1831,22 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
             binding.message_domains.lease_consume_response.as_str(),
         ),
         (
+            "lease_consumption_query",
+            binding
+                .message_domains
+                .lease_consumption_query
+                .as_deref()
+                .unwrap_or_default(),
+        ),
+        (
+            "lease_consumption_status",
+            binding
+                .message_domains
+                .lease_consumption_status
+                .as_deref()
+                .unwrap_or_default(),
+        ),
+        (
             "lease_issuance",
             binding.message_domains.lease_issuance.as_str(),
         ),
@@ -2496,6 +2559,12 @@ tasks:
                 lease_consume_response: String::from(
                     "ota-crossing-broker/lease-consume-response/v1",
                 ),
+                lease_consumption_query: Some(String::from(
+                    "ota-crossing-broker/lease-consumption-query/v1",
+                )),
+                lease_consumption_status: Some(String::from(
+                    "ota-crossing-broker/lease-consumption-status/v1",
+                )),
             },
             maximum_approval_wait_seconds: 120,
             minimum_post_approval_freshness_seconds: 30,
@@ -2516,6 +2585,18 @@ tasks:
             domain_identity(BROKER_BINDING_DOMAIN, binding).expect("test broker binding identity");
     }
 
+    pub(crate) fn legacy_broker_binding_for_tests(
+        binding: &BrokerAuthorityBinding,
+    ) -> BrokerAuthorityBinding {
+        let mut legacy = binding.clone();
+        legacy.message_domains.lease_consumption_query = None;
+        legacy.message_domains.lease_consumption_status = None;
+        legacy.identity.clear();
+        legacy.identity = domain_identity(BROKER_BINDING_DOMAIN, &legacy)
+            .expect("legacy broker binding identity");
+        legacy
+    }
+
     #[test]
     fn broker_store_requires_canonical_binding_and_attestation_posture() {
         let (binding, _) = broker_binding_with_signing_key();
@@ -2524,6 +2605,13 @@ tasks:
             bindings: vec![binding.clone()],
         })
         .expect("canonical broker binding should validate");
+
+        let error = validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![legacy_broker_binding_for_tests(&binding)],
+        })
+        .expect_err("live broker bindings require consumption recovery domains");
+        assert_eq!(error.reason, "crossing_broker_message_domain_invalid");
 
         let mut invalid_origin = binding.clone();
         invalid_origin.origin = String::from("http://broker.example.internal");

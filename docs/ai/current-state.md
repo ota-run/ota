@@ -154,14 +154,29 @@ durable agent workflow belongs in the canonical Ota skill.
   launcher-session `authority_broker` carrier is now executable for governed `ota run` and
   `ota up`. Its v1 wire structs, fixed message domains, bounded framing, and canonical nonce,
   message, and work-unit identities now come from the immutable public
-  `ota-run/authority-protocol` revision `bfa11a1703e7067d72656aa1c6cb9e931e35497a`; Core retains
+  `ota-run/authority-protocol` revision `242685d5b7c3904681f1c71d734fbe2d41679dda`; Core retains
   trust-root, verification, admission, transaction, receipt, and archive ownership. It selects
   exactly one protected binding from `/etc/ota/crossing-brokers.json`, freezes
   the semantic work unit, verifies challenge-bound launcher attestation, obtains signed
   authorization, creates the durable pending transaction, and atomically consumes the exact lease
-  after deterministic admission succeeds and before provisioning or selected work. `ota up`
-  evaluates unrelated blockers and the complete ordered prerequisite-instance preflight
+  after deterministic admission succeeds and before provisioning or selected work. Ota persists
+  the exact consume intent before transport. If acknowledgement is uncertain, a later
+  invocation obtains fresh launcher attestation and re-queries the exact intent; consumed,
+  not-consumed, and unknown results all close the abandoned transaction as incomplete and never
+  resume work. A durably recorded signed recovery status is re-verified locally after restart
+  without a second query, and consumed recovery retains its intent until the atomic terminal write.
+  Pre-recovery seven-domain broker archives retain their original identity through archive-only
+  compatibility; live bindings require all nine current domains. Hosted interruption/recovery
+  pressure remains open. `ota up` evaluates
+  unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
+  The current recovery batch is uncommitted and uses a local protocol dependency pending
+  independent review, protocol publication, immutable Core repinning, and the prepared
+  authority-launcher two-invocation hosted pressure run; it is not release evidence yet.
+  A local OrbStack Ubuntu/x64 root/non-root process-chain run proved the same lost-response
+  recovery sequence with one incomplete recovered journal, one fresh completed transaction,
+  exactly one selected-task execution, and one valid/zero invalid archives. It remains bounded
+  local evidence without a durable hosted artifact.
   Ordinary workflow readiness timeout, selected workflow instance, ordered prerequisite-instance closure,
   and runner-derived scope breadth are identity-bound; breadth retains only counts, categories,
   and hashed resource identities. The archive retains a public verification binding, not the live

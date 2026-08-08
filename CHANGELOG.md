@@ -39,6 +39,16 @@
   by immutable Git revision. Core retains trust-root selection, signature verification, admission,
   transaction, receipt, and archive authority while compiling against the shared wire model.
 
+- Added fail-closed broker consumption recovery. Ota now durably journals the exact consume intent
+  before transport, re-queries uncertain outcomes only after fresh launcher attestation, persists
+  the separately signed recovery status, and closes consumed, not-consumed, or unknown abandoned
+  transactions as incomplete without resuming work. Recovery requests and statuses use distinct
+  fixed protocol domains; a later execution always requires fresh authorization.
+  Pre-recovery broker archives retain their original seven-domain binding identity and remain
+  readable through an archive-only compatibility projection; live bindings still require the
+  complete nine-domain recovery profile. Consumed recovery also retains its exact intent through
+  the final atomic terminal write so a crash cannot downgrade it into generic abandonment.
+
 - Began the carrier-neutral audited-crossing evidence foundation. New transaction schema v2 binds
   the authority carrier and authorization identity, while receipt archives bind a re-derived common
   admission envelope. Legacy v1 receipt history remains limited to the existing `prebound_file`

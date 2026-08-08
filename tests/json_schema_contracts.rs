@@ -2089,6 +2089,18 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         json!("#/$defs/executionBoundaryBrokerAuthority")
     );
     assert_eq!(
+        receipt["$defs"]["brokerPublicAuthorityBinding"]["properties"]["message_domains"]["required"],
+        json!([
+            "challenge_request",
+            "attestation_response",
+            "authorization_request",
+            "authorization_decision",
+            "lease_issuance",
+            "lease_consume",
+            "lease_consume_response"
+        ])
+    );
+    assert_eq!(
         receipt["$defs"]["crossingGrantArchiveEvidence"]["additionalProperties"],
         json!(false)
     );
@@ -2134,6 +2146,32 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
             ["$ref"],
         json!("./run-preview.json#/$defs/crossingGrantAdmission")
     );
+}
+
+#[test]
+fn receipt_broker_domain_schema_preserves_legacy_archive_profile() {
+    let receipt = load_schema("docs/spec/json-schemas/receipt.json");
+    let mut schema =
+        receipt["$defs"]["brokerPublicAuthorityBinding"]["properties"]["message_domains"].clone();
+    schema["$defs"] = receipt["$defs"].clone();
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("broker domain schema");
+    let mut legacy = json!({
+        "challenge_request": "ota-crossing-broker/challenge-request/v1",
+        "attestation_response": "ota-crossing-broker/attestation-response/v1",
+        "authorization_request": "ota-crossing-broker/authorization-request/v1",
+        "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+        "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
+        "lease_consume": "ota-crossing-broker/lease-consume/v1",
+        "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1"
+    });
+    assert!(compiled.validate(&legacy).is_ok());
+    legacy["lease_consumption_query"] = json!("ota-crossing-broker/lease-consumption-query/v1");
+    assert!(compiled.validate(&legacy).is_err());
+    legacy["lease_consumption_status"] = json!("ota-crossing-broker/lease-consumption-status/v1");
+    assert!(compiled.validate(&legacy).is_ok());
 }
 
 #[test]

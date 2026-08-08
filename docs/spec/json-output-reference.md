@@ -158,7 +158,13 @@ human text output:
   the verified authority, exact semantic scope, carrier-specific admission, and archived signed
   evidence. `prebound_file` carries bundle/grant freshness and revocation posture.
   `authority_broker` carries launcher attestation, signed authorization, prepared lease, atomic
-  consume exchange, and broker revision. Real execution also carries a terminal
+  consume exchange, and broker revision. If consume acknowledgement is uncertain, internal
+  runner-owned state retains the exact consume intent and a separately domain-bound signed status;
+  recovery always closes the abandoned transaction as incomplete and never resumes work. A
+  consumed recovery retains its exact intent until the atomic terminal write. Pre-recovery broker
+  archives retain their original seven-domain binding identity, while live bindings require the
+  current nine-domain profile. These pending recovery fields are not successful receipt evidence.
+  Real execution also carries a terminal
   `authority.transaction`; dry-run admission does not create one. Transaction schema v2 binds
   `authority_carrier` and a carrier-neutral `authorization_identity`; broker transactions also
   require `broker_consumption`. Its archive carries a matching carrier admission envelope.

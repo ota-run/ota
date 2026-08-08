@@ -190,6 +190,19 @@
             "authorization_decision", "lease_issuance", "lease_consume",
             "lease_consume_response"
           ],
+          "oneOf": [
+            {
+              "required": ["lease_consumption_query", "lease_consumption_status"]
+            },
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["lease_consumption_query"] },
+                  { "required": ["lease_consumption_status"] }
+                ]
+              }
+            }
+          ],
           "properties": {
             "challenge_request": { "const": "ota-crossing-broker/challenge-request/v1" },
             "attestation_response": { "const": "ota-crossing-broker/attestation-response/v1" },
@@ -197,7 +210,9 @@
             "authorization_decision": { "const": "ota-crossing-broker/authorization-decision/v1" },
             "lease_issuance": { "const": "ota-crossing-broker/lease-issuance/v1" },
             "lease_consume": { "const": "ota-crossing-broker/lease-consume/v1" },
-            "lease_consume_response": { "const": "ota-crossing-broker/lease-consume-response/v1" }
+            "lease_consume_response": { "const": "ota-crossing-broker/lease-consume-response/v1" },
+            "lease_consumption_query": { "const": "ota-crossing-broker/lease-consumption-query/v1" },
+            "lease_consumption_status": { "const": "ota-crossing-broker/lease-consumption-status/v1" }
           }
         },
         "maximum_approval_wait_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },

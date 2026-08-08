@@ -123,7 +123,9 @@ The protected file is a store, not a single binding:
         "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
         "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
         "lease_consume": "ota-crossing-broker/lease-consume/v1",
-        "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1"
+        "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1",
+        "lease_consumption_query": "ota-crossing-broker/lease-consumption-query/v1",
+        "lease_consumption_status": "ota-crossing-broker/lease-consumption-status/v1"
       },
       "maximum_approval_wait_seconds": 120,
       "minimum_post_approval_freshness_seconds": 30,
@@ -132,6 +134,11 @@ The protected file is a store, not a single binding:
   ]
 }
 ```
+
+Live bindings require all nine domains shown above. Receipt history also accepts the exact earlier
+seven-domain broker snapshot that predates consumption recovery. Ota preserves that snapshot's
+original identity and compares it with a re-derived legacy projection of the protected current
+binding; it never inserts recovery fields before verifying archived identity.
 
 The example public keys are placeholders. The administrator derives `identity` from the exact
 canonical binding using Ota's domain-separated JCS identity rules; hand-written identities or
@@ -200,6 +207,14 @@ contact. Ota then verifies every signed phase and refuses before selected work f
 If consumption has an ambiguous transport outcome, Ota refuses rather than starting work. A later
 approval after local cancellation cannot become executable.
 
+Before sending a consume request, Ota durably records the exact signed admission, lease,
+consume-request identity, work-unit identity, and pending transaction identity. A later invocation
+with the same semantic scope first obtains fresh launcher attestation and queries the broker for
+that exact intent. Verified `consumed`, `not_consumed`, and `unknown` statuses all close the abandoned transaction as
+`incomplete`; recovery never resumes its selected work. A new execution requires a fresh
+authorization and lease. If a signed status was already journaled before interruption, Ota
+re-verifies it and completes local finalization without querying again.
+
 ## Receipts and archives
 
 Successful evidence uses transaction schema v2 with `authority_carrier: authority_broker` and
@@ -235,6 +250,7 @@ every provider, host, namespace, or privilege-separation fact not carried by tha
   helper/service/assertion and cleanup set.
 - The first adapter uses a launcher-supplied Unix stream; direct Ota-to-broker credentials are not
   supported.
-- Hosted broker pressure, interruption/recovery pressure, and stronger provider-attested boundary
-  claims remain V11.7 completion gates.
+- Hosted interruption/recovery pressure and stronger provider-attested boundary claims remain
+  V11.7 completion gates. Core regression proof covers consume-intent durability, exact re-query,
+  consumed/not-consumed/unknown outcomes, and restart after a durably recorded status.
 - Ota does not ship or operate the approval broker, provisioner, signing keys, or launcher.

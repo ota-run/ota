@@ -55,9 +55,18 @@ run. Authority launcher run
 Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
 bounded approval-timeout, local-cancellation, and conflicting-pending-response refusal before
 selected work, with byte-identical checkout manifests and no receipt state for every refusal.
-This does not close late approval after cancellation, attestation expiry during a pending wait,
-post-consumption interruption/recovery, catch-all work-unit pressure, or provider/launcher-attested
-separation.
+The current uncommitted recovery batch durably journals consume intent, re-queries an uncertain
+outcome only through fresh launcher attestation, and terminalizes every verified status without
+resuming abandoned work. Core regressions cover consumed, not-consumed, unknown, substituted
+status, and crash-after-status paths; the authority-launcher workflow contains the corresponding
+two-invocation hosted pressure case but has not run against an immutable Core/protocol revision.
+An OrbStack Ubuntu/x64 root/non-root process-chain run against the current uncommitted worktrees
+also proved lost consume acknowledgement, fresh-session consumed-status recovery, incomplete old
+transaction finalization, exactly one execution under a new lease, and one valid/zero invalid
+receipt archives. This local run has no durable hosted artifact and is not release evidence.
+Late approval after cancellation, attestation expiry during a pending wait, catch-all work-unit
+pressure, hosted consumption-recovery evidence, and provider/launcher-attested separation remain
+open.
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
@@ -805,7 +814,9 @@ the existing contract `authority_id` only, and has this canonical shape:
     "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
     "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
     "lease_consume": "ota-crossing-broker/lease-consume/v1",
-    "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1"
+    "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1",
+    "lease_consumption_query": "ota-crossing-broker/lease-consumption-query/v1",
+    "lease_consumption_status": "ota-crossing-broker/lease-consumption-status/v1"
   },
   "maximum_approval_wait_seconds": 120,
   "minimum_post_approval_freshness_seconds": 30,
@@ -954,8 +965,19 @@ verified semantic scope and one work-unit identity per consumed lease.
 ##### Recovery, finalization, and evidence
 
 - If Ota crashes after requesting consumption but before durable acknowledgement, it must not
-  execute or silently retry. Recovery re-queries the exact work-unit through the pre-bound broker;
-  an unknown or indeterminate state finalizes locally as incomplete and requires a new lease.
+  execute or silently retry. Ota persists the exact consume intent before sending it. A later
+  invocation obtains a fresh challenge-bound launcher attestation, then re-queries that exact
+  lease, consume-request identity, work unit, and pending transaction through the pre-bound broker.
+  verified `consumed`, `not_consumed`, and `unknown` statuses all finalize the abandoned transaction as incomplete;
+  none resumes its work. Any later execution requires a fresh authorization and lease.
+- The signed recovery status is durably journaled before finalization. If Ota stops after recording
+  that status, the next invocation re-verifies the recorded signed status and completes local
+  finalization without issuing a second status query. Recovery messages have distinct
+  `lease_consumption_query` and `lease_consumption_status` domains and cannot be interpreted as
+  ordinary consume requests or responses. A consumed recovery retains its original consume intent
+  until the atomic terminal write, so every crash point remains in this dedicated recovery path.
+  Archive reads preserve the exact semantic identity of the earlier seven-domain binding profile;
+  only live bindings require the complete nine-domain recovery profile.
 - Ota finalizes the same crossing transaction on success, task failure, interruption, timeout,
   startup failure, or abandoned recovery. It may report that terminal outcome to the broker, but
   delivery acknowledgement is not proof that selected work completed.

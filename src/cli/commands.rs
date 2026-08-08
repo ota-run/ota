@@ -17132,6 +17132,7 @@ fn activate_crossing_authority_plan(
             {
                 let interrupt_epoch = crate::runner::begin_command_interrupt_observation();
                 let prepared = crate::broker_session::PreparedBrokerCrossing::prepare(
+                    repo_root,
                     binding.clone(),
                     &semantic_scope,
                     actor_mode.as_str(),
@@ -103478,7 +103479,9 @@ workflows:
             authorization_identity: Some(format!("sha256:{}", "b".repeat(64))),
             scope_identity: scope_identity.clone(),
             contract_identity: format!("sha256:{}", "c".repeat(64)),
+            broker_consumption_intent: None,
             broker_consumption: None,
+            broker_consumption_recovery: None,
             state: String::from("completed"),
             created_at: String::from("2026-01-01T00:00:00Z"),
             finalized_at: Some(String::from("2026-01-01T00:00:01Z")),
