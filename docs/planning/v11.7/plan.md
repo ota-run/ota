@@ -55,18 +55,21 @@ run. Authority launcher run
 Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
 bounded approval-timeout, local-cancellation, and conflicting-pending-response refusal before
 selected work, with byte-identical checkout manifests and no receipt state for every refusal.
-The current uncommitted recovery batch durably journals consume intent, re-queries an uncertain
-outcome only through fresh launcher attestation, and terminalizes every verified status without
-resuming abandoned work. Core regressions cover consumed, not-consumed, unknown, substituted
-status, and crash-after-status paths; the authority-launcher workflow contains the corresponding
-two-invocation hosted pressure case but has not run against an immutable Core/protocol revision.
-An OrbStack Ubuntu/x64 root/non-root process-chain run against the current uncommitted worktrees
-also proved lost consume acknowledgement, fresh-session consumed-status recovery, incomplete old
-transaction finalization, exactly one execution under a new lease, and one valid/zero invalid
-receipt archives. This local run has no durable hosted artifact and is not release evidence.
-Late approval after cancellation, attestation expiry during a pending wait, catch-all work-unit
-pressure, hosted consumption-recovery evidence, and provider/launcher-attested separation remain
-open.
+Core now durably journals consume intent, re-queries an uncertain outcome only through fresh
+launcher attestation, and terminalizes every verified status without resuming abandoned work.
+Core regressions cover consumed, not-consumed, unknown, substituted-status, and crash-after-status
+paths. Authority launcher run
+[31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) against exact
+Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and protocol
+`242685d5b7c3904681f1c71d734fbe2d41679dda` proves the two-invocation hosted recovery case: the
+first invocation loses the consume acknowledgement and performs no selected work; the second uses
+fresh attestation to recover the consumed status, closes the abandoned transaction as incomplete,
+obtains fresh authorization, executes exactly once, and leaves one valid receipt archive and zero
+invalid archives. Independent dispatch
+[31257511093](https://github.com/ota-run/authority-launcher/actions/runs/31257511093) reproduced the
+same complete workflow at the same immutable launcher revision. Late approval after cancellation,
+attestation expiry during a pending wait, catch-all work-unit pressure, and
+provider/launcher-attested separation remain open.
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.

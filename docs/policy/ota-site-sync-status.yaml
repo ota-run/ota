@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "562f0bc39e2772c06fd9933f459e95578029442d8"
-consumer_commit: "d763869ac6ab49b9bf6bf205993f0210b602afb1"
+reviewed_ota_commit: "9244eb2bc6a44151c4172c0634ac44bdb216a65a"
+consumer_commit: "eff4970559198202541c84a2e5f1024dfce2a2d9"
 waiver_reason: ""
 notes: >
-  Synced V11.7 broker-backed run/up authority, dry-run semantics, one-use evidence, proof limits,
-  the public command index, and a dedicated broker operator reference.
+  Synced V11.7 broker consumption recovery, fail-closed uncertain outcomes, fresh-attestation
+  recovery semantics, archive compatibility boundaries, and the remaining hosted-pressure limits.

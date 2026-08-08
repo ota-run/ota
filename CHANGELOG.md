@@ -48,6 +48,12 @@
   readable through an archive-only compatibility projection; live bindings still require the
   complete nine-domain recovery profile. Consumed recovery also retains its exact intent through
   the final atomic terminal write so a crash cannot downgrade it into generic abandonment.
+  Authority launcher run
+  [31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) against exact
+  Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and immutable protocol
+  `242685d5b7c3904681f1c71d734fbe2d41679dda` proves lost-acknowledgement recovery through fresh
+  attestation, incomplete abandoned-transaction finalization, exactly one later execution under
+  fresh authorization, one valid recovery archive, and zero invalid archives.
 
 - Began the carrier-neutral audited-crossing evidence foundation. New transaction schema v2 binds
   the authority carrier and authorization identity, while receipt archives bind a re-derived common
@@ -162,9 +168,11 @@
   [31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
   Core `257be61dd91799237357390b145be950f2fc6b3f` proves broker-unavailable, bounded
   approval-timeout, local-cancellation, and conflicting-pending-response refusal before selected
-  work. Every refusal retains an unchanged checkout and no receipt state. Late approval after
-  cancellation, pending-wait attestation expiry, post-consumption interruption/recovery, catch-all
-  work-unit pressure, and provider/launcher-attested separation remain open.
+  work. Every refusal retains an unchanged checkout and no receipt state. Hosted recovery run
+  [31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) closes the
+  bounded post-consumption lost-acknowledgement gate. Late approval after cancellation,
+  pending-wait attestation expiry, catch-all work-unit pressure, and provider/launcher-attested
+  separation remain open.
   Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
   v3 is required for platform-bound and direct crossing-authority evidence.
 

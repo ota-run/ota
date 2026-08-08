@@ -166,17 +166,17 @@ durable agent workflow belongs in the canonical Ota skill.
   resume work. A durably recorded signed recovery status is re-verified locally after restart
   without a second query, and consumed recovery retains its intent until the atomic terminal write.
   Pre-recovery seven-domain broker archives retain their original identity through archive-only
-  compatibility; live bindings require all nine current domains. Hosted interruption/recovery
-  pressure remains open. `ota up` evaluates
+  compatibility; live bindings require all nine current domains. `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
-  The current recovery batch is uncommitted and uses a local protocol dependency pending
-  independent review, protocol publication, immutable Core repinning, and the prepared
-  authority-launcher two-invocation hosted pressure run; it is not release evidence yet.
-  A local OrbStack Ubuntu/x64 root/non-root process-chain run proved the same lost-response
-  recovery sequence with one incomplete recovered journal, one fresh completed transaction,
-  exactly one selected-task execution, and one valid/zero invalid archives. It remains bounded
-  local evidence without a durable hosted artifact.
+  Authority launcher run
+  [31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) against exact
+  Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and immutable protocol
+  `242685d5b7c3904681f1c71d734fbe2d41679dda` proves lost consume acknowledgement, fresh-session
+  consumed-status recovery, incomplete old-transaction finalization, fresh authorization,
+  exactly one selected-task execution, one valid recovery archive, and zero invalid archives. Run
+  [31257511093](https://github.com/ota-run/authority-launcher/actions/runs/31257511093) reproduced
+  the same complete workflow at the same launcher revision.
   Ordinary workflow readiness timeout, selected workflow instance, ordered prerequisite-instance closure,
   and runner-derived scope breadth are identity-bound; breadth retains only counts, categories,
   and hashed resource identities. The archive retains a public verification binding, not the live
@@ -210,7 +210,7 @@ durable agent workflow belongs in the canonical Ota skill.
   bounded approval-timeout, local-cancellation, and conflicting-pending-response refusal before
   selected work. Each refusal retains byte-identical checkout manifests and no receipt state.
   V11.7 remains open for late approval after cancellation, attestation expiry during a pending
-  wait, post-consumption interruption/recovery, catch-all work-unit pressure, and
+  wait, catch-all work-unit pressure, and
   provider/launcher-attested separation. V11.22
   remains planning-only and inactive; it does not consume crossing records as approval authority. See
   [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
@@ -718,9 +718,13 @@ Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. Run
 [31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
 Core `257be61dd91799237357390b145be950f2fc6b3f` additionally proves broker-unavailable,
 approval-timeout, cancellation, and ambiguous-response refusal without selected work, receipt
-state, or checkout mutation. Stronger provider-attested separation, late approval after
-cancellation, pending-wait attestation expiry, post-consumption interruption/recovery, and the
-remaining catch-all work-unit pressure remain open.
+state, or checkout mutation. Run
+[31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) against exact
+Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and immutable protocol
+`242685d5b7c3904681f1c71d734fbe2d41679dda` proves bounded lost-acknowledgement recovery without
+resuming abandoned work, followed by one fresh authorized execution and a valid recovery archive.
+Stronger provider-attested separation, late approval after cancellation, pending-wait attestation
+expiry, and the remaining catch-all work-unit pressure remain open.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
@@ -736,8 +740,8 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until the remaining late-approval, pending-attestation-expiry, post-consumption recovery,
-catch-all work-unit, and stronger attested-separation gates close its acceptance bar; keep V11.22
+open until the remaining late-approval, pending-attestation-expiry, catch-all work-unit, and
+stronger attested-separation gates close its acceptance bar; keep V11.22
 planned until explicitly activated.
 
 ## Working Rules
