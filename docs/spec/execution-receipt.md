@@ -158,8 +158,12 @@ host-isolation claim. `protected_launcher_attested_one_use` requires the additiv
 branch: one exact protocol-published protected-launcher profile, all ordered required observations
 verified, content-addressed launcher and configuration identities, and a separate attestor key
 authority. It proves only those signed observations and remains distinct from reserved
-provider-attested posture. Archive history preserves and re-verifies the original v1 or v2 branch;
-it never upgrades legacy v1 evidence by defaulting v2 fields.
+provider-attested posture. The additive v3 `systemd_protected_launcher_attested_one_use` branch
+binds Core's private process-posture preface to the complete, ordered systemd launcher and job-
+principal profiles. It proves only that signed systemd profile instance; it is not provider-
+  attested separation. Core archive history re-verifies the original v1, v2, or v3 branch in local
+  regressions; it never upgrades legacy evidence by defaulting newer fields. Production systemd
+  launcher deployment and hosted v3 pressure remain separate unproved work.
 `authority.transaction.authentication_posture: runner_local_content_addressed` is an explicit
 boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
 is not independently authenticated against another same-user process with write access to

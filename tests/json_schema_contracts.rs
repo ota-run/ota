@@ -2078,7 +2078,8 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         json!([
             "current_process_filesystem_guarded",
             "launcher_attested_one_use",
-            "protected_launcher_attested_one_use"
+            "protected_launcher_attested_one_use",
+            "systemd_protected_launcher_attested_one_use"
         ])
     );
     assert_eq!(
@@ -2369,6 +2370,179 @@ fn receipt_runtime_boundary_attestation_schema_enforces_v2_profile_and_domain() 
     let mut downgraded_version = binding;
     downgraded_version["schema_version"] = json!(1);
     assert!(binding_schema.validate(&downgraded_version).is_err());
+}
+
+#[test]
+fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and_domain() {
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let launcher_observations = [
+        "protected_file_identity",
+        "systemd_manager_property",
+        "socket_peer_credentials",
+        "proc_process_status",
+        "proc_descriptor_inspection",
+        "proc_unix_socket_inspection",
+        "target_principal_access_probe",
+        "ota_process_posture",
+    ]
+    .into_iter()
+    .map(|source| json!({ "source": source, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher" }))
+    .collect::<Vec<_>>();
+    let job_observations = [
+        ("distinct_one_to_one_principals", json!(["protected_mapping_configuration", "proc_peer_status", "account_database_inspection"])),
+        ("peer_identity_matches_protected_mapping", json!(["protected_mapping_configuration", "proc_peer_status"])),
+        ("peer_no_new_privileges", json!(["proc_peer_status"])),
+        ("peer_capabilities_empty", json!(["proc_peer_status"])),
+        ("peer_supplementary_groups_empty", json!(["proc_peer_status"])),
+        ("runner_service_identity_bound", json!(["protected_runner_service_identity"])),
+        ("all_principal_processes_contained", json!(["proc_principal_cgroup_enumeration"])),
+        ("accounts_locked", json!(["account_database_inspection"])),
+        ("non_login_shells", json!(["account_database_inspection"])),
+        ("sudo_policy_denied", json!(["sudo_policy_query"])),
+        ("systemd_policy_denied", json!(["systemd_manager_authorization_query"])),
+        ("polkit_policy_denied", json!(["polkit_authorization_query"])),
+        ("protected_paths_write_denied", json!(["target_principal_access_probe"])),
+        ("host_control_sockets_denied", json!(["target_principal_access_probe"])),
+        ("execution_launcher_socket_denied", json!(["target_principal_access_probe"])),
+        ("ota_process_non_dumpable", json!(["ota_process_posture", "process_access_probe"])),
+        ("ota_ptracer_cleared", json!(["ota_process_posture", "process_access_probe"])),
+        ("ota_process_inspection_denied", json!(["process_access_probe"])),
+    ]
+    .into_iter()
+    .map(|(requirement, evidence_methods)| json!({ "requirement": requirement, "evidence_methods": evidence_methods, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher" }))
+    .collect::<Vec<_>>();
+    let job_principal = json!({
+        "real_uid": 1000, "effective_uid": 1000, "saved_uid": 1000, "filesystem_uid": 1000,
+        "real_gid": 1000, "effective_gid": 1000, "saved_gid": 1000, "filesystem_gid": 1000
+    });
+    let execution_principal = json!({
+        "real_uid": 1001, "effective_uid": 1001, "saved_uid": 1001, "filesystem_uid": 1001,
+        "real_gid": 1001, "effective_gid": 1001, "saved_gid": 1001, "filesystem_gid": 1001
+    });
+    let attestation = json!({
+        "payload": {
+            "message_kind": "attestation_response",
+            "attestation_protocol_version": "ota-systemd-protected-launcher-attestation/v3",
+            "binding_identity": identity,
+            "challenge_nonce_commitment": identity,
+            "invocation_id": "systemd-invocation-1",
+            "work_unit_identity": identity,
+            "semantic_scope_identity": identity,
+            "runner_principal": identity,
+            "channel_delivery": "launcher_session_fd",
+            "authenticated_origin": "https://broker.example.internal",
+            "authority_mounts": ["authority-mount-profile:v3"],
+            "systemd_protected_launcher": {
+                "schema_version": 2,
+                "identity": identity,
+                "instance_v1": {
+                    "schema_version": 1,
+                    "identity": identity,
+                    "adapter": "systemd_protected_launcher/v1",
+                    "principal_mapping": {
+                        "schema_version": 1, "identity": identity,
+                        "job_peer": job_principal, "execution": execution_principal,
+                        "job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
+                        "launcher_session_binding_identity": identity
+                    },
+                    "process_posture": {
+                        "schema_version": 1, "identity": identity, "message_kind": "ota_process_posture", "pid": 4242,
+                        "process_start_time_identity": identity, "ota_binary_identity": identity,
+                        "no_new_privs": true, "dumpable": 0, "ptracer_clear_applied": true,
+                        "principal_mapping_identity": identity
+                    },
+                    "systemd_launcher_profile_identity": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930",
+                    "systemd_job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
+                    "launcher_session_binding_identity": identity,
+                    "systemd_invocation_identity": identity,
+                    "working_directory_identity": identity,
+                    "child_process_identity": identity
+                },
+                "launcher_observations": launcher_observations,
+                "job_principal_observations": job_observations
+            },
+            "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
+            "issued_at": "2026-08-08T00:00:00Z", "expires_at": "2026-08-08T00:02:00Z"
+        },
+        "key_id": "systemd-attestor-2026-01", "algorithm": "ed25519", "signature": "signature"
+    });
+    let attestation_schema = receipt_definition_schema("signedLauncherAttestation");
+    assert!(attestation_schema.validate(&attestation).is_ok());
+
+    let mut missing_observation = attestation.clone();
+    missing_observation["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        .as_array_mut()
+        .expect("launcher observations")
+        .pop();
+    assert!(attestation_schema.validate(&missing_observation).is_err());
+    let mut reordered_observation = attestation.clone();
+    reordered_observation["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        .as_array_mut()
+        .expect("launcher observations")
+        .swap(0, 1);
+    assert!(attestation_schema.validate(&reordered_observation).is_err());
+    let mut missing_job_observation = attestation.clone();
+    missing_job_observation["payload"]["systemd_protected_launcher"]["job_principal_observations"]
+        .as_array_mut()
+        .expect("job observations")
+        .pop();
+    assert!(
+        attestation_schema
+            .validate(&missing_job_observation)
+            .is_err()
+    );
+    let mut reordered_job_observation = attestation.clone();
+    reordered_job_observation["payload"]["systemd_protected_launcher"]
+        ["job_principal_observations"]
+        .as_array_mut()
+        .expect("job observations")
+        .swap(0, 1);
+    assert!(
+        attestation_schema
+            .validate(&reordered_job_observation)
+            .is_err()
+    );
+    let mut wrong_job_methods = attestation.clone();
+    wrong_job_methods["payload"]["systemd_protected_launcher"]["job_principal_observations"][0]["evidence_methods"] =
+        json!(["process_access_probe"]);
+    assert!(attestation_schema.validate(&wrong_job_methods).is_err());
+    let mut substituted_profile = attestation.clone();
+    substituted_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
+        format!("sha256:{}", "b".repeat(64)).into();
+    assert!(attestation_schema.validate(&substituted_profile).is_err());
+
+    let binding = json!({
+        "schema_version": 3, "identity": identity, "authority_id": "platform-release-authority",
+        "broker_id": "platform-crossing-broker", "origin": "https://broker.example.internal",
+        "server_name": "broker.example.internal", "protocol_version": "ota-crossing-broker/v1",
+        "transport_authentication": { "kind": "mtls", "trust_bundle_identity": identity, "credential_source_identity": "launcher:systemd-session/v1" },
+        "credential_delivery": { "kind": "launcher_session_fd", "session_audience": "ota-crossing-broker" },
+        "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
+        "attestation": {
+            "protocol_version": "ota-systemd-protected-launcher-attestation/v3", "adapter": "systemd_protected_launcher/v1",
+            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v1",
+            "systemd_launcher_profile_identity": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930",
+            "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v1",
+            "systemd_job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
+            "launcher_session_binding_identity": identity, "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
+            "trust_bundle_identity": identity, "verifiers": [{ "key_id": "attestor", "algorithm": "ed25519", "public_key": "key" }],
+            "maximum_age_seconds": 180, "maximum_clock_skew_seconds": 5, "key_rotation_overlap_seconds": 120
+        },
+        "message_domains": {
+            "challenge_request": "ota-crossing-broker/challenge-request/v1", "attestation_response": "ota-crossing-broker/attestation-response/v3",
+            "authorization_request": "ota-crossing-broker/authorization-request/v1", "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+            "lease_issuance": "ota-crossing-broker/lease-issuance/v1", "lease_consume": "ota-crossing-broker/lease-consume/v1",
+            "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1",
+            "lease_consumption_query": "ota-crossing-broker/lease-consumption-query/v1", "lease_consumption_status": "ota-crossing-broker/lease-consumption-status/v1"
+        },
+        "maximum_approval_wait_seconds": 120, "minimum_post_approval_freshness_seconds": 30, "maximum_lease_seconds": 300
+    });
+    let binding_schema = receipt_definition_schema("brokerPublicAuthorityBinding");
+    assert!(binding_schema.validate(&binding).is_ok());
+    let mut wrong_domain = binding;
+    wrong_domain["message_domains"]["attestation_response"] =
+        json!("ota-crossing-broker/attestation-response/v2");
+    assert!(binding_schema.validate(&wrong_domain).is_err());
 }
 
 #[test]

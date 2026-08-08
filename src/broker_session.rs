@@ -47,21 +47,30 @@ use time::format_description::well_known::Rfc3339;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+#[cfg(unix)]
+use ota_authority_protocol::OtaProcessPostureV1;
+#[cfg(any(test, all(unix, target_os = "linux")))]
+use ota_authority_protocol::ota_process_posture_identity;
 use ota_authority_protocol::{
     AuthorizationDecision, AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge,
     MAX_FRAME_BYTES, PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
     RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
-    RuntimeBoundarySemanticIdentityPosture, SignedLauncherAttestation, SignedLauncherAttestationV2,
+    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
+    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
+    SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
-    launcher_attestation_identity_v2, message_identity as protocol_message_identity,
-    nonce_commitment as protocol_nonce_commitment, runtime_boundary_profile_by_id,
-    runtime_boundary_profile_identity, sha256_identity,
+    launcher_attestation_identity_v2, launcher_attestation_identity_v3,
+    message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
+    runtime_boundary_profile_by_id, runtime_boundary_profile_identity, sha256_identity,
     signed_message_identity as protocol_signed_message_identity,
 };
 #[cfg(test)]
 use ota_authority_protocol::{
-    LauncherAttestationPayload, LauncherAttestationPayloadV2, RuntimeBoundaryAttestation,
-    RuntimeBoundaryObservation,
+    LauncherAttestationPayload, LauncherAttestationPayloadV2, LauncherAttestationPayloadV3,
+    LauncherPrincipalMappingV1, RuntimeBoundaryAttestation, RuntimeBoundaryObservation,
+    SystemdJobPrincipalObservation, SystemdLauncherObservation,
+    SystemdProtectedLauncherInstanceEvidenceV1, SystemdProtectedLauncherInstanceEvidenceV2,
+    UnixPrincipalIdentity,
 };
 pub(crate) use ota_authority_protocol::{
     LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, LeaseConsumptionQuery,
@@ -71,6 +80,7 @@ pub(crate) use ota_authority_protocol::{
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub(crate) enum LauncherAttestationEvidence {
+    V3(SignedLauncherAttestationV3),
     V2(SignedLauncherAttestationV2),
     V1(SignedLauncherAttestation),
 }
@@ -78,6 +88,7 @@ pub(crate) enum LauncherAttestationEvidence {
 impl LauncherAttestationEvidence {
     fn expires_at(&self) -> &str {
         match self {
+            Self::V3(value) => value.payload.expires_at.as_str(),
             Self::V1(value) => value.payload.expires_at.as_str(),
             Self::V2(value) => value.payload.expires_at.as_str(),
         }
@@ -85,6 +96,7 @@ impl LauncherAttestationEvidence {
 
     fn issued_at(&self) -> &str {
         match self {
+            Self::V3(value) => value.payload.issued_at.as_str(),
             Self::V1(value) => value.payload.issued_at.as_str(),
             Self::V2(value) => value.payload.issued_at.as_str(),
         }
@@ -92,6 +104,7 @@ impl LauncherAttestationEvidence {
 
     pub(crate) fn runner_principal(&self) -> &str {
         match self {
+            Self::V3(value) => value.payload.runner_principal.as_str(),
             Self::V1(value) => value.payload.runner_principal.as_str(),
             Self::V2(value) => value.payload.runner_principal.as_str(),
         }
@@ -101,7 +114,7 @@ impl LauncherAttestationEvidence {
     fn v1_mut(&mut self) -> &mut SignedLauncherAttestation {
         match self {
             Self::V1(value) => value,
-            Self::V2(_) => panic!("test fixture expected a v1 launcher attestation"),
+            Self::V2(_) | Self::V3(_) => panic!("test fixture expected a v1 launcher attestation"),
         }
     }
 
@@ -109,7 +122,17 @@ impl LauncherAttestationEvidence {
     fn v2_mut(&mut self) -> &mut SignedLauncherAttestationV2 {
         match self {
             Self::V2(value) => value,
-            Self::V1(_) => panic!("test fixture expected a v2 launcher attestation"),
+            Self::V1(_) | Self::V3(_) => panic!("test fixture expected a v2 launcher attestation"),
+        }
+    }
+
+    #[cfg(test)]
+    fn v3_mut(&mut self) -> &mut SignedLauncherAttestationV3 {
+        match self {
+            Self::V3(value) => value,
+            Self::V1(_) | Self::V2(_) => {
+                panic!("test fixture expected a v3 launcher attestation")
+            }
         }
     }
 }
@@ -122,6 +145,13 @@ use crate::crossing_authority::{
 
 #[cfg(unix)]
 const SESSION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+#[cfg(all(unix, target_os = "linux"))]
+const PR_GET_NO_NEW_PRIVS: libc::c_int = 39;
+#[cfg(all(unix, target_os = "linux"))]
+const PR_SET_PTRACER: libc::c_int = 0x5961_6d61;
+#[cfg(all(unix, target_os = "linux"))]
+const LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV: &str = "OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY";
 
 #[derive(Debug)]
 pub(crate) struct FrozenBrokerChallenge {
@@ -285,6 +315,7 @@ impl PreparedBrokerCrossing {
         }
         let challenge = freeze_broker_challenge(&binding, scope)?;
         let mut session = LauncherSession::from_binding(&binding)?;
+        session.send_systemd_process_posture_preface(&binding)?;
         session.send_challenge(&challenge.challenge)?;
         let (attestation, attestation_identity) =
             session.receive_verified_attestation(&binding, &challenge, &mut cancelled)?;
@@ -455,6 +486,7 @@ impl BrokerAdmissionEvidence {
         match &self.attestation {
             LauncherAttestationEvidence::V1(_) => "launcher_attested_one_use",
             LauncherAttestationEvidence::V2(_) => "protected_launcher_attested_one_use",
+            LauncherAttestationEvidence::V3(_) => "systemd_protected_launcher_attested_one_use",
         }
     }
 
@@ -1493,6 +1525,16 @@ pub(crate) fn verify_launcher_attestation(
             attestation,
             now,
         ),
+        (
+            LauncherAttestationEvidence::V3(attestation),
+            crate::crossing_authority::BrokerAttestationBinding::V3(binding_attestation),
+        ) => verify_launcher_attestation_v3(
+            binding,
+            binding_attestation,
+            challenge,
+            attestation,
+            now,
+        ),
         _ => Err(String::from(
             "launcher attestation version does not match the protected broker binding",
         )),
@@ -1619,6 +1661,71 @@ fn verify_launcher_attestation_v2(
         .map_err(|error| format!("failed to derive v2 launcher attestation identity: {error}"))
 }
 
+fn verify_launcher_attestation_v3(
+    binding: &BrokerAuthorityBinding,
+    binding_attestation: &crate::crossing_authority::BrokerAttestationBindingV3,
+    challenge: &FrozenBrokerChallenge,
+    attestation: &SignedLauncherAttestationV3,
+    now: OffsetDateTime,
+) -> Result<String, String> {
+    let payload = &attestation.payload;
+    verify_common_attestation_claims(
+        binding,
+        challenge,
+        payload.message_kind.as_str(),
+        payload.binding_identity.as_str(),
+        payload.challenge_nonce_commitment.as_str(),
+        payload.work_unit_identity.as_str(),
+        payload.semantic_scope_identity.as_str(),
+        payload.invocation_id.as_str(),
+        payload.runner_principal.as_str(),
+        payload.channel_delivery.as_str(),
+        payload.authenticated_origin.as_str(),
+        &payload.authority_mounts,
+        payload.issuer.as_str(),
+        payload.audience.as_str(),
+    )?;
+    let instance = &payload.systemd_protected_launcher;
+    let instance_identity =
+        ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(instance).map_err(
+            |error| {
+                format!("failed to derive systemd protected-launcher instance identity: {error}")
+            },
+        )?;
+    if payload.attestation_protocol_version != SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3
+        || instance.identity != instance_identity
+        || instance.instance_v1.adapter != binding_attestation.adapter
+        || instance.instance_v1.systemd_launcher_profile_identity
+            != binding_attestation.systemd_launcher_profile_identity
+        || instance.instance_v1.systemd_job_principal_profile_identity
+            != binding_attestation.systemd_job_principal_profile_identity
+        || instance.instance_v1.launcher_session_binding_identity
+            != binding_attestation.launcher_session_binding_identity
+        || instance
+            .instance_v1
+            .principal_mapping
+            .launcher_session_binding_identity
+            != binding_attestation.launcher_session_binding_identity
+        || instance.instance_v1.principal_mapping.identity != payload.runner_principal
+    {
+        return Err(String::from(
+            "systemd protected-launcher attestation does not match the protected broker binding",
+        ));
+    }
+    verify_attestation_signature_and_time(
+        binding,
+        payload,
+        attestation.key_id.as_str(),
+        attestation.algorithm.as_str(),
+        attestation.signature.as_str(),
+        payload.issued_at.as_str(),
+        payload.expires_at.as_str(),
+        now,
+    )?;
+    launcher_attestation_identity_v3(attestation)
+        .map_err(|error| format!("failed to derive v3 launcher attestation identity: {error}"))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_common_attestation_claims(
     binding: &BrokerAuthorityBinding,
@@ -1738,6 +1845,7 @@ pub(crate) struct LauncherSession {
     stream: UnixStream,
     state: LauncherSessionState,
     challenge: Option<BrokerChallenge>,
+    process_posture_identity: Option<String>,
     attestation_identity: Option<String>,
     pending_decision_identity: Option<String>,
     authorization_request_identity: Option<String>,
@@ -1809,6 +1917,7 @@ impl LauncherSession {
             stream,
             state: LauncherSessionState::ChallengeReady,
             challenge: None,
+            process_posture_identity: None,
             attestation_identity: None,
             pending_decision_identity: None,
             authorization_request_identity: None,
@@ -1825,6 +1934,34 @@ impl LauncherSession {
 
     pub(crate) fn state(&self) -> LauncherSessionState {
         self.state
+    }
+
+    fn send_systemd_process_posture_preface(
+        &mut self,
+        binding: &BrokerAuthorityBinding,
+    ) -> Result<(), String> {
+        let crate::crossing_authority::BrokerAttestationBinding::V3(attestation) =
+            &binding.attestation
+        else {
+            return Ok(());
+        };
+        if attestation.adapter != SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1 {
+            return Ok(());
+        }
+        let posture = collect_systemd_process_posture()?;
+        self.send_process_posture(&posture)
+    }
+
+    fn send_process_posture(&mut self, posture: &OtaProcessPostureV1) -> Result<(), String> {
+        self.require_state(LauncherSessionState::ChallengeReady, "send process posture")?;
+        let payload = serde_json::to_vec(posture)
+            .map_err(|error| format!("failed to serialize Ota process posture: {error}"))?;
+        if let Err(error) = write_frame(&mut self.stream, &payload) {
+            self.state = LauncherSessionState::Refused;
+            return Err(error);
+        }
+        self.process_posture_identity = Some(posture.identity.clone());
+        Ok(())
     }
 
     fn require_state(&mut self, expected: LauncherSessionState, phase: &str) -> Result<(), String> {
@@ -1915,6 +2052,29 @@ impl LauncherSession {
                 })?;
             let now = OffsetDateTime::now_utc();
             let identity = verify_launcher_attestation(binding, challenge, &attestation, now)?;
+            match (
+                &binding.attestation,
+                &attestation,
+                &self.process_posture_identity,
+            ) {
+                (
+                    crate::crossing_authority::BrokerAttestationBinding::V3(_),
+                    LauncherAttestationEvidence::V3(attestation),
+                    Some(posture_identity),
+                ) if attestation
+                    .payload
+                    .systemd_protected_launcher
+                    .instance_v1
+                    .process_posture
+                    .identity
+                    == *posture_identity => {}
+                (crate::crossing_authority::BrokerAttestationBinding::V3(_), _, _) => {
+                    return Err(String::from(
+                        "systemd protected-launcher attestation does not bind this Ota process posture",
+                    ));
+                }
+                _ => {}
+            }
             verify_attestation_covers_approval_window(binding, &attestation, now)?;
             Ok((attestation, identity))
         })();
@@ -2434,6 +2594,79 @@ impl LauncherSession {
     }
 }
 
+#[cfg(all(unix, target_os = "linux"))]
+fn collect_systemd_process_posture() -> Result<OtaProcessPostureV1, String> {
+    let principal_mapping_identity = std::env::var(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV)
+        .map_err(|_| String::from("systemd launcher principal mapping identity is unavailable"))?;
+    if !is_sha256_identity(principal_mapping_identity.as_str()) {
+        return Err(String::from(
+            "systemd launcher principal mapping identity is invalid",
+        ));
+    }
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) } != 0 {
+        return Err(String::from("failed to make Ota process non-dumpable"));
+    }
+    if unsafe { libc::prctl(PR_SET_PTRACER, 0) } != 0 {
+        return Err(String::from("failed to clear Ota ptracer allowance"));
+    }
+    let dumpable = unsafe { libc::prctl(libc::PR_GET_DUMPABLE) };
+    let no_new_privs = unsafe { libc::prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) };
+    if dumpable != 0 || no_new_privs != 1 {
+        return Err(String::from(
+            "systemd launcher process posture does not satisfy required kernel controls",
+        ));
+    }
+    let process_start_time_identity = linux_process_start_time_identity()?;
+    let ota_binary_identity = current_ota_binary_identity()?;
+    let mut posture = OtaProcessPostureV1 {
+        schema_version: 1,
+        identity: String::new(),
+        message_kind: String::from(ota_authority_protocol::OTA_PROCESS_POSTURE),
+        pid: std::process::id(),
+        process_start_time_identity,
+        ota_binary_identity,
+        no_new_privs: true,
+        dumpable: 0,
+        ptracer_clear_applied: true,
+        principal_mapping_identity,
+    };
+    posture.identity = ota_process_posture_identity(&posture)
+        .map_err(|error| format!("failed to derive Ota process posture identity: {error}"))?;
+    Ok(posture)
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn collect_systemd_process_posture() -> Result<OtaProcessPostureV1, String> {
+    Err(String::from(
+        "systemd protected launcher authority is supported only on Linux",
+    ))
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn linux_process_start_time_identity() -> Result<String, String> {
+    let stat = std::fs::read_to_string("/proc/self/stat")
+        .map_err(|error| format!("failed to read Ota process start time: {error}"))?;
+    let closing = stat
+        .rfind(')')
+        .ok_or_else(|| String::from("Ota process stat record is malformed"))?;
+    let start_time = stat[closing + 1..]
+        .split_whitespace()
+        .nth(19)
+        .ok_or_else(|| String::from("Ota process start time is unavailable"))?;
+    Ok(sha256_identity(
+        format!("pid:{};start_time:{start_time}", std::process::id()).as_bytes(),
+    ))
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn current_ota_binary_identity() -> Result<String, String> {
+    let binary = std::env::current_exe()
+        .map_err(|error| format!("failed to resolve Ota executable: {error}"))?;
+    let bytes = std::fs::read(&binary)
+        .map_err(|error| format!("failed to read Ota executable identity: {error}"))?;
+    Ok(sha256_identity(&bytes))
+}
+
 #[cfg(unix)]
 fn verify_connected_unix_stream(fd: i32) -> Result<(), String> {
     let mut socket_type = 0_i32;
@@ -2848,6 +3081,148 @@ pub(crate) mod tests {
         })
     }
 
+    fn signed_attestation_v3(
+        binding: &BrokerAuthorityBinding,
+        signing_key: &SigningKey,
+        challenge: &FrozenBrokerChallenge,
+        now: OffsetDateTime,
+    ) -> LauncherAttestationEvidence {
+        let crate::crossing_authority::BrokerAttestationBinding::V3(binding_attestation) =
+            &binding.attestation
+        else {
+            panic!("test binding must use v3 attestation");
+        };
+        let job_peer = UnixPrincipalIdentity {
+            real_uid: 1000,
+            effective_uid: 1000,
+            saved_uid: 1000,
+            filesystem_uid: 1000,
+            real_gid: 1000,
+            effective_gid: 1000,
+            saved_gid: 1000,
+            filesystem_gid: 1000,
+        };
+        let execution = UnixPrincipalIdentity {
+            real_uid: 1001,
+            effective_uid: 1001,
+            saved_uid: 1001,
+            filesystem_uid: 1001,
+            real_gid: 1001,
+            effective_gid: 1001,
+            saved_gid: 1001,
+            filesystem_gid: 1001,
+        };
+        let mut principal_mapping = LauncherPrincipalMappingV1 {
+            schema_version: 1,
+            identity: String::new(),
+            job_peer,
+            execution,
+            job_principal_profile_identity: binding_attestation
+                .systemd_job_principal_profile_identity
+                .clone(),
+            launcher_session_binding_identity: binding_attestation
+                .launcher_session_binding_identity
+                .clone(),
+        };
+        principal_mapping.identity =
+            ota_authority_protocol::launcher_principal_mapping_identity(&principal_mapping)
+                .expect("principal mapping identity");
+        let mut posture = OtaProcessPostureV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::OTA_PROCESS_POSTURE),
+            pid: 4242,
+            process_start_time_identity: format!("sha256:{}", "d".repeat(64)),
+            ota_binary_identity: format!("sha256:{}", "e".repeat(64)),
+            no_new_privs: true,
+            dumpable: 0,
+            ptracer_clear_applied: true,
+            principal_mapping_identity: principal_mapping.identity.clone(),
+        };
+        posture.identity =
+            ota_process_posture_identity(&posture).expect("process posture identity");
+        let mut instance_v1 = SystemdProtectedLauncherInstanceEvidenceV1 {
+            schema_version: 1,
+            identity: String::new(),
+            adapter: binding_attestation.adapter.clone(),
+            principal_mapping: principal_mapping.clone(),
+            process_posture: posture,
+            systemd_launcher_profile_identity: binding_attestation
+                .systemd_launcher_profile_identity
+                .clone(),
+            systemd_job_principal_profile_identity: binding_attestation
+                .systemd_job_principal_profile_identity
+                .clone(),
+            launcher_session_binding_identity: binding_attestation
+                .launcher_session_binding_identity
+                .clone(),
+            systemd_invocation_identity: format!("sha256:{}", "f".repeat(64)),
+            working_directory_identity: format!("sha256:{}", "0".repeat(64)),
+            child_process_identity: format!("sha256:{}", "1".repeat(64)),
+        };
+        instance_v1.identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_identity(&instance_v1)
+                .expect("systemd instance identity");
+        let mut instance = SystemdProtectedLauncherInstanceEvidenceV2 {
+            schema_version: 2,
+            identity: String::new(),
+            instance_v1,
+            launcher_observations: ota_authority_protocol::systemd_launcher_profile_v1()
+                .evidence_sources
+                .into_iter()
+                .map(|source| SystemdLauncherObservation {
+                    source,
+                    state: RuntimeBoundaryObservationState::Verified,
+                    reason_code: String::from("verified_by_systemd_protected_launcher"),
+                })
+                .collect(),
+            job_principal_observations: ota_authority_protocol::systemd_job_principal_profile_v1()
+                .requirements
+                .into_iter()
+                .map(|required| SystemdJobPrincipalObservation {
+                    requirement: required.requirement,
+                    evidence_methods: required.evidence_methods,
+                    state: RuntimeBoundaryObservationState::Verified,
+                    reason_code: String::from("verified_by_systemd_protected_launcher"),
+                })
+                .collect(),
+        };
+        instance.identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(&instance)
+                .expect("systemd complete instance identity");
+        let payload = LauncherAttestationPayloadV3 {
+            message_kind: String::from("attestation_response"),
+            attestation_protocol_version: String::from(
+                SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
+            ),
+            binding_identity: binding.identity.clone(),
+            challenge_nonce_commitment: challenge.challenge.nonce_commitment.clone(),
+            invocation_id: String::from("systemd-invocation-1"),
+            work_unit_identity: challenge.challenge.work_unit_identity.clone(),
+            semantic_scope_identity: challenge.challenge.semantic_scope_identity.clone(),
+            runner_principal: principal_mapping.identity,
+            channel_delivery: String::from("launcher_session_fd"),
+            authenticated_origin: binding.origin.clone(),
+            authority_mounts: vec![String::from("authority-mount-profile:v3")],
+            systemd_protected_launcher: instance,
+            issuer: binding.attestation.issuer().to_string(),
+            audience: binding.attestation.audience().to_string(),
+            issued_at: formatted(now),
+            expires_at: formatted(now + time::Duration::seconds(180)),
+        };
+        let canonical = serde_jcs::to_vec(&payload).expect("canonical v3 payload");
+        let signature = signing_key.sign(&domain_separated(
+            binding.message_domains.attestation_response.as_bytes(),
+            &canonical,
+        ));
+        LauncherAttestationEvidence::V3(SignedLauncherAttestationV3 {
+            payload,
+            key_id: String::from("systemd-attestor-2026-01"),
+            algorithm: String::from("ed25519"),
+            signature: URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+        })
+    }
+
     fn resign_v2_attestation(
         binding: &BrokerAuthorityBinding,
         signing_key: &SigningKey,
@@ -2855,6 +3230,23 @@ pub(crate) mod tests {
     ) {
         let attestation = attestation.v2_mut();
         let canonical = serde_jcs::to_vec(&attestation.payload).expect("canonical v2 payload");
+        attestation.signature = URL_SAFE_NO_PAD.encode(
+            signing_key
+                .sign(&domain_separated(
+                    binding.message_domains.attestation_response.as_bytes(),
+                    &canonical,
+                ))
+                .to_bytes(),
+        );
+    }
+
+    fn resign_v3_attestation(
+        binding: &BrokerAuthorityBinding,
+        signing_key: &SigningKey,
+        attestation: &mut LauncherAttestationEvidence,
+    ) {
+        let attestation = attestation.v3_mut();
+        let canonical = serde_jcs::to_vec(&attestation.payload).expect("canonical v3 payload");
         attestation.signature = URL_SAFE_NO_PAD.encode(
             signing_key
                 .sign(&domain_separated(
@@ -2894,10 +3286,16 @@ pub(crate) mod tests {
                 challenge,
                 nonce: [0_u8; 32],
             };
-            let attestation = if binding.attestation.is_v2() {
-                signed_attestation_v2(&binding, &attestor_signing_key, &frozen, now)
-            } else {
-                signed_attestation(&binding, &attestor_signing_key, &frozen, now)
+            let attestation = match &binding.attestation {
+                crate::crossing_authority::BrokerAttestationBinding::V2(_) => {
+                    signed_attestation_v2(&binding, &attestor_signing_key, &frozen, now)
+                }
+                crate::crossing_authority::BrokerAttestationBinding::V1(_) => {
+                    signed_attestation(&binding, &attestor_signing_key, &frozen, now)
+                }
+                crate::crossing_authority::BrokerAttestationBinding::V3(_) => {
+                    panic!("test broker must provide a v3 systemd attestation explicitly")
+                }
             };
             write_json_frame(&mut launcher, &attestation);
 
@@ -2984,6 +3382,229 @@ pub(crate) mod tests {
             !inherited.success(),
             "launcher descriptor must be closed across an actual child exec"
         );
+    }
+
+    #[test]
+    fn process_posture_preface_is_bounded_and_precedes_broker_protocol() {
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("launcher session");
+        let mut posture = OtaProcessPostureV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::OTA_PROCESS_POSTURE),
+            pid: 4242,
+            process_start_time_identity: format!("sha256:{}", "a".repeat(64)),
+            ota_binary_identity: format!("sha256:{}", "b".repeat(64)),
+            no_new_privs: true,
+            dumpable: 0,
+            ptracer_clear_applied: true,
+            principal_mapping_identity: format!("sha256:{}", "c".repeat(64)),
+        };
+        posture.identity = ota_process_posture_identity(&posture).expect("posture identity");
+
+        session
+            .send_process_posture(&posture)
+            .expect("posture preface");
+        let received: OtaProcessPostureV1 = read_json_frame(&mut launcher);
+        assert_eq!(received, posture);
+        assert_eq!(session.state(), LauncherSessionState::ChallengeReady);
+    }
+
+    #[test]
+    fn v3_session_attestation_must_bind_the_exact_sent_process_posture() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, _, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("frozen challenge");
+        let attestation = signed_attestation_v3(&binding, &attestor_signing_key, &challenge, now);
+        let sent_posture = attestation
+            .clone()
+            .v3_mut()
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .process_posture
+            .clone();
+
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("launcher session");
+        session
+            .send_process_posture(&sent_posture)
+            .expect("send process posture");
+        session
+            .send_challenge(&challenge.challenge)
+            .expect("send challenge");
+        assert_eq!(
+            read_json_frame::<OtaProcessPostureV1>(&mut launcher),
+            sent_posture
+        );
+        assert_eq!(
+            read_json_frame::<BrokerChallenge>(&mut launcher),
+            challenge.challenge
+        );
+        write_json_frame(&mut launcher, &attestation);
+        session
+            .receive_verified_attestation(&binding, &challenge, || false)
+            .expect("matching signed V3 posture must admit the session");
+
+        let mut substituted = attestation;
+        let evidence = substituted.v3_mut();
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .process_posture
+            .ota_binary_identity = format!("sha256:{}", "f".repeat(64));
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .process_posture
+            .identity = ota_process_posture_identity(
+            &evidence
+                .payload
+                .systemd_protected_launcher
+                .instance_v1
+                .process_posture,
+        )
+        .expect("substituted posture identity");
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .identity = ota_authority_protocol::systemd_protected_launcher_instance_identity(
+            &evidence.payload.systemd_protected_launcher.instance_v1,
+        )
+        .expect("substituted systemd instance identity");
+        evidence.payload.systemd_protected_launcher.identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(
+                &evidence.payload.systemd_protected_launcher,
+            )
+            .expect("substituted complete systemd instance identity");
+        resign_v3_attestation(&binding, &attestor_signing_key, &mut substituted);
+
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("launcher session");
+        session
+            .send_process_posture(&sent_posture)
+            .expect("send original process posture");
+        session
+            .send_challenge(&challenge.challenge)
+            .expect("send challenge");
+        assert_eq!(
+            read_json_frame::<OtaProcessPostureV1>(&mut launcher),
+            sent_posture
+        );
+        assert_eq!(
+            read_json_frame::<BrokerChallenge>(&mut launcher),
+            challenge.challenge
+        );
+        write_json_frame(&mut launcher, &substituted);
+        assert!(
+            session
+                .receive_verified_attestation(&binding, &challenge, || false)
+                .expect_err("different valid signed posture must refuse")
+                .contains("does not bind this Ota process posture")
+        );
+    }
+
+    #[test]
+    fn non_systemd_bindings_omit_the_process_posture_preface() {
+        for binding in [
+            crate::crossing_authority::tests::broker_binding_with_signing_key().0,
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys().0,
+        ] {
+            let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+            let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+                .expect("launcher session");
+            session
+                .send_systemd_process_posture_preface(&binding)
+                .expect("v1/v2 bindings omit the posture preface");
+            let challenge = BrokerChallenge {
+                message_kind: String::from("challenge_request"),
+                protocol_version: String::from("ota-crossing-broker/v1"),
+                binding_identity: binding.identity.clone(),
+                nonce_commitment: format!("sha256:{}", "a".repeat(64)),
+                work_unit_identity: format!("sha256:{}", "b".repeat(64)),
+                semantic_scope_identity: format!("sha256:{}", "c".repeat(64)),
+                contract_identity: format!("sha256:{}", "d".repeat(64)),
+            };
+            session.send_challenge(&challenge).expect("send challenge");
+            assert_eq!(read_json_frame::<BrokerChallenge>(&mut launcher), challenge);
+        }
+    }
+
+    #[test]
+    fn unavailable_v3_posture_refuses_before_challenge_traffic() {
+        let _environment = crate::test_support::ENV_MUTEX
+            .lock()
+            .expect("environment lock");
+        let previous = std::env::var_os("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY");
+        // Missing mapping identity forces a local V3 posture refusal on Linux; other platforms
+        // refuse V3 collection before any launcher write by construction.
+        // ENV_MUTEX prevents concurrent process-environment access in this test process.
+        unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") };
+        let (binding, _, _) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("launcher session");
+        assert!(
+            session
+                .send_systemd_process_posture_preface(&binding)
+                .is_err()
+        );
+        launcher
+            .set_nonblocking(true)
+            .expect("launcher nonblocking read");
+        let mut byte = [0_u8; 1];
+        assert!(
+            matches!(launcher.read(&mut byte), Err(error) if error.kind() == ErrorKind::WouldBlock)
+        );
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", value)
+            },
+            None => unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") },
+        }
+    }
+
+    #[test]
+    fn prepare_refuses_missing_v3_posture_before_challenge_traffic() {
+        let _environment = crate::test_support::ENV_MUTEX
+            .lock()
+            .expect("environment lock");
+        let previous = std::env::var_os("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY");
+        // ENV_MUTEX prevents concurrent process-environment access in this test process.
+        unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") };
+        let now = OffsetDateTime::now_utc();
+        let (mut binding, _, _) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            ota.into_raw_fd(),
+        );
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let root = tempdir().expect("transaction root");
+        assert!(
+            PreparedBrokerCrossing::prepare(root.path(), binding, &scope, "non_agent", 60, || {
+                false
+            },)
+            .is_err()
+        );
+        let mut byte = [0_u8; 1];
+        assert_eq!(launcher.read(&mut byte).expect("launcher read"), 0);
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", value)
+            },
+            None => unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") },
+        }
     }
 
     #[test]
@@ -3119,7 +3740,7 @@ pub(crate) mod tests {
     #[test]
     fn runtime_boundary_attestation_v2_requires_the_exact_complete_profile() {
         let now = OffsetDateTime::now_utc();
-        let (binding, _, attestor_signing_key) =
+        let (binding, _broker_signing_key, attestor_signing_key) =
             crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
         let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
         let challenge = freeze_broker_challenge(&binding, &scope).expect("frozen challenge");
@@ -3253,6 +3874,25 @@ pub(crate) mod tests {
             )
             .expect_err("image-profile measurements require semantic identities")
             .contains("observations")
+        );
+    }
+
+    #[test]
+    fn systemd_protected_launcher_attestation_v3_requires_the_exact_complete_instance() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, _broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("frozen challenge");
+        let attestation = signed_attestation_v3(&binding, &attestor_signing_key, &challenge, now);
+        verify_launcher_attestation(&binding, &challenge, &attestation, now)
+            .expect("complete v3 systemd protected-launcher attestation should verify");
+
+        let downgraded = signed_attestation(&binding, &attestor_signing_key, &challenge, now);
+        assert!(
+            verify_launcher_attestation(&binding, &challenge, &downgraded, now)
+                .expect_err("v3 binding must refuse a signed v1 payload")
+                .contains("version does not match")
         );
     }
 
@@ -4727,6 +5367,189 @@ pub(crate) mod tests {
         verify_broker_archive_evidence(root.path(), &substituted)
             .expect_err("self-consistent actor substitution must refuse");
         broker.join().expect("broker thread");
+    }
+
+    #[test]
+    fn v3_archive_requires_exact_attestation_carrier() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("v3 challenge");
+        let attestation = signed_attestation_v3(&binding, &attestor_signing_key, &challenge, now);
+        let attestation_identity =
+            verify_launcher_attestation(&binding, &challenge, &attestation, now)
+                .expect("v3 attestation");
+        let (request, request_identity) = build_authorization_request(
+            &binding,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &scope,
+            "non_agent",
+            60,
+            now,
+        )
+        .expect("authorization request");
+        let mut broker = TestBroker::new(broker_signing_key);
+        let decision = broker.authorization_decision(&binding, &request, &request_identity, now);
+        let decision_identity = signed_message_identity(
+            binding.message_domains.authorization_decision.as_bytes(),
+            &decision,
+        )
+        .expect("decision identity");
+        let lease = broker.prepared_lease(&binding, &request, &decision_identity, now);
+        let lease_identity =
+            signed_message_identity(binding.message_domains.lease_issuance.as_bytes(), &lease)
+                .expect("lease identity");
+        let admission = build_broker_admission(
+            &binding,
+            &scope,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &request,
+            &request_identity,
+            &decision,
+            &decision_identity,
+            &lease,
+            &lease_identity,
+            "non_agent",
+            now,
+        )
+        .expect("broker admission");
+        let root = tempdir().expect("transaction root");
+        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
+            root.path(),
+            &admission.crossing_admission(),
+        )
+        .expect("transaction");
+        let (consume_request, consume_request_identity) =
+            build_lease_consume_request(&admission, &transaction).expect("consume request");
+        transaction
+            .record_broker_consumption_intent(
+                &admission,
+                &consume_request,
+                &consume_request_identity,
+            )
+            .expect("consume intent");
+        let response = broker.consume(
+            &binding,
+            &lease,
+            &lease_identity,
+            &consume_request,
+            &consume_request_identity,
+            now,
+        );
+        verify_and_record_lease_consumption(
+            &binding,
+            &challenge,
+            &attestation,
+            &request,
+            &decision,
+            &lease,
+            &consume_request,
+            &consume_request_identity,
+            &response,
+            now,
+            &mut transaction,
+        )
+        .expect("consumption");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("finalization");
+        let archive =
+            build_broker_archive_evidence(&admission, &transaction.evidence()).expect("v3 archive");
+
+        let trust_root = tempdir().expect("broker trust root");
+        let trust_store = trust_root.path().join("crossing-brokers.json");
+        std::fs::write(
+            &trust_store,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store"),
+        )
+        .expect("write broker store");
+        let _trust_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
+        verify_broker_archive_evidence(root.path(), &archive).expect("v3 archive re-verifies");
+
+        let mut wrong_version = archive.clone();
+        wrong_version
+            .admission
+            .attestation
+            .v3_mut()
+            .payload
+            .attestation_protocol_version = String::from(RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2);
+        resign_v3_attestation(
+            &binding,
+            &attestor_signing_key,
+            &mut wrong_version.admission.attestation,
+        );
+        wrong_version.admission.identity = broker_admission_identity(&wrong_version.admission)
+            .expect("wrong-version admission identity");
+        wrong_version.identity =
+            broker_archive_identity(&wrong_version).expect("wrong-version archive identity");
+        verify_broker_archive_evidence(root.path(), &wrong_version)
+            .expect_err("v3 version substitution must refuse");
+
+        let mut incomplete_posture = archive.clone();
+        incomplete_posture
+            .admission
+            .attestation
+            .v3_mut()
+            .payload
+            .systemd_protected_launcher
+            .job_principal_observations
+            .pop();
+        resign_v3_attestation(
+            &binding,
+            &attestor_signing_key,
+            &mut incomplete_posture.admission.attestation,
+        );
+        incomplete_posture.admission.identity =
+            broker_admission_identity(&incomplete_posture.admission)
+                .expect("incomplete-posture admission identity");
+        incomplete_posture.identity = broker_archive_identity(&incomplete_posture)
+            .expect("incomplete-posture archive identity");
+        verify_broker_archive_evidence(root.path(), &incomplete_posture)
+            .expect_err("v3 posture substitution must refuse");
+
+        let mut wrong_profile = archive.clone();
+        wrong_profile
+            .admission
+            .attestation
+            .v3_mut()
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .systemd_launcher_profile_identity = format!("sha256:{}", "f".repeat(64));
+        resign_v3_attestation(
+            &binding,
+            &attestor_signing_key,
+            &mut wrong_profile.admission.attestation,
+        );
+        wrong_profile.admission.identity = broker_admission_identity(&wrong_profile.admission)
+            .expect("wrong-profile admission identity");
+        wrong_profile.identity =
+            broker_archive_identity(&wrong_profile).expect("wrong-profile archive identity");
+        verify_broker_archive_evidence(root.path(), &wrong_profile)
+            .expect_err("v3 profile substitution must refuse");
+
+        let mut wrong_domain = archive;
+        wrong_domain
+            .admission
+            .binding_snapshot
+            .message_domains
+            .attestation_response = String::from("ota-crossing-broker/attestation-response/v2");
+        wrong_domain.admission.identity = broker_admission_identity(&wrong_domain.admission)
+            .expect("wrong-domain admission identity");
+        wrong_domain.identity =
+            broker_archive_identity(&wrong_domain).expect("wrong-domain archive identity");
+        verify_broker_archive_evidence(root.path(), &wrong_domain)
+            .expect_err("v3 domain substitution must refuse");
     }
 
     #[test]

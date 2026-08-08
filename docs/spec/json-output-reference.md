@@ -185,7 +185,10 @@ human text output:
   verified v2 profile emits `protected_launcher_attested_one_use`; missing, reordered, failed,
   unknown, downgraded, or substituted profile evidence refuses. Archive verification preserves the
   original v1/v2 binding, payload, response-domain, and identity-domain branch and cannot upgrade
-  v1 by injecting defaults. Neither posture implies provider-attested separation.
+  v1 by injecting defaults. The additive v3 systemd protected-launcher carrier instead binds
+  Core's process-posture preface to the complete ordered launcher and job-principal profile
+  observations; it emits `systemd_protected_launcher_attested_one_use` only when every required
+  observation verifies. Neither posture implies provider-attested separation.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker
   selection with `authority_carrier: authority_broker` and

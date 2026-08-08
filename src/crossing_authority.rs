@@ -32,7 +32,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use ota_authority_protocol::{
-    ATTESTATION_RESPONSE_DOMAIN_V1, ATTESTATION_RESPONSE_DOMAIN_V2,
+    ATTESTATION_RESPONSE_DOMAIN_V1, ATTESTATION_RESPONSE_DOMAIN_V2, ATTESTATION_RESPONSE_DOMAIN_V3,
     AUTHORIZATION_DECISION_DOMAIN_V1, AUTHORIZATION_REQUEST_DOMAIN_V1,
     BROKER_BINDING_IDENTITY_DOMAIN_V1, BROKER_BINDING_IDENTITY_DOMAIN_V2,
     CHALLENGE_REQUEST_DOMAIN_V1, LEASE_CONSUME_DOMAIN_V1, LEASE_CONSUME_RESPONSE_DOMAIN_V1,
@@ -40,6 +40,8 @@ use ota_authority_protocol::{
     LEASE_ISSUANCE_DOMAIN_V1, PROTECTED_LAUNCHER_IMAGE_PROFILE_ID_V1,
     PROTECTED_LAUNCHER_PROFILE_ID_V1, PROTOCOL_VERSION_V1,
     RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RuntimeBoundaryAttestorKind,
+    SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V1, SYSTEMD_LAUNCHER_PROFILE_ID_V1,
+    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
     runtime_boundary_profile_by_id, runtime_boundary_profile_identity,
 };
 use serde::{Deserialize, Serialize};
@@ -367,6 +369,7 @@ pub(crate) struct BrokerVerifier {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub(crate) enum BrokerAttestationBinding {
+    V3(BrokerAttestationBindingV3),
     V2(BrokerAttestationBindingV2),
     V1(BrokerAttestationBindingV1),
 }
@@ -403,9 +406,29 @@ pub(crate) struct BrokerAttestationBindingV2 {
     pub key_rotation_overlap_seconds: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrokerAttestationBindingV3 {
+    pub protocol_version: String,
+    pub adapter: String,
+    pub systemd_launcher_profile_id: String,
+    pub systemd_launcher_profile_identity: String,
+    pub systemd_job_principal_profile_id: String,
+    pub systemd_job_principal_profile_identity: String,
+    pub launcher_session_binding_identity: String,
+    pub issuer: String,
+    pub audience: String,
+    pub trust_bundle_identity: String,
+    pub verifiers: Vec<BrokerVerifier>,
+    pub maximum_age_seconds: u64,
+    pub maximum_clock_skew_seconds: u64,
+    pub key_rotation_overlap_seconds: u64,
+}
+
 impl BrokerAttestationBinding {
     pub(crate) fn issuer(&self) -> &str {
         match self {
+            Self::V3(value) => value.issuer.as_str(),
             Self::V1(value) => value.issuer.as_str(),
             Self::V2(value) => value.issuer.as_str(),
         }
@@ -413,6 +436,7 @@ impl BrokerAttestationBinding {
 
     pub(crate) fn audience(&self) -> &str {
         match self {
+            Self::V3(value) => value.audience.as_str(),
             Self::V1(value) => value.audience.as_str(),
             Self::V2(value) => value.audience.as_str(),
         }
@@ -420,6 +444,7 @@ impl BrokerAttestationBinding {
 
     pub(crate) fn verifiers(&self) -> &[BrokerVerifier] {
         match self {
+            Self::V3(value) => value.verifiers.as_slice(),
             Self::V1(value) => value.verifiers.as_slice(),
             Self::V2(value) => value.verifiers.as_slice(),
         }
@@ -427,6 +452,7 @@ impl BrokerAttestationBinding {
 
     pub(crate) fn maximum_age_seconds(&self) -> u64 {
         match self {
+            Self::V3(value) => value.maximum_age_seconds,
             Self::V1(value) => value.maximum_age_seconds,
             Self::V2(value) => value.maximum_age_seconds,
         }
@@ -434,13 +460,22 @@ impl BrokerAttestationBinding {
 
     pub(crate) fn maximum_clock_skew_seconds(&self) -> u64 {
         match self {
+            Self::V3(value) => value.maximum_clock_skew_seconds,
             Self::V1(value) => value.maximum_clock_skew_seconds,
             Self::V2(value) => value.maximum_clock_skew_seconds,
         }
     }
 
-    pub(crate) fn is_v2(&self) -> bool {
-        matches!(self, Self::V2(_))
+    pub(crate) fn requires_disjoint_attestor(&self) -> bool {
+        matches!(self, Self::V2(_) | Self::V3(_))
+    }
+
+    pub(crate) fn attestation_response_domain(&self) -> &'static str {
+        match self {
+            Self::V1(_) => ATTESTATION_RESPONSE_DOMAIN_V1,
+            Self::V2(_) => ATTESTATION_RESPONSE_DOMAIN_V2,
+            Self::V3(_) => ATTESTATION_RESPONSE_DOMAIN_V3,
+        }
     }
 }
 
@@ -1836,7 +1871,8 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
     let attestation = &binding.attestation;
     match (binding.schema_version, attestation) {
         (None | Some(1), BrokerAttestationBinding::V1(_))
-        | (Some(2), BrokerAttestationBinding::V2(_)) => {}
+        | (Some(2), BrokerAttestationBinding::V2(_))
+        | (Some(3), BrokerAttestationBinding::V3(_)) => {}
         _ => {
             return Err(error(
                 "crossing_broker_binding_schema_mismatch",
@@ -1861,7 +1897,7 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
         .iter()
         .map(|verifier| verifier.public_key.as_str())
         .collect::<BTreeSet<_>>();
-    if attestation.is_v2()
+    if attestation.requires_disjoint_attestor()
         && attestation.verifiers().iter().any(|verifier| {
             broker_key_ids.contains(verifier.key_id.as_str())
                 || broker_public_keys.contains(verifier.public_key.as_str())
@@ -1932,11 +1968,7 @@ fn validate_broker_binding(binding: &BrokerAuthorityBinding) -> Result<(), Grant
             binding.message_domains.lease_issuance.as_str(),
         ),
     ];
-    let expected_attestation_domain = if attestation.is_v2() {
-        ATTESTATION_RESPONSE_DOMAIN_V2
-    } else {
-        ATTESTATION_RESPONSE_DOMAIN_V1
-    };
+    let expected_attestation_domain = attestation.attestation_response_domain();
     if actual_domains[0] != ("attestation_response", expected_attestation_domain)
         || actual_domains[1..] != BROKER_MESSAGE_DOMAINS[1..]
     {
@@ -1997,6 +2029,50 @@ fn validate_broker_attestation_binding(
                 return Err(error(
                     "crossing_broker_attestation_profile_invalid",
                     "broker attestation profile does not match the canonical protected-launcher definition",
+                ));
+            }
+            validate_sha256_identity(
+                value.launcher_session_binding_identity.as_str(),
+                "launcher session binding identity",
+            )?;
+            (
+                value.trust_bundle_identity.as_str(),
+                value.key_rotation_overlap_seconds,
+            )
+        }
+        BrokerAttestationBinding::V3(value) => {
+            let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v1();
+            let job_profile = ota_authority_protocol::systemd_job_principal_profile_v1();
+            let launcher_identity =
+                ota_authority_protocol::systemd_launcher_profile_identity(&launcher_profile)
+                    .map_err(|details| {
+                        error(
+                            "crossing_broker_attestation_profile_invalid",
+                            format!(
+                                "failed to derive systemd launcher profile identity: {details}"
+                            ),
+                        )
+                    })?;
+            let job_identity =
+                ota_authority_protocol::systemd_job_principal_profile_identity(&job_profile)
+                    .map_err(|details| {
+                        error(
+                            "crossing_broker_attestation_profile_invalid",
+                            format!(
+                                "failed to derive systemd job principal profile identity: {details}"
+                            ),
+                        )
+                    })?;
+            if value.protocol_version != SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3
+                || value.adapter != SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1
+                || value.systemd_launcher_profile_id != SYSTEMD_LAUNCHER_PROFILE_ID_V1
+                || value.systemd_launcher_profile_identity != launcher_identity
+                || value.systemd_job_principal_profile_id != SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V1
+                || value.systemd_job_principal_profile_identity != job_identity
+            {
+                return Err(error(
+                    "crossing_broker_attestation_profile_invalid",
+                    "broker attestation does not match the canonical systemd protected-launcher profile",
                 ));
             }
             validate_sha256_identity(
@@ -2789,6 +2865,44 @@ tasks:
         (binding, broker_signing_key, attestor_signing_key)
     }
 
+    pub(crate) fn broker_binding_v3_with_signing_keys()
+    -> (BrokerAuthorityBinding, SigningKey, SigningKey) {
+        let (mut binding, broker_signing_key) = broker_binding_with_signing_key();
+        let attestor_signing_key = SigningKey::from_bytes(&[11_u8; 32]);
+        let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v1();
+        let job_profile = ota_authority_protocol::systemd_job_principal_profile_v1();
+        binding.attestation = BrokerAttestationBinding::V3(BrokerAttestationBindingV3 {
+            protocol_version: String::from(SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3),
+            adapter: String::from(SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1),
+            systemd_launcher_profile_id: String::from(SYSTEMD_LAUNCHER_PROFILE_ID_V1),
+            systemd_launcher_profile_identity:
+                ota_authority_protocol::systemd_launcher_profile_identity(&launcher_profile)
+                    .expect("systemd launcher profile identity"),
+            systemd_job_principal_profile_id: String::from(SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V1),
+            systemd_job_principal_profile_identity:
+                ota_authority_protocol::systemd_job_principal_profile_identity(&job_profile)
+                    .expect("systemd job principal profile identity"),
+            launcher_session_binding_identity: format!("sha256:{}", "b".repeat(64)),
+            issuer: String::from("systemd-launcher"),
+            audience: String::from("ota-crossing-broker"),
+            trust_bundle_identity: format!("sha256:{}", "c".repeat(64)),
+            verifiers: vec![BrokerVerifier {
+                key_id: String::from("systemd-attestor-2026-01"),
+                algorithm: String::from("ed25519"),
+                public_key: URL_SAFE_NO_PAD.encode(attestor_signing_key.verifying_key().to_bytes()),
+            }],
+            maximum_age_seconds: 180,
+            maximum_clock_skew_seconds: 5,
+            key_rotation_overlap_seconds: 120,
+        });
+        binding.schema_version = Some(3);
+        binding.message_domains.attestation_response = String::from(ATTESTATION_RESPONSE_DOMAIN_V3);
+        binding.identity.clear();
+        binding.identity = domain_identity(broker_binding_domain(&binding), &binding)
+            .expect("test v3 broker binding identity");
+        (binding, broker_signing_key, attestor_signing_key)
+    }
+
     pub(crate) fn set_broker_binding_descriptor_for_tests(
         binding: &mut BrokerAuthorityBinding,
         descriptor: i32,
@@ -2973,6 +3087,52 @@ tasks:
             .expect_err("broker and attestor key authority must remain disjoint")
             .reason,
             "crossing_broker_verifier_authority_overlap"
+        );
+    }
+
+    #[test]
+    fn broker_v3_binding_requires_the_canonical_systemd_profile_and_domain() {
+        let (binding, _, _) = broker_binding_v3_with_signing_keys();
+        validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![binding.clone()],
+        })
+        .expect("canonical v3 broker binding should validate");
+
+        let mut wrong_domain = binding.clone();
+        wrong_domain.message_domains.attestation_response =
+            String::from(ATTESTATION_RESPONSE_DOMAIN_V2);
+        wrong_domain.identity.clear();
+        wrong_domain.identity =
+            domain_identity(broker_binding_domain(&wrong_domain), &wrong_domain)
+                .expect("wrong-domain binding identity");
+        assert_eq!(
+            validate_broker_store(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![wrong_domain],
+            })
+            .expect_err("v3 binding must use the v3 attestation domain")
+            .reason,
+            "crossing_broker_message_domain_invalid"
+        );
+
+        let mut wrong_profile = binding;
+        let BrokerAttestationBinding::V3(attestation) = &mut wrong_profile.attestation else {
+            panic!("test binding must use v3 attestation");
+        };
+        attestation.systemd_launcher_profile_identity = format!("sha256:{}", "d".repeat(64));
+        wrong_profile.identity.clear();
+        wrong_profile.identity =
+            domain_identity(broker_binding_domain(&wrong_profile), &wrong_profile)
+                .expect("wrong-profile binding identity");
+        assert_eq!(
+            validate_broker_store(&BrokerAuthorityStore {
+                schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![wrong_profile],
+            })
+            .expect_err("systemd profile substitution must refuse")
+            .reason,
+            "crossing_broker_attestation_profile_invalid"
         );
     }
 

@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Added the reserved Linux `systemd_protected_launcher/v1` broker-attestation branch. Core now
+  requires a private, content-addressed Ota process-posture preface before accepting the signed v3
+  systemd launcher and job-principal instance. The receipt schema and archive re-verification bind
+  the exact v3 carrier. This is a protocol foundation only: the production systemd launcher
+  service, provider/launcher attestation, and hosted v3 pressure remain open.
+
 - Added strict runtime-boundary attestation v2 verification for the Unix broker carrier. Protected
   bindings select one immutable protocol-published launcher profile and a separate attestor key
   authority; signed payloads bind the exact launcher session plus ordered required observations and

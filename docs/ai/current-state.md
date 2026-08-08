@@ -166,7 +166,13 @@ durable agent workflow belongs in the canonical Ota skill.
   resume work. A durably recorded signed recovery status is re-verified locally after restart
   without a second query, and consumed recovery retains its intent until the atomic terminal write.
   Pre-recovery seven-domain broker archives retain their original identity through archive-only
-  compatibility; live bindings require all nine current domains. `ota up` evaluates
+  compatibility; live bindings require all nine current domains.
+  The reserved v3 Linux `systemd_protected_launcher/v1` branch now requires Core to send a
+  private process-posture preface and to match that exact posture against the signed complete
+  systemd launcher/job-principal instance before admitting broker traffic. Core receipt and archive
+  re-verification are implemented and locally tested; the production systemd service and hosted v3
+  pressure are not implemented or proved yet.
+  `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
   Authority launcher run
