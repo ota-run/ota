@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Fixed the Unix launcher-session authority module to compile on Windows while preserving its
+  explicit unsupported-platform refusal. Cross-platform archive verification continues to use
+  platform-neutral contract paths without exposing Unix descriptor behavior.
+
 - Fixed source-build identity from Cargo Git checkouts so Cargo's exact root `.cargo-ok` marker no
   longer creates a false `dirty: true` claim; every other tracked or untracked source change still
   marks the binary dirty.

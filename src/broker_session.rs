@@ -38,7 +38,6 @@ use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-#[cfg(unix)]
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
