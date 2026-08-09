@@ -170,8 +170,20 @@ durable agent workflow belongs in the canonical Ota skill.
   The reserved v3 Linux `systemd_protected_launcher/v1` branch now requires Core to send a
   private process-posture preface and to match that exact posture against the signed complete
   systemd launcher/job-principal instance before admitting broker traffic. Core receipt and archive
-  re-verification are implemented and locally tested; the production systemd service and hosted v3
-  pressure are not implemented or proved yet.
+  re-verification are implemented and locally tested. The execution-disabled authority-launcher
+  foundation now consumes only the fixed systemd listener, reconciles its unique
+  `/proc/net/unix` inode/path with protected socket metadata, derives the job peer through
+  `SO_PEERCRED`, validates the governed Ota command before helper work, retains the exact verified
+  Ota executable descriptor, and maps one protected job principal to one distinct execution
+  principal. Its short-lived helper clears inherited descriptors and supplementary groups, adopts
+  the complete target UID/GID posture with `no_new_privs`, and requires Linux `openat2` containment
+  before returning only the repository directory descriptor through `SCM_RIGHTS`. The service
+  still refuses every admitted request after preparation: it does not spawn Core, contact the
+  broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests prove socket
+  replacement refusal, descriptor transport, and fail-closed behavior when that environment
+  reports `openat2` as `ENOSYS`; they do not prove the positive target-directory containment path.
+  A real Linux host exposing `openat2`, the production systemd execution path, and hosted v3
+  pressure remain unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
@@ -763,8 +775,9 @@ service that derives a fixed job-peer identity through `SO_PEERCRED`, maps it on
 distinct non-dumpable execution principal, binds a target-principal-opened repository-directory
 identity, keeps attestor and broker material outside the child, and signs only the existing
 complete protected-launcher profile after Ota's challenge. Its design has passed independent
-review. The immutable authority-protocol identity/profile foundation is the active implementation
-slice; no production launcher execution path exists yet, and it does not make
+review. The immutable authority-protocol identity/profile foundation plus the execution-disabled
+listener, peer-mapping, protected-binary, and target-directory admission boundary are the active
+implementation slice; no production launcher execution path exists yet, and it does not make
 `provider_attested_one_use` true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
