@@ -183,18 +183,27 @@ durable agent workflow belongs in the canonical Ota skill.
   before returning only the repository directory descriptor through `SCM_RIGHTS`. The service
   now creates and fsyncs a protected active-slot intent, forks the exact fixed Ota binary as a
   root-stopped child, binds its invocation/request, PID/start, binary, principal, directory, and
-  exact descriptor-object posture, then kills and reaps it without ever resuming or executing
-  Core. Startup promotes valid child-bearing temporary state and uses PID-bound cleanup; an
-  intent-only, mismatched, unsupported, or uncertain recovery remains a hard refusal. The service
-  still does not create a transient scope, contact the broker, consume authority, or execute
-  selected work. OrbStack Linux/x64 root tests against those exact revisions prove socket
+  exact descriptor-object posture. Startup promotes valid child- or scope-bearing temporary state
+  and uses PID-bound pre-scope cleanup; an intent-only, mismatched, unsupported, or uncertain
+  recovery remains a hard refusal. The current immutable scope slice at Protocol
+  `adaabfb8300925a09975c7244e27242b5cd41e60` and Launcher
+  `eef722f5d1b2cfd7482bcdfa9b6d40fd22366ce1` requests one request-derived transient scope from the
+  root systemd manager, independently reconciles its fixed slice, non-delegated controls, kernel
+  cgroup, and sole stopped PID, and records that identity before terminal cleanup. Scope-bearing
+  recovery must stop and observe the exact scope empty before releasing the principal slot.
+  OrbStack's systemd refuses the real pre-exec PID attachment with `ENOTTY`, so that environment
+  proves fail-closed behavior but not positive scope ownership; the prepared hardened VPS runner
+  remains the positive kernel gate. The child is still never resumed, and the service does not
+  contact the broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests
+  against the immutable stopped-child revisions prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
   reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
   [31319741342](https://github.com/bobaikato/create-chrome-extension/actions/runs/31319741342)
   checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
   positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
   `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
-  The production systemd execution path and hosted v3 pressure remain unproved.
+  The positive transient-scope path, production systemd execution path, and hosted v3 pressure
+  remain unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.

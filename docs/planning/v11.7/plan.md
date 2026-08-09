@@ -102,6 +102,17 @@ identity, crash-safe temporary-state promotion, and PID-bound cleanup on Linux. 
 transient-scope ownership, child continuation, broker admission, lease consumption, or selected
 work execution.
 
+The reviewed transient-scope slice is immutable at authority-protocol
+`adaabfb8300925a09975c7244e27242b5cd41e60` and authority-launcher
+`eef722f5d1b2cfd7482bcdfa9b6d40fd22366ce1`. It adds a protocol-owned scope identity and native
+systemd manager adapter, binding the exact stopped child to the request-derived unit, fixed
+invocation slice, non-delegated controls, and kernel cgroup before durably advancing the active-slot
+journal. Cleanup stops and observes the exact scope empty before releasing the principal slot.
+OrbStack's systemd currently refuses the pre-exec PID attachment with `ENOTTY`, which is retained as
+fail-closed local evidence with no residual child or unit; positive scope ownership remains pending
+on the hardened VPS runner. No resume path, broker contact, lease consumption, or selected work
+exists in this slice.
+
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
 be redirected by repository content, `OTA_POLICY`, environment variables, or caller flags.
