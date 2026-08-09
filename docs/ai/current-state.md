@@ -181,9 +181,12 @@ durable agent workflow belongs in the canonical Ota skill.
   still refuses every admitted request after preparation: it does not spawn Core, contact the
   broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
-  reports `openat2` as `ENOSYS`; they do not prove the positive target-directory containment path.
-  A real Linux host exposing `openat2`, the production systemd execution path, and hosted v3
-  pressure remain unproved.
+  reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
+  [31319741342](https://github.com/bobaikato/create-chrome-extension/actions/runs/31319741342)
+  checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
+  positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
+  `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
+  The production systemd execution path and hosted v3 pressure remain unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
