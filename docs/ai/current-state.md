@@ -193,8 +193,13 @@ durable agent workflow belongs in the canonical Ota skill.
   recovery must stop and observe the exact scope empty before releasing the principal slot.
   OrbStack's systemd refuses the real pre-exec PID attachment with `ENOTTY`, so that environment
   proves fail-closed behavior but not positive scope ownership; the prepared hardened VPS runner
-  remains the positive kernel gate. The child is still never resumed, and the service does not
-  contact the broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests
+  remains the durable positive kernel gate. Local Linux/x64 VPS validation of the current
+  uncommitted candidate now proves the fixed socket, root-stopped child, positive `openat2`
+  containment, request-derived transient scope, terminal scope removal, child reap, and active-slot
+  cleanup. It exposed and fixed listener-table, systemd Scope-interface, and collected-unit cleanup
+  defects. This is not immutable hosted evidence; the reviewed launcher commit and crash/recovery
+  matrix still must run before reconciliation. The child is still never resumed, and the service
+  does not contact the broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests
   against the immutable stopped-child revisions prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
   reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
@@ -202,8 +207,8 @@ durable agent workflow belongs in the canonical Ota skill.
   checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
   positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
   `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
-  The positive transient-scope path, production systemd execution path, and hosted v3 pressure
-  remain unproved.
+  The immutable hosted positive transient-scope path, production systemd execution path, and
+  hosted v3 pressure remain unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.

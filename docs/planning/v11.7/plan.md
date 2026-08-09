@@ -1154,6 +1154,16 @@ service, or an unverifiable required observation refuses before broker authoriza
 The signed record remains bounded to its exact ordered observations and does not imply host-wide,
 kernel, hypervisor, or cloud-provider integrity.
 
+The current execution-disabled candidate has passed local Linux/x64 VPS kernel pressure for the
+fixed socket, root-stopped child, `openat2` containment, request-derived transient scope, terminal
+scope removal, child reap, and active-slot cleanup. That run exposed and fixed three adapter
+defects: listener reconciliation incorrectly rejected same-path connected socket rows; scope
+properties were queried from the generic Unit interface instead of Scope; and a scope collected
+between `KillUnit` and `StopUnit` was treated as cleanup failure without reconciling the recorded
+cgroup. This is candidate validation against an uncommitted launcher worktree, not durable
+acceptance evidence. The gate remains open until the reviewed launcher commit is rebuilt and run
+through immutable hosted pressure, including the named crash/recovery cases below.
+
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:
 
