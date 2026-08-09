@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- Added the immutable stopped-child foundation for the Linux systemd protected launcher. Protocol
+  `6a2d0dc504a313a513ee41105f51449195c85797` defines canonical invocation, working-directory, and
+  child-process identities; Launcher `73a39c95ffab3125819ee655bdc7a740ec3204b9` durably records
+  pre-fork intent, prepares the exact Ota binary as a root-stopped child, verifies its descriptor
+  and principal posture, promotes recoverable temporary state, and uses PID-bound cleanup. This
+  remains execution-disabled foundation evidence: no transient systemd scope, child continuation,
+  broker admission, lease consumption, or selected task execution is claimed.
+
 - Added the reserved Linux `systemd_protected_launcher/v1` broker-attestation branch. Core now
   requires a private, content-addressed Ota process-posture preface before accepting the signed v3
   systemd launcher and job-principal instance. The receipt schema and archive re-verification bind

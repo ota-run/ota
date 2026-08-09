@@ -95,6 +95,13 @@ The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
 and retains all trust-root, admission, execution, receipt, and archive semantics.
 
+The reviewed stopped-child foundation is immutable at authority-protocol
+`6a2d0dc504a313a513ee41105f51449195c85797` and authority-launcher
+`73a39c95ffab3125819ee655bdc7a740ec3204b9`. It proves durable pre-fork intent, exact stopped-child
+identity, crash-safe temporary-state promotion, and PID-bound cleanup on Linux. It does not prove
+transient-scope ownership, child continuation, broker admission, lease consumption, or selected
+work execution.
+
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
 be redirected by repository content, `OTA_POLICY`, environment variables, or caller flags.
@@ -891,8 +898,10 @@ The adapter is split into an unprivileged client and an independently administer
   non-dumpable, clears any ptracer allowance, and verifies that posture;
 - the service keeps the attestor key, broker-proxy descriptor, service
   control socket, and request connection outside the Ota child. The Ota child receives only its
-  configured close-on-exec session descriptor. Every other descriptor is closed through one
-  centralized pre-exec sanitization path; and
+  profile-fixed session descriptor. That descriptor must remain inheritable through the exact
+  `fexecve`; Core sets and verifies `FD_CLOEXEC` immediately after startup and before protocol
+  traffic. Every other descriptor is closed through one centralized pre-exec sanitization path;
+  and
 - the service observes and signs the exact v2 profile only after receiving Ota's frozen challenge.
   It then relays authorization, lease, consume, recovery, and terminal protocol phases without
   allowing the client or selected task to author or replace signed messages.
@@ -909,6 +918,12 @@ channel to place that PID in
 the service atomically record and fsync the scope identity and continue the child. The staged
 journal binds effective principal, request, scope when known, child when known, working-directory,
 and launcher-session identities; every crash point is recoverable without inventing absent fields.
+If a crash leaves a valid child-bearing temporary journal before rename, startup promotes and
+reconciles that newer state rather than deleting it. An intent-only journal has no sufficient child
+identity and therefore remains a hard refusal pending explicit operator recovery; absence is never
+invented from a missing child record. Pre-scope recorded-child cleanup requires Linux `pidfd_open`
+and `pidfd_send_signal` so PID reuse cannot redirect cleanup. Unsupported PID-bound cleanup,
+identity mismatch, or uncertain exit retains the journal and refuses before accepting a client.
 
 The service does not release either mapped principal's slot until Ota is terminal, systemd has
 stopped the complete invocation scope, and the scope is observed empty. On service startup it

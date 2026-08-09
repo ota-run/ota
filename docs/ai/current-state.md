@@ -170,7 +170,10 @@ durable agent workflow belongs in the canonical Ota skill.
   The reserved v3 Linux `systemd_protected_launcher/v1` branch now requires Core to send a
   private process-posture preface and to match that exact posture against the signed complete
   systemd launcher/job-principal instance before admitting broker traffic. Core receipt and archive
-  re-verification are implemented and locally tested. The execution-disabled authority-launcher
+  re-verification are implemented and locally tested. Core now pins the immutable Protocol
+  child-identity foundation at `6a2d0dc504a313a513ee41105f51449195c85797`; the reviewed
+  execution-disabled Launcher implementation is `73a39c95ffab3125819ee655bdc7a740ec3204b9`.
+  The execution-disabled authority-launcher
   foundation now consumes only the fixed systemd listener, reconciles its unique
   `/proc/net/unix` inode/path with protected socket metadata, derives the job peer through
   `SO_PEERCRED`, validates the governed Ota command before helper work, retains the exact verified
@@ -178,8 +181,13 @@ durable agent workflow belongs in the canonical Ota skill.
   principal. Its short-lived helper clears inherited descriptors and supplementary groups, adopts
   the complete target UID/GID posture with `no_new_privs`, and requires Linux `openat2` containment
   before returning only the repository directory descriptor through `SCM_RIGHTS`. The service
-  still refuses every admitted request after preparation: it does not spawn Core, contact the
-  broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests prove socket
+  now creates and fsyncs a protected active-slot intent, forks the exact fixed Ota binary as a
+  root-stopped child, binds its invocation/request, PID/start, binary, principal, directory, and
+  exact descriptor-object posture, then kills and reaps it without ever resuming or executing
+  Core. Startup promotes valid child-bearing temporary state and uses PID-bound cleanup; an
+  intent-only, mismatched, unsupported, or uncertain recovery remains a hard refusal. The service
+  still does not create a transient scope, contact the broker, consume authority, or execute
+  selected work. OrbStack Linux/x64 root tests against those exact revisions prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
   reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
   [31319741342](https://github.com/bobaikato/create-chrome-extension/actions/runs/31319741342)
