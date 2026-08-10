@@ -892,9 +892,13 @@ The adapter is split into an unprivileged client and an independently administer
   match protected configuration; it never binds a caller-selected listener;
 - the fixed stream endpoint lives under `/run/ota`. An allowed job principal may connect to request
   an Ota invocation, but cannot replace or administer the socket, service, executable,
-  configuration, attestor key, broker proxy, credential, or state. The client verifies the
-  connected server's root `SO_PEERCRED` identity and the protected socket identity before sending a
-  request;
+  configuration, producer signing key, broker proxy, credential, or state. The client verifies the
+  connected server's root `SO_PEERCRED` identity, obtains the kernel-bound peer descriptor through
+  `SO_PEERPIDFD`, and reconciles the protected socket, executable, process-start, unit, and cgroup
+  identities before sending and again after receiving the first response. Any additional packet
+  already queued at that point refuses; a later packet cannot retroactively invalidate the
+  persisted signed response and is never processed. A kernel without
+  `SO_PEERPIDFD` support refuses this adapter rather than falling back to a PID-number lookup;
 - the client sends only a bounded invocation request: authority label, supported Ota command and
   arguments, and an absolute logical repository working directory.
   The service derives caller UID/GID only through `SO_PEERCRED`; it never accepts caller-authored
@@ -917,15 +921,17 @@ The adapter is split into an unprivileged client and an independently administer
   pair, and launches the fixed Ota binary as the configured non-root principal with the configured
   environment and `no_new_privs`. Before Ota performs any authority-protocol I/O it sets itself
   non-dumpable, clears any ptracer allowance, and verifies that posture;
-- the service keeps the attestor key, broker-proxy descriptor, service
+- the service keeps the producer-verification binding, broker-proxy descriptor, service
   control socket, and request connection outside the Ota child. The Ota child receives only its
   profile-fixed session descriptor. That descriptor must remain inheritable through the exact
   `fexecve`; Core sets and verifies `FD_CLOEXEC` immediately after startup and before protocol
   traffic. Every other descriptor is closed through one centralized pre-exec sanitization path;
   and
-- the service observes and signs the exact v2 profile only after receiving Ota's frozen challenge.
-  It then relays authorization, lease, consume, recovery, and terminal protocol phases without
-  allowing the client or selected task to author or replace signed messages.
+- the service observes the exact v2 profile only after receiving Ota's frozen challenge, submits
+  those claims to the separately protected attestation producer, and verifies the returned signed
+  response before relaying it. The launcher never holds the attestor signing credential. It then
+  relays authorization, lease, consume, recovery, and terminal protocol phases without allowing
+  the client or selected task to author or replace signed messages.
 
 The service admits at most one active invocation for the exact peer-to-execution-principal mapping.
 Before the
@@ -990,9 +996,9 @@ broker message or accepted from the client connection.
 The launcher reconciles that frame with the child it created and the protected Ota binary, then
 corroborates it through the external process-access probes. The Ota-authored frame cannot establish
 separation alone; a missing/malformed/substituted frame, failed operation, nonzero dumpability,
-wrong process identity, or successful external access probe refuses before the launcher signs the
-runtime-boundary attestation. The frame identity enters `attestor_instance_identity` and the signed
-session non-reacquisition observation basis. Existing inherited-session evidence is not
+wrong process identity, or successful external access probe refuses before the launcher submits the
+complete claims to the protected producer. The frame identity enters `attestor_instance_identity`
+and the signed session non-reacquisition observation basis. Existing inherited-session evidence is not
 reinterpreted; the new preface is negotiated only by the fixed
 `systemd_protected_launcher/v1` adapter and requires an additive binding/profile version before
 implementation.
@@ -1020,9 +1026,10 @@ the existing inherited-session branch. Its semantic identity binds:
 - configured target UID/GID and complete child environment identity;
 - broker-proxy endpoint identity and expected root-owned peer identity. The proxy, not this service,
   owns remote mTLS or workload credentials;
-- attestor key-set identity and one `LoadCredentialEncrypted=` credential name whose decrypted file
-  exists only in systemd's per-service credential directory, is never named in child environment,
-  and is closed before child execution;
+- producer verifier-key-set, producer binding, and producer socket identities. The separate
+  `ota-authority-attestor` service owns one `LoadCredentialEncrypted=` signing credential whose
+  decrypted file exists only in its own systemd credential directory. The launcher receives only
+  the public verifier set and cannot read or inherit the signing credential;
 - launcher service/socket unit and drop-in identities plus one published
   `ota.authority-launcher.systemd/v1` hardening-profile identity; and
 - one protected `ota.authority-job-principal.systemd/v1` identity for the service that owns the
@@ -1049,13 +1056,12 @@ The service unit requires these exact semantic settings:
 - address families restricted to `AF_UNIX`, `AF_INET`, and `AF_INET6`, preserving ordinary
   contract-selected network behavior while excluding other families; namespace creation denied;
 - `ReadOnlyPaths=` restricted to the fixed `/etc/ota` stores, installation manifest, unit/drop-in files,
-  launcher/Ota executables, encrypted credential source, broker-proxy socket metadata, and the
-  per-service decrypted credential directory;
+  launcher/Ota executables, producer public verifier set, producer socket metadata, and
+  broker-proxy socket metadata;
 - write access only to `/run/ota/authority-launcher`,
   `/var/lib/ota/authority-launcher`, and the protected configuration's exact allowed repository
   roots. No wildcard, relative path, caller path, home-directory expansion, or additional unit
   drop-in may widen that set; and
-- `LoadCredentialEncrypted=` names exactly the protected attestor credential source; and
 - service termination uses `KillMode=control-group`, while each child invocation remains in its
   separately named non-delegated scope and is recovered from the durable active-slot journal.
 
@@ -1229,6 +1235,126 @@ receipt/archive evidence. Malformed, substituted, or internally contradictory br
 decision. The slice requires immutable Linux/x64 pressure before the historical status above can
 be advanced.
 
+###### Protected V3 attestation producer protocol
+
+Immutable pressure for that bridge requires a real protected producer; a deterministic fixture
+that marks observations verified without collecting them is forbidden. The root launcher is the
+bounded evidence collector and remains part of the adapter's trusted computing base. The producer
+is the separate `ota-authority-attestor` binary and systemd service in the
+`ota-run/authority-launcher` repository. Runtime separation comes from distinct units, sockets,
+credentials, process identities, and protected state rather than a separate source repository.
+Only that producer owns the attestor signing key and producer clock. The launcher holds only the
+producer-verification key set and protected producer-binding truth. The producer has no
+repository-selected input and its attestation role remains distinct from broker authorization and
+remote-broker transport.
+
+The launcher must not send only `BrokerChallenge` to the producer. After freezing the challenge and
+collecting every closed-profile observation, it sends one canonical
+`launcher_attestation_signing_request/v1` containing:
+
+- `schema_version: 1`, `message_kind: launcher_attestation_signing_request`, and
+  `request_identity`. That identity is the canonical request excluding `request_identity` under the
+  fixed `ota.authority-launcher.attestation-signing-request.v1\0` domain;
+- the exact `BrokerChallenge` received from Core;
+- `claims_identity` plus one canonical `LauncherAttestationClaimsV3` that contains every V3 payload
+  field except `issued_at` and `expires_at`, including invocation, runner principal, authenticated
+  origin, authority mounts, and `SystemdProtectedLauncherInstanceEvidenceV2`. The claims object has
+  no self-identity field. `claims_identity` is `sha256:<lowercase hex>` over the UTF-8 bytes of the
+  JCS-normalized claims object prefixed by the fixed
+  `ota.authority-launcher.attestation-claims.v3\0` domain;
+- the protected launcher service-binding, configuration, executable, profile, and producer-binding
+  identities; and
+- one producer audience and requested maximum validity bounded by protected configuration.
+
+The request carries no signing key, credential path, caller time, validity timestamp, precomputed
+signature, or repository-controlled evidence status. Its digest proves canonical content
+integrity; it is not authentication. Another semantic request can always have another valid digest
+and must still fail protected-peer, producer-binding, challenge, and claim reconciliation when it
+does not describe the admitted launcher invocation. The launcher derives every observation from
+the canonical sources listed above. Missing, unknown, contradictory, reordered, duplicated, or
+placeholder observations refuse before producer contact.
+
+The producer processes at most one bounded `SOCK_SEQPACKET` request and returns at most one bounded
+response on a fixed root-owned Unix socket. Truncation, oversize payloads, ancillary descriptors,
+unknown flags, an additional packet already queued before signing, or expiry of the read/write
+deadline refuses. The producer closes the connection immediately after its one response or
+refusal. A packet arriving after signing cannot retroactively invalidate the persisted response,
+but it is never processed and can never produce another signature. The adapter does not use stream
+framing and therefore does not rely on delayed trailing-input detection. Immediately after
+`accept`, the producer reads `SO_PEERCRED`, obtains the connected peer's kernel-bound descriptor
+through `SO_PEERPIDFD`, and derives the executable identity from the live peer rather than pathname
+spelling. A kernel without `SO_PEERPIDFD` support refuses this adapter rather than falling back to a
+PID-number lookup.
+Before parsing and again immediately before signing, it requires the pidfd to remain live, rechecks
+the same PID/start/executable identity, and reconciles the peer through the systemd manager to the
+expected launcher unit, invocation, and cgroup. UID `0` alone is never sufficient. Any exit, PID
+reuse, executable change, unit/cgroup change, or observation race refuses.
+
+The producer then requires the fixed launcher/producer binding identities, canonical request
+identity, challenge-to-claim equality, complete profile identity, and an active protected attestor
+key. It sets `issued_at` and `expires_at` from its own bounded clock, constructs the complete
+`LauncherAttestationPayloadV3`, signs under the existing V3 attestation domain, and returns one
+canonical `launcher_attestation_signing_response/v1` envelope. The response binds
+`schema_version`, `message_kind`, `request_identity`, `claims_identity`, the complete
+`SignedLauncherAttestationV3`, and `response_identity`; the response identity excludes itself and
+uses the fixed `ota.authority-launcher.attestation-signing-response.v1\0` domain. The producer
+cannot alter the semantic scope, work unit, child, posture, principal, profile, or observation set.
+
+Freshness derivation is deterministic. The producer samples its protected UTC clock once, rounded
+to whole seconds, and uses that value as `issued_at`. The active key must already be valid at that
+instant. `expires_at` is the earliest of: `issued_at + requested_maximum_validity_seconds`,
+`issued_at + producer_maximum_attestation_age_seconds`, `issued_at` plus the selected verifier
+binding's `maximum_age_seconds`, and the active signing key's protected `not_after` instant. The
+producer maximum is an administrator-owned producer-configuration field bound into the producer
+identity and must not exceed the selected verifier binding. Non-positive effective lifetime,
+overflow, unavailable key validity, or a result outside the producer's configured issuer/audience
+policy refuses before persistence or signing. The same sampled time and derived expiry are retained
+by idempotent replay; they are never recomputed.
+
+Issuance is durable and idempotent by request identity. Before returning a first response, the
+producer atomically persists and fsyncs the canonical request identity, claims identity, exact
+response-envelope bytes, response identity, key identity, and issuance/expiry values. A repeated
+byte-identical request returns only those exact stored response bytes; it never receives new
+timestamps or a second signature. Reuse of a request identity with different content, an
+incomplete issuance record, an ambiguous persistence outcome, or a replay after the stored
+response has expired refuses. Protected compaction may replace old entries only with a durable
+spent-request checkpoint that preserves non-reissuance.
+
+Authority Protocol defines one canonical projection from `SignedLauncherAttestationV3` to
+`LauncherAttestationClaimsV3`: take the signed payload, remove producer-owned `issued_at` and
+`expires_at`, and discard the signed wrapper's `key_id`, `algorithm`, and `signature`. The launcher
+re-derives that projected claims identity and requires it to equal both the signing request and
+response-envelope `claims_identity`. It separately verifies the response identity, request
+identity, producer-owned timestamps, signed payload identity, algorithm, signature, key
+authorization, freshness, audience, and producer binding before relaying only the inner signed
+attestation to Core. Durable issuance is producer-owned state: the producer returns no response
+before its issuance record is terminal, while pressure and producer recovery tests establish
+idempotence rather than the launcher inferring persistence from an envelope.
+Core independently repeats its existing trust-root, signature, freshness, challenge, scope,
+profile, child, posture, and principal verification. The producer socket, unit, executable,
+encrypted credential, public verifier set, issuance state, and effective runtime posture are
+administrator-owned protected identities. Repository configuration, environment variables,
+workflow inputs, CLI flags, and the job principal cannot redirect or invoke the producer. Selected
+code receives neither the producer socket nor its credential.
+
+This protocol is the prerequisite for immutable V3 bridge pressure. A dedicated immutable pressure
+manifest and retained workflow artifact, not an Ota crossing receipt/archive, must bind the exact
+Protocol, Core, Launcher, producer binary, unit, socket, public verifier-set identity, signing key
+ID and public-key identity, and producer-binding identity. It must never contain the private key,
+decrypted credential, or credential path. The pressure lane must prove that the job principal
+cannot read, invoke, or connect to the producer; prove the complete observation set was collected
+rather than injected; and retain the typed
+execution-disabled terminal result. Positive pressure must reconcile the exact request, projected
+claims, signed response, scope, cgroup, child, working directory, active slot, and terminal cleanup,
+and must leave repository state unchanged. Negative controls must cover malformed and substituted
+claims, stale response, duplicate and replayed requests, request-identity/content mismatch, wrong
+or changed peer, unavailable producer, read/write timeout, truncation, an additional packet queued
+before signing, a late packet that must not produce a second signature, substituted producer
+binding, uncertain issuance persistence, and cleanup interruption. Every
+refusal must preserve unchanged repository state and exact scope/cgroup/child/slot cleanup or retain
+explicit failed recovery evidence. It still does not establish a broker authorization decision,
+lease consumption, selected execution, receipt/archive crossing evidence, or provider attestation.
+
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:
 
@@ -1257,9 +1383,9 @@ repository job cannot administer the service or read its keys. It must prove:
 - missing, malformed, replayed, or substituted Ota process-posture frames and any disagreement
   among principal-mapping identity, signed `runner_principal`, authorization, lease, receipt, and
   archive refuse before work or fail archive verification;
-- selected code cannot inspect the attestor key, broker credential, service descriptor, client
-  request channel, or consumed Ota session, and cannot ask the service to sign an arbitrary
-  challenge;
+- selected code cannot inspect the producer signing key, broker credential, service descriptor,
+  client request channel, or consumed Ota session, and cannot ask either the launcher or producer
+  to sign an arbitrary challenge;
 - service restart; client disconnect before consume, while consume is in flight, after broker
   response, and after durable consumption; process interruption after consumption; lost consume
   acknowledgement; service restart with live, empty, missing, and identity-mismatched child scopes;

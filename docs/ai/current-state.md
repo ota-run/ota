@@ -250,6 +250,27 @@ durable agent workflow belongs in the canonical Ota skill.
   Site propagation is required for this internal execution-disabled carrier step because it adds no
   contract, CLI, operator, receipt, or archive surface; those surfaces must move with the first
   usable production adapter.
+  VPS preflight confirmed that the preceding protected configuration named
+  `/run/ota/broker-proxy.sock` but no protected producer owned that socket. The reviewed bridge
+  sent only `BrokerChallenge`, which was insufficient for a real external producer to sign the
+  complete V3 child and profile evidence. The current uncommitted foundation now defines a
+  canonical identity-bound
+  launcher-to-producer signing request over a fixed protected `SOCK_SEQPACKET` endpoint, complete
+  launcher-collected observations, producer-owned freshness and signing-key use, durable
+  idempotent issuance, deterministic bounded validity, socket-bound `SO_PEERPIDFD` live-peer
+  verification on both sides of the producer exchange, refusal of any additional response packet
+  already queued at admission, and exact
+  domain-separated claims projection and returned-evidence reconciliation. Authority Protocol now
+  carries the canonical claims/request/response and protected producer binding at immutable
+  revision `845f9a36e4f680e0cbc23838959aa266ae269528`. Launcher revision
+  `f8832541a8c5e5e3989bb3d8fb0ca596bb927407` pins that Protocol revision and contains an execution-disabled
+  `ota-authority-attestor` service foundation plus a separate public-key response verifier. Local
+  Linux tests prove deterministic signing and exact unexpired replay from fsynced protected state.
+  The production launcher does not yet collect the complete closed
+  observation set or invoke the producer, so no real V3 bridge or immutable pressure claim exists.
+  Retained pressure artifacts may bind only the signing key ID and public verifier identity, never
+  private credential material. The launcher never holds the producer signing credential, and a
+  fixture that injects verified observations is not acceptable pressure evidence.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
@@ -839,13 +860,14 @@ The next V11.7 gate is now planned as the Linux-only
 `systemd_protected_launcher/v1` production adapter: an independently administered socket-activated
 service that derives a fixed job-peer identity through `SO_PEERCRED`, maps it one-to-one onto a
 distinct non-dumpable execution principal, binds a target-principal-opened repository-directory
-identity, keeps attestor and broker material outside the child, and signs only the existing
-complete protected-launcher profile after Ota's challenge. Its design has passed independent
-review. The current execution-disabled implementation extends that foundation through an
-identity-bound startup continuation and a signed V3 bridge that stops before forwarding Core's
-authorization request. No selected execution, lease consumption, receipt/archive carrier, or
-complete production launcher path exists yet, and it does not make `provider_attested_one_use`
-true.
+identity, keeps producer and broker material outside the child, and submits only the existing
+complete protected-launcher profile to a separately credentialed producer after Ota's challenge.
+Its design has passed independent review. The current execution-disabled implementation extends
+that foundation through an identity-bound startup continuation and includes the producer protocol,
+signing-service foundation, and launcher-side response verifier. Complete observation collection
+and real producer invocation remain unwired. No selected execution, lease consumption,
+receipt/archive carrier, or complete production launcher path exists yet, and it does not make
+`provider_attested_one_use` true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
