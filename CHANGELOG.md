@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- Advanced the production systemd-launcher foundation at immutable Launcher revision
+  `ebbe777682bafa8384b28070e95cf91037d7f451` beyond a permanently stopped child. After
+  the exact transient scope and active slot are durable, the launcher resumes only the exact Ota
+  child through `pidfd`, admits one bounded `ota_process_posture/v1` preface, and reconciles it to
+  the recorded PID/start time, binary identity, and principal mapping before terminal cleanup. It
+  now emits that preface before CLI dispatch and blocks for launcher continuation, which this slice
+  deliberately never sends. It still creates no V3 attestation, contacts no broker, consumes no
+  lease, and executes no selected work; immutable hosted posture pressure remains open.
 - Added the next execution-disabled systemd-launcher slice at Protocol
   `adaabfb8300925a09975c7244e27242b5cd41e60` and Launcher
   `0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`: a canonical protocol scope identity,

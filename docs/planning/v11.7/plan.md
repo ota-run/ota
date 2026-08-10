@@ -120,7 +120,8 @@ next activation reconciles the abandoned slot before accepting a new request and
 scope, or recorded child. An execution-disabled child may exit early enough for systemd to collect
 its empty scope before the post-crash observation; the durable slot, exact exit `86`, subsequent
 successful reconciliation, and terminal absence are the bounded recovery evidence. No resume path,
-broker contact, lease consumption, selected work, receipt, or archive exists in this slice.
+broker contact, lease consumption, selected work, receipt, or archive exists in those immutable
+scope-foundation revisions.
 
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
@@ -1178,6 +1179,18 @@ revisions `cbf5183e0b3c8edf000f9d0ea840e1b50bfa4802` and
 `b7fe6daa96ba193134e9a4c75eca8f69eb1584d2`, and unchanged repository identities. This closes the
 execution-disabled transient-scope foundation gate only; the production pressure bar below remains
 open.
+
+The next implementation slice at immutable Launcher revision
+`ebbe777682bafa8384b28070e95cf91037d7f451` advances that exact scoped child only through Core's
+private `ota_process_posture/v1` preface. The launcher uses `pidfd` to resume the previously verified
+PID only after scope identity is durable, reads one protocol-bounded frame, and reconciles its
+semantic identity, PID/start identity, protected Ota binary identity, and principal-mapping identity
+to the recorded child. Core emits that frame before CLI parsing or command dispatch and then blocks
+for an explicit launcher continuation. This slice deliberately sends no continuation. Missing,
+malformed, oversized, invalid-control, or substituted posture fails closed through exact scope,
+child, and active-slot cleanup. This still creates no signed V3 launcher instance, forwards no
+broker challenge, consumes no lease, executes no selected work, and does not satisfy the production
+pressure bar.
 
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:

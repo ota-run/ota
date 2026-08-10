@@ -152,6 +152,62 @@ const PR_GET_NO_NEW_PRIVS: libc::c_int = 39;
 const PR_SET_PTRACER: libc::c_int = 0x5961_6d61;
 #[cfg(all(unix, target_os = "linux"))]
 const LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV: &str = "OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY";
+#[cfg(all(unix, target_os = "linux"))]
+const SYSTEMD_LAUNCHER_STARTUP_GATE_ENV: &str = "OTA_SYSTEMD_LAUNCHER_STARTUP_GATE";
+#[cfg(all(unix, target_os = "linux"))]
+const SYSTEMD_LAUNCHER_STARTUP_GATE_V1: &str = "posture_only_v1";
+#[cfg(all(unix, target_os = "linux"))]
+const SYSTEMD_OTA_SESSION_DESCRIPTOR: std::os::fd::RawFd = 3;
+
+#[cfg(all(unix, target_os = "linux"))]
+pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
+    match std::env::var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV) {
+        Err(std::env::VarError::NotPresent) => return Ok(()),
+        Ok(value) if value == SYSTEMD_LAUNCHER_STARTUP_GATE_V1 => {}
+        Ok(_) | Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(String::from(
+                "systemd launcher startup gate configuration is invalid",
+            ));
+        }
+    }
+
+    let descriptor = SYSTEMD_OTA_SESSION_DESCRIPTOR;
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0
+    {
+        return Err(String::from(
+            "systemd launcher startup gate descriptor is unavailable",
+        ));
+    }
+    verify_connected_unix_stream(descriptor)?;
+    let stream = unsafe { UnixStream::from_raw_fd(descriptor) };
+    let posture = collect_systemd_process_posture()?;
+    send_systemd_startup_posture_and_wait(stream, &posture)
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn send_systemd_startup_posture_and_wait(
+    mut stream: UnixStream,
+    posture: &OtaProcessPostureV1,
+) -> Result<(), String> {
+    let payload = serde_json::to_vec(&posture)
+        .map_err(|error| format!("failed to serialize Ota process posture: {error}"))?;
+    write_frame(&mut stream, &payload)?;
+
+    // The first production slice has no continuation message. Remaining blocked here is the
+    // enforcement boundary: the launcher validates the preface, then terminates the exact scoped
+    // child. Any bytes or closure are a refusal rather than permission to dispatch the CLI.
+    let mut unsupported_continuation = [0_u8; 1];
+    let _ = stream.read(&mut unsupported_continuation);
+    Err(String::from(
+        "systemd launcher startup continuation is not implemented",
+    ))
+}
+
+#[cfg(not(all(unix, target_os = "linux")))]
+pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
+    Ok(())
+}
 
 #[derive(Debug)]
 pub(crate) struct FrozenBrokerChallenge {
@@ -3409,6 +3465,47 @@ pub(crate) mod tests {
         let received: OtaProcessPostureV1 = read_json_frame(&mut launcher);
         assert_eq!(received, posture);
         assert_eq!(session.state(), LauncherSessionState::ChallengeReady);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn systemd_startup_gate_emits_posture_and_never_accepts_continuation() {
+        let mut posture = OtaProcessPostureV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::OTA_PROCESS_POSTURE),
+            pid: 42,
+            process_start_time_identity: format!("sha256:{}", "1".repeat(64)),
+            ota_binary_identity: format!("sha256:{}", "2".repeat(64)),
+            no_new_privs: true,
+            dumpable: 0,
+            ptracer_clear_applied: true,
+            principal_mapping_identity: format!("sha256:{}", "3".repeat(64)),
+        };
+        posture.identity = ota_process_posture_identity(&posture).expect("posture identity");
+        let expected = posture.clone();
+        let (child, mut launcher) = UnixStream::pair().expect("startup gate pair");
+        let gate =
+            std::thread::spawn(move || send_systemd_startup_posture_and_wait(child, &posture));
+
+        let mut header = [0_u8; 4];
+        launcher.read_exact(&mut header).expect("posture header");
+        let length = u32::from_be_bytes(header) as usize;
+        let mut payload = vec![0_u8; length];
+        launcher.read_exact(&mut payload).expect("posture payload");
+        assert_eq!(
+            serde_json::from_slice::<OtaProcessPostureV1>(&payload).expect("posture JSON"),
+            expected
+        );
+        launcher
+            .write_all(b"continue")
+            .expect("unsupported continuation");
+        assert!(
+            gate.join()
+                .expect("startup gate thread")
+                .expect_err("posture-only gate must never continue")
+                .contains("continuation is not implemented")
+        );
     }
 
     #[test]

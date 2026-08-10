@@ -3343,6 +3343,10 @@ fn complete_repo_run_input_candidates(current: &std::ffi::OsStr) -> Vec<Completi
 }
 
 pub fn run() -> i32 {
+    if crate::broker_session::enter_systemd_launcher_startup_gate().is_err() {
+        eprintln!("systemd protected-launcher startup refused before command dispatch");
+        return 1;
+    }
     let output = run_with(std::env::args_os());
 
     if !output.stdout.is_empty() {

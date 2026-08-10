@@ -203,9 +203,9 @@ durable agent workflow belongs in the canonical Ota skill.
   next request, terminal refusal, and zero residual slots, scopes, or recorded children. The empty
   execution-disabled child was collected before the post-crash scope observation, so the evidence
   does not claim a still-loaded scope at that instant. These runs exposed and fixed listener-table,
-  systemd Scope-interface, collected-unit cleanup, and build-path reproducibility defects. The child
-  is still never resumed, and the service does not contact the broker, consume authority, execute
-  selected work, or emit receipts/archives. OrbStack Linux/x64 root tests
+  systemd Scope-interface, collected-unit cleanup, and build-path reproducibility defects. Those
+  immutable revisions never resume the child and do not contact the broker, consume authority,
+  execute selected work, or emit receipts/archives. OrbStack Linux/x64 root tests
   against the immutable stopped-child revisions prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
   reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
@@ -213,8 +213,16 @@ durable agent workflow belongs in the canonical Ota skill.
   checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
   positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
   `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
-  The execution-disabled immutable transient-scope foundation is now proved. The production
-  systemd execution path and hosted v3 pressure remain unproved.
+  The execution-disabled immutable transient-scope foundation is now proved. Launcher revision
+  `ebbe777682bafa8384b28070e95cf91037d7f451` resumes that exact scoped child only far enough to
+  receive Core's bounded private
+  process-posture preface. It re-derives the posture identity and binds PID/start time, Ota binary,
+  and principal mapping before exact scope/child/slot cleanup. Core emits the preface before CLI
+  parsing or command dispatch and blocks for launcher continuation; this slice deliberately sends
+  none. Malformed or substituted posture fails closed. This local slice creates no V3 attestation,
+  forwards no broker challenge, consumes no lease, and executes no selected work. Its immutable
+  hosted posture proof, the production systemd execution path, and hosted V3 pressure remain
+  unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
