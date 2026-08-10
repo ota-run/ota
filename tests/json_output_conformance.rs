@@ -35,6 +35,46 @@ fn run_ota(args: &[&str], cwd: &Path) -> Value {
 }
 
 #[test]
+fn relocated_binary_validates_against_its_embedded_published_schema() {
+    let temporary = tempfile::tempdir().expect("relocated binary directory");
+    let source_binary = Path::new(env!("CARGO_BIN_EXE_ota"));
+    let relocated_binary = temporary.path().join(
+        source_binary
+            .file_name()
+            .expect("Ota binary filename must be present"),
+    );
+    fs::copy(source_binary, &relocated_binary).expect("copy Ota binary");
+
+    let version = Command::new(&relocated_binary)
+        .args(["--version", "--json"])
+        .current_dir(temporary.path())
+        .output()
+        .expect("relocated Ota version command");
+    assert!(version.status.success());
+    let input = temporary.path().join("version.json");
+    fs::write(&input, version.stdout).expect("version payload");
+
+    let validation = Command::new(&relocated_binary)
+        .args([
+            "json",
+            "validate",
+            "--schema",
+            "version.json",
+            "--input",
+            input.to_str().expect("UTF-8 input path"),
+        ])
+        .current_dir(temporary.path())
+        .output()
+        .expect("relocated Ota schema validation");
+    assert!(
+        validation.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&validation.stdout),
+        String::from_utf8_lossy(&validation.stderr)
+    );
+}
+
+#[test]
 fn crossing_grant_preview_refusal_matches_published_schema() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(

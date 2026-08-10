@@ -223,9 +223,9 @@ durable agent workflow belongs in the canonical Ota skill.
   forwards no broker challenge, consumes no lease, and executes no selected work. Its immutable
   hosted posture proof, the production systemd execution path, and hosted V3 pressure remain
   unproved. The first hosted posture attempt also exposed that Core's schema-validation fallback
-  embedded its absolute compile checkout. Runtime schema discovery now uses the repository or
-  source-build executable tree, making immutable Core binary reconciliation independent of the
-  checkout directory without weakening schema validation.
+  embedded its absolute compile checkout. Published JSON schemas are now embedded into the
+  source-built binary, making installed schema validation and immutable Core binary reconciliation
+  independent of both a source checkout and the checkout directory that compiled Ota.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.

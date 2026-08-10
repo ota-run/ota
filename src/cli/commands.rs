@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use include_dir::{Dir, include_dir};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -42,6 +43,8 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::macros::format_description;
 use toml::Value as TomlValue;
+
+static PUBLISHED_JSON_SCHEMAS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/docs/spec/json-schemas");
 
 use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistHostScopeArg,
@@ -54174,22 +54177,17 @@ pub fn json_validate(
 }
 
 fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Result<(), String> {
-    let schema_dir = resolve_schema_dir()?;
-    let schema_path = schema_dir.join(schema_name);
-    if !schema_path.exists() {
-        return Err(format!("schema file not found: {}", schema_path.display()));
-    }
-
-    let raw_schema = load_json_value(&schema_path)?;
+    let schema_file = PUBLISHED_JSON_SCHEMAS
+        .get_file(schema_name)
+        .ok_or_else(|| format!("published schema not found: {schema_name}"))?;
+    let raw_schema = serde_json::from_slice(schema_file.contents())
+        .map_err(|error| format!("failed to parse published schema `{schema_name}`: {error}"))?;
     let mut options = JSONSchema::options();
     options.with_draft(Draft::Draft202012);
-    register_schema_documents(&mut options, &schema_dir)?;
-    let compiled = options.compile(&raw_schema).map_err(|error| {
-        format!(
-            "failed to compile schema `{}`: {error}",
-            schema_path.display()
-        )
-    })?;
+    register_schema_documents(&mut options)?;
+    let compiled = options
+        .compile(&raw_schema)
+        .map_err(|error| format!("failed to compile published schema `{schema_name}`: {error}"))?;
     if let Err(errors) = compiled.validate(payload) {
         let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
         return Err(format!(
@@ -54201,62 +54199,14 @@ fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Resul
     Ok(())
 }
 
-fn resolve_schema_dir() -> Result<PathBuf, String> {
-    let cwd =
-        env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
-    let executable = env::current_exe()
-        .map_err(|error| format!("failed to resolve current executable: {error}"))?;
-    resolve_schema_dir_from(&cwd, &executable).ok_or_else(|| {
-        String::from(
-            "schema directory not found; expected docs/spec/json-schemas in the current repo or source-build tree",
-        )
-    })
-}
-
-fn resolve_schema_dir_from(cwd: &Path, executable: &Path) -> Option<PathBuf> {
-    let cwd_schema_dir = cwd.join("docs").join("spec").join("json-schemas");
-    if cwd_schema_dir.is_dir() {
-        return Some(cwd_schema_dir);
-    }
-
-    for ancestor in executable.ancestors().skip(1) {
-        let schema_dir = ancestor.join("docs").join("spec").join("json-schemas");
-        if schema_dir.is_dir() {
-            return Some(schema_dir);
-        }
-    }
-    None
-}
-
-fn load_json_value(path: &Path) -> Result<JsonValue, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse {} as JSON: {error}", path.display()))
-}
-
-fn register_schema_documents(
-    options: &mut jsonschema::CompilationOptions,
-    schema_dir: &Path,
-) -> Result<(), String> {
-    let entries = fs::read_dir(schema_dir).map_err(|error| {
-        format!(
-            "failed to read schema directory {}: {error}",
-            schema_dir.display()
-        )
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|error| {
+fn register_schema_documents(options: &mut jsonschema::CompilationOptions) -> Result<(), String> {
+    for file in PUBLISHED_JSON_SCHEMAS.files() {
+        let document: JsonValue = serde_json::from_slice(file.contents()).map_err(|error| {
             format!(
-                "failed to read schema directory entry under {}: {error}",
-                schema_dir.display()
+                "failed to parse published schema `{}`: {error}",
+                file.path().display()
             )
         })?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let document = load_json_value(&path)?;
         let Some(id) = document.get("$id").and_then(JsonValue::as_str) else {
             continue;
         };
@@ -60648,20 +60598,6 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-
-    #[test]
-    fn schema_directory_follows_runtime_source_tree_without_compile_path() {
-        let source = tempfile::tempdir().expect("source tree");
-        let elsewhere = tempfile::tempdir().expect("unrelated cwd");
-        let schema_dir = source.path().join("docs/spec/json-schemas");
-        fs::create_dir_all(&schema_dir).expect("schema directory");
-        let executable = source.path().join("target/release/ota");
-
-        assert_eq!(
-            super::resolve_schema_dir_from(elsewhere.path(), &executable),
-            Some(schema_dir)
-        );
-    }
 
     #[test]
     fn lifecycle_assertion_diagnostics_redact_and_limit_utf8_bytes() {

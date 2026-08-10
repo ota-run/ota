@@ -20,11 +20,12 @@ signal-hook = "0.3.18"
 jsonschema = { version = "0.18.3", features = ["draft202012"] }
 getrandom = "0.2.16"
 fs2 = "0.4.3"
+include_dir = "0.7.4"
 sha2 = "0.10.9"
 base64 = "0.22.1"
 ed25519-dalek = "3.0.0"
 serde_jcs = "0.2.0"
-ota-authority-protocol = { git = "https://github.com/ota-run/authority-protocol", rev = "adaabfb8300925a09975c7244e27242b5cd41e60" }
+ota-authority-protocol = { git = "https://github.com/ota-run/authority-protocol", rev = "b4f36fe450dc4047bd7bd623ea8ba60fd951e31d" }
 quick-xml = "0.41.0"
 tempfile = "3.23.0"
 
