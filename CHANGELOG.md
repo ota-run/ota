@@ -28,12 +28,16 @@
 
 - Added the next execution-disabled systemd-launcher slice at Protocol
   `adaabfb8300925a09975c7244e27242b5cd41e60` and Launcher
-  `eef722f5d1b2cfd7482bcdfa9b6d40fd22366ce1`: a canonical protocol scope identity,
+  `0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`: a canonical protocol scope identity,
   native root-manager transient-scope creation, exact fixed-slice/control reconciliation, sole-PID
   kernel-cgroup observation, durable scope-stage journaling, and scope-first startup cleanup. No
   code path resumes Ota or contacts the broker. OrbStack fails closed because its systemd cannot
-  attach the pre-exec child (`ENOTTY`); positive scope ownership remains a hardened-runner pressure
-  gate rather than a local claim.
+  attach the pre-exec child (`ENOTTY`). Immutable Linux/x64 VPS runs `31373366733` and `31373928434`
+  bind reproducible installed binaries to the exact launcher revision and prove positive scope
+  ownership, terminal removal, root-only post-scope crash recovery before the next request, an
+  unchanged repository, and zero residual slots, scopes, or recorded children. This remains
+  execution-disabled foundation evidence, not broker, selected-work, receipt/archive, or
+  provider-attestation proof.
 
 - Added the immutable stopped-child foundation for the Linux systemd protected launcher. Protocol
   `6a2d0dc504a313a513ee41105f51449195c85797` defines canonical invocation, working-directory, and

@@ -104,14 +104,23 @@ work execution.
 
 The reviewed transient-scope slice is immutable at authority-protocol
 `adaabfb8300925a09975c7244e27242b5cd41e60` and authority-launcher
-`eef722f5d1b2cfd7482bcdfa9b6d40fd22366ce1`. It adds a protocol-owned scope identity and native
+`0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`. It adds a protocol-owned scope identity and native
 systemd manager adapter, binding the exact stopped child to the request-derived unit, fixed
 invocation slice, non-delegated controls, and kernel cgroup before durably advancing the active-slot
-journal. Cleanup stops and observes the exact scope empty before releasing the principal slot.
+journal. Cleanup stops the exact scope when still present and confirms the scope absent plus its
+recorded cgroup empty or absent before releasing the principal slot.
 OrbStack's systemd currently refuses the pre-exec PID attachment with `ENOTTY`, which is retained as
-fail-closed local evidence with no residual child or unit; positive scope ownership remains pending
-on the hardened VPS runner. No resume path, broker contact, lease consumption, or selected work
-exists in this slice.
+fail-closed local evidence with no residual child or unit. Immutable Linux/x64 VPS run
+[31373366733](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373366733)
+proves the exact reproducibly built launcher and client, positive scope ownership, terminal scope
+removal, and unchanged repository state. Run
+[31373928434](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373928434)
+uses a root-only one-shot fault after durable `scope_attached` persistence, then proves that the
+next activation reconciles the abandoned slot before accepting a new request and leaves no slot,
+scope, or recorded child. An execution-disabled child may exit early enough for systemd to collect
+its empty scope before the post-crash observation; the durable slot, exact exit `86`, subsequent
+successful reconciliation, and terminal absence are the bounded recovery evidence. No resume path,
+broker contact, lease consumption, selected work, receipt, or archive exists in this slice.
 
 Activation prerequisite: closed by independent design review. Crossing records remain evidence,
 never reusable authority. The reviewed first carrier uses a fixed system trust binding that cannot
@@ -1154,15 +1163,21 @@ service, or an unverifiable required observation refuses before broker authoriza
 The signed record remains bounded to its exact ordered observations and does not imply host-wide,
 kernel, hypervisor, or cloud-provider integrity.
 
-The current execution-disabled candidate has passed local Linux/x64 VPS kernel pressure for the
+The execution-disabled candidate first passed local Linux/x64 VPS kernel pressure for the
 fixed socket, root-stopped child, `openat2` containment, request-derived transient scope, terminal
 scope removal, child reap, and active-slot cleanup. That run exposed and fixed three adapter
 defects: listener reconciliation incorrectly rejected same-path connected socket rows; scope
 properties were queried from the generic Unit interface instead of Scope; and a scope collected
 between `KillUnit` and `StopUnit` was treated as cleanup failure without reconciling the recorded
-cgroup. This is candidate validation against an uncommitted launcher worktree, not durable
-acceptance evidence. The gate remains open until the reviewed launcher commit is rebuilt and run
-through immutable hosted pressure, including the named crash/recovery cases below.
+cgroup. Immutable hosted runs
+[31373366733](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373366733)
+and [31373928434](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373928434)
+now bind that normal and crash/recovery evidence to launcher
+`0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`, reproducible installed binary identities, workflow
+revisions `cbf5183e0b3c8edf000f9d0ea840e1b50bfa4802` and
+`b7fe6daa96ba193134e9a4c75eca8f69eb1584d2`, and unchanged repository identities. This closes the
+execution-disabled transient-scope foundation gate only; the production pressure bar below remains
+open.
 
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:

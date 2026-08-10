@@ -187,19 +187,25 @@ durable agent workflow belongs in the canonical Ota skill.
   and uses PID-bound pre-scope cleanup; an intent-only, mismatched, unsupported, or uncertain
   recovery remains a hard refusal. The current immutable scope slice at Protocol
   `adaabfb8300925a09975c7244e27242b5cd41e60` and Launcher
-  `eef722f5d1b2cfd7482bcdfa9b6d40fd22366ce1` requests one request-derived transient scope from the
+  `0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2` requests one request-derived transient scope from the
   root systemd manager, independently reconciles its fixed slice, non-delegated controls, kernel
   cgroup, and sole stopped PID, and records that identity before terminal cleanup. Scope-bearing
-  recovery must stop and observe the exact scope empty before releasing the principal slot.
+  recovery stops the exact scope when still present and confirms the scope absent plus its recorded
+  cgroup empty or absent before releasing the principal slot.
   OrbStack's systemd refuses the real pre-exec PID attachment with `ENOTTY`, so that environment
-  proves fail-closed behavior but not positive scope ownership; the prepared hardened VPS runner
-  remains the durable positive kernel gate. Local Linux/x64 VPS validation of the current
-  uncommitted candidate now proves the fixed socket, root-stopped child, positive `openat2`
-  containment, request-derived transient scope, terminal scope removal, child reap, and active-slot
-  cleanup. It exposed and fixed listener-table, systemd Scope-interface, and collected-unit cleanup
-  defects. This is not immutable hosted evidence; the reviewed launcher commit and crash/recovery
-  matrix still must run before reconciliation. The child is still never resumed, and the service
-  does not contact the broker, consume authority, or execute selected work. OrbStack Linux/x64 root tests
+  proves fail-closed behavior but not positive scope ownership. Immutable Linux/x64 VPS run
+  [31373366733](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373366733)
+  now proves the exact reproducibly built launcher/client identities, fixed socket, root-stopped
+  child, positive `openat2` containment, request-derived transient scope, terminal scope removal,
+  child reap, active-slot cleanup, and unchanged repository state. Crash/recovery run
+  [31373928434](https://github.com/bobaikato/create-chrome-extension/actions/runs/31373928434)
+  proves a root-only post-scope crash at exit `86`, durable abandoned-slot reconciliation before the
+  next request, terminal refusal, and zero residual slots, scopes, or recorded children. The empty
+  execution-disabled child was collected before the post-crash scope observation, so the evidence
+  does not claim a still-loaded scope at that instant. These runs exposed and fixed listener-table,
+  systemd Scope-interface, collected-unit cleanup, and build-path reproducibility defects. The child
+  is still never resumed, and the service does not contact the broker, consume authority, execute
+  selected work, or emit receipts/archives. OrbStack Linux/x64 root tests
   against the immutable stopped-child revisions prove socket
   replacement refusal, descriptor transport, and fail-closed behavior when that environment
   reports `openat2` as `ENOSYS`. The separate VPS kernel-pressure run
@@ -207,8 +213,8 @@ durable agent workflow belongs in the canonical Ota skill.
   checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
   positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
   `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
-  The immutable hosted positive transient-scope path, production systemd execution path, and
-  hosted v3 pressure remain unproved.
+  The execution-disabled immutable transient-scope foundation is now proved. The production
+  systemd execution path and hosted v3 pressure remain unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
