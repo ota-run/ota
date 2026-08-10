@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- Add the next execution-disabled systemd protected-launcher bridge. An exact, identity-bound local
+  continuation now binds the exact invocation, child, working directory, posture, and principal
+  mapping while unlocking CLI parsing after process-posture admission and preserving the same
+  private `FD_CLOEXEC` descriptor for Core's scope-bound broker session. Core then verifies the
+  signed V3 attestation through its existing trust-root, signature, freshness, profile, process,
+  principal, and semantic-scope checks before it can emit an authorization request. Launcher-only
+  startup-gate and principal-mapping values are consumed into private memory and removed from the
+  process environment before CLI dispatch, with task-spawn removal retained as defense in depth.
+- Keep authorization and execution disabled in this slice. The launcher observes Core's exact
+  authorization request but does not forward it, and emits only the typed
+  `attestation_admitted_before_authorization_boundary_removed` refusal after exact scope, cgroup,
+  child, and active-slot cleanup. No decision, lease, selected work, receipt, archive, or provider
+  attestation claim is created.
+
 - Removed the source checkout's absolute `CARGO_MANIFEST_DIR` from production schema discovery.
   Published JSON schemas are now embedded into the Ota binary, so installed or relocated source
   builds validate machine output against their exact version-matched schema set without a source

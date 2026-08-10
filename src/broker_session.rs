@@ -34,11 +34,15 @@
 
 #[cfg(unix)]
 use std::io::{ErrorKind, Read, Write};
+#[cfg(all(unix, target_os = "linux"))]
+use std::os::fd::IntoRawFd;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+#[cfg(all(unix, target_os = "linux"))]
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -71,6 +75,10 @@ use ota_authority_protocol::{
     SystemdJobPrincipalObservation, SystemdLauncherObservation,
     SystemdProtectedLauncherInstanceEvidenceV1, SystemdProtectedLauncherInstanceEvidenceV2,
     UnixPrincipalIdentity,
+};
+#[cfg(unix)]
+use ota_authority_protocol::{
+    LauncherStartupContinuationV1, launcher_startup_continuation_identity,
 };
 pub(crate) use ota_authority_protocol::{
     LeaseConsumeRequest, LeaseConsumeResponsePayload, LeaseConsumeState, LeaseConsumptionQuery,
@@ -155,21 +163,80 @@ const LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV: &str = "OTA_LAUNCHER_PRINCIPAL_MA
 #[cfg(all(unix, target_os = "linux"))]
 const SYSTEMD_LAUNCHER_STARTUP_GATE_ENV: &str = "OTA_SYSTEMD_LAUNCHER_STARTUP_GATE";
 #[cfg(all(unix, target_os = "linux"))]
-const SYSTEMD_LAUNCHER_STARTUP_GATE_V1: &str = "posture_only_v1";
+const SYSTEMD_LAUNCHER_STARTUP_GATE_V1: &str = "attestation_v1";
 #[cfg(all(unix, target_os = "linux"))]
 const SYSTEMD_OTA_SESSION_DESCRIPTOR: std::os::fd::RawFd = 3;
 
 #[cfg(all(unix, target_os = "linux"))]
-pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
-    match std::env::var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV) {
-        Err(std::env::VarError::NotPresent) => return Ok(()),
-        Ok(value) if value == SYSTEMD_LAUNCHER_STARTUP_GATE_V1 => {}
-        Ok(_) | Err(std::env::VarError::NotUnicode(_)) => {
-            return Err(String::from(
-                "systemd launcher startup gate configuration is invalid",
-            ));
-        }
+static SYSTEMD_LAUNCHER_STARTUP_BINDING: OnceLock<Mutex<Option<LauncherStartupContinuationV1>>> =
+    OnceLock::new();
+
+#[cfg(all(unix, target_os = "linux"))]
+fn startup_binding_slot() -> &'static Mutex<Option<LauncherStartupContinuationV1>> {
+    SYSTEMD_LAUNCHER_STARTUP_BINDING.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn store_systemd_launcher_startup_binding(
+    continuation: LauncherStartupContinuationV1,
+) -> Result<(), String> {
+    let mut slot = startup_binding_slot()
+        .lock()
+        .map_err(|_| String::from("systemd launcher startup binding is unavailable"))?;
+    if slot.is_some() {
+        return Err(String::from(
+            "systemd launcher startup binding was already established",
+        ));
     }
+    *slot = Some(continuation);
+    Ok(())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn take_systemd_launcher_startup_binding() -> Option<LauncherStartupContinuationV1> {
+    startup_binding_slot()
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn take_systemd_launcher_startup_environment() -> Result<Option<String>, String> {
+    let gate = std::env::var_os(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV);
+    let principal_mapping = std::env::var_os(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV);
+    // SAFETY: this runs at process entry before CLI dispatch or worker-thread creation. The
+    // launcher-only values are consumed into private memory and must not remain globally
+    // inheritable by any later repository-controlled process.
+    unsafe {
+        std::env::remove_var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV);
+        std::env::remove_var(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV);
+    }
+    match gate {
+        None => Ok(None),
+        Some(value) if value == SYSTEMD_LAUNCHER_STARTUP_GATE_V1 => {
+            let principal_mapping = principal_mapping
+                .and_then(|value| value.into_string().ok())
+                .ok_or_else(|| {
+                    String::from("systemd launcher principal mapping identity is unavailable")
+                })?;
+            if !is_sha256_identity(principal_mapping.as_str()) {
+                return Err(String::from(
+                    "systemd launcher principal mapping identity is invalid",
+                ));
+            }
+            Ok(Some(principal_mapping))
+        }
+        Some(_) => Err(String::from(
+            "systemd launcher startup gate configuration is invalid",
+        )),
+    }
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
+    let Some(principal_mapping_identity) = take_systemd_launcher_startup_environment()? else {
+        return Ok(());
+    };
 
     let descriptor = SYSTEMD_OTA_SESSION_DESCRIPTOR;
     let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
@@ -181,27 +248,58 @@ pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
     }
     verify_connected_unix_stream(descriptor)?;
     let stream = unsafe { UnixStream::from_raw_fd(descriptor) };
-    let posture = collect_systemd_process_posture()?;
-    send_systemd_startup_posture_and_wait(stream, &posture)
+    let posture = collect_systemd_process_posture(principal_mapping_identity.as_str())?;
+    let (stream, continuation) = send_systemd_startup_posture_and_wait(stream, &posture)?;
+    store_systemd_launcher_startup_binding(continuation)?;
+    let _ = stream.into_raw_fd();
+    Ok(())
 }
 
 #[cfg(all(unix, target_os = "linux"))]
 fn send_systemd_startup_posture_and_wait(
     mut stream: UnixStream,
     posture: &OtaProcessPostureV1,
-) -> Result<(), String> {
+) -> Result<(UnixStream, LauncherStartupContinuationV1), String> {
     let payload = serde_json::to_vec(&posture)
         .map_err(|error| format!("failed to serialize Ota process posture: {error}"))?;
     write_frame(&mut stream, &payload)?;
+    let continuation: LauncherStartupContinuationV1 =
+        serde_json::from_slice(&read_startup_frame(&mut stream)?)
+            .map_err(|_| String::from("systemd launcher startup continuation is malformed"))?;
+    let identity = launcher_startup_continuation_identity(&continuation)
+        .map_err(|_| String::from("systemd launcher startup continuation is invalid"))?;
+    if continuation.identity != identity
+        || continuation.process_posture_identity != posture.identity
+        || continuation.principal_mapping_identity != posture.principal_mapping_identity
+    {
+        return Err(String::from(
+            "systemd launcher startup continuation does not match the protected Ota process",
+        ));
+    }
 
-    // The first production slice has no continuation message. Remaining blocked here is the
-    // enforcement boundary: the launcher validates the preface, then terminates the exact scoped
-    // child. Any bytes or closure are a refusal rather than permission to dispatch the CLI.
-    let mut unsupported_continuation = [0_u8; 1];
-    let _ = stream.read(&mut unsupported_continuation);
-    Err(String::from(
-        "systemd launcher startup continuation is not implemented",
-    ))
+    // Preserve the same private descriptor for the later scope-bound broker session. The caller
+    // records the exact continuation in private process state before relinquishing stream
+    // ownership without closing the descriptor.
+    Ok((stream, continuation))
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn read_startup_frame(stream: &mut UnixStream) -> Result<Vec<u8>, String> {
+    let mut header = [0_u8; 4];
+    stream
+        .read_exact(&mut header)
+        .map_err(|_| String::from("systemd launcher startup continuation is unavailable"))?;
+    let length = u32::from_be_bytes(header) as usize;
+    if length == 0 || length > MAX_FRAME_BYTES {
+        return Err(String::from(
+            "systemd launcher startup continuation is invalid",
+        ));
+    }
+    let mut payload = vec![0_u8; length];
+    stream
+        .read_exact(&mut payload)
+        .map_err(|_| String::from("systemd launcher startup continuation is incomplete"))?;
+    Ok(payload)
 }
 
 #[cfg(not(all(unix, target_os = "linux")))]
@@ -1902,6 +2000,7 @@ pub(crate) struct LauncherSession {
     state: LauncherSessionState,
     challenge: Option<BrokerChallenge>,
     process_posture_identity: Option<String>,
+    systemd_startup_binding: Option<LauncherStartupContinuationV1>,
     attestation_identity: Option<String>,
     pending_decision_identity: Option<String>,
     authorization_request_identity: Option<String>,
@@ -1918,10 +2017,24 @@ pub(crate) struct LauncherSession {
 #[cfg(unix)]
 impl LauncherSession {
     pub(crate) fn from_binding(binding: &BrokerAuthorityBinding) -> Result<Self, String> {
-        Self::from_inherited_descriptor_with_timeout(
+        let session = Self::from_inherited_descriptor_with_timeout(
             binding.credential_delivery.descriptor,
             std::time::Duration::from_secs(binding.maximum_approval_wait_seconds),
-        )
+        )?;
+        #[cfg(target_os = "linux")]
+        {
+            let mut session = session;
+            if matches!(
+                &binding.attestation,
+                crate::crossing_authority::BrokerAttestationBinding::V3(attestation)
+                    if attestation.adapter == SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1
+            ) {
+                session.systemd_startup_binding = take_systemd_launcher_startup_binding();
+            }
+            return Ok(session);
+        }
+        #[cfg(not(target_os = "linux"))]
+        Ok(session)
     }
 
     /// Takes ownership of the fixed inherited descriptor after making it non-inheritable.
@@ -1974,6 +2087,7 @@ impl LauncherSession {
             state: LauncherSessionState::ChallengeReady,
             challenge: None,
             process_posture_identity: None,
+            systemd_startup_binding: None,
             attestation_identity: None,
             pending_decision_identity: None,
             authorization_request_identity: None,
@@ -2004,7 +2118,29 @@ impl LauncherSession {
         if attestation.adapter != SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1 {
             return Ok(());
         }
+        #[cfg(target_os = "linux")]
+        {
+            let startup = self.systemd_startup_binding.as_ref().ok_or_else(|| {
+                String::from(
+                    "systemd protected-launcher startup binding is unavailable before challenge traffic",
+                )
+            })?;
+            let posture =
+                collect_systemd_process_posture(startup.principal_mapping_identity.as_str())?;
+            if posture.identity != startup.process_posture_identity {
+                return Err(String::from(
+                    "systemd protected-launcher process posture changed after startup admission",
+                ));
+            }
+            // The protected startup gate already sent and identity-bound this exact posture on the
+            // same descriptor before CLI dispatch. Retain its identity for V3 reconciliation and
+            // make the challenge the first post-continuation frame.
+            self.process_posture_identity = Some(posture.identity);
+            return Ok(());
+        }
+        #[cfg(not(target_os = "linux"))]
         let posture = collect_systemd_process_posture()?;
+        #[cfg(not(target_os = "linux"))]
         self.send_process_posture(&posture)
     }
 
@@ -2117,16 +2253,12 @@ impl LauncherSession {
                     crate::crossing_authority::BrokerAttestationBinding::V3(_),
                     LauncherAttestationEvidence::V3(attestation),
                     Some(posture_identity),
-                ) if attestation
-                    .payload
-                    .systemd_protected_launcher
-                    .instance_v1
-                    .process_posture
-                    .identity
-                    == *posture_identity => {}
+                ) if self
+                    .verify_systemd_startup_binding(attestation, posture_identity)
+                    .is_ok() => {}
                 (crate::crossing_authority::BrokerAttestationBinding::V3(_), _, _) => {
                     return Err(String::from(
-                        "systemd protected-launcher attestation does not bind this Ota process posture",
+                        "systemd protected-launcher attestation does not bind the exact startup continuation",
                     ));
                 }
                 _ => {}
@@ -2143,6 +2275,34 @@ impl LauncherSession {
         self.attestation_identity = Some(identity.clone());
         self.state = LauncherSessionState::AuthorizationReady;
         Ok((attestation, identity))
+    }
+
+    fn verify_systemd_startup_binding(
+        &self,
+        attestation: &SignedLauncherAttestationV3,
+        posture_identity: &str,
+    ) -> Result<(), String> {
+        let startup = self.systemd_startup_binding.as_ref().ok_or_else(|| {
+            String::from("systemd protected-launcher startup binding is unavailable")
+        })?;
+        let startup_identity = launcher_startup_continuation_identity(startup)
+            .map_err(|_| String::from("systemd protected-launcher startup binding is invalid"))?;
+        let instance = &attestation.payload.systemd_protected_launcher.instance_v1;
+        if startup.identity != startup_identity
+            || attestation.payload.invocation_id != startup.invocation_id
+            || instance.child_process_identity != startup.child_process_identity
+            || instance.working_directory_identity != startup.working_directory_identity
+            || instance.process_posture.identity != startup.process_posture_identity
+            || instance.process_posture.identity != posture_identity
+            || instance.process_posture.principal_mapping_identity
+                != startup.principal_mapping_identity
+            || instance.principal_mapping.identity != startup.principal_mapping_identity
+        {
+            return Err(String::from(
+                "systemd protected-launcher attestation changed startup-bound child truth",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn recover_pending_consumption<F>(
@@ -2651,10 +2811,10 @@ impl LauncherSession {
 }
 
 #[cfg(all(unix, target_os = "linux"))]
-fn collect_systemd_process_posture() -> Result<OtaProcessPostureV1, String> {
-    let principal_mapping_identity = std::env::var(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV)
-        .map_err(|_| String::from("systemd launcher principal mapping identity is unavailable"))?;
-    if !is_sha256_identity(principal_mapping_identity.as_str()) {
+fn collect_systemd_process_posture(
+    principal_mapping_identity: &str,
+) -> Result<OtaProcessPostureV1, String> {
+    if !is_sha256_identity(principal_mapping_identity) {
         return Err(String::from(
             "systemd launcher principal mapping identity is invalid",
         ));
@@ -2684,7 +2844,7 @@ fn collect_systemd_process_posture() -> Result<OtaProcessPostureV1, String> {
         no_new_privs: true,
         dumpable: 0,
         ptracer_clear_applied: true,
-        principal_mapping_identity,
+        principal_mapping_identity: principal_mapping_identity.to_string(),
     };
     posture.identity = ota_process_posture_identity(&posture)
         .map_err(|error| format!("failed to derive Ota process posture identity: {error}"))?;
@@ -3313,6 +3473,29 @@ pub(crate) mod tests {
         );
     }
 
+    fn startup_continuation_for_v3(
+        attestation: &LauncherAttestationEvidence,
+    ) -> LauncherStartupContinuationV1 {
+        let attestation = match attestation {
+            LauncherAttestationEvidence::V3(attestation) => attestation,
+            _ => panic!("test attestation must be V3"),
+        };
+        let instance = &attestation.payload.systemd_protected_launcher.instance_v1;
+        let mut continuation = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
+            invocation_id: attestation.payload.invocation_id.clone(),
+            child_process_identity: instance.child_process_identity.clone(),
+            working_directory_identity: instance.working_directory_identity.clone(),
+            process_posture_identity: instance.process_posture.identity.clone(),
+            principal_mapping_identity: instance.principal_mapping.identity.clone(),
+        };
+        continuation.identity =
+            launcher_startup_continuation_identity(&continuation).expect("continuation identity");
+        continuation
+    }
+
     pub(crate) fn spawn_allowing_test_broker(
         launcher: UnixStream,
         binding: BrokerAuthorityBinding,
@@ -3469,7 +3652,7 @@ pub(crate) mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn systemd_startup_gate_emits_posture_and_never_accepts_continuation() {
+    fn systemd_startup_gate_requires_an_exact_identity_bound_continuation() {
         let mut posture = OtaProcessPostureV1 {
             schema_version: 1,
             identity: String::new(),
@@ -3497,19 +3680,82 @@ pub(crate) mod tests {
             serde_json::from_slice::<OtaProcessPostureV1>(&payload).expect("posture JSON"),
             expected
         );
-        launcher
-            .write_all(b"continue")
-            .expect("unsupported continuation");
+        let mut continuation = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
+            invocation_id: String::from("invocation-test"),
+            child_process_identity: format!("sha256:{}", "4".repeat(64)),
+            working_directory_identity: format!("sha256:{}", "6".repeat(64)),
+            process_posture_identity: expected.identity.clone(),
+            principal_mapping_identity: expected.principal_mapping_identity.clone(),
+        };
+        continuation.identity =
+            launcher_startup_continuation_identity(&continuation).expect("continuation identity");
+        write_json_frame(&mut launcher, &continuation);
+        let (stream, observed_continuation) = gate
+            .join()
+            .expect("startup gate thread")
+            .expect("matching continuation");
+        assert_eq!(observed_continuation, continuation);
+        drop(stream);
+
+        let (child, mut launcher) = UnixStream::pair().expect("mismatch gate pair");
+        let posture = expected.clone();
+        let mismatch_gate =
+            std::thread::spawn(move || send_systemd_startup_posture_and_wait(child, &posture));
+        let _: OtaProcessPostureV1 = read_json_frame(&mut launcher);
+        continuation.process_posture_identity = format!("sha256:{}", "5".repeat(64));
+        continuation.identity = launcher_startup_continuation_identity(&continuation)
+            .expect("changed continuation identity");
+        write_json_frame(&mut launcher, &continuation);
         assert!(
-            gate.join()
-                .expect("startup gate thread")
-                .expect_err("posture-only gate must never continue")
-                .contains("continuation is not implemented")
+            mismatch_gate
+                .join()
+                .expect("mismatch gate thread")
+                .expect_err("mismatched continuation must refuse")
+                .contains("does not match")
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn v3_session_attestation_must_bind_the_exact_sent_process_posture() {
+    fn systemd_startup_environment_is_consumed_before_cli_dispatch() {
+        let _environment = crate::test_support::ENV_MUTEX
+            .lock()
+            .expect("environment lock");
+        let previous_mapping = std::env::var_os(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV);
+        let previous_gate = std::env::var_os(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV);
+        let mapping = format!("sha256:{}", "a".repeat(64));
+        unsafe {
+            std::env::set_var(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV, &mapping);
+            std::env::set_var(
+                SYSTEMD_LAUNCHER_STARTUP_GATE_ENV,
+                SYSTEMD_LAUNCHER_STARTUP_GATE_V1,
+            );
+        }
+
+        assert_eq!(
+            take_systemd_launcher_startup_environment().expect("startup environment"),
+            Some(mapping)
+        );
+        assert!(std::env::var_os(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV).is_none());
+        assert!(std::env::var_os(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV).is_none());
+
+        match previous_mapping {
+            Some(value) => unsafe {
+                std::env::set_var(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV, value)
+            },
+            None => unsafe { std::env::remove_var(LAUNCHER_PRINCIPAL_MAPPING_IDENTITY_ENV) },
+        }
+        match previous_gate {
+            Some(value) => unsafe { std::env::set_var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV, value) },
+            None => unsafe { std::env::remove_var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV) },
+        }
+    }
+
+    #[test]
+    fn v3_session_attestation_must_bind_the_exact_startup_continuation() {
         let now = OffsetDateTime::now_utc();
         let (binding, _, attestor_signing_key) =
             crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
@@ -3528,6 +3774,7 @@ pub(crate) mod tests {
         let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
         let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
             .expect("launcher session");
+        session.systemd_startup_binding = Some(startup_continuation_for_v3(&attestation));
         session
             .send_process_posture(&sent_posture)
             .expect("send process posture");
@@ -3547,7 +3794,7 @@ pub(crate) mod tests {
             .receive_verified_attestation(&binding, &challenge, || false)
             .expect("matching signed V3 posture must admit the session");
 
-        let mut substituted = attestation;
+        let mut substituted = attestation.clone();
         let evidence = substituted.v3_mut();
         evidence
             .payload
@@ -3586,6 +3833,7 @@ pub(crate) mod tests {
         let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
         let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
             .expect("launcher session");
+        session.systemd_startup_binding = Some(startup_continuation_for_v3(&attestation));
         session
             .send_process_posture(&sent_posture)
             .expect("send original process posture");
@@ -3605,7 +3853,95 @@ pub(crate) mod tests {
             session
                 .receive_verified_attestation(&binding, &challenge, || false)
                 .expect_err("different valid signed posture must refuse")
-                .contains("does not bind this Ota process posture")
+                .contains("does not bind the exact startup continuation")
+        );
+
+        let mut substituted_child = attestation.clone();
+        let evidence = substituted_child.v3_mut();
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .child_process_identity = format!("sha256:{}", "7".repeat(64));
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .identity = ota_authority_protocol::systemd_protected_launcher_instance_identity(
+            &evidence.payload.systemd_protected_launcher.instance_v1,
+        )
+        .expect("substituted child instance identity");
+        evidence.payload.systemd_protected_launcher.identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(
+                &evidence.payload.systemd_protected_launcher,
+            )
+            .expect("substituted child complete identity");
+        resign_v3_attestation(&binding, &attestor_signing_key, &mut substituted_child);
+
+        let (mut launcher, ota) = UnixStream::pair().expect("child substitution session pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("child substitution session");
+        session.systemd_startup_binding = Some(startup_continuation_for_v3(&attestation));
+        session
+            .send_process_posture(&sent_posture)
+            .expect("send original process posture");
+        session
+            .send_challenge(&challenge.challenge)
+            .expect("send challenge");
+        let _: OtaProcessPostureV1 = read_json_frame(&mut launcher);
+        let _: BrokerChallenge = read_json_frame(&mut launcher);
+        write_json_frame(&mut launcher, &substituted_child);
+        assert!(
+            session
+                .receive_verified_attestation(&binding, &challenge, || false)
+                .expect_err("different valid signed child must refuse")
+                .contains("does not bind the exact startup continuation")
+        );
+
+        let mut substituted_working_directory = attestation.clone();
+        let evidence = substituted_working_directory.v3_mut();
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .working_directory_identity = format!("sha256:{}", "8".repeat(64));
+        evidence
+            .payload
+            .systemd_protected_launcher
+            .instance_v1
+            .identity = ota_authority_protocol::systemd_protected_launcher_instance_identity(
+            &evidence.payload.systemd_protected_launcher.instance_v1,
+        )
+        .expect("substituted working-directory instance identity");
+        evidence.payload.systemd_protected_launcher.identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(
+                &evidence.payload.systemd_protected_launcher,
+            )
+            .expect("substituted working-directory complete identity");
+        resign_v3_attestation(
+            &binding,
+            &attestor_signing_key,
+            &mut substituted_working_directory,
+        );
+        verify_launcher_attestation(&binding, &challenge, &substituted_working_directory, now)
+            .expect("substituted working directory remains otherwise valid signed evidence");
+        let (_launcher, ota) = UnixStream::pair().expect("working-directory substitution pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("working-directory substitution session");
+        session.systemd_startup_binding = Some(startup_continuation_for_v3(&attestation));
+        let LauncherAttestationEvidence::V3(substituted_working_directory) =
+            &substituted_working_directory
+        else {
+            panic!("substituted evidence must remain V3");
+        };
+        assert!(
+            session
+                .verify_systemd_startup_binding(
+                    substituted_working_directory,
+                    sent_posture.identity.as_str(),
+                )
+                .expect_err("different signed working directory must refuse")
+                .contains("changed startup-bound child truth")
         );
     }
 
@@ -3636,15 +3972,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn unavailable_v3_posture_refuses_before_challenge_traffic() {
-        let _environment = crate::test_support::ENV_MUTEX
-            .lock()
-            .expect("environment lock");
-        let previous = std::env::var_os("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY");
-        // Missing mapping identity forces a local V3 posture refusal on Linux; other platforms
-        // refuse V3 collection before any launcher write by construction.
-        // ENV_MUTEX prevents concurrent process-environment access in this test process.
-        unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") };
+    fn missing_v3_startup_binding_refuses_before_challenge_traffic() {
         let (binding, _, _) =
             crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
         let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
@@ -3662,22 +3990,46 @@ pub(crate) mod tests {
         assert!(
             matches!(launcher.read(&mut byte), Err(error) if error.kind() == ErrorKind::WouldBlock)
         );
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", value)
-            },
-            None => unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") },
-        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn systemd_startup_posture_is_reused_without_a_second_wire_preface() {
+        let mapping = format!("sha256:{}", "a".repeat(64));
+        let (binding, _, _) =
+            crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher session pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("launcher session");
+        let posture = collect_systemd_process_posture(mapping.as_str()).expect("process posture");
+        let mut continuation = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
+            invocation_id: String::from("invocation-test"),
+            child_process_identity: format!("sha256:{}", "b".repeat(64)),
+            working_directory_identity: format!("sha256:{}", "c".repeat(64)),
+            process_posture_identity: posture.identity,
+            principal_mapping_identity: mapping,
+        };
+        continuation.identity =
+            launcher_startup_continuation_identity(&continuation).expect("continuation identity");
+        session.systemd_startup_binding = Some(continuation);
+        session
+            .send_systemd_process_posture_preface(&binding)
+            .expect("reuse startup posture");
+        assert!(session.process_posture_identity.is_some());
+        launcher
+            .set_nonblocking(true)
+            .expect("launcher nonblocking read");
+        let mut byte = [0_u8; 1];
+        assert!(
+            matches!(launcher.read(&mut byte), Err(error) if error.kind() == ErrorKind::WouldBlock)
+        );
     }
 
     #[test]
-    fn prepare_refuses_missing_v3_posture_before_challenge_traffic() {
-        let _environment = crate::test_support::ENV_MUTEX
-            .lock()
-            .expect("environment lock");
-        let previous = std::env::var_os("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY");
-        // ENV_MUTEX prevents concurrent process-environment access in this test process.
-        unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") };
+    fn prepare_refuses_missing_v3_startup_binding_before_challenge_traffic() {
         let now = OffsetDateTime::now_utc();
         let (mut binding, _, _) =
             crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
@@ -3696,12 +4048,6 @@ pub(crate) mod tests {
         );
         let mut byte = [0_u8; 1];
         assert_eq!(launcher.read(&mut byte).expect("launcher read"), 0);
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", value)
-            },
-            None => unsafe { std::env::remove_var("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY") },
-        }
     }
 
     #[test]

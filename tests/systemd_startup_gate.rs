@@ -31,10 +31,13 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use ota_authority_protocol::{OTA_PROCESS_POSTURE, OtaProcessPostureV1};
+use ota_authority_protocol::{
+    LAUNCHER_STARTUP_CONTINUATION, LauncherStartupContinuationV1, OTA_PROCESS_POSTURE,
+    OtaProcessPostureV1, launcher_startup_continuation_identity,
+};
 
 #[test]
-fn actual_binary_blocks_before_cli_dispatch_and_never_accepts_continuation() {
+fn actual_binary_blocks_before_cli_dispatch_and_rejects_malformed_continuation() {
     let (mut launcher, child_session) = UnixStream::pair().expect("startup-gate socket pair");
     launcher
         .set_read_timeout(Some(Duration::from_secs(30)))
@@ -44,7 +47,7 @@ fn actual_binary_blocks_before_cli_dispatch_and_never_accepts_continuation() {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ota"));
     command
         .arg("--version")
-        .env("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE", "posture_only_v1")
+        .env("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE", "attestation_v1")
         .env(
             "OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY",
             format!("sha256:{}", "1".repeat(64)),
@@ -92,4 +95,69 @@ fn actual_binary_blocks_before_cli_dispatch_and_never_accepts_continuation() {
         String::from_utf8_lossy(&output.stderr)
             .contains("systemd protected-launcher startup refused before command dispatch")
     );
+}
+
+#[test]
+fn actual_binary_accepts_only_an_identity_bound_startup_continuation() {
+    let (mut launcher, child_session) = UnixStream::pair().expect("startup-gate socket pair");
+    launcher
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("bounded posture read");
+    let child_session_fd = child_session.as_raw_fd();
+    let principal_mapping_identity = format!("sha256:{}", "1".repeat(64));
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ota"));
+    command
+        .arg("--version")
+        .env("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE", "attestation_v1")
+        .env(
+            "OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY",
+            &principal_mapping_identity,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // SAFETY: the child-side callback uses only async-signal-safe syscalls before exec.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(child_session_fd, 3) < 0
+                || libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().expect("spawn gated Ota binary");
+    drop(child_session);
+
+    let mut header = [0_u8; 4];
+    launcher.read_exact(&mut header).expect("posture header");
+    let length = u32::from_be_bytes(header) as usize;
+    let mut payload = vec![0_u8; length];
+    launcher
+        .read_exact(&mut payload)
+        .expect("complete posture payload");
+    let posture: OtaProcessPostureV1 = serde_json::from_slice(&payload).expect("posture JSON");
+    let mut continuation = LauncherStartupContinuationV1 {
+        schema_version: 1,
+        identity: String::new(),
+        message_kind: LAUNCHER_STARTUP_CONTINUATION.into(),
+        invocation_id: String::from("integration-test-invocation"),
+        child_process_identity: format!("sha256:{}", "2".repeat(64)),
+        working_directory_identity: format!("sha256:{}", "3".repeat(64)),
+        process_posture_identity: posture.identity,
+        principal_mapping_identity,
+    };
+    continuation.identity =
+        launcher_startup_continuation_identity(&continuation).expect("continuation identity");
+    let payload = serde_json::to_vec(&continuation).expect("continuation JSON");
+    launcher
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .and_then(|()| launcher.write_all(&payload))
+        .expect("write continuation");
+
+    let output = child.wait_with_output().expect("gated Ota result");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("ota "));
+    assert!(output.stderr.is_empty());
 }

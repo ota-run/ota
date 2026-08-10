@@ -73192,8 +73192,11 @@ workflows:
             "protected_launcher_attested_one_use"
         );
 
-        let receipt_schema = super::load_json_value(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/receipt.json"),
+        let receipt_schema: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/receipt.json"),
+            )
+            .expect("read receipt schema"),
         )
         .expect("receipt schema");
         let mut authority_schema = receipt_schema["oneOf"][0]["properties"]["receipt"]

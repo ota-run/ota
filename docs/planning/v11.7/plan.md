@@ -1207,6 +1207,28 @@ This closes only the immutable hosted execution-disabled posture gate; V3 attest
 authorization, lease consumption, selected execution, receipt/archive evidence, and provider
 attestation remain open under the production pressure bar below.
 
+The independently reviewed next execution-disabled bridge is additive to that proved posture gate
+and pins Protocol `953e9e6407c9de030822b1f891046c2829b3c714` plus Launcher
+`0ed578a46ce821d8dd1da671a2e53c75ded1ed0b`. After reconciling the exact Ota posture, the launcher
+sends one content-addressed startup continuation bound to the invocation, recorded child, working
+directory, posture, and principal mapping. Core consumes the launcher-only startup environment into
+private memory and removes it before CLI dispatch. The continuation is not authority; it only
+permits Core to parse the requested command, derive the exact semantic scope, and create its fresh
+broker challenge on the same private descriptor. The launcher relays that challenge to the
+protected root-owned proxy and relays one structurally V3 response back. Core remains the sole owner
+of signature, trust-root, freshness, complete profile, process-posture, principal, and exact scope
+verification, and reconciles the signed invocation, child, working-directory, posture, and
+principal identities against the retained startup continuation. Reaching the next exact
+`authorization_request` therefore establishes that Core admitted the signed V3 response, but the
+launcher deliberately does not forward that request. It then removes the exact scope, confirms its
+recorded cgroup empty or absent, reaps the child, finalizes the active slot, and emits
+`attestation_admitted_before_authorization_boundary_removed`. This slice does not obtain an
+authorization decision, issue or consume a lease, run selected work, or create crossing
+receipt/archive evidence. Malformed, substituted, or internally contradictory bridge traffic emits
+`pre_authorization_protocol_refused_boundary_removed`; it is never labeled as an authority
+decision. The slice requires immutable Linux/x64 pressure before the historical status above can
+be advanced.
+
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:
 

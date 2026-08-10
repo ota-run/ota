@@ -234,6 +234,22 @@ durable agent workflow belongs in the canonical Ota skill.
   compiled Ota. This closes only the immutable hosted execution-disabled posture gate. V3
   attestation, broker authorization, one-use lease consumption, selected execution, receipt/archive
   evidence, the production systemd execution path, and provider attestation remain unproved.
+  The independently reviewed execution-disabled V3 bridge pins Protocol
+  `953e9e6407c9de030822b1f891046c2829b3c714` and Launcher
+  `0ed578a46ce821d8dd1da671a2e53c75ded1ed0b`. An identity-bound launcher continuation binds the
+  exact invocation, child, working directory, posture, and principal mapping while unlocking CLI
+  parsing after exact posture admission. Core consumes and removes the launcher-only startup
+  environment before CLI dispatch, then freezes the real semantic scope and verifies one signed V3
+  response through its canonical broker verifier, including exact reconciliation back to the
+  retained startup binding. The launcher observes but does not forward the resulting exact
+  authorization request. Exact scope, cgroup, child, and active-slot cleanup precede the typed
+  `attestation_admitted_before_authorization_boundary_removed` refusal. This bridge has local
+  protocol and Linux regression evidence only and still requires immutable Linux/x64 pressure. It
+  does not prove authorization, lease consumption, selected execution, receipts/archives, the
+  complete production path, or provider attestation. No example, Skill, or
+  Site propagation is required for this internal execution-disabled carrier step because it adds no
+  contract, CLI, operator, receipt, or archive surface; those surfaces must move with the first
+  usable production adapter.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
@@ -825,10 +841,11 @@ service that derives a fixed job-peer identity through `SO_PEERCRED`, maps it on
 distinct non-dumpable execution principal, binds a target-principal-opened repository-directory
 identity, keeps attestor and broker material outside the child, and signs only the existing
 complete protected-launcher profile after Ota's challenge. Its design has passed independent
-review. The immutable authority-protocol identity/profile foundation plus the execution-disabled
-listener, peer-mapping, protected-binary, and target-directory admission boundary are the active
-implementation slice; no production launcher execution path exists yet, and it does not make
-`provider_attested_one_use` true.
+review. The current execution-disabled implementation extends that foundation through an
+identity-bound startup continuation and a signed V3 bridge that stops before forwarding Core's
+authorization request. No selected execution, lease consumption, receipt/archive carrier, or
+complete production launcher path exists yet, and it does not make `provider_attested_one_use`
+true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity

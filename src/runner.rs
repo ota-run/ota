@@ -8665,9 +8665,11 @@ fn pnpm_boundary_cwd(
     Some(normalized_pnpm_cwd(path.strip_suffix("/node_modules")?))
 }
 
-fn remove_execution_boundary_trace_env(command: &mut Command) {
+fn remove_runner_private_env(command: &mut Command) {
     command.env_remove(EXECUTION_BOUNDARY_TRACE_PATH_ENV);
     command.env_remove(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV);
+    command.env_remove("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY");
+    command.env_remove("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE");
 }
 
 fn observe_virtualenv_boundary_precondition(
@@ -9869,7 +9871,7 @@ fn run_host_shell_command(
         } => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
-            remove_execution_boundary_trace_env(&mut process);
+            remove_runner_private_env(&mut process);
             if capture_output {
                 let mut child = process
                     .stdin(Stdio::inherit())
@@ -9931,7 +9933,7 @@ fn run_host_shell_command(
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
-            remove_execution_boundary_trace_env(&mut process);
+            remove_runner_private_env(&mut process);
             process
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -10660,7 +10662,7 @@ fn execute_native_launch_command(
         .args(args)
         .current_dir(working_dir)
         .envs(env_overrides.iter());
-    remove_execution_boundary_trace_env(&mut process);
+    remove_runner_private_env(&mut process);
 
     match mode {
         TaskExecutionMode::Stream {
@@ -12515,12 +12517,13 @@ fn run_task_condition_command_check(check: &CheckSpec, working_dir: &Path) -> Ta
         return TaskConditionStatus::Failed;
     };
 
-    let mut child = match shell_command(command)
+    let mut process = shell_command(command);
+    process
         .current_dir(working_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    remove_runner_private_env(&mut process);
+    let mut child = match process.spawn() {
         Ok(child) => child,
         Err(_) => return TaskConditionStatus::Failed,
     };
@@ -15524,7 +15527,7 @@ fn execute_ensure_virtualenv_action(
     let mut command = Command::new(spec.provider.label());
     command.current_dir(working_dir);
     command.envs(env_overrides);
-    remove_execution_boundary_trace_env(&mut command);
+    remove_runner_private_env(&mut command);
     command.arg("venv");
     if let Some(python) = spec.python.as_deref() {
         command.arg("--python");
@@ -26404,6 +26407,7 @@ fn execute_native_task_command(
     let runtime_spec = runtime;
     let mut process = shell_command(command);
     process.current_dir(working_dir).envs(env_overrides.iter());
+    remove_runner_private_env(&mut process);
     let activation_service_pidfile = matches!(mode, TaskExecutionMode::CaptureActivation)
         .then(|| persistent_service_workload_pidfile_path(task_name))
         .filter(|_| runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service));
@@ -26655,6 +26659,7 @@ fn execute_native_task_command(
                         task_name, command, None,
                     ));
                     process.current_dir(working_dir).envs(env_overrides.iter());
+                    remove_runner_private_env(&mut process);
                 }
             }
             let mut child = process
@@ -37741,6 +37746,25 @@ tasks:
         assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH"));
         assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"));
         assert!(!task_env.contains_key("OTA_PROOF_PARENT_AUTHORITY_FD"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_private_launcher_env_is_removed_from_task_processes() {
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg("env")
+            .env("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", "private-mapping")
+            .env("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE", "attestation_v1");
+
+        super::remove_runner_private_env(&mut command);
+
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY="));
+        assert!(!stdout.contains("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE="));
     }
 
     #[test]
