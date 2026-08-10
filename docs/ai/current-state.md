@@ -213,19 +213,27 @@ durable agent workflow belongs in the canonical Ota skill.
   checks out exact authority-launcher `99affd90f712512fa1fd7c039868d114904736cf` and proves the
   positive `openat2` containment flags plus symlink-escape refusal on Linux/x86_64 kernel
   `6.8.0-134`. This does not exercise the root UID-switching helper or the systemd service.
-  The execution-disabled immutable transient-scope foundation is now proved. Launcher revision
-  `ebbe777682bafa8384b28070e95cf91037d7f451` resumes that exact scoped child only far enough to
+  The execution-disabled immutable transient-scope foundation is now proved. Core
+  `cc680cef790bf8334ee0dfe513c202a51c21954e`, Protocol
+  `b4f36fe450dc4047bd7bd623ea8ba60fd951e31d`, and Launcher
+  `d8aa1d0bf9783d29d53d0a5e912f09f1fa414624` resume that exact scoped child only far enough to
   receive Core's bounded private
   process-posture preface. It re-derives the posture identity and binds PID/start time, Ota binary,
   and principal mapping before exact scope/child/slot cleanup. Core emits the preface before CLI
   parsing or command dispatch and blocks for launcher continuation; this slice deliberately sends
-  none. Malformed or substituted posture fails closed. This local slice creates no V3 attestation,
-  forwards no broker challenge, consumes no lease, and executes no selected work. Its immutable
-  hosted posture proof, the production systemd execution path, and hosted V3 pressure remain
-  unproved. The first hosted posture attempt also exposed that Core's schema-validation fallback
-  embedded its absolute compile checkout. Published JSON schemas are now embedded into the
-  source-built binary, making installed schema validation and immutable Core binary reconciliation
-  independent of both a source checkout and the checkout directory that compiled Ota.
+  none. Malformed or substituted posture fails closed. Hosted normal run
+  [31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+  and root-armed crash/recovery run
+  [31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+  bind exact reproducible binary identities, unchanged repository state, zero terminal scopes, and
+  the typed `posture_admitted_boundary_removed` terminal stage; the crash path records launcher
+  exit `86` before fresh reconciliation. The first hosted posture attempt also exposed that Core's
+  schema-validation fallback embedded its absolute compile checkout. Published JSON schemas are now
+  embedded into the source-built binary, making installed schema validation and immutable Core
+  binary reconciliation independent of both a source checkout and the checkout directory that
+  compiled Ota. This closes only the immutable hosted execution-disabled posture gate. V3
+  attestation, broker authorization, one-use lease consumption, selected execution, receipt/archive
+  evidence, the production systemd execution path, and provider attestation remain unproved.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.

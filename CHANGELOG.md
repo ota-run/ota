@@ -30,14 +30,17 @@
   Published JSON schemas are now embedded into the Ota binary, so installed or relocated source
   builds validate machine output against their exact version-matched schema set without a source
   checkout or compiler-path dependency.
-- Advanced the production systemd-launcher foundation at immutable Launcher revision
-  `ebbe777682bafa8384b28070e95cf91037d7f451` beyond a permanently stopped child. After
-  the exact transient scope and active slot are durable, the launcher resumes only the exact Ota
-  child through `pidfd`, admits one bounded `ota_process_posture/v1` preface, and reconciles it to
-  the recorded PID/start time, binary identity, and principal mapping before terminal cleanup. It
-  now emits that preface before CLI dispatch and blocks for launcher continuation, which this slice
-  deliberately never sends. It still creates no V3 attestation, contacts no broker, consumes no
-  lease, and executes no selected work; immutable hosted posture pressure remains open.
+- Proved the execution-disabled systemd posture gate at Core
+  `cc680cef790bf8334ee0dfe513c202a51c21954e`, Protocol
+  `b4f36fe450dc4047bd7bd623ea8ba60fd951e31d`, and Launcher
+  `d8aa1d0bf9783d29d53d0a5e912f09f1fa414624`. Hosted normal run
+  [31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+  and root-armed crash/recovery run
+  [31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+  bind reproducible installed binaries, unchanged repository identities, exact transient-scope
+  cleanup, and a typed `posture_admitted_boundary_removed` terminal stage. The crash path records
+  launcher exit `86` before fresh reconciliation. These runs still create no V3 attestation,
+  contact no broker, consume no lease, execute no selected work, and emit no receipt or archive.
 - Added the next execution-disabled systemd-launcher slice at Protocol
   `adaabfb8300925a09975c7244e27242b5cd41e60` and Launcher
   `0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`: a canonical protocol scope identity,

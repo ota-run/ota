@@ -1180,8 +1180,10 @@ revisions `cbf5183e0b3c8edf000f9d0ea840e1b50bfa4802` and
 execution-disabled transient-scope foundation gate only; the production pressure bar below remains
 open.
 
-The next implementation slice at immutable Launcher revision
-`ebbe777682bafa8384b28070e95cf91037d7f451` advances that exact scoped child only through Core's
+The completed execution-disabled posture slice at Core
+`cc680cef790bf8334ee0dfe513c202a51c21954e`, Protocol
+`b4f36fe450dc4047bd7bd623ea8ba60fd951e31d`, and Launcher
+`d8aa1d0bf9783d29d53d0a5e912f09f1fa414624` advances that exact scoped child only through Core's
 private `ota_process_posture/v1` preface. The launcher uses `pidfd` to resume the previously verified
 PID only after scope identity is durable, reads one protocol-bounded frame, and reconciles its
 semantic identity, PID/start identity, protected Ota binary identity, and principal-mapping identity
@@ -1194,6 +1196,16 @@ pressure bar. The first hosted attempt exposed one Core build-reproducibility de
 schema discovery embedded the absolute compile checkout through `CARGO_MANIFEST_DIR`. Core now
 embeds the published schema set into the source-built executable instead, preserving installed
 schema validation while allowing exact immutable binaries to reconcile across checkout paths.
+Hosted normal run
+[31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+binds those exact source revisions and root-installed binary identities to an unchanged repository,
+zero residual transient scopes, and the typed `posture_admitted_boundary_removed` terminal stage.
+Root-armed crash/recovery run
+[31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+records launcher exit `86`, then proves fresh reconciliation and the same exact terminal cleanup.
+This closes only the immutable hosted execution-disabled posture gate; V3 attestation, broker
+authorization, lease consumption, selected execution, receipt/archive evidence, and provider
+attestation remain open under the production pressure bar below.
 
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:
