@@ -222,7 +222,10 @@ durable agent workflow belongs in the canonical Ota skill.
   none. Malformed or substituted posture fails closed. This local slice creates no V3 attestation,
   forwards no broker challenge, consumes no lease, and executes no selected work. Its immutable
   hosted posture proof, the production systemd execution path, and hosted V3 pressure remain
-  unproved.
+  unproved. The first hosted posture attempt also exposed that Core's schema-validation fallback
+  embedded its absolute compile checkout. Runtime schema discovery now uses the repository or
+  source-build executable tree, making immutable Core binary reconciliation independent of the
+  checkout directory without weakening schema validation.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.

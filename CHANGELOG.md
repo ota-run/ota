@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Removed the source checkout's absolute `CARGO_MANIFEST_DIR` from production schema discovery.
+  Source builds now locate `docs/spec/json-schemas` from the runtime repository or executable tree,
+  so identical immutable Core revisions can produce the same binary identity across different
+  checkout directories without weakening published-schema validation.
 - Advanced the production systemd-launcher foundation at immutable Launcher revision
   `ebbe777682bafa8384b28070e95cf91037d7f451` beyond a permanently stopped child. After
   the exact transient scope and active slot are durable, the launcher resumes only the exact Ota

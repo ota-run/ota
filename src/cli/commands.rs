@@ -54204,22 +54204,28 @@ fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Resul
 fn resolve_schema_dir() -> Result<PathBuf, String> {
     let cwd =
         env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
+    let executable = env::current_exe()
+        .map_err(|error| format!("failed to resolve current executable: {error}"))?;
+    resolve_schema_dir_from(&cwd, &executable).ok_or_else(|| {
+        String::from(
+            "schema directory not found; expected docs/spec/json-schemas in the current repo or source-build tree",
+        )
+    })
+}
+
+fn resolve_schema_dir_from(cwd: &Path, executable: &Path) -> Option<PathBuf> {
     let cwd_schema_dir = cwd.join("docs").join("spec").join("json-schemas");
     if cwd_schema_dir.is_dir() {
-        return Ok(cwd_schema_dir);
+        return Some(cwd_schema_dir);
     }
 
-    let fallback_schema_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("docs")
-        .join("spec")
-        .join("json-schemas");
-    if fallback_schema_dir.is_dir() {
-        return Ok(fallback_schema_dir);
+    for ancestor in executable.ancestors().skip(1) {
+        let schema_dir = ancestor.join("docs").join("spec").join("json-schemas");
+        if schema_dir.is_dir() {
+            return Some(schema_dir);
+        }
     }
-
-    Err(String::from(
-        "schema directory not found; expected docs/spec/json-schemas in the current repo",
-    ))
+    None
 }
 
 fn load_json_value(path: &Path) -> Result<JsonValue, String> {
@@ -60642,6 +60648,21 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn schema_directory_follows_runtime_source_tree_without_compile_path() {
+        let source = tempfile::tempdir().expect("source tree");
+        let elsewhere = tempfile::tempdir().expect("unrelated cwd");
+        let schema_dir = source.path().join("docs/spec/json-schemas");
+        fs::create_dir_all(&schema_dir).expect("schema directory");
+        let executable = source.path().join("target/release/ota");
+
+        assert_eq!(
+            super::resolve_schema_dir_from(elsewhere.path(), &executable),
+            Some(schema_dir)
+        );
+    }
+
     #[test]
     fn lifecycle_assertion_diagnostics_redact_and_limit_utf8_bytes() {
         let secret = String::from("lifecycle-secret");

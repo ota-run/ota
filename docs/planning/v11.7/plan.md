@@ -1190,7 +1190,10 @@ for an explicit launcher continuation. This slice deliberately sends no continua
 malformed, oversized, invalid-control, or substituted posture fails closed through exact scope,
 child, and active-slot cleanup. This still creates no signed V3 launcher instance, forwards no
 broker challenge, consumes no lease, executes no selected work, and does not satisfy the production
-pressure bar.
+pressure bar. The first hosted attempt exposed one Core build-reproducibility defect: production
+schema discovery embedded the absolute compile checkout through `CARGO_MANIFEST_DIR`. Core now
+discovers schemas from the runtime repository or source-build executable tree instead, preserving
+schema validation while allowing exact immutable binaries to reconcile across checkout paths.
 
 The initial production pressure bar requires an administrator-provisioned Linux/x64 host where the
 repository job cannot administer the service or read its keys. It must prove:
