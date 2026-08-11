@@ -1031,15 +1031,17 @@ the existing inherited-session branch. Its semantic identity binds:
   decrypted file exists only in its own systemd credential directory. The launcher receives only
   the public verifier set and cannot read or inherit the signing credential;
 - launcher service/socket unit and drop-in identities plus one published
-  `ota.authority-launcher.systemd/v1` hardening-profile identity; and
+  `ota.authority-launcher.systemd/v2` hardening-profile identity; and
 - one protected `ota.authority-job-principal.systemd/v1` identity for the service that owns the
   connecting job principal; and
 - maximum request size, session count, startup time, and terminal wait bounds.
 
-`ota.authority-launcher.systemd/v1` is one closed profile, not a label for arbitrary hardened
-units. Before implementation, authority-protocol publishes its canonical ordered definition and
-content-addressed profile identity,
-`sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930`.
+`ota.authority-launcher.systemd/v2` is one closed profile, not a label for arbitrary hardened
+units. Authority Protocol publishes its canonical ordered definition and content-addressed profile
+identity, `sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42`.
+The legacy `ota.authority-launcher.systemd/v1` profile remains verifiable for historical evidence,
+but it models a launcher-owned attestor credential and cannot authorize the separated producer
+path.
 The service unit requires these exact semantic settings:
 
 - `User=root`, `Group=root`, empty supplementary and ambient capabilities, `UMask=0077`,
@@ -1123,8 +1125,8 @@ provider control plane. Any unobservable host-principal posture refuses
 `protected_launcher_attested_one_use`; it is not converted to a warning.
 
 Runtime reconciliation uses only defined evidence sources: `SO_PEERCRED` and socket metadata for
-client/proxy/listener identity; protected-file verification plus canonical content identities for
-units, drop-ins, binaries, stores, encrypted credential source, and configuration; systemd manager
+client/proxy/producer/listener identity; protected-file verification plus canonical content identities for
+units, drop-ins, binaries, stores, producer public verifier set, producer binding, and configuration; systemd manager
 properties for active unit, invocation, slice, scope, cgroup, effective directive, and Polkit
 control posture; account/group and non-interactive sudo policy queries for bounded host-principal
 posture; `/proc/<pid>/status`, `/proc/<pid>/fd`, and `/proc/net/unix` for peer/child identities,
@@ -1153,8 +1155,9 @@ Those sources map to the existing protected-launcher observations without adding
 - protected content identities supply launcher binary and configuration binding, plus image/profile
   identities only when the image profile is selected.
 
-The protected installation manifest contains the exact identities of the service unit, socket unit,
-all drop-ins, executable, configuration, encrypted credential source, and hardening profile. At
+The protected installation manifest contains the exact identities of the launcher and producer
+service/socket units, all drop-ins, executables, launcher configuration, producer binding, producer
+public verifier set, and hardening profile. It never contains the producer signing credential. At
 startup the service reconciles those protected files, its inherited listener, systemd invocation
 identity, and current cgroup with the manifest. The job principal must have no permission through
 systemd or Polkit to start, stop, reload, replace, signal, inspect protected credentials, or manage

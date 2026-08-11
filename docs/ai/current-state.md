@@ -271,6 +271,14 @@ durable agent workflow belongs in the canonical Ota skill.
   Retained pressure artifacts may bind only the signing key ID and public verifier identity, never
   private credential material. The launcher never holds the producer signing credential, and a
   fixture that injects verified observations is not acceptable pressure evidence.
+  The next uncommitted collector batch adds the additive
+  `ota.authority-launcher.systemd/v2` profile with identity
+  `sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42`. It preserves V1 archive
+  verification while replacing launcher-owned credential settings with producer socket metadata
+  and the public verifier set. Core accepts only the exact registered V1 or V2 profile-ID/identity
+  pair, and the Launcher collector assembles observations in canonical order while refusing any
+  unavailable source. Concrete Linux probes and producer invocation remain unwired, so this is not
+  yet real V3 evidence.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.

@@ -218,8 +218,8 @@
       "properties": {
         "protocol_version": { "const": "ota-systemd-protected-launcher-attestation/v3" },
         "adapter": { "const": "systemd_protected_launcher/v1" },
-        "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v1" },
-        "systemd_launcher_profile_identity": { "const": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930" },
+        "systemd_launcher_profile_id": { "enum": ["ota.authority-launcher.systemd/v1", "ota.authority-launcher.systemd/v2"] },
+        "systemd_launcher_profile_identity": { "$ref": "#/$defs/sha256Identity" },
         "systemd_job_principal_profile_id": { "const": "ota.authority-job-principal.systemd/v1" },
         "systemd_job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" },
         "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
@@ -230,7 +230,23 @@
         "maximum_age_seconds": { "type": "integer", "minimum": 1 },
         "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
         "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
-      }
+      },
+      "allOf": [{
+        "oneOf": [
+          {
+            "properties": {
+              "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v1" },
+              "systemd_launcher_profile_identity": { "const": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930" }
+            }
+          },
+          {
+            "properties": {
+              "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v2" },
+              "systemd_launcher_profile_identity": { "const": "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42" }
+            }
+          }
+        ]
+      }]
     },
     "brokerPublicAuthorityBinding": {
       "type": "object",
@@ -628,7 +644,7 @@
                 "ptracer_clear_applied": { "const": true }, "principal_mapping_identity": { "$ref": "#/$defs/sha256Identity" }
               }
             },
-            "systemd_launcher_profile_identity": { "const": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930" },
+            "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42"] },
             "systemd_job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" },
             "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
             "systemd_invocation_identity": { "$ref": "#/$defs/sha256Identity" },

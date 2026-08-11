@@ -41,8 +41,9 @@ use ota_authority_protocol::{
     PROTECTED_LAUNCHER_PROFILE_ID_V1, PROTOCOL_VERSION_V1,
     RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RuntimeBoundaryAttestorKind,
     SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V1, SYSTEMD_LAUNCHER_PROFILE_ID_V1,
-    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
-    runtime_boundary_profile_by_id, runtime_boundary_profile_identity,
+    SYSTEMD_LAUNCHER_PROFILE_ID_V2, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
+    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, runtime_boundary_profile_by_id,
+    runtime_boundary_profile_identity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2041,7 +2042,15 @@ fn validate_broker_attestation_binding(
             )
         }
         BrokerAttestationBinding::V3(value) => {
-            let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v1();
+            let launcher_profile = ota_authority_protocol::systemd_launcher_profile_by_id(
+                value.systemd_launcher_profile_id.as_str(),
+            )
+            .ok_or_else(|| {
+                error(
+                    "crossing_broker_attestation_profile_unsupported",
+                    "broker attestation selects an unsupported systemd launcher profile",
+                )
+            })?;
             let job_profile = ota_authority_protocol::systemd_job_principal_profile_v1();
             let launcher_identity =
                 ota_authority_protocol::systemd_launcher_profile_identity(&launcher_profile)
@@ -2065,7 +2074,10 @@ fn validate_broker_attestation_binding(
                     })?;
             if value.protocol_version != SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3
                 || value.adapter != SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1
-                || value.systemd_launcher_profile_id != SYSTEMD_LAUNCHER_PROFILE_ID_V1
+                || !matches!(
+                    value.systemd_launcher_profile_id.as_str(),
+                    SYSTEMD_LAUNCHER_PROFILE_ID_V1 | SYSTEMD_LAUNCHER_PROFILE_ID_V2
+                )
                 || value.systemd_launcher_profile_identity != launcher_identity
                 || value.systemd_job_principal_profile_id != SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V1
                 || value.systemd_job_principal_profile_identity != job_identity
@@ -2869,12 +2881,12 @@ tasks:
     -> (BrokerAuthorityBinding, SigningKey, SigningKey) {
         let (mut binding, broker_signing_key) = broker_binding_with_signing_key();
         let attestor_signing_key = SigningKey::from_bytes(&[11_u8; 32]);
-        let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v1();
+        let launcher_profile = ota_authority_protocol::systemd_launcher_profile_v2();
         let job_profile = ota_authority_protocol::systemd_job_principal_profile_v1();
         binding.attestation = BrokerAttestationBinding::V3(BrokerAttestationBindingV3 {
             protocol_version: String::from(SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3),
             adapter: String::from(SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1),
-            systemd_launcher_profile_id: String::from(SYSTEMD_LAUNCHER_PROFILE_ID_V1),
+            systemd_launcher_profile_id: String::from(SYSTEMD_LAUNCHER_PROFILE_ID_V2),
             systemd_launcher_profile_identity:
                 ota_authority_protocol::systemd_launcher_profile_identity(&launcher_profile)
                     .expect("systemd launcher profile identity"),
@@ -3098,6 +3110,26 @@ tasks:
             bindings: vec![binding.clone()],
         })
         .expect("canonical v3 broker binding should validate");
+
+        let mut legacy_profile = binding.clone();
+        let BrokerAttestationBinding::V3(attestation) = &mut legacy_profile.attestation else {
+            panic!("test binding must use v3 attestation");
+        };
+        attestation.systemd_launcher_profile_id = SYSTEMD_LAUNCHER_PROFILE_ID_V1.into();
+        attestation.systemd_launcher_profile_identity =
+            ota_authority_protocol::systemd_launcher_profile_identity(
+                &ota_authority_protocol::systemd_launcher_profile_v1(),
+            )
+            .expect("legacy launcher profile identity");
+        legacy_profile.identity.clear();
+        legacy_profile.identity =
+            domain_identity(broker_binding_domain(&legacy_profile), &legacy_profile)
+                .expect("legacy-profile binding identity");
+        validate_broker_store(&BrokerAuthorityStore {
+            schema_version: CROSSING_BROKER_SCHEMA_VERSION,
+            bindings: vec![legacy_profile],
+        })
+        .expect("legacy v1 systemd profile remains verifiable");
 
         let mut wrong_domain = binding.clone();
         wrong_domain.message_domains.attestation_response =

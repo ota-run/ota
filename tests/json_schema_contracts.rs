@@ -2451,7 +2451,7 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
                         "no_new_privs": true, "dumpable": 0, "ptracer_clear_applied": true,
                         "principal_mapping_identity": identity
                     },
-                    "systemd_launcher_profile_identity": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930",
+                    "systemd_launcher_profile_identity": "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42",
                     "systemd_job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
                     "launcher_session_binding_identity": identity,
                     "systemd_invocation_identity": identity,
@@ -2506,6 +2506,14 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
     wrong_job_methods["payload"]["systemd_protected_launcher"]["job_principal_observations"][0]["evidence_methods"] =
         json!(["process_access_probe"]);
     assert!(attestation_schema.validate(&wrong_job_methods).is_err());
+    let mut legacy_launcher_profile = attestation.clone();
+    legacy_launcher_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
+        json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
+    assert!(
+        attestation_schema
+            .validate(&legacy_launcher_profile)
+            .is_ok()
+    );
     let mut substituted_profile = attestation.clone();
     substituted_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
         format!("sha256:{}", "b".repeat(64)).into();
@@ -2520,8 +2528,8 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
         "attestation": {
             "protocol_version": "ota-systemd-protected-launcher-attestation/v3", "adapter": "systemd_protected_launcher/v1",
-            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v1",
-            "systemd_launcher_profile_identity": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930",
+            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v2",
+            "systemd_launcher_profile_identity": "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42",
             "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v1",
             "systemd_job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
             "launcher_session_binding_identity": identity, "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
@@ -2539,6 +2547,20 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
     });
     let binding_schema = receipt_definition_schema("brokerPublicAuthorityBinding");
     assert!(binding_schema.validate(&binding).is_ok());
+    let mut legacy_launcher_profile = binding.clone();
+    legacy_launcher_profile["attestation"]["systemd_launcher_profile_id"] =
+        json!("ota.authority-launcher.systemd/v1");
+    legacy_launcher_profile["attestation"]["systemd_launcher_profile_identity"] =
+        json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
+    assert!(binding_schema.validate(&legacy_launcher_profile).is_ok());
+    let mut mismatched_launcher_profile = binding.clone();
+    mismatched_launcher_profile["attestation"]["systemd_launcher_profile_identity"] =
+        json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
+    assert!(
+        binding_schema
+            .validate(&mismatched_launcher_profile)
+            .is_err()
+    );
     let mut wrong_domain = binding;
     wrong_domain["message_domains"]["attestation_response"] =
         json!("ota-crossing-broker/attestation-response/v2");

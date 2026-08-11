@@ -1117,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "ota-authority-protocol"
 version = "0.1.0"
-source = "git+https://github.com/ota-run/authority-protocol.git?rev=953e9e6407c9de030822b1f891046c2829b3c714#953e9e6407c9de030822b1f891046c2829b3c714"
+source = "git+https://github.com/ota-run/authority-protocol.git?rev=cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14#cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14"
 dependencies = [
  "serde",
  "serde_jcs",

@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Add compatibility-preserving support for the separated-producer
+  `ota.authority-launcher.systemd/v2` profile. V3 broker bindings and the published receipt schema
+  require an exact registered profile-ID/identity pair; legacy V1 evidence remains verifiable but
+  cannot be relabelled as V2.
+
 - Add the next execution-disabled systemd protected-launcher bridge. An exact, identity-bound local
   continuation now binds the exact invocation, child, working directory, posture, and principal
   mapping while unlocking CLI parsing after process-posture admission and preserving the same
