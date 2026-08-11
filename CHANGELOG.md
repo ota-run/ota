@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- Fixed interactive native task closures so typed hydration and bootstrap phases retain Ota's
+  canonical `🦦` loader instead of inheriting terminal ownership from a later interactive command.
+  On Unix, Ctrl-C now terminates Ota's complete native child process group and waits for it to
+  settle before emitting the interrupted summary, preventing late npm output after Ota reports
+  completion.
+
 - Add compatibility-preserving support for the separated-producer
   `ota.authority-launcher.systemd/v2` profile. V3 broker bindings and the published receipt schema
   require an exact registered profile-ID/identity pair; legacy V1 evidence remains verifiable but

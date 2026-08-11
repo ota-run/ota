@@ -235,3 +235,12 @@
   lane only when the task is explicitly review-required and the user has approved that execution.
 - Rule: Codex must preserve its actor mode when invoking Ota. Agent-safe validation means
   `--agent`, not merely a task that would also run successfully for a human.
+
+## 2026-08-11
+
+- Pattern: A later interactive task can transfer terminal ownership backward into typed hydration
+  or bootstrap, silently removing Ota's canonical loader from runner-owned preparation phases.
+- Correction: Resolve interaction per executed phase: typed preparation remains noninteractive and
+  loader-owned, while only the actual interactive command inherits the terminal.
+- Rule: Every runner-owned silent phase must retain Ota's loader and active task label; terminal
+  passthrough is an explicit exception for the command currently owning the user's terminal.

@@ -10617,6 +10617,16 @@ fn finite_command_stdin(interaction: Option<CommandInteractionPosture>) -> Stdio
     }
 }
 
+fn stream_step_inherits_terminal(
+    allow_terminal_passthrough: bool,
+    capture_output: bool,
+    interaction: Option<CommandInteractionPosture>,
+) -> bool {
+    allow_terminal_passthrough
+        && !capture_output
+        && interaction != Some(CommandInteractionPosture::Forbidden)
+}
+
 fn required_command_terminal_is_available(
     interaction: Option<CommandInteractionPosture>,
     mode: &TaskExecutionMode,
@@ -10677,11 +10687,14 @@ fn execute_native_launch_command(
             // all three stdio streams directly. This is the path that lets Wrangler (and similar
             // tools) detect a real TTY. The `emit_progress` spinner is bypassed to avoid the
             // pipe interception it requires.
-            let step_inherits = allow_terminal_passthrough
-                && !capture_output
-                && interaction != Some(CommandInteractionPosture::Forbidden);
+            let step_inherits = stream_step_inherits_terminal(
+                allow_terminal_passthrough,
+                capture_output,
+                interaction,
+            );
 
             if emit_progress && !step_inherits {
+                configure_owned_native_process_group(&mut process);
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start_with_policy(
                     &running_loader_label(task_name, backend),
@@ -10740,7 +10753,7 @@ fn execute_native_launch_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_owned_native_process_group(child);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -10795,6 +10808,9 @@ fn execute_native_launch_command(
                     interrupted,
                 })
             } else {
+                if !step_inherits {
+                    configure_owned_native_process_group(&mut process);
+                }
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
@@ -10847,7 +10863,7 @@ fn execute_native_launch_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_native_child(child, !step_inherits);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -10901,6 +10917,7 @@ fn execute_native_launch_command(
             }
         }
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
+            configure_owned_native_process_group(&mut process);
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut child = process
                 .stdin(finite_command_stdin(interaction))
@@ -10931,7 +10948,7 @@ fn execute_native_launch_command(
                 &mut child,
                 readiness_probe.as_ref(),
                 |child| {
-                    let _ = child.kill();
+                    interrupt_owned_native_process_group(child);
                     let _ = cleanup_interrupted_native_service_workload_and_note(
                         task_name,
                         runtime_spec,
@@ -12138,7 +12155,7 @@ fn execute_task_with_hooks(
         prepared_execution = PreparedTaskExecution::Shell {
             command,
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         };
     }
     if requires_read_only_replay_baseline
@@ -13902,7 +13919,7 @@ fn execute_prepare_task(
         PreparedTaskExecution::Shell {
             command,
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
     )?;
     execute_task_command(
@@ -14347,12 +14364,12 @@ fn prepared_structured_command_for_backend(
             exe: exe.to_string(),
             args,
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, exe, &args),
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
     }
 }
@@ -14366,14 +14383,20 @@ fn prepared_structured_command_spec_for_backend(
             exe: command.exe.clone(),
             args: command.args.clone(),
             cwd: command.cwd.clone(),
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, command.exe.as_str(), &command.args),
             cwd: command.cwd.clone(),
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
     }
+}
+
+fn typed_prepare_command_interaction() -> Option<CommandInteractionPosture> {
+    // Typed preparation is a deterministic runner-owned phase. A later interactive task in the
+    // same closure must not transfer terminal ownership backward into hydration or bootstrap.
+    Some(CommandInteractionPosture::Forbidden)
 }
 
 fn wrapped_prepare_execution_for_orchestrator(
@@ -26419,10 +26442,13 @@ fn execute_native_task_command(
             live_log,
             allow_terminal_passthrough,
         } => {
-            let step_inherits = allow_terminal_passthrough
-                && !capture_output
-                && interaction != Some(CommandInteractionPosture::Forbidden);
+            let step_inherits = stream_step_inherits_terminal(
+                allow_terminal_passthrough,
+                capture_output,
+                interaction,
+            );
             if emit_progress && !step_inherits {
+                configure_owned_native_process_group(&mut process);
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start_with_policy(
                     &running_loader_label(task_name, backend),
@@ -26480,7 +26506,7 @@ fn execute_native_task_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_owned_native_process_group(child);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -26536,6 +26562,9 @@ fn execute_native_task_command(
                     interrupted,
                 })
             } else {
+                if !step_inherits {
+                    configure_owned_native_process_group(&mut process);
+                }
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
@@ -26588,7 +26617,7 @@ fn execute_native_task_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_native_child(child, !step_inherits);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -26662,6 +26691,7 @@ fn execute_native_task_command(
                     remove_runner_private_env(&mut process);
                 }
             }
+            configure_owned_native_process_group(&mut process);
             let mut child = process
                 .stdin(finite_command_stdin(interaction))
                 .stdout(Stdio::piped())
@@ -35138,6 +35168,48 @@ fn shell_command(command: &str) -> Command {
         .arg("-c")
         .arg(signal_forwarding_shell_script(command.to_string()));
     shell
+}
+
+// Native children need their own process group so interruption can stop the complete task tree
+// without signalling Ota's caller terminal.
+#[cfg(unix)]
+fn configure_owned_native_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt as _;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_owned_native_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn interrupt_owned_native_process_group(child: &mut Child) {
+    let process_group = child.id() as libc::pid_t;
+    if process_group <= 0 {
+        return;
+    }
+
+    // A negative PID targets only the Ota-created process group, including npm's descendants.
+    // SIGTERM is deliberate: noninteractive shells can make background jobs ignore SIGINT.
+    // It never targets the inherited terminal process group.
+    let result = unsafe { libc::kill(-process_group, libc::SIGTERM) };
+    if result != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+        let _ = child.kill();
+    }
+}
+
+fn interrupt_native_child(child: &mut Child, owns_process_group: bool) {
+    if owns_process_group {
+        interrupt_owned_native_process_group(child);
+    } else {
+        // Terminal-passthrough children remain in the caller's foreground process group so
+        // interactive prompts keep working. The terminal delivers Ctrl-C to that group directly.
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(unix))]
+fn interrupt_owned_native_process_group(child: &mut Child) {
+    let _ = child.kill();
 }
 
 #[cfg(windows)]
@@ -55467,6 +55539,77 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn interrupted_native_task_waits_for_owned_descendant_exit() {
+        let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let child_pid_path = repo.path().join("child.pid");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: interrupt-tree
+tasks:
+  setup:
+    command:
+      exe: sh
+      args:
+        - -c
+        - sleep 30 & child=$!; printf '%s\n' "$child" > child.pid; wait "$child"
+"#,
+        )
+        .expect("write contract");
+        let contract = load_contract(&contract_path).expect("load contract");
+
+        let interrupt_path = child_pid_path.clone();
+        let interrupt_thread = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !interrupt_path.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(interrupt_path.exists(), "native descendant should start");
+            super::simulate_run_interrupt_for_test();
+        });
+
+        let outcome = super::run_task_with_args_with_overrides_and_stream_capture(
+            &contract,
+            &contract_path,
+            "setup",
+            &[],
+            ExecutionOverrides::default(),
+            true,
+            None,
+            false,
+        )
+        .expect("interrupted task should return an outcome");
+        interrupt_thread.join().expect("interrupt thread");
+
+        assert!(outcome.interrupted, "{outcome:?}");
+        assert_eq!(outcome.exit_code, 130, "{outcome:?}");
+        let child_pid = fs::read_to_string(&child_pid_path)
+            .expect("read child pid")
+            .trim()
+            .parse::<libc::pid_t>()
+            .expect("parse child pid");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while unsafe { libc::kill(child_pid, 0) } == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            unsafe { libc::kill(child_pid, 0) },
+            -1,
+            "Ota must not report interruption while a native task descendant still runs"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn persistent_service_wrapper_fails_when_statusfile_is_never_written() {
         let _guard = env_mutex_lock();
         let task_name = "dev:statusfile-missing";
@@ -73498,6 +73641,23 @@ services:
             CommandInteractionPosture::Forbidden,
             true,
             true
+        ));
+    }
+
+    #[test]
+    fn typed_prepare_keeps_runner_owned_loader_when_later_task_is_interactive() {
+        let interaction = super::typed_prepare_command_interaction();
+
+        assert_eq!(interaction, Some(CommandInteractionPosture::Forbidden));
+        assert!(!super::stream_step_inherits_terminal(
+            true,
+            false,
+            interaction
+        ));
+        assert!(super::stream_step_inherits_terminal(
+            true,
+            false,
+            Some(CommandInteractionPosture::Auto)
         ));
     }
 
