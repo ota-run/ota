@@ -279,12 +279,16 @@ durable agent workflow belongs in the canonical Ota skill.
   verification while replacing launcher-owned credential settings with producer socket metadata
   and the public verifier set. Core accepts only the exact registered V1 or V2 profile-ID/identity
   pair, and the Launcher collector assembles observations in canonical order while refusing any
-  unavailable source. The next uncommitted Launcher batch activates the first live Linux
-  job-principal preflight before repository opening or child creation: socket-bound pidfd,
-  protected UID/GID mapping, exact `/proc` UID/GID slots, empty supplementary groups and
-  inheritable/permitted/effective/ambient capabilities, and `NoNewPrivs=1`. The remaining protected
-  file, systemd, containment, account/policy, target-access, and Ota process-access probes plus
-  producer invocation remain unwired, so this is not yet complete collector or real V3 evidence.
+  unavailable source. The committed live Linux job-principal preflight at Launcher
+  `60a07055477ed27d6c82a2885fa9a87da94c6a70` and Core
+  `591289f441cf9f0832d9605001854e3aa89f5df5` runs before repository opening or child creation:
+  socket-bound pidfd, protected UID/GID mapping, exact `/proc` UID/GID slots, empty supplementary
+  groups and inheritable/permitted/effective/ambient capabilities, and `NoNewPrivs=1`. Launcher
+  `d437aed99daf4ae55e5d8299a99ce5df535fb07f` additionally retains and revalidates the protected
+  broker-proxy pidfd before and after bridge traffic, with an orchestration regression proving peer
+  exit during that window refuses. The remaining protected file, systemd, containment,
+  account/policy, target-access, and Ota process-access probes plus producer invocation remain
+  unwired, so this is not yet complete collector or real V3 evidence.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
