@@ -258,3 +258,9 @@
   publication boundary exists.
 - Rule: Execution-option semantics should be uniform across capable backends, while backend-specific
   mechanics remain explicit and fail closed when Ota cannot project the requested resource.
+- Pattern: Improving one conflict diagnosis can accidentally redesign the established run summary
+  instead of adding the minimum evidence needed to explain the refusal.
+- Correction: Preserve the canonical summary order and mode-specific fields; add only reason and
+  resource rows at the existing ownership boundary, while keeping detailed remediation above it.
+- Rule: Error-specific UX may enrich the shared summary, but it must not replace or reorder the
+  stable summary contract.

@@ -4769,11 +4769,26 @@ fn run_native_host_port_override_participates_in_listener_conflicts() {
         .expect("run Ota");
     assert!(!output.status.success());
     assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Host port already in use"), "{stderr}");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("runtime_listener"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr.contains("native task `dev` listener `site` requested `127.0.0.1:43112`"),
+        "{stderr}"
     );
+    assert!(
+        stderr.contains("active container execution `dev` already owns `127.0.0.1:43112`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "rerun `ota run dev --mode native --host-port <free port>` to select a different host port"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Reason:      runtime_listener"), "{stderr}");
+    assert!(stderr.contains("Host port:   43112"), "{stderr}");
+    assert!(stderr.contains("Mode:        native"), "{stderr}");
+    assert!(stderr.contains("Task:        dev"), "{stderr}");
 }
 
 #[cfg(unix)]
@@ -4896,7 +4911,7 @@ fn run_refuses_same_listener_before_selected_task_mutation() {
     assert!(!output.status.success());
     assert!(!fixture.path().join("sentinel").exists());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Active execution conflict"));
+    assert!(stderr.contains("Host port already in use"));
     assert!(stderr.contains("runtime_listener"));
     assert!(stderr.contains("host:site (127.0.0.1:43111; dev)"));
 }

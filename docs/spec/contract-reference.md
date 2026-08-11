@@ -3082,7 +3082,8 @@ Surface attachment rules:
 - `bind.port.mode: discover`: ota discovers the final listening port after the task starts; use this only for native tasks where the process may auto-bump to a free port
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
 - `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs reconcile the named container and then resolve the current published host mapping
-- `ota run <task> --host-port <port>` can override one run's published host/public port on the selected primary projected listener when that listener uses `project.host.port.mode: fixed`; the workload bind port stays unchanged
+- `ota run <task> --host-port <port>` can select one run's host-facing port on a primary listener with fixed bind and fixed `project.host.port` truth; containers and native Compose retain the internal bind, while direct native execution applies the selected port to bind and projection together
+- direct native host-port overrides reproject supported typed launch arguments and Ota's canonical bind/public runtime env; the explicit execution option takes precedence over conflicting task-level bind env for that invocation
 - for native structured `docker compose up` lanes, `--host-port` also requires explicit publication ownership through `project.publication.compose.service`; ota uses that declared compose service to render a temporary override stack instead of guessing service publication truth
 - `ota run <task> --memory <size>` can override one run's requested container memory for container execution while preserving contract/task intent
 - with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering

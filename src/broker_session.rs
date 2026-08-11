@@ -42,6 +42,8 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 #[cfg(all(unix, target_os = "linux"))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(unix, target_os = "linux"))]
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -53,20 +55,22 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 #[cfg(unix)]
 use ota_authority_protocol::OtaProcessPostureV1;
-#[cfg(any(test, all(unix, target_os = "linux")))]
-use ota_authority_protocol::ota_process_posture_identity;
 use ota_authority_protocol::{
     AuthorizationDecision, AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge,
     MAX_FRAME_BYTES, PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
     RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
-    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
+    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2,
+    SYSTEMD_LAUNCHER_PROFILE_ID_V3, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
     SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
     SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
     launcher_attestation_identity_v2, launcher_attestation_identity_v3,
-    message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
+    launcher_principal_mapping_identity, message_identity as protocol_message_identity,
+    nonce_commitment as protocol_nonce_commitment, ota_process_posture_identity,
     runtime_boundary_profile_by_id, runtime_boundary_profile_identity, sha256_identity,
     signed_message_identity as protocol_signed_message_identity,
+    systemd_job_principal_profile_by_id, systemd_launcher_profile_by_id,
+    systemd_protected_launcher_instance_v3_foundation_identity,
 };
 #[cfg(test)]
 use ota_authority_protocol::{
@@ -170,6 +174,8 @@ const SYSTEMD_OTA_SESSION_DESCRIPTOR: std::os::fd::RawFd = 3;
 #[cfg(all(unix, target_os = "linux"))]
 static SYSTEMD_LAUNCHER_STARTUP_BINDING: OnceLock<Mutex<Option<LauncherStartupContinuationV1>>> =
     OnceLock::new();
+#[cfg(all(unix, target_os = "linux"))]
+static SYSTEMD_LAUNCHER_SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(all(unix, target_os = "linux"))]
 fn startup_binding_slot() -> &'static Mutex<Option<LauncherStartupContinuationV1>> {
@@ -224,6 +230,7 @@ fn take_systemd_launcher_startup_environment() -> Result<Option<String>, String>
                     "systemd launcher principal mapping identity is invalid",
                 ));
             }
+            SYSTEMD_LAUNCHER_SESSION_ACTIVE.store(true, Ordering::Release);
             Ok(Some(principal_mapping))
         }
         Some(_) => Err(String::from(
@@ -231,6 +238,16 @@ fn take_systemd_launcher_startup_environment() -> Result<Option<String>, String>
         )),
     }
 }
+
+#[cfg(all(unix, target_os = "linux"))]
+fn report_systemd_launcher_verification_refusal(stage: &str) {
+    if SYSTEMD_LAUNCHER_SESSION_ACTIVE.load(Ordering::Acquire) {
+        eprintln!("ota: systemd protected-launcher verification refused stage={stage}");
+    }
+}
+
+#[cfg(not(all(unix, target_os = "linux")))]
+fn report_systemd_launcher_verification_refusal(_stage: &str) {}
 
 #[cfg(all(unix, target_os = "linux"))]
 pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
@@ -473,18 +490,28 @@ impl PreparedBrokerCrossing {
         session.send_challenge(&challenge.challenge)?;
         let (attestation, attestation_identity) =
             session.receive_verified_attestation(&binding, &challenge, &mut cancelled)?;
-        if let Some(recovery) = crate::crossing_transaction::pending_broker_consumption_recovery(
+        let pending_recovery = crate::crossing_transaction::pending_broker_consumption_recovery(
             repo_root,
             scope.identity.as_str(),
-        )? {
-            session.recover_pending_consumption(
-                &binding,
-                &challenge,
-                &attestation,
-                &attestation_identity,
-                recovery,
-                &mut cancelled,
-            )?;
+        )
+        .map_err(|error| {
+            report_systemd_launcher_verification_refusal("recovery_lookup");
+            error
+        })?;
+        if let Some(recovery) = pending_recovery {
+            session
+                .recover_pending_consumption(
+                    &binding,
+                    &challenge,
+                    &attestation,
+                    &attestation_identity,
+                    recovery,
+                    &mut cancelled,
+                )
+                .map_err(|error| {
+                    report_systemd_launcher_verification_refusal("recovery");
+                    error
+                })?;
         }
         let request_time = OffsetDateTime::now_utc();
         let (authorization_request, authorization_request_identity) = build_authorization_request(
@@ -496,12 +523,21 @@ impl PreparedBrokerCrossing {
             actor_mode,
             requested_lifetime_seconds,
             request_time,
-        )?;
-        session.send_authorization_request(
-            &binding,
-            &authorization_request,
-            &authorization_request_identity,
-        )?;
+        )
+        .map_err(|error| {
+            report_systemd_launcher_verification_refusal("authorization_request_build");
+            error
+        })?;
+        session
+            .send_authorization_request(
+                &binding,
+                &authorization_request,
+                &authorization_request_identity,
+            )
+            .map_err(|error| {
+                report_systemd_launcher_verification_refusal("authorization_request_send");
+                error
+            })?;
         let (authorization_decision, authorization_decision_identity) = session
             .wait_for_authorization_decision(
                 &binding,
@@ -1846,6 +1882,7 @@ fn verify_launcher_attestation_v3(
                 format!("failed to derive systemd protected-launcher instance identity: {error}")
             },
         )?;
+    verify_systemd_protected_launcher_profile(binding_attestation, instance)?;
     if payload.attestation_protocol_version != SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3
         || instance.identity != instance_identity
         || instance.instance_v1.adapter != binding_attestation.adapter
@@ -1878,6 +1915,88 @@ fn verify_launcher_attestation_v3(
     )?;
     launcher_attestation_identity_v3(attestation)
         .map_err(|error| format!("failed to derive v3 launcher attestation identity: {error}"))
+}
+
+fn verify_systemd_protected_launcher_profile(
+    binding: &crate::crossing_authority::BrokerAttestationBindingV3,
+    instance: &ota_authority_protocol::SystemdProtectedLauncherInstanceEvidenceV2,
+) -> Result<(), String> {
+    if instance.schema_version != 3
+        || binding.systemd_launcher_profile_id != SYSTEMD_LAUNCHER_PROFILE_ID_V3
+        || binding.systemd_job_principal_profile_id != SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2
+    {
+        return Err(String::from(
+            "V3 authority requires the canonical V3 systemd protected-launcher profile",
+        ));
+    }
+    let launcher_profile =
+        systemd_launcher_profile_by_id(binding.systemd_launcher_profile_id.as_str())
+            .ok_or_else(|| String::from("systemd protected-launcher profile is unsupported"))?;
+    let job_profile =
+        systemd_job_principal_profile_by_id(binding.systemd_job_principal_profile_id.as_str())
+            .ok_or_else(|| String::from("systemd job-principal profile is unsupported"))?;
+    let mapping = &instance.instance_v1.principal_mapping;
+    let posture = &instance.instance_v1.process_posture;
+    let mapping_identity = launcher_principal_mapping_identity(mapping)
+        .map_err(|_| String::from("systemd principal mapping identity is invalid"))?;
+    let posture_identity = ota_process_posture_identity(posture)
+        .map_err(|_| String::from("Ota process posture identity is invalid"))?;
+    let inner_identity =
+        systemd_protected_launcher_instance_v3_foundation_identity(&instance.instance_v1)
+            .map_err(|_| String::from("systemd protected-launcher instance identity is invalid"))?;
+    if mapping.identity != mapping_identity
+        || posture.identity != posture_identity
+        || instance.instance_v1.identity != inner_identity
+        || posture.principal_mapping_identity != mapping.identity
+        || mapping.job_principal_profile_identity
+            != instance.instance_v1.systemd_job_principal_profile_identity
+        || instance.launcher_observations.len() != launcher_profile.evidence_sources.len()
+        || instance.job_principal_observations.len() != job_profile.requirements.len()
+    {
+        return Err(String::from(
+            "systemd protected-launcher evidence does not satisfy the protected profile",
+        ));
+    }
+    for (observed, required) in instance
+        .launcher_observations
+        .iter()
+        .zip(launcher_profile.evidence_sources.iter())
+    {
+        if &observed.source != required
+            || observed.state != RuntimeBoundaryObservationState::Verified
+            || !is_public_evidence_label(observed.reason_code.as_str())
+            || (instance.schema_version == 3
+                && !observed
+                    .evidence_identity
+                    .as_deref()
+                    .is_some_and(is_sha256_identity))
+        {
+            return Err(String::from(
+                "systemd protected-launcher observations do not satisfy the protected profile",
+            ));
+        }
+    }
+    for (observed, required) in instance
+        .job_principal_observations
+        .iter()
+        .zip(job_profile.requirements.iter())
+    {
+        if observed.requirement != required.requirement
+            || observed.evidence_methods != required.evidence_methods
+            || observed.state != RuntimeBoundaryObservationState::Verified
+            || !is_public_evidence_label(observed.reason_code.as_str())
+            || (instance.schema_version == 3
+                && !observed
+                    .evidence_identity
+                    .as_deref()
+                    .is_some_and(is_sha256_identity))
+        {
+            return Err(String::from(
+                "systemd job-principal observations do not satisfy the protected profile",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2237,13 +2356,23 @@ impl LauncherSession {
             ));
         }
         let result: Result<(LauncherAttestationEvidence, String), String> = (|| {
-            let frame = self.receive_frame_with_cancellation(cancelled, false)?;
+            let frame = self
+                .receive_frame_with_cancellation(cancelled, false)
+                .map_err(|error| {
+                    report_systemd_launcher_verification_refusal("attestation_frame");
+                    error
+                })?;
             let attestation = serde_json::from_slice::<LauncherAttestationEvidence>(&frame)
                 .map_err(|error| {
+                    report_systemd_launcher_verification_refusal("attestation_shape");
                     format!("launcher session returned malformed attestation: {error}")
                 })?;
             let now = OffsetDateTime::now_utc();
-            let identity = verify_launcher_attestation(binding, challenge, &attestation, now)?;
+            let identity = verify_launcher_attestation(binding, challenge, &attestation, now)
+                .map_err(|error| {
+                    report_systemd_launcher_verification_refusal("signature_or_profile");
+                    error
+                })?;
             match (
                 &binding.attestation,
                 &attestation,
@@ -2257,13 +2386,19 @@ impl LauncherSession {
                     .verify_systemd_startup_binding(attestation, posture_identity)
                     .is_ok() => {}
                 (crate::crossing_authority::BrokerAttestationBinding::V3(_), _, _) => {
+                    report_systemd_launcher_verification_refusal("startup_binding");
                     return Err(String::from(
                         "systemd protected-launcher attestation does not bind the exact startup continuation",
                     ));
                 }
                 _ => {}
             }
-            verify_attestation_covers_approval_window(binding, &attestation, now)?;
+            verify_attestation_covers_approval_window(binding, &attestation, now).map_err(
+                |error| {
+                    report_systemd_launcher_verification_refusal("approval_window");
+                    error
+                },
+            )?;
             Ok((attestation, identity))
         })();
         let (attestation, identity) = result.map_err(|error| {
@@ -3376,23 +3511,45 @@ pub(crate) mod tests {
             working_directory_identity: format!("sha256:{}", "0".repeat(64)),
             child_process_identity: format!("sha256:{}", "1".repeat(64)),
         };
-        instance_v1.identity =
+        instance_v1.identity = if binding_attestation.systemd_launcher_profile_id
+            == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3
+        {
+            ota_authority_protocol::systemd_protected_launcher_instance_v3_foundation_identity(
+                &instance_v1,
+            )
+            .expect("V3 systemd foundation identity")
+        } else {
             ota_authority_protocol::systemd_protected_launcher_instance_identity(&instance_v1)
-                .expect("systemd instance identity");
+                .expect("legacy systemd instance identity")
+        };
+        let launcher_profile = ota_authority_protocol::systemd_launcher_profile_by_id(
+            binding_attestation.systemd_launcher_profile_id.as_str(),
+        )
+        .expect("registered launcher profile");
+        let job_profile = ota_authority_protocol::systemd_job_principal_profile_by_id(
+            binding_attestation
+                .systemd_job_principal_profile_id
+                .as_str(),
+        )
+        .expect("registered job-principal profile");
+        let complete_profile = binding_attestation.systemd_launcher_profile_id
+            == ota_authority_protocol::SYSTEMD_LAUNCHER_PROFILE_ID_V3;
         let mut instance = SystemdProtectedLauncherInstanceEvidenceV2 {
-            schema_version: 2,
+            schema_version: if complete_profile { 3 } else { 2 },
             identity: String::new(),
             instance_v1,
-            launcher_observations: ota_authority_protocol::systemd_launcher_profile_v1()
+            launcher_observations: launcher_profile
                 .evidence_sources
                 .into_iter()
                 .map(|source| SystemdLauncherObservation {
                     source,
                     state: RuntimeBoundaryObservationState::Verified,
                     reason_code: String::from("verified_by_systemd_protected_launcher"),
+                    evidence_identity: complete_profile
+                        .then(|| format!("sha256:{}", "6".repeat(64))),
                 })
                 .collect(),
-            job_principal_observations: ota_authority_protocol::systemd_job_principal_profile_v1()
+            job_principal_observations: job_profile
                 .requirements
                 .into_iter()
                 .map(|required| SystemdJobPrincipalObservation {
@@ -3400,6 +3557,8 @@ pub(crate) mod tests {
                     evidence_methods: required.evidence_methods,
                     state: RuntimeBoundaryObservationState::Verified,
                     reason_code: String::from("verified_by_systemd_protected_launcher"),
+                    evidence_identity: complete_profile
+                        .then(|| format!("sha256:{}", "7".repeat(64))),
                 })
                 .collect(),
         };
@@ -3789,10 +3948,14 @@ pub(crate) mod tests {
             read_json_frame::<BrokerChallenge>(&mut launcher),
             challenge.challenge
         );
-        write_json_frame(&mut launcher, &attestation);
+        let matching_response = attestation.clone();
+        let matching_writer = std::thread::spawn(move || {
+            write_json_frame(&mut launcher, &matching_response);
+        });
         session
             .receive_verified_attestation(&binding, &challenge, || false)
             .expect("matching signed V3 posture must admit the session");
+        matching_writer.join().expect("matching response writer");
 
         let mut substituted = attestation.clone();
         let evidence = substituted.v3_mut();
@@ -3819,10 +3982,11 @@ pub(crate) mod tests {
             .payload
             .systemd_protected_launcher
             .instance_v1
-            .identity = ota_authority_protocol::systemd_protected_launcher_instance_identity(
-            &evidence.payload.systemd_protected_launcher.instance_v1,
-        )
-        .expect("substituted systemd instance identity");
+            .identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v3_foundation_identity(
+                &evidence.payload.systemd_protected_launcher.instance_v1,
+            )
+            .expect("substituted V3 systemd foundation identity");
         evidence.payload.systemd_protected_launcher.identity =
             ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(
                 &evidence.payload.systemd_protected_launcher,
@@ -3848,13 +4012,19 @@ pub(crate) mod tests {
             read_json_frame::<BrokerChallenge>(&mut launcher),
             challenge.challenge
         );
-        write_json_frame(&mut launcher, &substituted);
+        let substituted_response = substituted.clone();
+        let substituted_writer = std::thread::spawn(move || {
+            write_json_frame(&mut launcher, &substituted_response);
+        });
         assert!(
             session
                 .receive_verified_attestation(&binding, &challenge, || false)
                 .expect_err("different valid signed posture must refuse")
                 .contains("does not bind the exact startup continuation")
         );
+        substituted_writer
+            .join()
+            .expect("substituted posture response writer");
 
         let mut substituted_child = attestation.clone();
         let evidence = substituted_child.v3_mut();
@@ -3867,10 +4037,11 @@ pub(crate) mod tests {
             .payload
             .systemd_protected_launcher
             .instance_v1
-            .identity = ota_authority_protocol::systemd_protected_launcher_instance_identity(
-            &evidence.payload.systemd_protected_launcher.instance_v1,
-        )
-        .expect("substituted child instance identity");
+            .identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v3_foundation_identity(
+                &evidence.payload.systemd_protected_launcher.instance_v1,
+            )
+            .expect("substituted child V3 foundation identity");
         evidence.payload.systemd_protected_launcher.identity =
             ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(
                 &evidence.payload.systemd_protected_launcher,
@@ -3890,13 +4061,19 @@ pub(crate) mod tests {
             .expect("send challenge");
         let _: OtaProcessPostureV1 = read_json_frame(&mut launcher);
         let _: BrokerChallenge = read_json_frame(&mut launcher);
-        write_json_frame(&mut launcher, &substituted_child);
+        let substituted_child_response = substituted_child.clone();
+        let substituted_child_writer = std::thread::spawn(move || {
+            write_json_frame(&mut launcher, &substituted_child_response);
+        });
         assert!(
             session
                 .receive_verified_attestation(&binding, &challenge, || false)
                 .expect_err("different valid signed child must refuse")
                 .contains("does not bind the exact startup continuation")
         );
+        substituted_child_writer
+            .join()
+            .expect("substituted child response writer");
 
         let mut substituted_working_directory = attestation.clone();
         let evidence = substituted_working_directory.v3_mut();
@@ -3909,10 +4086,11 @@ pub(crate) mod tests {
             .payload
             .systemd_protected_launcher
             .instance_v1
-            .identity = ota_authority_protocol::systemd_protected_launcher_instance_identity(
-            &evidence.payload.systemd_protected_launcher.instance_v1,
-        )
-        .expect("substituted working-directory instance identity");
+            .identity =
+            ota_authority_protocol::systemd_protected_launcher_instance_v3_foundation_identity(
+                &evidence.payload.systemd_protected_launcher.instance_v1,
+            )
+            .expect("substituted working-directory V3 foundation identity");
         evidence.payload.systemd_protected_launcher.identity =
             ota_authority_protocol::systemd_protected_launcher_instance_v2_identity(
                 &evidence.payload.systemd_protected_launcher,
@@ -4330,6 +4508,44 @@ pub(crate) mod tests {
         let attestation = signed_attestation_v3(&binding, &attestor_signing_key, &challenge, now);
         verify_launcher_attestation(&binding, &challenge, &attestation, now)
             .expect("complete v3 systemd protected-launcher attestation should verify");
+
+        let mut incomplete = attestation.clone();
+        let incomplete_instance = &mut incomplete.v3_mut().payload.systemd_protected_launcher;
+        incomplete_instance.job_principal_observations.pop();
+        let mut canonical_incomplete = incomplete_instance.clone();
+        canonical_incomplete.identity.clear();
+        incomplete_instance.identity = protocol_message_identity(
+            ota_authority_protocol::SYSTEMD_LAUNCHER_INSTANCE_IDENTITY_DOMAIN_V3,
+            &canonical_incomplete,
+        )
+        .expect("content-addressed incomplete instance");
+        resign_v3_attestation(&binding, &attestor_signing_key, &mut incomplete);
+        let incomplete_error = verify_launcher_attestation(&binding, &challenge, &incomplete, now)
+            .expect_err("content-addressed and re-signed incomplete profile must refuse");
+        assert!(
+            incomplete_error.contains("instance identity")
+                || incomplete_error.contains("observations")
+        );
+
+        let mut legacy_instance = attestation.clone();
+        let legacy_instance_evidence =
+            &mut legacy_instance.v3_mut().payload.systemd_protected_launcher;
+        legacy_instance_evidence.schema_version = 2;
+        let mut canonical_legacy_instance = legacy_instance_evidence.clone();
+        canonical_legacy_instance.identity.clear();
+        legacy_instance_evidence.identity = protocol_message_identity(
+            ota_authority_protocol::SYSTEMD_LAUNCHER_INSTANCE_IDENTITY_DOMAIN_V2,
+            &canonical_legacy_instance,
+        )
+        .expect("adversarial schema-2 content identity");
+        resign_v3_attestation(&binding, &attestor_signing_key, &mut legacy_instance);
+        let error = verify_launcher_attestation(&binding, &challenge, &legacy_instance, now)
+            .expect_err("V3 authority must not reinterpret a schema-2 instance");
+        assert!(
+            error.contains("failed to derive systemd protected-launcher instance identity")
+                || error.contains("canonical V3"),
+            "unexpected downgrade refusal: {error}"
+        );
 
         let downgraded = signed_attestation(&binding, &attestor_signing_key, &challenge, now);
         assert!(

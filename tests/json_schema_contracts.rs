@@ -2288,7 +2288,15 @@ fn receipt_runtime_boundary_attestation_schema_enforces_v2_profile_and_domain() 
         "signature": "signature"
     });
     let attestation_schema = receipt_definition_schema("signedLauncherAttestation");
-    assert!(attestation_schema.validate(&attestation).is_ok());
+    if let Err(errors) = attestation_schema.validate(&attestation) {
+        panic!(
+            "valid V3 attestation was rejected: {}",
+            errors
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
 
     let mut missing = attestation.clone();
     missing["payload"]["runtime_boundary"]["observations"]
@@ -2386,19 +2394,19 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         "socket_peer_credentials",
         "proc_process_status",
         "proc_descriptor_inspection",
-        "proc_unix_socket_inspection",
+        "protected_socket_identity",
         "target_principal_access_probe",
         "ota_process_posture",
     ]
     .into_iter()
-    .map(|source| json!({ "source": source, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher" }))
+    .map(|source| json!({ "source": source, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher", "evidence_identity": identity }))
     .collect::<Vec<_>>();
     let job_observations = [
         ("distinct_one_to_one_principals", json!(["protected_mapping_configuration", "proc_peer_status", "account_database_inspection"])),
         ("peer_identity_matches_protected_mapping", json!(["protected_mapping_configuration", "proc_peer_status"])),
         ("peer_no_new_privileges", json!(["proc_peer_status"])),
         ("peer_capabilities_empty", json!(["proc_peer_status"])),
-        ("peer_supplementary_groups_empty", json!(["proc_peer_status"])),
+        ("peer_supplementary_groups_limited_to_primary", json!(["proc_peer_status"])),
         ("runner_service_identity_bound", json!(["protected_runner_service_identity"])),
         ("all_principal_processes_contained", json!(["proc_principal_cgroup_enumeration"])),
         ("accounts_locked", json!(["account_database_inspection"])),
@@ -2414,7 +2422,7 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         ("ota_process_inspection_denied", json!(["process_access_probe"])),
     ]
     .into_iter()
-    .map(|(requirement, evidence_methods)| json!({ "requirement": requirement, "evidence_methods": evidence_methods, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher" }))
+    .map(|(requirement, evidence_methods)| json!({ "requirement": requirement, "evidence_methods": evidence_methods, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher", "evidence_identity": identity }))
     .collect::<Vec<_>>();
     let job_principal = json!({
         "real_uid": 1000, "effective_uid": 1000, "saved_uid": 1000, "filesystem_uid": 1000,
@@ -2438,7 +2446,7 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
             "authenticated_origin": "https://broker.example.internal",
             "authority_mounts": ["authority-mount-profile:v3"],
             "systemd_protected_launcher": {
-                "schema_version": 2,
+                "schema_version": 3,
                 "identity": identity,
                 "instance_v1": {
                     "schema_version": 1,
@@ -2447,7 +2455,7 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
                     "principal_mapping": {
                         "schema_version": 1, "identity": identity,
                         "job_peer": job_principal, "execution": execution_principal,
-                        "job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
+                        "job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
                         "launcher_session_binding_identity": identity
                     },
                     "process_posture": {
@@ -2456,8 +2464,8 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
                         "no_new_privs": true, "dumpable": 0, "ptracer_clear_applied": true,
                         "principal_mapping_identity": identity
                     },
-                    "systemd_launcher_profile_identity": "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42",
-                    "systemd_job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
+                    "systemd_launcher_profile_identity": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480",
+                    "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
                     "launcher_session_binding_identity": identity,
                     "systemd_invocation_identity": identity,
                     "working_directory_identity": identity,
@@ -2472,7 +2480,68 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         "key_id": "systemd-attestor-2026-01", "algorithm": "ed25519", "signature": "signature"
     });
     let attestation_schema = receipt_definition_schema("signedLauncherAttestation");
-    assert!(attestation_schema.validate(&attestation).is_ok());
+    if let Err(errors) = attestation_schema.validate(&attestation) {
+        panic!(
+            "valid V3 attestation was rejected: {}",
+            errors
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+
+    let mut legacy_v2 = attestation.clone();
+    legacy_v2["payload"]["systemd_protected_launcher"]["schema_version"] = json!(2);
+    legacy_v2["payload"]["systemd_protected_launcher"]["instance_v1"]["principal_mapping"]["job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    legacy_v2["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
+        json!("sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42");
+    legacy_v2["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    legacy_v2["payload"]["systemd_protected_launcher"]["launcher_observations"][5]["source"] =
+        json!("proc_unix_socket_inspection");
+    legacy_v2["payload"]["systemd_protected_launcher"]["job_principal_observations"][4]["requirement"] =
+        json!("peer_supplementary_groups_empty");
+    for observation in legacy_v2["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        .as_array_mut()
+        .expect("launcher observations")
+    {
+        observation
+            .as_object_mut()
+            .expect("launcher observation")
+            .remove("evidence_identity");
+    }
+    for observation in
+        legacy_v2["payload"]["systemd_protected_launcher"]["job_principal_observations"]
+            .as_array_mut()
+            .expect("job observations")
+    {
+        observation
+            .as_object_mut()
+            .expect("job observation")
+            .remove("evidence_identity");
+    }
+    assert!(attestation_schema.validate(&legacy_v2).is_err());
+
+    let mut missing_v3_evidence_identity = attestation.clone();
+    missing_v3_evidence_identity["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        [0]
+    .as_object_mut()
+    .expect("launcher observation")
+    .remove("evidence_identity");
+    assert!(
+        attestation_schema
+            .validate(&missing_v3_evidence_identity)
+            .is_err()
+    );
+    let mut legacy_socket_source = attestation.clone();
+    legacy_socket_source["payload"]["systemd_protected_launcher"]["launcher_observations"][5]["source"] =
+        json!("proc_unix_socket_inspection");
+    assert!(attestation_schema.validate(&legacy_socket_source).is_err());
+    let mut legacy_group_posture = attestation.clone();
+    legacy_group_posture["payload"]["systemd_protected_launcher"]["job_principal_observations"]
+        [4]["requirement"] = json!("peer_supplementary_groups_empty");
+    assert!(attestation_schema.validate(&legacy_group_posture).is_err());
 
     let mut missing_observation = attestation.clone();
     missing_observation["payload"]["systemd_protected_launcher"]["launcher_observations"]
@@ -2511,13 +2580,13 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
     wrong_job_methods["payload"]["systemd_protected_launcher"]["job_principal_observations"][0]["evidence_methods"] =
         json!(["process_access_probe"]);
     assert!(attestation_schema.validate(&wrong_job_methods).is_err());
-    let mut legacy_launcher_profile = attestation.clone();
+    let mut legacy_launcher_profile = legacy_v2.clone();
     legacy_launcher_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
         json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
     assert!(
         attestation_schema
             .validate(&legacy_launcher_profile)
-            .is_ok()
+            .is_err()
     );
     let mut substituted_profile = attestation.clone();
     substituted_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
@@ -2533,10 +2602,10 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
         "attestation": {
             "protocol_version": "ota-systemd-protected-launcher-attestation/v3", "adapter": "systemd_protected_launcher/v1",
-            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v2",
-            "systemd_launcher_profile_identity": "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42",
-            "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v1",
-            "systemd_job_principal_profile_identity": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d",
+            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v3",
+            "systemd_launcher_profile_identity": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480",
+            "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v2",
+            "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
             "launcher_session_binding_identity": identity, "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
             "trust_bundle_identity": identity, "verifiers": [{ "key_id": "attestor", "algorithm": "ed25519", "public_key": "key" }],
             "maximum_age_seconds": 180, "maximum_clock_skew_seconds": 5, "key_rotation_overlap_seconds": 120
@@ -2557,7 +2626,17 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         json!("ota.authority-launcher.systemd/v1");
     legacy_launcher_profile["attestation"]["systemd_launcher_profile_identity"] =
         json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
-    assert!(binding_schema.validate(&legacy_launcher_profile).is_ok());
+    legacy_launcher_profile["attestation"]["systemd_job_principal_profile_id"] =
+        json!("ota.authority-job-principal.systemd/v1");
+    legacy_launcher_profile["attestation"]["systemd_job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    assert!(binding_schema.validate(&legacy_launcher_profile).is_err());
+    let mut mismatched_job_profile = binding.clone();
+    mismatched_job_profile["attestation"]["systemd_job_principal_profile_id"] =
+        json!("ota.authority-job-principal.systemd/v1");
+    mismatched_job_profile["attestation"]["systemd_job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    assert!(binding_schema.validate(&mismatched_job_profile).is_err());
     let mut mismatched_launcher_profile = binding.clone();
     mismatched_launcher_profile["attestation"]["systemd_launcher_profile_identity"] =
         json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");

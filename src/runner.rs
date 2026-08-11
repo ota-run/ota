@@ -1028,6 +1028,7 @@ pub enum RunError {
         task: String,
         path: String,
         reasons: Vec<RepoExecutionConflictReason>,
+        runtime_conflicts: Vec<RepoExecutionRuntimeConflict>,
         owners: Vec<RepoExecutionLockOwner>,
     },
     #[error(
@@ -2996,6 +2997,12 @@ pub struct RepoExecutionRuntimeOwner {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     pub allocation: RepoExecutionRuntimeAllocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoExecutionRuntimeConflict {
+    pub requested: RepoExecutionRuntimeOwner,
+    pub active: RepoExecutionRuntimeOwner,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34507,12 +34514,7 @@ fn execution_conflict_reasons_with_active_owner(
     {
         reasons.push(RepoExecutionConflictReason::WritePath);
     }
-    if candidate.runtime_owners.iter().any(|candidate_owner| {
-        active
-            .runtime_owners
-            .iter()
-            .any(|active_owner| runtime_resource_owners_conflict(candidate_owner, active_owner))
-    }) {
+    if !runtime_conflicts_with_active_owner(candidate, active).is_empty() {
         reasons.push(RepoExecutionConflictReason::RuntimeListener);
     }
     if candidate.runtime_owners.iter().any(|candidate_owner| {
@@ -34525,6 +34527,42 @@ fn execution_conflict_reasons_with_active_owner(
         reasons.push(RepoExecutionConflictReason::ServiceTask);
     }
     reasons
+}
+
+fn runtime_conflicts_with_active_owner(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> Vec<RepoExecutionRuntimeConflict> {
+    let mut conflicts = Vec::new();
+    for requested in &candidate.runtime_owners {
+        for active_owner in &active.runtime_owners {
+            if runtime_resource_owners_conflict(requested, active_owner) {
+                let conflict = RepoExecutionRuntimeConflict {
+                    requested: requested.clone(),
+                    active: active_owner.clone(),
+                };
+                if !conflicts.contains(&conflict) {
+                    conflicts.push(conflict);
+                }
+            }
+        }
+    }
+    conflicts
+}
+
+fn active_execution_runtime_conflicts(
+    candidate: &RepoExecutionLockOwner,
+    owners: &[RepoExecutionLockOwner],
+) -> Vec<RepoExecutionRuntimeConflict> {
+    let mut conflicts = Vec::new();
+    for owner in owners {
+        for conflict in runtime_conflicts_with_active_owner(candidate, owner) {
+            if !conflicts.contains(&conflict) {
+                conflicts.push(conflict);
+            }
+        }
+    }
+    conflicts
 }
 
 fn owned_resource_paths_overlap(left: &str, right: &str) -> bool {
@@ -34712,12 +34750,15 @@ fn register_active_repo_execution(
         .map(|record| record.owner.clone())
         .collect::<Vec<_>>();
     if !owners.is_empty() {
+        let reasons = active_execution_conflict_reasons(owner, &owners);
+        let runtime_conflicts = active_execution_runtime_conflicts(owner, &owners);
         return Err(RunError::RepoExecutionConflict {
             task: task_name.to_string(),
             path: repo_active_executions_path(working_dir)
                 .display()
                 .to_string(),
-            reasons: active_execution_conflict_reasons(owner, &owners),
+            reasons,
+            runtime_conflicts,
             owners,
         });
     }
@@ -34796,6 +34837,7 @@ fn ensure_no_active_repo_execution_conflicts(
                 .display()
                 .to_string(),
             reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+            runtime_conflicts: Vec::new(),
             owners,
         })
     }
@@ -36162,6 +36204,20 @@ tasks:
             super::execution_conflict_reasons_with_active_owner(&second, &first),
             vec![super::RepoExecutionConflictReason::RuntimeListener]
         );
+        assert_eq!(
+            super::runtime_conflicts_with_active_owner(&second, &first),
+            vec![super::RepoExecutionRuntimeConflict {
+                requested: second.runtime_owners[0].clone(),
+                active: first.runtime_owners[0].clone(),
+            }]
+        );
+        assert_eq!(
+            super::runtime_conflicts_with_active_owner(&first, &second),
+            vec![super::RepoExecutionRuntimeConflict {
+                requested: first.runtime_owners[0].clone(),
+                active: second.runtime_owners[0].clone(),
+            }]
+        );
     }
 
     #[test]
@@ -36431,6 +36487,7 @@ tasks:
                 path,
                 reasons,
                 owners,
+                ..
             }) => {
                 assert_eq!(task, "dev");
                 assert!(

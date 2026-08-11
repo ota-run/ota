@@ -188,7 +188,9 @@ human text output:
   v1 by injecting defaults. The additive v3 systemd protected-launcher carrier instead binds
   Core's process-posture preface to the complete ordered launcher and job-principal profile
   observations; it emits `systemd_protected_launcher_attested_one_use` only when every required
-  observation verifies. Neither posture implies provider-attested separation.
+  observation verifies. The current execution-disabled candidate locally reaches the exact
+  authorization request but withholds it, so it emits no crossing, transaction, receipt, or archive
+  output. Neither posture implies provider-attested separation.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker
   selection with `authority_carrier: authority_broker` and
@@ -5462,6 +5464,11 @@ The nested `receipt` object can also include:
   `runtime_owners[]` entries with task, listener, namespace, protocol, address, port, and allocation
   posture (`fixed`, `managed_dynamic`, `isolated`, or `unresolved`). Internal-only container
   listeners use `isolated`; they are recorded without claiming or conflicting on a host listener.
+  For a single fixed runtime-listener collision, receipt `next`/`next_steps` carries the same
+  `--host-port <free port>` remediation as human output only when the selected lane admits that
+  override; otherwise it points to the declared listener. The stable machine classification
+  remains `active_execution_conflict` with `runtime_listener`; Ota does not silently remap an
+  explicitly requested port.
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.

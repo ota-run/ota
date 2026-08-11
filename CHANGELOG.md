@@ -37,7 +37,12 @@
   conflict on ancestor/descendant overlap instead of exact text only. Legacy active records without
   runtime or write-namespace identity remain fail-closed, and conflict output now tells operators
   to restart a still-needed legacy service once with the current Ota binary so precise listener
-  admission becomes available.
+  admission becomes available. A sole fixed runtime-listener collision now reports `Host port
+  already in use`, names the requested and active execution modes plus endpoint owner, suggests a
+  truthful `--host-port <free port>` rerun when that selected lane admits host-port overrides, and
+  preserves the existing run-summary layout with additive `Reason` and `Host port` rows. Mixed
+  ownership conflicts keep the broader active-conflict title while still carrying port-specific
+  remediation.
 - Extended `ota run <task> --host-port <port>` to direct native service execution. Container and
   native Compose lanes still remap only the host publication, while direct native lanes apply the
   selected port to both the canonical bind and projected host endpoint because no publication
@@ -58,6 +63,24 @@
   `ota.authority-launcher.systemd/v2` profile. V3 broker bindings and the published receipt schema
   require an exact registered profile-ID/identity pair; legacy V1 evidence remains verifiable but
   cannot be relabelled as V2.
+
+- Add the complete `ota.authority-launcher.systemd/v3` and
+  `ota.authority-job-principal.systemd/v2` verification branches. Core independently re-derives the
+  ordered launcher and job-principal observations, nested identities, protected socket source, and
+  limited-primary-group posture from signed evidence. V3 bindings and signed payloads require that
+  exact profile pair and instance schema 3; Core, Protocol, and published receipt schemas reject
+  legacy schema/profile substitution while preserving V1/V2 evidence only in its original branch.
+- Complete local execution-disabled V3 candidate pressure on an ARM64 OrbStack PID 1 systemd VM.
+  Exact signed attestation reaches Core's authorization request, which the launcher deliberately
+  withholds before exact scope/cgroup/child/slot cleanup. Installation drift, runtime-property
+  drift, unavailable producer credentials, and crash-after-scope recovery all preserve zero
+  selected work. Immutable hosted Linux/x64 proof, authorization, lease consumption, receipts, and
+  provider-attested separation remain open.
+- Prepare the immutable Linux/x64 PID 1 systemd V3 pressure lane in Authority Launcher. The lane
+  rejects non-source or dirty Core binaries, requires an immutable Protocol dependency, proves the
+  complete signed execution-disabled path, and exercises installation drift, runtime drift,
+  unavailable producer credentials, and crash recovery. It remains an unrun pressure definition,
+  not hosted evidence.
 
 - Add the next execution-disabled systemd protected-launcher bridge. An exact, identity-bound local
   continuation now binds the exact invocation, child, working directory, posture, and principal

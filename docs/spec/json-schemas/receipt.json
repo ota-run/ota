@@ -218,10 +218,10 @@
       "properties": {
         "protocol_version": { "const": "ota-systemd-protected-launcher-attestation/v3" },
         "adapter": { "const": "systemd_protected_launcher/v1" },
-        "systemd_launcher_profile_id": { "enum": ["ota.authority-launcher.systemd/v1", "ota.authority-launcher.systemd/v2"] },
-        "systemd_launcher_profile_identity": { "$ref": "#/$defs/sha256Identity" },
-        "systemd_job_principal_profile_id": { "const": "ota.authority-job-principal.systemd/v1" },
-        "systemd_job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" },
+        "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v3" },
+        "systemd_launcher_profile_identity": { "const": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480" },
+        "systemd_job_principal_profile_id": { "const": "ota.authority-job-principal.systemd/v2" },
+        "systemd_job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" },
         "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
         "issuer": { "type": "string", "minLength": 1 },
         "audience": { "type": "string", "minLength": 1 },
@@ -230,23 +230,7 @@
         "maximum_age_seconds": { "type": "integer", "minimum": 1 },
         "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
         "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
-      },
-      "allOf": [{
-        "oneOf": [
-          {
-            "properties": {
-              "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v1" },
-              "systemd_launcher_profile_identity": { "const": "sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930" }
-            }
-          },
-          {
-            "properties": {
-              "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v2" },
-              "systemd_launcher_profile_identity": { "const": "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42" }
-            }
-          }
-        ]
-      }]
+      }
     },
     "brokerPublicAuthorityBinding": {
       "type": "object",
@@ -605,7 +589,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "identity", "instance_v1", "launcher_observations", "job_principal_observations"],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "enum": [2, 3] },
         "identity": { "$ref": "#/$defs/sha256Identity" },
         "instance_v1": {
           "type": "object",
@@ -628,7 +612,7 @@
                 "identity": { "$ref": "#/$defs/sha256Identity" },
                 "job_peer": { "$ref": "#/$defs/systemdUnixPrincipal" },
                 "execution": { "$ref": "#/$defs/systemdUnixPrincipal" },
-                "job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" },
+                "job_principal_profile_identity": { "enum": ["sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d", "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659"] },
                 "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" }
               }
             },
@@ -644,8 +628,8 @@
                 "ptracer_clear_applied": { "const": true }, "principal_mapping_identity": { "$ref": "#/$defs/sha256Identity" }
               }
             },
-            "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42"] },
-            "systemd_job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" },
+            "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42", "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480"] },
+            "systemd_job_principal_profile_identity": { "enum": ["sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d", "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659"] },
             "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
             "systemd_invocation_identity": { "$ref": "#/$defs/sha256Identity" },
             "working_directory_identity": { "$ref": "#/$defs/sha256Identity" },
@@ -660,7 +644,7 @@
             { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "socket_peer_credentials" } } },
             { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "proc_process_status" } } },
             { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "proc_descriptor_inspection" } } },
-            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "proc_unix_socket_inspection" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "enum": ["proc_unix_socket_inspection", "protected_socket_identity"] } } },
             { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "target_principal_access_probe" } } },
             { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "ota_process_posture" } } }
           ],
@@ -673,7 +657,7 @@
             { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_identity_matches_protected_mapping" }, "evidence_methods": { "const": ["protected_mapping_configuration", "proc_peer_status"] } } },
             { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_no_new_privileges" }, "evidence_methods": { "const": ["proc_peer_status"] } } },
             { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_capabilities_empty" }, "evidence_methods": { "const": ["proc_peer_status"] } } },
-            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_supplementary_groups_empty" }, "evidence_methods": { "const": ["proc_peer_status"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "enum": ["peer_supplementary_groups_empty", "peer_supplementary_groups_limited_to_primary"] }, "evidence_methods": { "const": ["proc_peer_status"] } } },
             { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "runner_service_identity_bound" }, "evidence_methods": { "const": ["protected_runner_service_identity"] } } },
             { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "all_principal_processes_contained" }, "evidence_methods": { "const": ["proc_principal_cgroup_enumeration"] } } },
             { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "accounts_locked" }, "evidence_methods": { "const": ["account_database_inspection"] } } },
@@ -690,7 +674,49 @@
           ],
           "items": false
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "schema_version": { "const": 2 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "instance_v1": {
+                "properties": {
+                  "principal_mapping": { "properties": { "job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" } } },
+                  "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42"] },
+                  "systemd_job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" }
+                }
+              },
+              "launcher_observations": { "prefixItems": [{}, {}, {}, {}, {}, { "properties": { "source": { "const": "proc_unix_socket_inspection" } } }] },
+              "job_principal_observations": { "prefixItems": [{}, {}, {}, {}, { "properties": { "requirement": { "const": "peer_supplementary_groups_empty" } } }] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "schema_version": { "const": 3 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "instance_v1": {
+                "properties": {
+                  "principal_mapping": { "properties": { "job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" } } },
+                  "systemd_launcher_profile_identity": { "const": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480" },
+                  "systemd_job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" }
+                }
+              },
+              "launcher_observations": {
+                "prefixItems": [{}, {}, {}, {}, {}, { "properties": { "source": { "const": "protected_socket_identity" } } }],
+                "contains": { "required": ["evidence_identity"] },
+                "minContains": 8
+              },
+              "job_principal_observations": {
+                "prefixItems": [{}, {}, {}, {}, { "properties": { "requirement": { "const": "peer_supplementary_groups_limited_to_primary" } } }],
+                "contains": { "required": ["evidence_identity"] },
+                "minContains": 18
+              }
+            }
+          }
+        }
+      ]
     },
     "systemdUnixPrincipal": {
       "type": "object", "additionalProperties": false,
@@ -706,17 +732,19 @@
       "type": "object", "additionalProperties": false,
       "required": ["source", "state", "reason_code"],
       "properties": {
-        "source": { "enum": ["protected_file_identity", "systemd_manager_property", "socket_peer_credentials", "proc_process_status", "proc_descriptor_inspection", "proc_unix_socket_inspection", "target_principal_access_probe", "ota_process_posture"] },
-        "state": { "const": "verified" }, "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" }
+        "source": { "enum": ["protected_file_identity", "systemd_manager_property", "socket_peer_credentials", "proc_process_status", "proc_descriptor_inspection", "proc_unix_socket_inspection", "protected_socket_identity", "target_principal_access_probe", "ota_process_posture"] },
+        "state": { "const": "verified" }, "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "evidence_identity": { "$ref": "#/$defs/sha256Identity" }
       }
     },
     "systemdJobPrincipalObservation": {
       "type": "object", "additionalProperties": false,
       "required": ["requirement", "evidence_methods", "state", "reason_code"],
       "properties": {
-        "requirement": { "enum": ["distinct_one_to_one_principals", "peer_identity_matches_protected_mapping", "peer_no_new_privileges", "peer_capabilities_empty", "peer_supplementary_groups_empty", "runner_service_identity_bound", "all_principal_processes_contained", "accounts_locked", "non_login_shells", "sudo_policy_denied", "systemd_policy_denied", "polkit_policy_denied", "protected_paths_write_denied", "host_control_sockets_denied", "execution_launcher_socket_denied", "ota_process_non_dumpable", "ota_ptracer_cleared", "ota_process_inspection_denied"] },
+        "requirement": { "enum": ["distinct_one_to_one_principals", "peer_identity_matches_protected_mapping", "peer_no_new_privileges", "peer_capabilities_empty", "peer_supplementary_groups_empty", "peer_supplementary_groups_limited_to_primary", "runner_service_identity_bound", "all_principal_processes_contained", "accounts_locked", "non_login_shells", "sudo_policy_denied", "systemd_policy_denied", "polkit_policy_denied", "protected_paths_write_denied", "host_control_sockets_denied", "execution_launcher_socket_denied", "ota_process_non_dumpable", "ota_ptracer_cleared", "ota_process_inspection_denied"] },
         "evidence_methods": { "type": "array", "minItems": 1, "items": { "enum": ["protected_mapping_configuration", "proc_peer_status", "protected_runner_service_identity", "proc_principal_cgroup_enumeration", "account_database_inspection", "sudo_policy_query", "systemd_manager_authorization_query", "polkit_authorization_query", "target_principal_access_probe", "ota_process_posture", "process_access_probe"] } },
-        "state": { "const": "verified" }, "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" }
+        "state": { "const": "verified" }, "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "evidence_identity": { "$ref": "#/$defs/sha256Identity" }
       }
     },
     "signedLauncherAttestationV3": {
@@ -733,7 +761,12 @@
             "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" }, "runner_principal": { "$ref": "#/$defs/sha256Identity" },
             "channel_delivery": { "const": "launcher_session_fd" }, "authenticated_origin": { "type": "string", "minLength": 1 },
             "authority_mounts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/publicEvidenceLabel" } },
-            "systemd_protected_launcher": { "$ref": "#/$defs/systemdProtectedLauncherInstanceV2" },
+            "systemd_protected_launcher": {
+              "allOf": [
+                { "$ref": "#/$defs/systemdProtectedLauncherInstanceV2" },
+                { "properties": { "schema_version": { "const": 3 } } }
+              ]
+            },
             "issuer": { "type": "string", "minLength": 1 }, "audience": { "type": "string", "minLength": 1 },
             "issued_at": { "type": "string", "format": "date-time" }, "expires_at": { "type": "string", "format": "date-time" }
           }

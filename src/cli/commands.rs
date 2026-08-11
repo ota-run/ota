@@ -187,8 +187,8 @@ use crate::runner::{
     CleanExecutionResourceKind, DeclaredEnvSourceStatus, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
     EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
     HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, RepoExecutionConflictReason,
-    RepoExecutionLockOwner, ResolvedEnvValue, ResolvedExecutionBackend,
-    ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
+    RepoExecutionLockOwner, RepoExecutionRuntimeConflict, ResolvedEnvValue,
+    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
@@ -262,7 +262,8 @@ mod workspace_output;
 use self::execution_summary::{
     append_runtime_listener_lines, execution_receipt_next_steps, primary_runtime_endpoint,
     render_execution_receipt_status, render_execution_receipt_summary_block,
-    render_execution_summary_status_value, summary_detail_line, summary_has_status,
+    render_execution_receipt_summary_block_with_conflict, render_execution_summary_status_value,
+    summary_detail_line, summary_has_status,
 };
 use self::explain_output::{
     explain_action_count, explain_actions, explain_steps, explain_summary,
@@ -79411,6 +79412,7 @@ tasks:
                     RepoExecutionConflictReason::HostService,
                     RepoExecutionConflictReason::ComposeProject,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("container")),
@@ -79470,6 +79472,7 @@ tasks:
                     RepoExecutionConflictReason::ActiveExecutionPresent,
                     RepoExecutionConflictReason::HostService,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("native")),
@@ -95105,6 +95108,7 @@ tasks:
                 task: String::from("build"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+                runtime_conflicts: vec![],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -95146,6 +95150,7 @@ tasks:
                 task: String::from("deploy:cloudflare"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+                runtime_conflicts: vec![],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -95155,6 +95160,278 @@ tasks:
         assert!(
             rendered.contains("then rerun `ota run deploy:cloudflare --mode native`"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_explains_container_port_conflict_with_native_owner() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-site
+execution:
+  default_context: development
+  contexts:
+    development:
+      backend: container
+      lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+tasks:
+  dev:
+    context: development
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+        let requested = crate::runner::RepoExecutionRuntimeOwner {
+            task: String::from("dev"),
+            listener: Some(String::from("site")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("0.0.0.0")),
+            port: Some(3001),
+            allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+        };
+        let active = requested.clone();
+        let owner = RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: vec![String::from("node_modules")],
+            write_owners: vec![],
+            runtime_owners: vec![active.clone()],
+            service_task: true,
+            parent_pid: None,
+            pid: 52386,
+            started_at: String::from("2026-08-11T15:55:28Z"),
+        };
+        let error = RunError::RepoExecutionConflict {
+            task: String::from("dev"),
+            path: String::from("./.ota/state/active-executions.json"),
+            reasons: vec![RepoExecutionConflictReason::RuntimeListener],
+            runtime_conflicts: vec![crate::runner::RepoExecutionRuntimeConflict {
+                requested,
+                active,
+            }],
+            owners: vec![owner],
+        };
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides {
+                lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &error,
+            "RUN SUMMARY\nStatus:      blocked\nReason:      runtime_listener\nHost port:   3001\nMode:        container\nTask:        dev",
+            None,
+        ));
+
+        assert!(rendered.contains("Host port already in use"), "{rendered}");
+        assert!(
+            rendered.contains("container task `dev` requested host port `3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("active native execution `dev` already owns `0.0.0.0:3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "rerun `ota run dev --lifecycle ephemeral --host-port <free port>` to select a different host port"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Reason:      runtime_listener"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Host port:   3001"), "{rendered}");
+        assert!(rendered.contains("Mode:        container"), "{rendered}");
+    }
+
+    #[test]
+    fn run_structured_error_text_keeps_generic_title_for_mixed_conflicts() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+        let requested = crate::runner::RepoExecutionRuntimeOwner {
+            task: String::from("dev"),
+            listener: Some(String::from("site")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("127.0.0.1")),
+            port: Some(3001),
+            allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+        };
+        let active = requested.clone();
+        let owner = RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("container")),
+            execution_mode: String::from("container"),
+            lifecycle: Some(String::from("ephemeral")),
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: vec![String::from("node_modules")],
+            write_owners: vec![],
+            runtime_owners: vec![active.clone()],
+            service_task: true,
+            parent_pid: None,
+            pid: 52386,
+            started_at: String::from("2026-08-11T15:55:28Z"),
+        };
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &RunError::RepoExecutionConflict {
+                task: String::from("dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![
+                    RepoExecutionConflictReason::WritePath,
+                    RepoExecutionConflictReason::RuntimeListener,
+                ],
+                runtime_conflicts: vec![crate::runner::RepoExecutionRuntimeConflict {
+                    requested,
+                    active,
+                }],
+                owners: vec![owner],
+            },
+            "RUN SUMMARY\nStatus:      blocked\nReasons:     write_path, runtime_listener\nHost port:   3001\nMode:        native\nTask:        dev",
+            None,
+        ));
+
+        assert!(rendered.contains("Active execution conflict"), "{rendered}");
+        assert!(
+            !rendered.contains("ERROR  Host port already in use"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("--host-port <free port>` to select a different host port"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Reasons:     write_path, runtime_listener"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn runtime_conflict_text_does_not_offer_one_port_override_for_multiple_listeners() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+        let conflict = |listener: &str, port: u16| {
+            let owner = crate::runner::RepoExecutionRuntimeOwner {
+                task: String::from("dev"),
+                listener: Some(listener.to_string()),
+                namespace: String::from("host"),
+                protocol: Some(String::from("tcp")),
+                address: Some(String::from("127.0.0.1")),
+                port: Some(port),
+                allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+            };
+            crate::runner::RepoExecutionRuntimeConflict {
+                requested: owner.clone(),
+                active: owner,
+            }
+        };
+
+        let unsupported = super::repo_execution_runtime_conflict_text(
+            &contract,
+            None,
+            "dev",
+            ExecutionOverrides::default(),
+            &[],
+            &[conflict("site", 3001)],
+            String::from("ota run dev --host-port <free port>"),
+        )
+        .expect("unsupported runtime conflict text");
+        assert!(
+            unsupported
+                .next_steps
+                .iter()
+                .any(|step| step.contains("listener in `ota.yaml`")),
+            "{:?}",
+            unsupported.next_steps
+        );
+        assert!(
+            unsupported
+                .next_steps
+                .iter()
+                .all(|step| !step.contains("ota run dev --host-port")),
+            "{:?}",
+            unsupported.next_steps
+        );
+
+        let rendered = super::repo_execution_runtime_conflict_text(
+            &contract,
+            None,
+            "dev",
+            ExecutionOverrides::default(),
+            &[],
+            &[conflict("site", 3001), conflict("metrics", 9090)],
+            String::from("ota run dev --host-port <free port>"),
+        )
+        .expect("runtime conflict text");
+
+        assert!(
+            rendered
+                .next_steps
+                .iter()
+                .any(|step| step.contains("each conflicting listener")),
+            "{:?}",
+            rendered.next_steps
+        );
+        assert!(
+            rendered
+                .next_steps
+                .iter()
+                .all(|step| !step.contains("ota run dev --host-port")),
+            "{:?}",
+            rendered.next_steps
         );
     }
 
@@ -95192,6 +95469,7 @@ tasks:
                     RepoExecutionConflictReason::PersistentBackendFamily,
                     RepoExecutionConflictReason::EnvMaterializationPath,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("container")),
@@ -95301,6 +95579,7 @@ tasks:
                 task: String::from("dev"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ServiceTask],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: None,
@@ -95363,6 +95642,7 @@ tasks:
                 task: String::from("version:bump"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+                runtime_conflicts: vec![],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -95384,6 +95664,7 @@ tasks:
                 RepoExecutionConflictReason::HostService,
                 RepoExecutionConflictReason::ComposeProject,
             ],
+            runtime_conflicts: vec![],
             owners: vec![],
         });
         assert_eq!(
@@ -96548,6 +96829,7 @@ tasks:
                     RepoExecutionConflictReason::WritePath,
                     RepoExecutionConflictReason::ServiceTask,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: None,
@@ -96618,6 +96900,85 @@ tasks:
             "{rendered}"
         );
         assert!(rendered.contains("then rerun `ota up`"), "{rendered}");
+    }
+
+    #[test]
+    fn up_run_error_explains_runtime_listener_conflict_with_free_port_rerun() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let contract_path = temp_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota-site
+tasks:
+  setup:dev:
+    run: npm run dev
+"#,
+        )
+        .expect("write contract");
+        let requested = crate::runner::RepoExecutionRuntimeOwner {
+            task: String::from("setup:dev"),
+            listener: Some(String::from("site")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("127.0.0.1")),
+            port: Some(3001),
+            allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+        };
+        let active = requested.clone();
+
+        let rendered = strip_ansi_codes(&super::render_up_run_error(
+            &contract_path,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            RunError::RepoExecutionConflict {
+                task: String::from("setup:dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::RuntimeListener],
+                runtime_conflicts: vec![crate::runner::RepoExecutionRuntimeConflict {
+                    requested,
+                    active: active.clone(),
+                }],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: Some(String::from("container")),
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("ephemeral")),
+                    host_services: vec![],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
+                    write_paths: vec![],
+                    write_owners: vec![],
+                    runtime_owners: vec![active],
+                    service_task: true,
+                    parent_pid: None,
+                    pid: 52386,
+                    started_at: String::from("2026-08-11T15:55:28Z"),
+                }],
+            },
+        ));
+
+        assert!(rendered.contains("Host port already in use"), "{rendered}");
+        assert!(
+            rendered.contains("native task `setup:dev` listener `site` requested `127.0.0.1:3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("active container execution `dev` already owns `127.0.0.1:3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "rerun `ota up --mode native --host-port <free port>` to select a different host port"
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -108062,18 +108423,16 @@ fn run_single_contract_target_streaming(
                 member,
                 persist_logs,
             );
-            let next_note = match &error {
-                RunError::RuntimeListenerResolutionFailed {
-                    task,
-                    listener,
-                    kind,
-                } => runtime_listener_resolution_receipt_note(
-                    member, task, listener, kind, overrides,
-                ),
-                _ => format!(
-                    "repair task `{task_name}` and rerun `ota run {task_name}`; {details_footer}"
-                ),
-            };
+            let next_note = run_error_receipt_note(
+                &target.contract,
+                &target.contract_path,
+                member,
+                task_name.as_str(),
+                overrides,
+                task_inputs,
+                &error,
+                details_footer,
+            );
             let error_target = match &error {
                 RunError::PersistentContainerListenerBindConflict { container, .. } => {
                     Some(container.clone())
@@ -108129,11 +108488,7 @@ fn run_single_contract_target_streaming(
                 ));
             }
             archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
-            let summary = render_execution_receipt_summary_block(
-                &receipt,
-                Some(task_name.as_str()),
-                "RUN SUMMARY",
-            );
+            let summary = render_run_error_summary_block(&receipt, task_name.as_str(), &error);
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_structured_error_text(
@@ -108436,18 +108791,16 @@ fn run_single_contract_target_captured(
                 &error_detail,
                 persist_logs,
             );
-            let next_note = match &error {
-                RunError::RuntimeListenerResolutionFailed {
-                    task,
-                    listener,
-                    kind,
-                } => runtime_listener_resolution_receipt_note(
-                    member, task, listener, kind, overrides,
-                ),
-                _ => format!(
-                    "repair task `{task_name}` and rerun `ota run {task_name}`; {details_footer}"
-                ),
-            };
+            let next_note = run_error_receipt_note(
+                &target.contract,
+                &target.contract_path,
+                member,
+                task_name.as_str(),
+                overrides,
+                task_inputs,
+                &error,
+                details_footer,
+            );
             let error_target = match &error {
                 RunError::PersistentContainerListenerBindConflict { container, .. } => {
                     Some(container.clone())
@@ -108503,11 +108856,7 @@ fn run_single_contract_target_captured(
                 ));
             }
             archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
-            let summary = render_execution_receipt_summary_block(
-                &receipt,
-                Some(task_name.as_str()),
-                "RUN SUMMARY",
-            );
+            let summary = render_run_error_summary_block(&receipt, task_name.as_str(), &error);
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_structured_error_text(
@@ -110922,6 +111271,38 @@ fn repo_run_command_with_overrides(
     command
 }
 
+fn repo_run_command_with_free_host_port(
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+) -> String {
+    let mut command = repo_run_command(task_name, member);
+    append_run_execution_override_flags(
+        &mut command,
+        ExecutionOverrides {
+            host_port: None,
+            ..overrides
+        },
+    );
+    command.push_str(" --host-port <free port>");
+    append_repo_run_task_inputs(&mut command, task_inputs);
+    command
+}
+
+fn repo_up_command_with_free_host_port(overrides: ExecutionOverrides) -> String {
+    let mut command = String::from("ota up");
+    append_run_execution_override_flags(
+        &mut command,
+        ExecutionOverrides {
+            host_port: None,
+            ..overrides
+        },
+    );
+    command.push_str(" --host-port <free port>");
+    command
+}
+
 fn repo_run_stream_command_with_overrides(
     task_name: &str,
     member: Option<&str>,
@@ -111540,6 +111921,45 @@ fn runtime_listener_resolution_receipt_note(
     .join("; ")
 }
 
+fn run_error_receipt_note(
+    contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    error: &RunError,
+    details_footer: &str,
+) -> String {
+    match error {
+        RunError::RuntimeListenerResolutionFailed {
+            task,
+            listener,
+            kind,
+        } => runtime_listener_resolution_receipt_note(member, task, listener, kind, overrides),
+        RunError::RepoExecutionConflict {
+            owners,
+            runtime_conflicts,
+            ..
+        } => repo_execution_runtime_conflict_text(
+            contract,
+            Some(contract_path),
+            task_name,
+            overrides,
+            owners,
+            runtime_conflicts,
+            repo_run_command_with_free_host_port(task_name, member, overrides, task_inputs),
+        )
+        .map(|conflict| conflict.next_steps.join("; "))
+        .unwrap_or_else(|| {
+            format!("repair task `{task_name}` and rerun `ota run {task_name}`; {details_footer}")
+        }),
+        _ => {
+            format!("repair task `{task_name}` and rerun `ota run {task_name}`; {details_footer}")
+        }
+    }
+}
+
 fn render_run_structured_error_text(
     contract: &Contract,
     contract_path: &Path,
@@ -111598,32 +112018,56 @@ fn render_run_structured_error_text(
         RunError::RepoExecutionConflict {
             path,
             reasons,
+            runtime_conflicts,
             owners,
             ..
         } => {
             detail_lines.extend(repo_execution_conflict_detail_lines(reasons, owners));
             let legacy_service_owner =
                 repo_execution_conflict_has_legacy_service_owner(reasons, owners);
-            let mut why_lines = vec![format!(
-                "ota could not start this task because active repo executions recorded in `{path}` conflict with it"
-            )];
-            let mut next_steps = vec![String::from(
-                "wait for the conflicting execution to finish or stop it before retrying",
-            )];
-            if legacy_service_owner {
-                why_lines.push(String::from(
+            let runtime_conflict = repo_execution_runtime_conflict_text(
+                contract,
+                Some(contract_path),
+                task_name,
+                overrides,
+                owners,
+                runtime_conflicts,
+                repo_run_command_with_free_host_port(task_name, member, overrides, task_inputs),
+            );
+            if reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener]
+                && let Some(runtime_conflict) = runtime_conflict.as_ref()
+            {
+                (
+                    String::from("Host port already in use"),
+                    runtime_conflict.why_lines.clone(),
+                    runtime_conflict.next_steps.clone(),
+                )
+            } else {
+                let mut why_lines = vec![format!(
+                    "ota could not start this task because active repo executions recorded in `{path}` conflict with it"
+                )];
+                let mut next_steps = vec![String::from(
+                    "wait for the conflicting execution to finish or stop it before retrying",
+                )];
+                if let Some(runtime_conflict) = runtime_conflict {
+                    why_lines.extend(runtime_conflict.why_lines);
+                    next_steps.splice(0..0, runtime_conflict.next_steps);
+                }
+                if legacy_service_owner {
+                    why_lines.push(String::from(
                     "the active service record predates runtime-listener ownership, so ota cannot prove that its endpoint is disjoint from this run",
                 ));
-                next_steps.push(String::from(
+                    next_steps.push(String::from(
                     "if that service should remain active, restart it once with the current ota binary so its listener ownership is recorded",
                 ));
+                }
+                next_steps.push(format!("then rerun `{}`", rerun_command));
+                (
+                    String::from("Active execution conflict"),
+                    why_lines,
+                    next_steps,
+                )
             }
-            next_steps.push(format!("then rerun `{}`", rerun_command));
-            (
-                String::from("Active execution conflict"),
-                why_lines,
-                next_steps,
-            )
         }
         RunError::RepoExecutionLockFailed {
             action,
@@ -112547,6 +112991,126 @@ fn repo_execution_conflict_reason_label(
     }
 }
 
+struct RepoExecutionRuntimeConflictText {
+    why_lines: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+fn repo_execution_conflict_host_port(
+    runtime_conflicts: &[RepoExecutionRuntimeConflict],
+) -> Option<u16> {
+    let ports = runtime_conflicts
+        .iter()
+        .filter_map(|conflict| conflict.requested.port)
+        .collect::<BTreeSet<_>>();
+    (ports.len() == 1).then(|| *ports.first().expect("one runtime conflict port"))
+}
+
+fn repo_execution_runtime_conflict_text(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    owners: &[RepoExecutionLockOwner],
+    runtime_conflicts: &[RepoExecutionRuntimeConflict],
+    rerun_with_free_host_port: String,
+) -> Option<RepoExecutionRuntimeConflictText> {
+    if runtime_conflicts.is_empty() {
+        return None;
+    }
+    let requested_mode =
+        format_backend(effective_task_execution(contract, task_name, overrides).backend);
+    let mut why_lines = Vec::new();
+    let mut active_owners = Vec::new();
+    for conflict in runtime_conflicts {
+        let host_port = conflict.requested.port?;
+        let requested_address = conflict.requested.address.as_deref().unwrap_or("host");
+        let requested_listener = conflict.requested.listener.as_deref().unwrap_or("service");
+        let active_owner = owners.iter().find(|owner| {
+            owner
+                .runtime_owners
+                .iter()
+                .any(|runtime_owner| runtime_owner == &conflict.active)
+        });
+        let active_mode = active_owner
+            .map(|owner| owner.execution_mode.as_str())
+            .unwrap_or("unknown");
+        let active_task = active_owner
+            .map(|owner| owner.task.as_str())
+            .unwrap_or(conflict.active.task.as_str());
+        let active_address = conflict.active.address.as_deref().unwrap_or("host");
+        let active_port = conflict.active.port.unwrap_or(host_port);
+        let requested_line = if requested_mode == "native" {
+            format!(
+                "native task `{task_name}` listener `{requested_listener}` requested `{requested_address}:{host_port}`"
+            )
+        } else {
+            format!(
+                "{requested_mode} task `{task_name}` requested host port `{host_port}` for listener `{requested_listener}`"
+            )
+        };
+        let active_line = format!(
+            "active {active_mode} execution `{active_task}` already owns `{active_address}:{active_port}`"
+        );
+        if !why_lines.contains(&requested_line) {
+            why_lines.push(requested_line);
+        }
+        if !why_lines.contains(&active_line) {
+            why_lines.push(active_line);
+        }
+        if let Some(active_owner) = active_owner
+            && !active_owners.contains(&active_owner)
+        {
+            active_owners.push(active_owner);
+        }
+    }
+
+    let selected_host_port = repo_execution_conflict_host_port(runtime_conflicts);
+    let host_port_override_supported = selected_host_port.is_some_and(|host_port| {
+        overrides.host_port.is_some()
+            || crate::runner::preflight_task_execution_overrides(
+                contract,
+                task_name,
+                ExecutionOverrides {
+                    host_port: Some(host_port),
+                    ..overrides
+                },
+                contract_path,
+            )
+            .is_ok()
+    });
+    let mut next_steps = if runtime_conflicts.len() == 1 && host_port_override_supported {
+        vec![format!(
+            "rerun `{rerun_with_free_host_port}` to select a different host port"
+        )]
+    } else if runtime_conflicts.len() == 1 {
+        vec![String::from(
+            "select a free port for the conflicting listener in `ota.yaml` before retrying",
+        )]
+    } else {
+        vec![String::from(
+            "select a free host port for each conflicting listener in `ota.yaml` before retrying",
+        )]
+    };
+    let has_active_owners = !active_owners.is_empty();
+    for owner in active_owners {
+        next_steps.push(format!(
+            "or stop the active `{}` execution with pid `{}` before retrying",
+            owner.task, owner.pid
+        ));
+    }
+    if !has_active_owners {
+        next_steps.push(String::from(
+            "or stop the active execution that owns the conflicting listener before retrying",
+        ));
+    }
+
+    Some(RepoExecutionRuntimeConflictText {
+        why_lines,
+        next_steps,
+    })
+}
+
 fn repo_execution_conflict_detail_lines(
     reasons: &[RepoExecutionConflictReason],
     owners: &[RepoExecutionLockOwner],
@@ -112724,6 +113288,34 @@ fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+fn render_run_error_summary_block(
+    receipt: &ExecutionReceipt,
+    task_name: &str,
+    error: &RunError,
+) -> String {
+    let (reasons, host_port) = match error {
+        RunError::RepoExecutionConflict {
+            reasons,
+            runtime_conflicts,
+            ..
+        } => (
+            reasons
+                .iter()
+                .map(|reason| repo_execution_conflict_reason_label(*reason).to_string())
+                .collect::<Vec<_>>(),
+            repo_execution_conflict_host_port(runtime_conflicts),
+        ),
+        _ => (Vec::new(), None),
+    };
+    render_execution_receipt_summary_block_with_conflict(
+        receipt,
+        Some(task_name),
+        "RUN SUMMARY",
+        &reasons,
+        host_port,
+    )
 }
 
 fn refresh_execution_receipt_status(receipt: &mut ExecutionReceipt) {
@@ -139216,11 +139808,23 @@ fn render_up_run_error(
             task,
             path,
             reasons,
+            runtime_conflicts,
             owners,
         } => {
             let where_value = display_contract_target(&compact_contract_path(contract_path), None);
             let legacy_service_owner =
                 repo_execution_conflict_has_legacy_service_owner(&reasons, &owners);
+            let runtime_conflict = load_contract(contract_path).ok().and_then(|contract| {
+                repo_execution_runtime_conflict_text(
+                    &contract,
+                    Some(contract_path),
+                    task.as_str(),
+                    overrides,
+                    &owners,
+                    &runtime_conflicts,
+                    repo_up_command_with_free_host_port(overrides),
+                )
+            });
             let mut why_lines = vec![format!(
                 "ota could not start the selected workflow path because active repo executions recorded in `{path}` conflict with task `{task}`"
             )];
@@ -139232,6 +139836,12 @@ fn render_up_run_error(
                     "wait for the conflicting execution to finish or stop it before retrying",
                 ),
             ];
+            if let Some(runtime_conflict) = runtime_conflict.as_ref()
+                && reasons.as_slice() != [RepoExecutionConflictReason::RuntimeListener]
+            {
+                why_lines.extend(runtime_conflict.why_lines.clone());
+                next_steps.splice(0..0, runtime_conflict.next_steps.clone());
+            }
             if legacy_service_owner {
                 why_lines.push(String::from(
                     "the active service record predates runtime-listener ownership, so ota cannot prove that its endpoint is disjoint from this workflow",
@@ -139242,13 +139852,32 @@ fn render_up_run_error(
             }
             next_steps.push(String::from("then rerun `ota up`"));
             let detail_lines = repo_execution_conflict_detail_lines(&reasons, &owners);
-            let mut output = structured_error_text(
-                "UP",
-                &where_value,
-                "Active execution conflict",
-                &why_lines,
-                &next_steps,
-            );
+            let (summary, why_lines, next_steps) =
+                if reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener] {
+                    runtime_conflict
+                        .map(|runtime_conflict| {
+                            (
+                                String::from("Host port already in use"),
+                                runtime_conflict.why_lines,
+                                runtime_conflict.next_steps,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            (
+                                String::from("Active execution conflict"),
+                                why_lines,
+                                next_steps,
+                            )
+                        })
+                } else {
+                    (
+                        String::from("Active execution conflict"),
+                        why_lines,
+                        next_steps,
+                    )
+                };
+            let mut output =
+                structured_error_text("UP", &where_value, &summary, &why_lines, &next_steps);
             if !detail_lines.is_empty() {
                 output.push('\n');
                 append_error_detail_section(

@@ -102,8 +102,10 @@ OOM kill. For host-managed service cleanup owned by ota, receipts can also inclu
 cleanup trigger, and any failure detail ota captured while stopping that host-managed service.
 When execution was blocked by an active repo-execution ownership conflict, receipts can also
 include `execution_conflict`; this records the typed ownership reasons such as `host_service`,
-`compose_project`, or `persistent_backend_family` while keeping the existing `blocked[]`
-compatibility lane.
+`compose_project`, `persistent_backend_family`, `write_path`, or `runtime_listener` while keeping
+the existing `blocked[]` compatibility lane. Runtime listener conflicts are derived from the
+selected closure's effective execution namespace and projected endpoint, not from task-name
+equality alone; unresolved or legacy service ownership remains conservative.
 When the selected task or workflow crosses a heavier audited execution boundary, repo-target
 execution receipts may also include additive `crossing`. This record is ota-authored execution
 evidence, not caller-authored narration. The current shipped slice publishes:
@@ -160,10 +162,14 @@ verified, content-addressed launcher and configuration identities, and a separat
 authority. It proves only those signed observations and remains distinct from reserved
 provider-attested posture. The additive v3 `systemd_protected_launcher_attested_one_use` branch
 binds Core's private process-posture preface to the complete, ordered systemd launcher and job-
-principal profiles. It proves only that signed systemd profile instance; it is not provider-
-  attested separation. Core archive history re-verifies the original v1, v2, or v3 branch in local
-  regressions; it never upgrades legacy evidence by defaulting newer fields. Production systemd
-  launcher deployment and hosted v3 pressure remain separate unproved work.
+principal profiles. V3 authority requires instance schema 3 with exactly
+`ota.authority-launcher.systemd/v3` and `ota.authority-job-principal.systemd/v2`; legacy profiles
+remain readable only through their original evidence branch. It proves only that signed systemd
+profile instance; it is not provider-attested separation. Core archive history re-verifies the
+original v1, v2, or v3 branch in local regressions; it never upgrades legacy evidence by defaulting
+newer fields. The execution-disabled systemd candidate now admits a real locally produced V3 profile
+before withholding authorization, so it creates no crossing transaction or archive. Immutable hosted
+V3 pressure and the production authorization/lease path remain unproved.
 `authority.transaction.authentication_posture: runner_local_content_addressed` is an explicit
 boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
 is not independently authenticated against another same-user process with write access to

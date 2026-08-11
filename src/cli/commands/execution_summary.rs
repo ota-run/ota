@@ -27,6 +27,16 @@ pub(super) fn render_execution_receipt_summary_block(
     task: Option<&str>,
     title: &str,
 ) -> String {
+    render_execution_receipt_summary_block_with_conflict(receipt, task, title, &[], None)
+}
+
+pub(super) fn render_execution_receipt_summary_block_with_conflict(
+    receipt: &ExecutionReceipt,
+    task: Option<&str>,
+    title: &str,
+    conflict_reasons: &[String],
+    conflict_host_port: Option<u16>,
+) -> String {
     let title = if plain_mode() {
         title.to_string()
     } else if title.starts_with("WORKSPACE ") {
@@ -79,6 +89,19 @@ pub(super) fn render_execution_receipt_summary_block(
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
+    if !conflict_reasons.is_empty() {
+        lines.push(summary_detail_line(
+            if conflict_reasons.len() == 1 {
+                "Reason:"
+            } else {
+                "Reasons:"
+            },
+            &conflict_reasons.join(", "),
+        ));
+    }
+    if let Some(host_port) = conflict_host_port {
+        lines.push(summary_detail_line("Host port:", &host_port.to_string()));
+    }
     if let Some(requested_mode) = refused_mode {
         lines.push(summary_detail_line("Requested Mode:", requested_mode));
     } else {
