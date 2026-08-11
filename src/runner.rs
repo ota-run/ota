@@ -289,7 +289,7 @@ fn clear_stream_phase_line() {
 
 fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
     match backend {
-        Backend::Native => "",
+        Backend::Native => " (native)",
         Backend::Container => " (container)",
         Backend::Remote => " (remote)",
     }
@@ -297,7 +297,7 @@ fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
 
 fn backend_loader_suffix(backend: &ResolvedExecutionBackend) -> &'static str {
     match backend {
-        ResolvedExecutionBackend::Native { .. } => "",
+        ResolvedExecutionBackend::Native { .. } => " (native)",
         ResolvedExecutionBackend::Container { .. } => " (container)",
         ResolvedExecutionBackend::Remote { .. }
         | ResolvedExecutionBackend::BackendProvider { .. } => " (remote)",
@@ -2963,6 +2963,41 @@ pub struct RepoExecutionWriteOwner {
     pub namespace: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoExecutionRuntimeAllocation {
+    Fixed,
+    ManagedDynamic,
+    Isolated,
+    Unresolved,
+}
+
+impl RepoExecutionRuntimeAllocation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::ManagedDynamic => "managed_dynamic",
+            Self::Isolated => "isolated",
+            Self::Unresolved => "unresolved",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoExecutionRuntimeOwner {
+    pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    pub namespace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    pub allocation: RepoExecutionRuntimeAllocation,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoExecutionLockOwner {
     pub task: String,
@@ -2983,6 +3018,8 @@ pub struct RepoExecutionLockOwner {
     pub write_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub write_owners: Vec<RepoExecutionWriteOwner>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_owners: Vec<RepoExecutionRuntimeOwner>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_task: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3000,6 +3037,7 @@ pub enum RepoExecutionConflictReason {
     PersistentBackendFamily,
     EnvMaterializationPath,
     WritePath,
+    RuntimeListener,
     ServiceTask,
 }
 
@@ -3042,6 +3080,7 @@ fn repo_execution_lock_owner_for_backend(
     let mut env_materialization_paths: Vec<String> = Vec::new();
     let mut write_paths: Vec<String> = Vec::new();
     let mut write_owners: Vec<RepoExecutionWriteOwner> = Vec::new();
+    let mut runtime_owners: Vec<RepoExecutionRuntimeOwner> = Vec::new();
     let mut service_task = false;
     let plan = plan_task_execution_with_overrides(contract, task_name, overrides)
         .expect("active execution owner should plan a known task");
@@ -3087,12 +3126,42 @@ fn repo_execution_lock_owner_for_backend(
             push_unique_write_owner(
                 &mut write_owners,
                 RepoExecutionWriteOwner {
-                    path: path.clone(),
+                    path: normalize_owned_resource_path(path.as_str()),
                     namespace: write_ownership_namespace_for_path(path.as_str(), &step_backend),
                 },
             );
         }
-        service_task |= task.service_runtime_for_backend(step.backend).is_some();
+        if let Some(runtime) = task.service_runtime_for_backend(step.backend) {
+            service_task = true;
+            let step_backend = resolve_execution_backend_with_contract_path(
+                contract,
+                step.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(step.backend),
+                    lifecycle: overrides.lifecycle,
+                    host_port: if step.task == task_name {
+                        overrides.host_port
+                    } else {
+                        None
+                    },
+                    memory: overrides.memory,
+                    skip_deps: overrides.skip_deps,
+                },
+                contract_path,
+            )
+            .unwrap_or_else(|_| backend.clone());
+            collect_runtime_resource_owners(
+                step.task.as_str(),
+                runtime,
+                &step_backend,
+                if step.task == task_name {
+                    overrides.host_port
+                } else {
+                    None
+                },
+                &mut runtime_owners,
+            );
+        }
     }
     let lifecycle = match backend {
         ResolvedExecutionBackend::Native {
@@ -3116,10 +3185,214 @@ fn repo_execution_lock_owner_for_backend(
         env_materialization_paths,
         write_paths,
         write_owners,
+        runtime_owners,
         service_task,
         parent_pid: active_execution_parent_pid_from_env(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
+    }
+}
+
+fn collect_runtime_resource_owners(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
+    owners: &mut Vec<RepoExecutionRuntimeOwner>,
+) {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => {
+            if runtime.listeners.is_empty() {
+                return;
+            }
+            let override_listener = host_port_override
+                .and_then(|_| selected_host_port_override_listener(task_name, runtime).ok());
+            for (listener_name, listener) in &runtime.listeners {
+                let compose_publication = listener.project.publication.compose.is_some();
+                let fixed = if compose_publication {
+                    listener.project.host.as_ref().and_then(|host| {
+                        let port = if override_listener.as_deref() == Some(listener_name.as_str()) {
+                            host_port_override
+                        } else if host.port.mode == TaskRuntimeHostPortMode::Fixed {
+                            host.port.value
+                        } else {
+                            None
+                        }?;
+                        Some((host.address.trim().to_string(), port))
+                    })
+                } else if listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed {
+                    let port = if override_listener.as_deref() == Some(listener_name.as_str()) {
+                        host_port_override
+                    } else {
+                        listener.bind.port.value
+                    };
+                    port.map(|port| (listener.bind.address.trim().to_string(), port))
+                } else {
+                    None
+                };
+                push_unique_runtime_owner(
+                    owners,
+                    match fixed {
+                        Some((address, port)) => fixed_runtime_owner(
+                            task_name,
+                            listener_name,
+                            "host",
+                            listener.protocol,
+                            address,
+                            port,
+                        ),
+                        None => unresolved_listener_owner(task_name, listener_name, "host"),
+                    },
+                );
+            }
+        }
+        ResolvedExecutionBackend::Container { .. } => {
+            let mut publications = task_runtime_listener_publications(Some(runtime));
+            apply_host_port_override_to_listener_publications(
+                task_name,
+                Some(runtime),
+                &mut publications,
+                host_port_override,
+            )
+            .expect("validated runtime owner should accept admitted host-port override");
+            for (listener_name, publication) in publications {
+                let owner = match (publication.host_port_mode, publication.host_port) {
+                    (TaskRuntimeHostPortMode::Fixed, Some(port)) => fixed_runtime_owner(
+                        task_name,
+                        listener_name.as_str(),
+                        "host",
+                        publication.protocol,
+                        publication.host_address,
+                        port,
+                    ),
+                    (TaskRuntimeHostPortMode::Auto, _) => RepoExecutionRuntimeOwner {
+                        task: task_name.to_string(),
+                        listener: Some(listener_name),
+                        namespace: String::from("host"),
+                        protocol: Some(publication.protocol.network_protocol().to_string()),
+                        address: Some(publication.host_address),
+                        port: None,
+                        allocation: RepoExecutionRuntimeAllocation::ManagedDynamic,
+                    },
+                    _ => unresolved_listener_owner(task_name, listener_name.as_str(), "host"),
+                };
+                push_unique_runtime_owner(owners, owner);
+            }
+            for (listener_name, listener) in &runtime.listeners {
+                if listener.project.host.is_some() {
+                    continue;
+                }
+                push_unique_runtime_owner(
+                    owners,
+                    RepoExecutionRuntimeOwner {
+                        task: task_name.to_string(),
+                        listener: Some(listener_name.clone()),
+                        namespace: runtime_resource_namespace(backend),
+                        protocol: Some(listener.protocol.network_protocol().to_string()),
+                        address: Some(listener.bind.address.trim().to_string()),
+                        port: listener.bind.port.value,
+                        allocation: RepoExecutionRuntimeAllocation::Isolated,
+                    },
+                );
+            }
+        }
+        ResolvedExecutionBackend::Remote { .. }
+        | ResolvedExecutionBackend::BackendProvider { .. } => {
+            let namespace = runtime_resource_namespace(backend);
+            if runtime.listeners.is_empty() {
+                return;
+            }
+            for (listener_name, listener) in &runtime.listeners {
+                let owner = if listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed
+                {
+                    listener.bind.port.value.map(|port| {
+                        fixed_runtime_owner(
+                            task_name,
+                            listener_name,
+                            namespace.as_str(),
+                            listener.protocol,
+                            listener.bind.address.trim().to_string(),
+                            port,
+                        )
+                    })
+                } else {
+                    None
+                }
+                .unwrap_or_else(|| {
+                    unresolved_listener_owner(task_name, listener_name, namespace.as_str())
+                });
+                push_unique_runtime_owner(owners, owner);
+            }
+        }
+    }
+}
+
+fn runtime_resource_namespace(backend: &ResolvedExecutionBackend) -> String {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => String::from("host"),
+        ResolvedExecutionBackend::Container { engine, .. } => format!("container:{engine}"),
+        ResolvedExecutionBackend::Remote {
+            provider,
+            target,
+            cwd,
+            ..
+        } => format!(
+            "remote:{provider}:{target}:{}",
+            cwd.as_deref().unwrap_or(".")
+        ),
+        ResolvedExecutionBackend::BackendProvider {
+            provider,
+            target,
+            cwd,
+            ..
+        } => format!(
+            "provider:{provider}:{target}:{}",
+            cwd.as_deref().unwrap_or(".")
+        ),
+    }
+}
+
+fn fixed_runtime_owner(
+    task_name: &str,
+    listener_name: &str,
+    namespace: &str,
+    protocol: TaskRuntimeProtocol,
+    address: String,
+    port: u16,
+) -> RepoExecutionRuntimeOwner {
+    RepoExecutionRuntimeOwner {
+        task: task_name.to_string(),
+        listener: Some(listener_name.to_string()),
+        namespace: namespace.to_string(),
+        protocol: Some(protocol.network_protocol().to_string()),
+        address: Some(address),
+        port: Some(port),
+        allocation: RepoExecutionRuntimeAllocation::Fixed,
+    }
+}
+
+fn unresolved_listener_owner(
+    task_name: &str,
+    listener_name: &str,
+    namespace: &str,
+) -> RepoExecutionRuntimeOwner {
+    RepoExecutionRuntimeOwner {
+        task: task_name.to_string(),
+        listener: Some(listener_name.to_string()),
+        namespace: namespace.to_string(),
+        protocol: None,
+        address: None,
+        port: None,
+        allocation: RepoExecutionRuntimeAllocation::Unresolved,
+    }
+}
+
+fn push_unique_runtime_owner(
+    owners: &mut Vec<RepoExecutionRuntimeOwner>,
+    owner: RepoExecutionRuntimeOwner,
+) {
+    if !owners.contains(&owner) {
+        owners.push(owner);
     }
 }
 
@@ -3206,11 +3479,18 @@ fn collect_action_env_materialization_paths(
 }
 
 fn push_unique_owned_path(paths: &mut Vec<String>, value: &str) {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || paths.iter().any(|existing| existing == trimmed) {
+    let normalized = normalize_owned_resource_path(value);
+    if normalized.is_empty() || paths.iter().any(|existing| existing == &normalized) {
         return;
     }
-    paths.push(trimmed.to_string());
+    paths.push(normalized);
+}
+
+fn normalize_owned_resource_path(value: &str) -> String {
+    crate::execution::normalize_dependency_isolated_path(value)
+        .unwrap_or_else(|| value.trim().replace('\\', "/"))
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn push_unique_write_owner(
@@ -4274,11 +4554,21 @@ fn projected_command_launch_for_task(
     backend: Backend,
     command: &crate::schema::TaskCommandLaunchSpec,
 ) -> crate::schema::TaskCommandSpec {
+    projected_command_launch_for_task_with_runtime(task, backend, command, None)
+}
+
+fn projected_command_launch_for_task_with_runtime(
+    task: &TaskSpec,
+    backend: Backend,
+    command: &crate::schema::TaskCommandLaunchSpec,
+    runtime_override: Option<&TaskRuntimeSpec>,
+) -> crate::schema::TaskCommandSpec {
     let mut projected = projected_structured_command_for_task(task, backend, command);
     let Some(runtime_projection) = command.runtime_projection.as_ref() else {
         return projected;
     };
-    let Some(runtime) = task.service_runtime_for_backend(backend) else {
+    let Some(runtime) = runtime_override.or_else(|| task.service_runtime_for_backend(backend))
+    else {
         return projected;
     };
     let Some(listener) = runtime.listeners.get(runtime_projection.listener.as_str()) else {
@@ -11605,7 +11895,6 @@ fn execute_task_with_hooks(
             contract_path,
             task_name,
             task,
-            requested_overrides.host_port,
             policy_env,
             &backend,
             mode.clone(),
@@ -11861,7 +12150,20 @@ fn execute_task_with_hooks(
     let mut combined_env = native_activation_env.unwrap_or_default();
     combined_env.extend(env_overrides);
     combined_env.extend(input_resolution.env_overrides.clone());
-    let runtime = task.service_runtime_for_backend(backend_kind);
+    let declared_runtime = task.service_runtime_for_backend(backend_kind);
+    let native_runtime_override = if requested_relation
+        && matches!(backend, ResolvedExecutionBackend::Native { .. })
+        && native_compose_up_engine(execution).is_none()
+    {
+        selected_native_direct_host_port_override(
+            task_name,
+            declared_runtime,
+            requested_overrides.host_port,
+        )?
+    } else {
+        None
+    };
+    let runtime = native_runtime_override.as_ref().or(declared_runtime);
     let projected_command = execution
         .command()
         .map(|command| projected_structured_command_for_task(task, backend_kind, command));
@@ -11870,7 +12172,7 @@ fn execute_task_with_hooks(
         .map(|compose| projected_compose_command_for_task(task, backend_kind, compose));
     let projected_launch_command = match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
-            projected_command_launch_for_task(task, backend_kind, command),
+            projected_command_launch_for_task_with_runtime(task, backend_kind, command, runtime),
         ),
         Some(crate::schema::TaskLaunchSpec::Compose(compose)) => Some(
             projected_compose_launch_command_for_task(task, backend_kind, compose),
@@ -12314,7 +12616,6 @@ fn execute_task_with_hooks(
         contract_path,
         task_name,
         task,
-        requested_overrides.host_port,
         policy_env,
         &backend,
         mode.clone(),
@@ -13316,7 +13617,6 @@ fn execute_post_hooks(
     contract_path: &Path,
     task_name: &str,
     task: &TaskSpec,
-    host_port_override: Option<u16>,
     policy_env: Option<&BTreeMap<String, String>>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -13334,10 +13634,7 @@ fn execute_post_hooks(
             contract_path,
             &task.after_success,
             task_name,
-            ExecutionOverrides {
-                host_port: host_port_override,
-                ..ExecutionOverrides::default()
-            },
+            ExecutionOverrides::default(),
             policy_env,
             backend,
             mode.clone(),
@@ -13354,10 +13651,7 @@ fn execute_post_hooks(
             contract_path,
             &task.after_failure,
             task_name,
-            ExecutionOverrides {
-                host_port: host_port_override,
-                ..ExecutionOverrides::default()
-            },
+            ExecutionOverrides::default(),
             policy_env,
             backend,
             mode.clone(),
@@ -13374,10 +13668,7 @@ fn execute_post_hooks(
         contract_path,
         &task.after_always,
         task_name,
-        ExecutionOverrides {
-            host_port: host_port_override,
-            ..ExecutionOverrides::default()
-        },
+        ExecutionOverrides::default(),
         policy_env,
         backend,
         mode.clone(),
@@ -13546,39 +13837,43 @@ fn execute_task_command_with_replay_baseline_mounts(
                 })
                 .transpose()?
                 .flatten();
-            let effective_runtime = native_compose_override
-                .as_ref()
-                .map(|override_spec| &override_spec.runtime)
-                .or(runtime);
-            let mut resolved_env = env_overrides.clone();
+            let result = (|| {
+                let effective_runtime = native_compose_override
+                    .as_ref()
+                    .map(|override_spec| &override_spec.runtime)
+                    .or(runtime);
+                let mut resolved_env = env_overrides.clone();
+                if let Some(override_spec) = native_compose_override.as_ref() {
+                    resolved_env.insert(
+                        String::from("COMPOSE_FILE"),
+                        override_spec.compose_file_value.clone(),
+                    );
+                } else {
+                    preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+                }
+                preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
+                let runtime_env = runtime_bind_env_for_native(effective_runtime);
+                if host_port_override.is_some() && native_compose_override.is_none() {
+                    resolved_env.extend(runtime_env);
+                } else {
+                    extend_missing_env(&mut resolved_env, runtime_env);
+                }
+                execute_native_launch_command(
+                    contract,
+                    task,
+                    task_name,
+                    effective_runtime,
+                    exe,
+                    args,
+                    *interaction,
+                    effective_working_dir.as_path(),
+                    &resolved_env,
+                    mode,
+                    backend,
+                )
+            })();
             if let Some(override_spec) = native_compose_override.as_ref() {
-                resolved_env.insert(
-                    String::from("COMPOSE_FILE"),
-                    override_spec.compose_file_value.clone(),
-                );
-            } else {
-                preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
-            }
-            preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
-            extend_missing_env(
-                &mut resolved_env,
-                runtime_bind_env_for_native(effective_runtime),
-            );
-            let result = execute_native_launch_command(
-                contract,
-                task,
-                task_name,
-                effective_runtime,
-                exe,
-                args,
-                *interaction,
-                effective_working_dir.as_path(),
-                &resolved_env,
-                mode,
-                backend,
-            );
-            if let Some(override_spec) = native_compose_override {
-                let _ = fs::remove_file(override_spec.override_file);
+                let _ = fs::remove_file(&override_spec.override_file);
             }
             result
         }
@@ -13627,7 +13922,12 @@ fn execute_task_command_with_replay_baseline_mounts(
                 preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
                 preflight_native_runtime_listener_binds(task_name, runtime)?;
                 let mut resolved_env = env_overrides.clone();
-                extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
+                let runtime_env = runtime_bind_env_for_native(runtime);
+                if host_port_override.is_some() {
+                    resolved_env.extend(runtime_env);
+                } else {
+                    extend_missing_env(&mut resolved_env, runtime_env);
+                }
                 // Native shell execution needs the same source-managed tool path as container shells.
                 let command = command_with_optional_path_export(command, path_export);
                 execute_native_task_command(
@@ -23391,7 +23691,7 @@ fn preflight_native_compose_host_port_shape(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
     engine: crate::schema::ComposeCliEngine,
-) -> Result<(String, u16, String), RunError> {
+) -> Result<(String, u16, String, String, String), RunError> {
     let Some(runtime) = runtime else {
         return Err(RunError::HostPortOverrideNoProjectedListener {
             task: task_name.to_string(),
@@ -23443,7 +23743,13 @@ fn preflight_native_compose_host_port_shape(
             listener: listener_name.clone(),
         })?;
 
-    Ok((listener_name, bind_port, service.to_string()))
+    Ok((
+        listener_name,
+        bind_port,
+        service.to_string(),
+        host_projection.address.trim().to_string(),
+        listener.protocol.network_protocol().to_string(),
+    ))
 }
 
 fn selected_native_compose_host_port_override(
@@ -23471,12 +23777,9 @@ fn selected_native_compose_host_port_override(
     {
         crate::schema::ComposeCliEngine::Podman
     } else {
-        return Err(RunError::HostPortOverrideUnsupportedBackend {
-            task: task_name.to_string(),
-            backend: "native",
-        });
+        return Ok(None);
     };
-    let (listener_name, bind_port, service) =
+    let (listener_name, bind_port, service, host_address, protocol) =
         preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
     let runtime = runtime.expect("validated native compose runtime should exist");
 
@@ -23486,8 +23789,10 @@ fn selected_native_compose_host_port_override(
         task_name,
         repo_working_dir,
         service.as_str(),
+        host_address.as_str(),
         host_port,
         bind_port,
+        protocol.as_str(),
     )?;
 
     let mut effective_runtime = runtime.clone();
@@ -23569,8 +23874,10 @@ fn write_native_compose_host_port_override_file(
     task_name: &str,
     working_dir: &Path,
     service: &str,
+    host_address: &str,
     host_port: u16,
     bind_port: u16,
+    protocol: &str,
 ) -> Result<PathBuf, RunError> {
     let state_dir = working_dir
         .join(".ota")
@@ -23591,10 +23898,12 @@ fn write_native_compose_host_port_override_file(
         host_port
     ));
     let contents = format!(
-        "services:\n  {}:\n    ports: !override\n      - \"{}:{}\"\n",
+        "services:\n  {}:\n    ports: !override\n      - target: {}\n        published: {}\n        host_ip: {}\n        protocol: {}\n",
         yaml_single_quote(service),
+        bind_port,
         host_port,
-        bind_port
+        yaml_single_quote(host_address),
+        yaml_single_quote(protocol),
     );
     fs::write(&file_path, contents).map_err(|source| {
         RunError::DependencyIsolationOwnershipFailure {
@@ -23661,6 +23970,56 @@ fn selected_host_port_override_listener(
     })
 }
 
+fn selected_native_direct_host_port_override(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    host_port_override: Option<u16>,
+) -> Result<Option<TaskRuntimeSpec>, RunError> {
+    let Some(host_port) = host_port_override else {
+        return Ok(None);
+    };
+    let runtime = runtime.ok_or_else(|| RunError::HostPortOverrideNoProjectedListener {
+        task: task_name.to_string(),
+    })?;
+    let listener_name = selected_host_port_override_listener(task_name, runtime)?;
+    let listener = runtime
+        .listeners
+        .get(listener_name.as_str())
+        .expect("selected native listener should exist");
+    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+        RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        }
+    })?;
+    if host_projection.port.mode != TaskRuntimeHostPortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedProjectedPort {
+            task: task_name.to_string(),
+            listener: listener_name.clone(),
+        });
+    }
+    if listener.bind.port.mode != TaskRuntimePortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedBindPort {
+            task: task_name.to_string(),
+            listener: listener_name.clone(),
+        });
+    }
+
+    let mut effective_runtime = runtime.clone();
+    let listener = effective_runtime
+        .listeners
+        .get_mut(listener_name.as_str())
+        .expect("selected native listener should remain available");
+    listener.bind.port.value = Some(host_port);
+    let host_projection = listener
+        .project
+        .host
+        .as_mut()
+        .expect("selected native listener should retain its host projection");
+    host_projection.port.value = Some(host_port);
+
+    Ok(Some(effective_runtime))
+}
+
 fn preflight_host_port_override(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
@@ -23671,10 +24030,14 @@ fn preflight_host_port_override(
         return Ok(());
     }
 
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        selected_native_direct_host_port_override(task_name, runtime, host_port_override)?;
+        return Ok(());
+    }
     if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
         let backend = match backend {
-            ResolvedExecutionBackend::Native { .. } => "native",
-            ResolvedExecutionBackend::Container { .. } => "container",
+            ResolvedExecutionBackend::Native { .. }
+            | ResolvedExecutionBackend::Container { .. } => unreachable!(),
             ResolvedExecutionBackend::Remote { .. } => "remote",
             ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
         };
@@ -24042,6 +24405,28 @@ fn runtime_bind_env_for_native(runtime: Option<&TaskRuntimeSpec>) -> BTreeMap<St
     let Some(runtime) = runtime else {
         return env;
     };
+
+    let listener_publications = task_runtime_listener_publications(Some(runtime));
+    let expected_host_ports = listener_publications
+        .iter()
+        .filter_map(|(listener_name, publication)| {
+            (publication.host_port_mode == TaskRuntimeHostPortMode::Fixed)
+                .then(|| {
+                    publication
+                        .host_port
+                        .map(|port| (listener_name.clone(), port))
+                })
+                .flatten()
+        })
+        .collect::<BTreeMap<_, _>>();
+    extend_missing_env(
+        &mut env,
+        runtime_public_env(
+            Some(runtime),
+            listener_publications.as_slice(),
+            &expected_host_ports,
+        ),
+    );
 
     let Some(primary_listener_name) = runtime_primary_bind_listener_name(runtime) else {
         return env;
@@ -25207,23 +25592,22 @@ pub(crate) fn preflight_task_execution_overrides(
                 .ok_or_else(|| RunError::InvalidTaskExecution {
                     task: task_name.to_string(),
                 })?;
-            let engine = native_compose_up_engine(execution).ok_or_else(|| {
-                RunError::HostPortOverrideUnsupportedBackend {
-                    task: task_name.to_string(),
-                    backend: "native",
+            if let Some(engine) = native_compose_up_engine(execution) {
+                preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
+                if let Some(contract_path) = contract_path {
+                    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+                    let env = task.env_for_backend_with_context_name_for_os(
+                        contract.execution.as_ref(),
+                        Backend::Native,
+                        effective.context_name,
+                        current_os(),
+                    );
+                    let working_dir =
+                        effective_task_execution_working_dir(task, Backend::Native, root);
+                    effective_native_compose_file_stack(task_name, task, &env, &working_dir)?;
                 }
-            })?;
-            preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
-            if let Some(contract_path) = contract_path {
-                let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
-                let env = task.env_for_backend_with_context_name_for_os(
-                    contract.execution.as_ref(),
-                    Backend::Native,
-                    effective.context_name,
-                    current_os(),
-                );
-                let working_dir = effective_task_execution_working_dir(task, Backend::Native, root);
-                effective_native_compose_file_stack(task_name, task, &env, &working_dir)?;
+            } else {
+                selected_native_direct_host_port_override(task_name, runtime, Some(host_port))?;
             }
             Ok(())
         }
@@ -34103,22 +34487,153 @@ fn execution_conflict_reasons_with_active_owner(
     if candidate
         .env_materialization_paths
         .iter()
-        .any(|path| active.env_materialization_paths.contains(path))
+        .any(|candidate_path| {
+            active.env_materialization_paths.iter().any(|active_path| {
+                owned_resource_paths_overlap(candidate_path.as_str(), active_path.as_str())
+            })
+        })
     {
         reasons.push(RepoExecutionConflictReason::EnvMaterializationPath);
     }
     if candidate.write_owners.iter().any(|candidate_owner| {
         active.write_owners.iter().any(|active_owner| {
-            candidate_owner.path == active_owner.path
-                && candidate_owner.namespace == active_owner.namespace
+            candidate_owner.namespace == active_owner.namespace
+                && owned_resource_paths_overlap(
+                    candidate_owner.path.as_str(),
+                    active_owner.path.as_str(),
+                )
         })
-    }) {
+    }) || legacy_write_paths_conflict(candidate, active)
+    {
         reasons.push(RepoExecutionConflictReason::WritePath);
     }
-    if candidate.service_task && active.service_task && candidate.task == active.task {
+    if candidate.runtime_owners.iter().any(|candidate_owner| {
+        active
+            .runtime_owners
+            .iter()
+            .any(|active_owner| runtime_resource_owners_conflict(candidate_owner, active_owner))
+    }) {
+        reasons.push(RepoExecutionConflictReason::RuntimeListener);
+    }
+    if candidate.runtime_owners.iter().any(|candidate_owner| {
+        active
+            .runtime_owners
+            .iter()
+            .any(|active_owner| unresolved_runtime_owners_conflict(candidate_owner, active_owner))
+    }) || legacy_service_owners_conflict(candidate, active)
+    {
         reasons.push(RepoExecutionConflictReason::ServiceTask);
     }
     reasons
+}
+
+fn owned_resource_paths_overlap(left: &str, right: &str) -> bool {
+    let left = normalize_owned_resource_path(left);
+    let right = normalize_owned_resource_path(right);
+    left == right
+        || left == "."
+        || right == "."
+        || left
+            .strip_prefix(right.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn legacy_write_paths_conflict(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> bool {
+    (candidate.write_owners.is_empty() || active.write_owners.is_empty())
+        && candidate.write_paths.iter().any(|candidate_path| {
+            active.write_paths.iter().any(|active_path| {
+                owned_resource_paths_overlap(candidate_path.as_str(), active_path.as_str())
+            })
+        })
+}
+
+fn runtime_resource_owners_conflict(
+    candidate: &RepoExecutionRuntimeOwner,
+    active: &RepoExecutionRuntimeOwner,
+) -> bool {
+    if candidate.namespace != active.namespace
+        || candidate.allocation != RepoExecutionRuntimeAllocation::Fixed
+        || active.allocation != RepoExecutionRuntimeAllocation::Fixed
+        || candidate.protocol != active.protocol
+        || candidate.port != active.port
+    {
+        return false;
+    }
+    match (candidate.address.as_deref(), active.address.as_deref()) {
+        (Some(candidate_address), Some(active_address)) => {
+            runtime_listener_addresses_overlap(candidate_address, active_address)
+        }
+        _ => false,
+    }
+}
+
+fn unresolved_runtime_owners_conflict(
+    candidate: &RepoExecutionRuntimeOwner,
+    active: &RepoExecutionRuntimeOwner,
+) -> bool {
+    candidate.namespace == active.namespace
+        && candidate.allocation != RepoExecutionRuntimeAllocation::ManagedDynamic
+        && active.allocation != RepoExecutionRuntimeAllocation::ManagedDynamic
+        && candidate.allocation != RepoExecutionRuntimeAllocation::Isolated
+        && active.allocation != RepoExecutionRuntimeAllocation::Isolated
+        && (candidate.allocation == RepoExecutionRuntimeAllocation::Unresolved
+            || active.allocation == RepoExecutionRuntimeAllocation::Unresolved)
+}
+
+fn legacy_service_owners_conflict(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> bool {
+    candidate.service_task
+        && active.service_task
+        && (candidate.runtime_owners.is_empty() || active.runtime_owners.is_empty())
+}
+
+fn runtime_listener_addresses_overlap(left: &str, right: &str) -> bool {
+    let left = normalized_runtime_listener_address(left);
+    let right = normalized_runtime_listener_address(right);
+    if left == right {
+        return true;
+    }
+    if runtime_listener_address_is_wildcard(left.as_str())
+        || runtime_listener_address_is_wildcard(right.as_str())
+    {
+        return true;
+    }
+    runtime_listener_address_is_loopback(left.as_str())
+        && runtime_listener_address_is_loopback(right.as_str())
+}
+
+fn normalized_runtime_listener_address(value: &str) -> String {
+    let normalized = value
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    normalized
+        .parse::<std::net::IpAddr>()
+        .map(|address| address.to_string())
+        .unwrap_or(normalized)
+}
+
+fn runtime_listener_address_is_wildcard(value: &str) -> bool {
+    value == "*"
+        || value
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_unspecified())
+}
+
+fn runtime_listener_address_is_loopback(value: &str) -> bool {
+    value == "localhost"
+        || value
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 fn active_execution_is_related_orchestration_pair(
@@ -35045,35 +35560,38 @@ fn visit_task_with_overrides(
         )
         .to_string();
 
-    for dependency in task.depends_on_for_backend(backend) {
-        let dependency_spec = contract
-            .tasks
-            .get(dependency)
-            .expect("validated task plan should only reference known tasks");
-        let dependency_overrides = ExecutionOverrides {
-            backend: dependency_spec
-                .dependency_backend_override_for_parent(overrides.backend, backend),
-            ..overrides
-        };
-        visit_task_with_overrides(
-            contract,
-            dependency,
-            dependency_overrides,
-            explicit_backend_override,
-            Some(task_name),
-            Some(backend),
-            visited,
-            ordered,
-            steps,
-            edges,
-        );
-        edges.push(RunPlanEdge {
-            source: dependency.clone(),
-            destination: task_name.to_string(),
-            relation: TaskExecutionRelation::DependsOn {
-                parent: task_name.to_string(),
-            },
-        });
+    let skip_requested_dependencies = parent_task.is_none() && overrides.skip_deps;
+    if !skip_requested_dependencies {
+        for dependency in task.depends_on_for_backend(backend) {
+            let dependency_spec = contract
+                .tasks
+                .get(dependency)
+                .expect("validated task plan should only reference known tasks");
+            let dependency_overrides = ExecutionOverrides {
+                backend: dependency_spec
+                    .dependency_backend_override_for_parent(overrides.backend, backend),
+                ..overrides
+            };
+            visit_task_with_overrides(
+                contract,
+                dependency,
+                dependency_overrides,
+                explicit_backend_override,
+                Some(task_name),
+                Some(backend),
+                visited,
+                ordered,
+                steps,
+                edges,
+            );
+            edges.push(RunPlanEdge {
+                source: dependency.clone(),
+                destination: task_name.to_string(),
+                relation: TaskExecutionRelation::DependsOn {
+                    parent: task_name.to_string(),
+                },
+            });
+        }
     }
     if let Some(aggregate) = task.aggregate.as_ref() {
         for child in &aggregate.tasks {
@@ -35484,6 +36002,406 @@ mod tests {
             .expect("lock should reacquire");
     }
 
+    fn test_repo_execution_owner(
+        task: &str,
+        mode: &str,
+        runtime_owners: Vec<super::RepoExecutionRuntimeOwner>,
+        write_owners: Vec<super::RepoExecutionWriteOwner>,
+    ) -> super::RepoExecutionLockOwner {
+        super::RepoExecutionLockOwner {
+            task: task.to_string(),
+            requested_mode: Some(mode.to_string()),
+            execution_mode: mode.to_string(),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: write_owners
+                .iter()
+                .map(|owner| owner.path.clone())
+                .collect(),
+            write_owners,
+            runtime_owners,
+            service_task: true,
+            parent_pid: None,
+            pid: std::process::id(),
+            started_at: String::from("2026-08-11T12:00:00Z"),
+        }
+    }
+
+    #[test]
+    fn disjoint_native_and_container_service_endpoints_can_coexist() {
+        let _env_guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    development:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths: [node_modules]
+tasks:
+  setup:dev:
+    context: development
+    command:
+      exe: npm
+      args: [ci]
+    effects:
+      writes: [node_modules]
+  dev:
+    context: development
+    depends_on: [setup:dev]
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 3000 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 3000 }
+              primary: true
+"#,
+        )
+        .expect("contract should parse");
+        let fixture = tempdir().expect("tempdir");
+        let _docker = install_fake_docker_on_path(fixture.path());
+        let container_overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Ephemeral),
+            host_port: Some(3002),
+            ..ExecutionOverrides::default()
+        };
+        let container_backend = resolve_execution_backend(&contract, "dev", container_overrides)
+            .expect("container backend");
+        let container_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "dev",
+            container_overrides,
+            &container_backend,
+        );
+        let native_overrides = ExecutionOverrides {
+            backend: Some(Backend::Native),
+            ..ExecutionOverrides::default()
+        };
+        let native_backend =
+            resolve_execution_backend(&contract, "dev", native_overrides).expect("native backend");
+        let native_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "dev",
+            native_overrides,
+            &native_backend,
+        );
+
+        assert!(container_owner.runtime_owners.iter().any(|owner| {
+            owner.address.as_deref() == Some("127.0.0.1") && owner.port == Some(3002)
+        }));
+        assert!(native_owner.runtime_owners.iter().any(|owner| {
+            owner.address.as_deref() == Some("0.0.0.0") && owner.port == Some(3000)
+        }));
+        assert_ne!(container_owner.write_owners, native_owner.write_owners);
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&native_owner, &container_owner,),
+            Vec::<super::RepoExecutionConflictReason>::new()
+        );
+
+        let _container_guard =
+            register_active_repo_execution("dev", fixture.path(), &container_owner)
+                .expect("container service should register");
+        let _native_guard = register_active_repo_execution("dev", fixture.path(), &native_owner)
+            .expect("disjoint native service should coexist");
+    }
+
+    #[test]
+    fn fixed_runtime_listener_conflicts_across_different_task_names() {
+        let first = test_repo_execution_owner(
+            "dev",
+            "native",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("0.0.0.0"),
+                3000,
+            )],
+            vec![],
+        );
+        let second = test_repo_execution_owner(
+            "preview",
+            "container",
+            vec![super::fixed_runtime_owner(
+                "preview",
+                "site",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&second, &first),
+            vec![super::RepoExecutionConflictReason::RuntimeListener]
+        );
+    }
+
+    #[test]
+    fn equivalent_ipv6_wildcard_addresses_conflict() {
+        let compressed = test_repo_execution_owner(
+            "dev",
+            "native",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("::"),
+                3000,
+            )],
+            vec![],
+        );
+        let expanded = test_repo_execution_owner(
+            "preview",
+            "container",
+            vec![super::fixed_runtime_owner(
+                "preview",
+                "site",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("0:0:0:0:0:0:0:0"),
+                3000,
+            )],
+            vec![],
+        );
+
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&expanded, &compressed),
+            vec![super::RepoExecutionConflictReason::RuntimeListener]
+        );
+    }
+
+    #[test]
+    fn internal_container_listener_is_recorded_as_isolated_runtime_ownership() {
+        let _env_guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: development
+  contexts:
+    development:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: development
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
+    runtime:
+      kind: service
+      listeners:
+        internal:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 3000 }
+"#,
+        )
+        .expect("contract should parse");
+        let fixture = tempdir().expect("tempdir");
+        let _docker = install_fake_docker_on_path(fixture.path());
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Ephemeral),
+            ..ExecutionOverrides::default()
+        };
+        let backend = resolve_execution_backend(&contract, "dev", overrides)
+            .expect("container backend should resolve");
+        let owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "dev",
+            overrides,
+            &backend,
+        );
+
+        assert_eq!(owner.runtime_owners.len(), 1);
+        assert_eq!(
+            owner.runtime_owners[0].allocation,
+            super::RepoExecutionRuntimeAllocation::Isolated
+        );
+        let native = test_repo_execution_owner(
+            "preview",
+            "native",
+            vec![super::fixed_runtime_owner(
+                "preview",
+                "http",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+        assert!(super::execution_conflict_reasons_with_active_owner(&native, &owner).is_empty());
+    }
+
+    #[test]
+    fn managed_dynamic_listeners_and_distinct_remote_namespaces_can_coexist() {
+        let dynamic = |task: &str| super::RepoExecutionRuntimeOwner {
+            task: task.to_string(),
+            listener: Some(String::from("http")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("127.0.0.1")),
+            port: None,
+            allocation: super::RepoExecutionRuntimeAllocation::ManagedDynamic,
+        };
+        let first = test_repo_execution_owner("dev", "container", vec![dynamic("dev")], vec![]);
+        let second = test_repo_execution_owner("dev", "container", vec![dynamic("dev")], vec![]);
+        assert!(super::execution_conflict_reasons_with_active_owner(&second, &first).is_empty());
+
+        let remote_a = test_repo_execution_owner(
+            "dev",
+            "remote",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "remote:ssh:host-a:.",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+        let remote_b = test_repo_execution_owner(
+            "dev",
+            "remote",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "remote:ssh:host-b:.",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+        assert!(
+            super::execution_conflict_reasons_with_active_owner(&remote_b, &remote_a).is_empty()
+        );
+    }
+
+    #[test]
+    fn unresolved_runtime_and_nested_shared_writes_fail_closed() {
+        let unresolved = |task: &str| {
+            test_repo_execution_owner(
+                task,
+                "native",
+                vec![super::unresolved_listener_owner(task, "unknown", "host")],
+                vec![],
+            )
+        };
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(
+                &unresolved("preview"),
+                &unresolved("dev"),
+            ),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+
+        let parent = test_repo_execution_owner(
+            "build",
+            "native",
+            vec![],
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from(".next"),
+                namespace: String::from("shared:repo-worktree"),
+            }],
+        );
+        let child = test_repo_execution_owner(
+            "cache",
+            "native",
+            vec![],
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from(".next/cache"),
+                namespace: String::from("shared:repo-worktree"),
+            }],
+        );
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&child, &parent),
+            vec![super::RepoExecutionConflictReason::WritePath]
+        );
+    }
+
+    #[test]
+    fn legacy_service_records_fail_closed_without_runtime_identity() {
+        let native = test_repo_execution_owner("dev", "native", vec![], vec![]);
+        let container = test_repo_execution_owner("dev", "container", vec![], vec![]);
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&native, &container),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&native, &native),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+
+        let differently_named = test_repo_execution_owner("preview", "native", vec![], vec![]);
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&differently_named, &container),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+    }
+
+    #[test]
+    fn legacy_write_paths_fail_closed_without_namespace_identity() {
+        let mut legacy = test_repo_execution_owner("build", "native", vec![], vec![]);
+        legacy.service_task = false;
+        legacy.write_paths = vec![String::from(".next")];
+        let mut current = test_repo_execution_owner(
+            "cache",
+            "container",
+            vec![],
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from(".next/cache"),
+                namespace: String::from("container-isolated:current"),
+            }],
+        );
+        current.service_task = false;
+
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&current, &legacy),
+            vec![super::RepoExecutionConflictReason::WritePath]
+        );
+    }
+
     #[test]
     fn active_repo_execution_conflict_surfaces_owner_metadata() {
         let fixture = tempdir().expect("tempdir");
@@ -35498,6 +36416,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -35546,6 +36465,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -35562,6 +36482,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35588,6 +36509,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: 42000,
@@ -35604,6 +36526,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: Some(parent_owner.pid),
             pid: 42001,
@@ -35639,6 +36562,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35655,6 +36579,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35696,6 +36621,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35712,6 +36638,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35754,6 +36681,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35770,6 +36698,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35810,6 +36739,7 @@ mod tests {
             env_materialization_paths: vec![String::from(".env.local")],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35826,6 +36756,7 @@ mod tests {
             env_materialization_paths: vec![String::from(".env.local")],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35871,6 +36802,7 @@ mod tests {
                 path: String::from("node_modules"),
                 namespace: String::from("shared:repo-worktree"),
             }],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35890,6 +36822,7 @@ mod tests {
                 path: String::from("node_modules"),
                 namespace: String::from("shared:repo-worktree"),
             }],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -35932,6 +36865,7 @@ mod tests {
                     env_materialization_paths: vec![],
                     write_paths: vec![],
                     write_owners: vec![],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: u32::MAX,
@@ -35952,6 +36886,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -35976,6 +36911,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -48669,7 +49605,7 @@ tasks:
     }
 
     #[test]
-    fn run_task_captured_rejects_host_port_override_for_native_execution() {
+    fn run_task_captured_rejects_host_port_override_without_native_listener_projection() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -48694,11 +49630,10 @@ tasks:
                 ..ExecutionOverrides::default()
             },
         )
-        .expect_err("native execution should reject --host-port override");
+        .expect_err("native execution without a projected listener should reject --host-port");
         assert!(matches!(
             error,
-            RunError::HostPortOverrideUnsupportedBackend { task, backend }
-                if task == "dev" && backend == "native"
+            RunError::HostPortOverrideNoProjectedListener { task } if task == "dev"
         ));
     }
 
@@ -48730,11 +49665,10 @@ tasks:
                 ..ExecutionOverrides::default()
             },
         )
-        .expect_err("native execution should reject --host-port override");
+        .expect_err("native execution without a projected listener should reject --host-port");
         assert!(matches!(
             error,
-            RunError::HostPortOverrideUnsupportedBackend { task, backend }
-                if task == "dev" && backend == "native"
+            RunError::HostPortOverrideNoProjectedListener { task } if task == "dev"
         ));
     }
 
@@ -48865,9 +49799,18 @@ exit 1
         );
         let override_file = fs::read_to_string(state_dir.join("override.yml")).unwrap();
         assert!(
-            override_file.contains(&format!(r#""{}:{}""#, override_port, original_port)),
+            override_file.contains(&format!("target: {original_port}")),
             "{override_file}"
         );
+        assert!(
+            override_file.contains(&format!("published: {override_port}")),
+            "{override_file}"
+        );
+        assert!(
+            override_file.contains("host_ip: '127.0.0.1'"),
+            "{override_file}"
+        );
+        assert!(override_file.contains("protocol: 'tcp'"), "{override_file}");
         let runtime = outcome.runtime.expect("runtime should resolve");
         assert_eq!(runtime.primary_listener.as_deref(), Some("web:http"));
         assert_eq!(
@@ -48877,6 +49820,78 @@ exit 1
                 .map(|endpoint| endpoint.host.port),
             Some(override_port)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_compose_bind_refusal_removes_generated_override_file() {
+        let _guard = env_mutex_lock();
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).expect("occupied host listener");
+        let override_port = occupied.local_addr().expect("occupied address").port();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        files: [docker-compose.yml]
+    compose:
+      kind: up
+      detach: true
+      services: [web]
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 3000 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 3000 }
+              primary: true
+            publication:
+              compose:
+                service: web
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    image: nginx:alpine\n",
+        )
+        .expect("compose fixture");
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+
+        let error = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(override_port),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("occupied native Compose publication should refuse");
+        assert!(matches!(
+            error,
+            RunError::NativeListenerBindConflict { port, .. } if port == override_port
+        ));
+
+        let override_dir = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("compose-overrides");
+        let remaining = fs::read_dir(&override_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(remaining, 0, "refusal must not retain an override file");
     }
 
     #[test]
@@ -49837,7 +50852,7 @@ tasks:
     fn loader_labels_include_execution_class_not_runtime_identity() {
         assert_eq!(
             preparing_loader_label("test", Backend::Native),
-            "Preparing test"
+            "Preparing test (native)"
         );
         assert_eq!(
             preparing_loader_label("test", Backend::Container),
@@ -49848,8 +50863,21 @@ tasks:
             "Preparing test (remote)"
         );
         assert_eq!(
+            running_loader_label_for_backend("test", Backend::Native),
+            "Running test (native)"
+        );
+        assert_eq!(
             running_loader_label_for_backend("test", Backend::Container),
             "Running test (container)"
+        );
+        assert_eq!(
+            running_loader_label(
+                "test",
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                }
+            ),
+            "Running test (native)"
         );
         assert_eq!(
             running_loader_label(
@@ -61600,6 +62628,7 @@ workflows:
             env_materialization_paths: Vec::new(),
             write_paths: Vec::new(),
             write_owners: Vec::new(),
+            runtime_owners: Vec::new(),
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -70963,6 +71992,76 @@ tasks:
                 String::from("127.0.0.1"),
                 String::from("--port"),
                 String::from("3005"),
+            ]
+        );
+    }
+
+    #[test]
+    fn native_host_port_override_reprojects_typed_launch_bind_args() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args: [exec, next, dev]
+      runtime_projection:
+        listener: web:http
+        adapter: nextjs
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let runtime = super::selected_native_direct_host_port_override(
+            "dev",
+            task.service_runtime_for_backend(Backend::Native),
+            Some(4000),
+        )
+        .unwrap()
+        .expect("native runtime override");
+        let projected = super::projected_command_launch_for_task_with_runtime(
+            task,
+            Backend::Native,
+            match task.launch.as_ref().unwrap() {
+                crate::schema::TaskLaunchSpec::Command(command) => command,
+                _ => unreachable!("expected command launch"),
+            },
+            Some(&runtime),
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("exec"),
+                String::from("next"),
+                String::from("dev"),
+                String::from("--hostname"),
+                String::from("127.0.0.1"),
+                String::from("--port"),
+                String::from("4000"),
             ]
         );
     }

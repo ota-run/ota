@@ -35139,6 +35139,7 @@ fn clean_execution_conflict_json_value(
             "env_materialization_paths": owner.env_materialization_paths,
             "write_paths": owner.write_paths,
             "write_owners": owner.write_owners,
+            "runtime_owners": owner.runtime_owners,
             "service_task": owner.service_task,
             "pid": owner.pid,
             "started_at": owner.started_at
@@ -59780,6 +59781,7 @@ fn render_up_result(
             &preview.summary,
             &preview.contract_identity,
             &preview.execution,
+            preview.overrides.as_ref(),
             &preview.plan,
             &preview.governance,
             preview.sandbox_admission.as_ref(),
@@ -60040,6 +60042,7 @@ fn render_up_preview_result(
     summary: &DoctorSummary,
     contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
+    overrides: Option<&ExecutionPlanOverrides>,
     plan: &UpPreviewPlan,
     governance: &crate::output::GovernanceEvaluation,
     sandbox_admission: Option<&JsonValue>,
@@ -60084,6 +60087,7 @@ fn render_up_preview_result(
                 summary: summary.clone(),
                 contract_identity: contract_identity.clone(),
                 execution: execution.clone(),
+                overrides: overrides.cloned(),
                 plan: plan.clone(),
                 governance: governance.clone(),
                 sandbox_admission,
@@ -60109,6 +60113,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "summary": preview.summary,
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
+            "overrides": preview.overrides,
             "plan": preview.plan,
             "governance": preview.governance,
             "sandbox_admission": preview.sandbox_admission,
@@ -60169,6 +60174,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "summary": preview.summary,
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
+            "overrides": preview.overrides,
             "plan": preview.plan,
             "governance": preview.governance,
             "sandbox_admission": preview.sandbox_admission,
@@ -79416,6 +79422,7 @@ tasks:
                     env_materialization_paths: vec![],
                     write_paths: vec![],
                     write_owners: vec![],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -79474,6 +79481,7 @@ tasks:
                     env_materialization_paths: vec![],
                     write_paths: vec![],
                     write_owners: vec![],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -82770,6 +82778,7 @@ tasks:
                     target: None,
                     task: Some(String::from("setup")),
                 },
+                overrides: None,
                 plan: UpPreviewPlan {
                     actions: Vec::new(),
                     staged_actions: Vec::new(),
@@ -93809,6 +93818,23 @@ workflows:
             super::UpRunBehaviorPreference::Attach,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedLeaveRunning);
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Native),
+            host_port: Some(4000),
+            ..ExecutionOverrides::default()
+        };
+        assert_eq!(
+            super::selected_up_host_port_task_name(&contract, None, overrides),
+            Some("dev")
+        );
+        assert_eq!(
+            super::up_execution_overrides_for_task(&contract, None, "dev", overrides).host_port,
+            Some(4000)
+        );
+        assert_eq!(
+            super::up_execution_overrides_for_task(&contract, None, "attach", overrides).host_port,
+            None
+        );
     }
 
     #[test]
@@ -95180,6 +95206,7 @@ tasks:
                         path: String::from("node_modules"),
                         namespace: String::from("shared:repo-worktree"),
                     }],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -95241,6 +95268,71 @@ tasks:
         );
         assert!(
             rendered.contains("then rerun `ota run build --mode native`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_explains_legacy_service_owner_restart() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &RunError::RepoExecutionConflict {
+                task: String::from("dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::ServiceTask],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: None,
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("ephemeral")),
+                    host_services: vec![],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
+                    write_paths: vec![String::from("node_modules")],
+                    write_owners: vec![],
+                    runtime_owners: vec![],
+                    service_task: true,
+                    parent_pid: None,
+                    pid: 50216,
+                    started_at: String::from("2026-08-11T14:18:46Z"),
+                }],
+            },
+            "RUN SUMMARY\nStatus:      blocked\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("active service record predates runtime-listener ownership"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("runtime ownership: `legacy_or_unresolved`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("restart it once with the current ota binary"),
             "{rendered}"
         );
     }
@@ -96476,6 +96568,7 @@ tasks:
                             namespace: String::from("shared:repo-worktree"),
                         },
                     ],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 86601,
@@ -111509,17 +111602,27 @@ fn render_run_structured_error_text(
             ..
         } => {
             detail_lines.extend(repo_execution_conflict_detail_lines(reasons, owners));
+            let legacy_service_owner =
+                repo_execution_conflict_has_legacy_service_owner(reasons, owners);
+            let mut why_lines = vec![format!(
+                "ota could not start this task because active repo executions recorded in `{path}` conflict with it"
+            )];
+            let mut next_steps = vec![String::from(
+                "wait for the conflicting execution to finish or stop it before retrying",
+            )];
+            if legacy_service_owner {
+                why_lines.push(String::from(
+                    "the active service record predates runtime-listener ownership, so ota cannot prove that its endpoint is disjoint from this run",
+                ));
+                next_steps.push(String::from(
+                    "if that service should remain active, restart it once with the current ota binary so its listener ownership is recorded",
+                ));
+            }
+            next_steps.push(format!("then rerun `{}`", rerun_command));
             (
                 String::from("Active execution conflict"),
-                vec![format!(
-                    "ota could not start this task because active repo executions recorded in `{path}` conflict with it"
-                )],
-                vec![
-                    String::from(
-                        "wait for the conflicting execution to finish or stop it before retrying",
-                    ),
-                    format!("then rerun `{}`", rerun_command),
-                ],
+                why_lines,
+                next_steps,
             )
         }
         RunError::RepoExecutionLockFailed {
@@ -111842,9 +111945,16 @@ fn render_run_structured_error_text(
                 why_lines.push(String::from(
                     "this usually means another local workload is still running",
                 ));
-                next_steps.push(format!(
-                    "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
-                ));
+                if overrides.host_port == Some(*port) {
+                    why_lines.push(format!(
+                        "the explicit `--host-port {port}` override selected this native bind"
+                    ));
+                    next_steps.push(String::from("or rerun with `--host-port <free port>`"));
+                } else {
+                    next_steps.push(format!(
+                        "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
+                    ));
+                }
             }
             next_steps.push(format!(
                 "rerun `{}`",
@@ -111934,19 +112044,12 @@ fn render_run_structured_error_text(
             ],
         ),
         RunError::HostPortOverrideUnsupportedBackend { task, backend } => (
-            String::from("Host port override requires container execution"),
+            String::from("Host port override is unsupported for the selected backend"),
             vec![format!(
-                "task `{task}` resolved to `{backend}` execution, but `--host-port` only applies to projected container host publication"
+                "task `{task}` resolved to `{backend}` execution, but `--host-port` requires a direct native listener, container host publication, or supported native Compose publication"
             )],
             vec![
-                format!(
-                    "rerun with container mode if the contract supports it, for example {}",
-                    paint_code(&match member {
-                        Some(member) =>
-                            format!("ota run --member {member} {task} --mode container"),
-                        None => format!("ota run {task} --mode container"),
-                    })
-                ),
+                task_use_details_step(Some(contract_path), member),
                 String::from("or rerun without `--host-port`"),
             ],
         ),
@@ -112200,10 +112303,15 @@ fn render_run_structured_error_text(
             return output;
         }
         RunError::NativeListenerBindConflict { task, listener, .. } => {
+            let field = if overrides.host_port.is_some() {
+                String::from("execution.host_port")
+            } else {
+                format!("tasks.{task}.runtime.listeners.{listener}.bind.port")
+            };
             let mut output = structured_field_error_text(
                 "RUN",
                 &text_path_display,
-                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                &field,
                 &summary,
                 &why_lines,
                 &next_steps,
@@ -112434,6 +112542,7 @@ fn repo_execution_conflict_reason_label(
             "env_materialization_path"
         }
         crate::runner::RepoExecutionConflictReason::WritePath => "write_path",
+        crate::runner::RepoExecutionConflictReason::RuntimeListener => "runtime_listener",
         crate::runner::RepoExecutionConflictReason::ServiceTask => "service_task",
     }
 }
@@ -112528,6 +112637,32 @@ fn repo_execution_conflict_detail_lines(
                     .join(", ")
             ));
         }
+        if !owner.runtime_owners.is_empty() {
+            detail_lines.push(format!(
+                "runtime owners: {}",
+                owner
+                    .runtime_owners
+                    .iter()
+                    .map(|runtime_owner| {
+                        let listener = runtime_owner.listener.as_deref().unwrap_or("service");
+                        let endpoint = match (runtime_owner.address.as_deref(), runtime_owner.port)
+                        {
+                            (Some(address), Some(port)) => format!("{address}:{port}"),
+                            _ => runtime_owner.allocation.as_str().to_string(),
+                        };
+                        format!(
+                            "`{}:{} ({}; {})`",
+                            runtime_owner.namespace, listener, endpoint, runtime_owner.task
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        } else if owner.service_task {
+            detail_lines.push(String::from(
+                "runtime ownership: `legacy_or_unresolved` (restart with current ota for precise listener admission)",
+            ));
+        }
         detail_lines.push(format!("pid: `{}`", owner.pid));
         detail_lines.push(format!("started: `{}`", owner.started_at));
     }
@@ -112538,6 +112673,16 @@ fn repo_execution_conflict_detail_lines(
         ));
     }
     detail_lines
+}
+
+fn repo_execution_conflict_has_legacy_service_owner(
+    reasons: &[RepoExecutionConflictReason],
+    owners: &[RepoExecutionLockOwner],
+) -> bool {
+    reasons.contains(&RepoExecutionConflictReason::ServiceTask)
+        && owners
+            .iter()
+            .any(|owner| owner.service_task && owner.runtime_owners.is_empty())
 }
 
 fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
@@ -125304,6 +125449,7 @@ struct RepoUpPreview {
     summary: DoctorSummary,
     contract_identity: ContractIdentity,
     execution: UpPreviewExecution,
+    overrides: Option<ExecutionPlanOverrides>,
     plan: UpPreviewPlan,
     governance: crate::output::GovernanceEvaluation,
     sandbox_admission: Option<JsonValue>,
@@ -129776,6 +129922,7 @@ fn build_up_preview_with_actor(
             target,
             task: primary_task.map(String::from),
         },
+        overrides: execution_plan_overrides(overrides),
         plan,
         governance: governance_evaluation_for_workflow_preview(
             contract,
@@ -134117,6 +134264,12 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     }
 
     if let Some(setup_task_name) = setup_task {
+        let setup_task_execution_overrides = up_execution_overrides_for_task(
+            contract,
+            workflow_name,
+            setup_task_name,
+            task_execution_overrides,
+        );
         let setup_task_command = contract
             .tasks
             .get(setup_task_name)
@@ -134124,7 +134277,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         let setup_contract = contract_adjusted_for_up_setup_phase(
             contract,
             setup_task_name,
-            task_execution_overrides,
+            setup_task_execution_overrides,
             prepare_task,
         );
         let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
@@ -134132,7 +134285,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             setup_contract_ref,
             resolved_path,
             setup_task_name,
-            task_execution_overrides,
+            setup_task_execution_overrides,
             policy_env,
             mode,
             agent,
@@ -134147,7 +134300,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         contract,
                         resolved_path,
                         setup_task_name,
-                        task_execution_overrides,
+                        setup_task_execution_overrides,
                         outcome.target.clone(),
                     ),
                     "SETUP FAILED",
@@ -134303,67 +134456,79 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     }
 
     if let Some(run_task_name) = activation_task {
+        let run_task_execution_overrides = up_execution_overrides_for_task(
+            contract,
+            workflow_name,
+            run_task_name,
+            task_execution_overrides,
+        );
         let run_task_command = contract
             .tasks
             .get(run_task_name)
             .and_then(task_command_preview);
-        let run_result =
-            if selected_up_run_task_is_service(contract, workflow_name, task_execution_overrides)
-                && matches!(
-                    run_behavior,
-                    UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
-                )
+        let run_result = if selected_up_run_task_is_service(
+            contract,
+            workflow_name,
+            run_task_execution_overrides,
+        ) && matches!(
+            run_behavior,
+            UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
+        ) {
+            let effective_execution =
+                effective_task_execution(contract, run_task_name, run_task_execution_overrides);
+            let native_preflight = if effective_execution.backend == Backend::Native
+                && let Some(task) = contract.tasks.get(run_task_name)
             {
-                let effective_execution =
-                    effective_task_execution(contract, run_task_name, task_execution_overrides);
-                let native_preflight = if effective_execution.backend == Backend::Native
-                    && let Some(task) = contract.tasks.get(run_task_name)
-                {
-                    if task_execution_overrides.host_port.is_some() {
-                        Ok(())
-                    } else {
-                        let runtime = task.service_runtime_for_backend(Backend::Native);
-                        preflight_native_runtime_listener_binds(run_task_name, runtime)
-                    }
-                } else {
+                if run_task_execution_overrides.host_port.is_some() {
                     Ok(())
-                };
-                if let Err(error) = native_preflight {
-                    Err(error)
                 } else {
-                    let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
-                    let proof_overrides = if keep_running {
-                        overrides
-                    } else {
-                        task_execution_overrides
-                    };
-                    run_up_task_detached_until_ready(
-                        contract,
-                        resolved_path,
-                        workflow_name,
-                        run_task_name,
-                        proof_overrides,
-                        policy_env,
-                        ready_timeout,
-                        keep_running,
-                        replay_input_preflight,
-                    )
-                    .map_err(|error| RunError::SpawnFailed {
-                        task: run_task_name.to_string(),
-                        source: io::Error::other(error),
-                    })
+                    let runtime = task.service_runtime_for_backend(Backend::Native);
+                    preflight_native_runtime_listener_binds(run_task_name, runtime)
                 }
             } else {
-                run_up_task(
+                Ok(())
+            };
+            if let Err(error) = native_preflight {
+                Err(error)
+            } else {
+                let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
+                let proof_overrides = if keep_running {
+                    up_execution_overrides_for_task(
+                        contract,
+                        workflow_name,
+                        run_task_name,
+                        overrides,
+                    )
+                } else {
+                    run_task_execution_overrides
+                };
+                run_up_task_detached_until_ready(
                     contract,
                     resolved_path,
+                    workflow_name,
                     run_task_name,
-                    task_execution_overrides,
+                    proof_overrides,
                     policy_env,
-                    mode,
-                    agent,
+                    ready_timeout,
+                    keep_running,
+                    replay_input_preflight,
                 )
-            };
+                .map_err(|error| RunError::SpawnFailed {
+                    task: run_task_name.to_string(),
+                    source: io::Error::other(error),
+                })
+            }
+        } else {
+            run_up_task(
+                contract,
+                resolved_path,
+                run_task_name,
+                run_task_execution_overrides,
+                policy_env,
+                mode,
+                agent,
+            )
+        };
         match run_result {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_some() => {
                 stdout.push_str(&outcome.stdout);
@@ -134376,7 +134541,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         contract,
                         resolved_path,
                         run_task_name,
-                        task_execution_overrides,
+                        run_task_execution_overrides,
                         outcome.target.clone(),
                     ),
                     "RUN FAILED",
@@ -134387,7 +134552,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     &[],
                     Some(exit_code),
                     None,
-                    Some(task_execution_overrides),
+                    Some(run_task_execution_overrides),
                     Some(replay_input_preflight.doctor_policy_snapshot()),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
@@ -134438,7 +134603,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     contract,
                     resolved_path,
                     workflow_name,
-                    task_execution_overrides,
+                    run_task_execution_overrides,
                     run_behavior_preference,
                     agent,
                     run_task_name,
@@ -134526,6 +134691,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         && matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
         && let Some(attach_task_name) = selected_up_attach_task_name(contract, workflow_name)
     {
+        let attach_overrides =
+            up_execution_overrides_for_task(contract, workflow_name, attach_task_name, overrides);
         let attach_task_command = contract
             .tasks
             .get(attach_task_name)
@@ -134534,7 +134701,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             contract,
             resolved_path,
             attach_task_name,
-            overrides,
+            attach_overrides,
             policy_env,
             RepoExecutionMode::Stream,
             agent,
@@ -134557,7 +134724,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         contract,
                         resolved_path,
                         attach_task_name,
-                        overrides,
+                        attach_overrides,
                         outcome.target.clone(),
                     ),
                     "ATTACH FAILED",
@@ -134568,7 +134735,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     &[],
                     Some(exit_code),
                     None,
-                    Some(overrides),
+                    Some(attach_overrides),
                     Some(replay_input_preflight.doctor_policy_snapshot()),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
@@ -138163,6 +138330,47 @@ fn selected_up_activation_task_name<'a>(
     })
 }
 
+fn selected_up_host_port_task_name<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Option<&'a str> {
+    let candidates = [
+        selected_up_run_task_name(contract, workflow_name),
+        selected_up_setup_task_name(contract, workflow_name),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|task_name| {
+            let backend = effective_task_execution(contract, task_name, overrides).backend;
+            contract
+                .tasks
+                .get(*task_name)
+                .and_then(|task| task.service_runtime_for_backend(backend))
+                .is_some()
+        })
+        .or_else(|| candidates.into_iter().flatten().next())
+}
+
+fn up_execution_overrides_for_task(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> ExecutionOverrides {
+    if overrides.host_port.is_some()
+        && selected_up_host_port_task_name(contract, workflow_name, overrides) != Some(task_name)
+    {
+        ExecutionOverrides {
+            host_port: None,
+            ..overrides
+        }
+    } else {
+        overrides
+    }
+}
+
 fn selected_up_agent_task_names(
     contract: &Contract,
     workflow_name: Option<&str>,
@@ -138200,8 +138408,10 @@ fn up_execution_option_admission_blocker(
 ) -> Option<(String, Finding, Vec<String>)> {
     for task_name in selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
     {
+        let task_overrides =
+            up_execution_overrides_for_task(contract, workflow_name, &task_name, overrides);
         let Err(error) =
-            resolve_execution_plan_for_task(contract, contract_path, &task_name, overrides)
+            resolve_execution_plan_for_task(contract, contract_path, &task_name, task_overrides)
         else {
             continue;
         };
@@ -139009,18 +139219,28 @@ fn render_up_run_error(
             owners,
         } => {
             let where_value = display_contract_target(&compact_contract_path(contract_path), None);
-            let why_lines = vec![format!(
+            let legacy_service_owner =
+                repo_execution_conflict_has_legacy_service_owner(&reasons, &owners);
+            let mut why_lines = vec![format!(
                 "ota could not start the selected workflow path because active repo executions recorded in `{path}` conflict with task `{task}`"
             )];
-            let next_steps = vec![
+            let mut next_steps = vec![
                 String::from(
                     "run `ota up --dry-run` to preview preparation without starting anything",
                 ),
                 String::from(
                     "wait for the conflicting execution to finish or stop it before retrying",
                 ),
-                String::from("then rerun `ota up`"),
             ];
+            if legacy_service_owner {
+                why_lines.push(String::from(
+                    "the active service record predates runtime-listener ownership, so ota cannot prove that its endpoint is disjoint from this workflow",
+                ));
+                next_steps.push(String::from(
+                    "if that service should remain active, restart it once with the current ota binary so its listener ownership is recorded",
+                ));
+            }
+            next_steps.push(String::from("then rerun `ota up`"));
             let detail_lines = repo_execution_conflict_detail_lines(&reasons, &owners);
             let mut output = structured_error_text(
                 "UP",
@@ -139154,14 +139374,26 @@ fn render_up_run_error(
                 why_lines.push(String::from(
                     "this usually means another local workload is still running",
                 ));
-                next_steps.push(format!(
-                    "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
-                ));
+                if overrides.host_port == Some(port) {
+                    why_lines.push(format!(
+                        "the explicit `--host-port {port}` override selected this native bind"
+                    ));
+                    next_steps.push(String::from("or rerun with `--host-port <free port>`"));
+                } else {
+                    next_steps.push(format!(
+                        "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
+                    ));
+                }
             }
+            let field = if overrides.host_port.is_some() {
+                String::from("execution.host_port")
+            } else {
+                format!("tasks.{task}.runtime.listeners.{listener}.bind.port")
+            };
             render_field_error_with_tail(
                 "UP",
                 &where_value,
-                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                &field,
                 "Listener bind conflict",
                 &why_lines,
                 &[next_steps, vec![String::from("rerun `ota up`")]].concat(),

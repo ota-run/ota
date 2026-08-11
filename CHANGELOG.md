@@ -26,6 +26,28 @@
 
 ## Unreleased
 
+- Native task progress loaders now show the selected execution class explicitly, for example
+  `Running setup:dev (native)`, matching the existing container and remote labels.
+
+- Refined active-execution admission around actual resource ownership. Long-running tasks now bind
+  fixed, Ota-managed dynamic, isolated, or unresolved runtime listeners across their complete execution
+  closure, including hooks. Native and container services can coexist when their projected host
+  endpoints and effective write namespaces are disjoint; different task names still refuse when
+  they compete for the same host listener. Shared write and env-materialization paths now also
+  conflict on ancestor/descendant overlap instead of exact text only. Legacy active records without
+  runtime or write-namespace identity remain fail-closed, and conflict output now tells operators
+  to restart a still-needed legacy service once with the current Ota binary so precise listener
+  admission becomes available.
+- Extended `ota run <task> --host-port <port>` to direct native service execution. Container and
+  native Compose lanes still remap only the host publication, while direct native lanes apply the
+  selected port to both the canonical bind and projected host endpoint because no publication
+  boundary exists. Ota reprojects typed launch arguments and runtime environment values, gives the
+  explicit override precedence over conflicting task env, and uses the same effective listener for
+  collision admission, readiness, summaries, and receipts. `ota up` now routes the option only to
+  the selected workflow run or setup task that owns the listener; dependencies, hooks, and
+  interactive attach helpers do not inherit it. Dry-run JSON publishes the admitted override
+  instead of silently omitting it.
+
 - Fixed interactive native task closures so typed hydration and bootstrap phases retain Ota's
   canonical `🦦` loader instead of inheriting terminal ownership from a later interactive command.
   On Unix, Ctrl-C now terminates Ota's complete native child process group and waits for it to

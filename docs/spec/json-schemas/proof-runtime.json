@@ -517,6 +517,8 @@
               "compose_project",
               "persistent_backend_family",
               "env_materialization_path",
+              "write_path",
+              "runtime_listener",
               "service_task"
             ]
           }
@@ -558,7 +560,40 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
-              "service_task": { "type": ["string", "null"] },
+              "write_paths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "write_owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path", "namespace"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "namespace": { "type": "string" }
+                  }
+                }
+              },
+              "runtime_owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["task", "namespace", "allocation"],
+                  "properties": {
+                    "task": { "type": "string" },
+                    "listener": { "type": ["string", "null"] },
+                    "namespace": { "type": "string" },
+                    "protocol": { "type": ["string", "null"] },
+                    "address": { "type": ["string", "null"] },
+                    "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+                    "allocation": { "enum": ["fixed", "managed_dynamic", "isolated", "unresolved"] }
+                  }
+                }
+              },
+              "service_task": { "type": "boolean" },
               "pid": { "type": "integer", "minimum": 0 },
               "started_at": { "type": "string" }
             }

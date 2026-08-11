@@ -244,3 +244,17 @@
   loader-owned, while only the actual interactive command inherits the terminal.
 - Rule: Every runner-owned silent phase must retain Ota's loader and active task label; terminal
   passthrough is an explicit exception for the command currently owning the user's terminal.
+- Pattern: Treating a task name as long-running service ownership blocks disjoint native/container
+  listeners while missing collisions between differently named tasks that bind the same endpoint.
+- Correction: Derive active ownership from the complete executable closure, effective runtime
+  namespace, projected listener, and normalized write-path ancestry; preserve unknown legacy or
+  unresolved ownership as fail-closed.
+- Rule: Execution conflicts follow actual shared resources, not task identity. Explicit host-port
+  remaps and isolated storage namespaces must permit coexistence only when Ota can prove separation.
+- Pattern: Treating `--host-port` as container-only makes a resource-shaped execution option vary
+  unnecessarily by backend and prevents truthful concurrent native/container development.
+- Correction: Define the flag around the selected host-facing listener. Remap only publication for
+  containers and Compose, but update both bind and projection for direct native execution where no
+  publication boundary exists.
+- Rule: Execution-option semantics should be uniform across capable backends, while backend-specific
+  mechanics remain explicit and fail closed when Ota cannot project the requested resource.

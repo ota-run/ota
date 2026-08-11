@@ -5256,6 +5256,9 @@ Example contract-validation failure (before `up` execution starts):
     "lifecycle": "ephemeral",
     "task": "setup"
   },
+  "overrides": {
+    "backend": "native"
+  },
   "plan": {
     "actions": [
       "run task `setup`",
@@ -5279,6 +5282,8 @@ Current preview JSON fields:
 - `execution.image` when container execution is selected
 - `execution.target` when the selected execution context has a real named target
 - `execution.task` when `up` would run `setup`
+- optional `overrides` with the explicit execution options admitted for the preview, including
+  `host_port` when selected
 - `plan.actions`
 - `plan.skipped`
 - `blockers`
@@ -5452,7 +5457,11 @@ The nested `receipt` object can also include:
   declared activation with `applied: false`
 - `execution_conflict.reasons[]` when the recorded failure was blocked by active execution
   ownership; entries use typed identities such as `active_execution_present`, `host_service`,
-  `compose_project`, `persistent_backend_family`, `env_materialization_path`, and `service_task`
+  `compose_project`, `persistent_backend_family`, `env_materialization_path`, `write_path`,
+  `runtime_listener`, and `service_task`. Conflict owners can also expose additive
+  `runtime_owners[]` entries with task, listener, namespace, protocol, address, port, and allocation
+  posture (`fixed`, `managed_dynamic`, `isolated`, or `unresolved`). Internal-only container
+  listeners use `isolated`; they are recorded without claiming or conflicting on a host listener.
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.

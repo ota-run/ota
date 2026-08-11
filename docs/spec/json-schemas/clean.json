@@ -59,11 +59,7 @@
         "error",
         "why",
         "next",
-        "reason",
-        "engine",
-        "action",
-        "resource_kind",
-        "details"
+        "reason"
       ],
       "properties": {
         "ok": { "const": false },
@@ -82,6 +78,7 @@
         "action": { "type": "string" },
         "resource_kind": {
           "enum": [
+            "host_service",
             "persistent_container",
             "dependency_isolation_volume",
             "stale_containers"
@@ -92,11 +89,23 @@
         "registry_path": { "type": "string" },
         "reasons": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "enum": [
+              "active_execution_present",
+              "host_service",
+              "compose_project",
+              "persistent_backend_family",
+              "env_materialization_path",
+              "write_path",
+              "runtime_listener",
+              "service_task"
+            ]
+          }
         },
-        "active_execution_count": { "type": "integer", "minimum": 0 },
+        "active_execution_count": { "type": "integer", "minimum": 1 },
         "owners": {
           "type": "array",
+          "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -128,13 +137,60 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
+              "write_paths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "write_owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path", "namespace"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "namespace": { "type": "string" }
+                  }
+                }
+              },
+              "runtime_owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["task", "namespace", "allocation"],
+                  "properties": {
+                    "task": { "type": "string" },
+                    "listener": { "type": ["string", "null"] },
+                    "namespace": { "type": "string" },
+                    "protocol": { "type": ["string", "null"] },
+                    "address": { "type": ["string", "null"] },
+                    "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+                    "allocation": { "enum": ["fixed", "managed_dynamic", "isolated", "unresolved"] }
+                  }
+                }
+              },
               "service_task": { "type": "boolean" },
               "pid": { "type": "integer", "minimum": 0 },
               "started_at": { "type": "string" }
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "reason": { "const": "active_execution_conflict" } },
+            "required": ["reason"]
+          },
+          "then": {
+            "required": ["registry_path", "reasons", "active_execution_count", "owners"]
+          },
+          "else": {
+            "required": ["engine", "action", "resource_kind", "details"]
+          }
+        }
+      ]
     },
     "genericFailure": {
       "type": "object",

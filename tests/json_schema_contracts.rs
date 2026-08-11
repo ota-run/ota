@@ -498,6 +498,11 @@ fn clean_schema_covers_repo_workspace_stale_and_nullable_stale_failure_resource(
     assert!(classified_failure.get("reasons").is_some());
     assert!(classified_failure.get("active_execution_count").is_some());
     assert!(classified_failure.get("owners").is_some());
+    assert!(
+        schema["$defs"]["classifiedFailure"]["allOf"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty())
+    );
     assert_eq!(
         classified_failure["resource_name"]["type"],
         serde_json::json!(["string", "null"])

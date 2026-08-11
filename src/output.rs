@@ -3628,6 +3628,8 @@ pub struct UpPreviewStatus<'a> {
     pub summary: DoctorSummary,
     pub contract_identity: ContractIdentity,
     pub execution: UpPreviewExecution,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<ExecutionPlanOverrides>,
     pub plan: UpPreviewPlan,
     pub governance: GovernanceEvaluation,
     #[serde(skip_serializing_if = "Option::is_none")]

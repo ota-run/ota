@@ -1627,9 +1627,11 @@ Current behavior:
 - Compose attachment namespace drift also counts as persistent execution-shape drift, so changing `attachments.compose` recreates the persistent backend instead of reusing a container bound to the old Compose network family
 - service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
 - active repo execution ownership is now tracked in `.ota/state/active-executions.json` instead of a single whole-run lock, so compatible runs can coexist when their execution ownership does not conflict
-- the current shipped conflict rule is ownership-shaped: duplicate long-running service-task ownership still blocks, and so do shared host-managed service ownership, shared Compose project ownership, shared persistent backend-family ownership, and shared deterministic env-file materialization ownership; finite task paths can still run alongside an active service owner when they do not claim the same owned resources
-- shared logical write paths are now compared on effective ownership namespace, not path text alone: when two container contexts declare the same repo-relative `attachments.isolated_paths` entry but resolve to different Ota-managed dependency-isolation volume families, ota allows them to coexist; raw repo-worktree writes or unresolved shared namespaces still conflict
-- execution-conflict reporting now carries typed reason identities such as `active_execution_present`, `host_service`, `compose_project`, `persistent_backend_family`, `env_materialization_path`, and `service_task` instead of reducing the failure to owner detail text alone
+- the current shipped conflict rule is ownership-shaped: shared host-managed services, Compose projects, persistent backend families, deterministic env-file materialization outputs, effective write namespaces, and runtime listeners block only when their resolved ownership overlaps; finite tasks and long-running services can coexist when they claim disjoint resources
+- runtime listener ownership covers the complete selected execution closure, including dependencies, aggregates, and outcome hooks; fixed listeners conflict by effective namespace, network protocol, canonical address, and port, Ota-managed dynamic host ports and internal-only isolated container listeners can coexist, and unresolved service ownership stays fail-closed
+- shared logical write paths are compared on effective ownership namespace and ancestor/descendant overlap, not exact path text alone: separate container isolation volumes can coexist, while `.next` and `.next/cache` still conflict in one shared worktree
+- active records written before runtime listener or write-namespace identity existed remain conservatively fail-closed for overlapping legacy claims; restart the active lane with the current Ota version to enable precise cross-mode admission
+- execution-conflict reporting now carries typed reason identities such as `active_execution_present`, `host_service`, `compose_project`, `persistent_backend_family`, `env_materialization_path`, `write_path`, `runtime_listener`, and `service_task` instead of reducing the failure to owner detail text alone
 - failure receipts now also publish an `execution_conflict.reasons[]` object derived from that same ownership truth while keeping the existing `blocked[]` compatibility lane
 - stale active-execution records are pruned by owner PID before conflict checks, so interrupted or crashed ota processes do not leave a permanent fake-active barrier behind
 - when `--skip-deps` is used, receipts and run summaries mark the override explicitly and point back to rerunning without it when you need to validate the full declared task flow
@@ -1716,8 +1718,17 @@ ota run build --skip-deps
 - `OTA_PUBLIC_URL_<LISTENER>`
 - when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
 - for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the reconciled container's published host mapping before exec
-- `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
-- `--host-port` is valid when the selected primary listener uses `project.host.port.mode: fixed` and the execution path is either container execution or native structured `docker compose up` with explicit `project.publication.compose.service` ownership
+- `--host-port <port>` overrides one run's selected primary host-facing listener; ota updates
+  runtime env, typed launch projection, conflict admission, summary output, and receipts to the
+  same effective endpoint
+- for container execution and native structured Docker Compose, the override changes only the host
+  publication and keeps the internal bind port stable
+- for direct native execution, no publication boundary exists, so the override changes both the
+  canonical bind and projected host port; the explicit option takes precedence over task-level
+  bind env, including `PORT`, for that invocation
+- `--host-port` is valid when the selected primary listener uses fixed bind and fixed
+  `project.host.port` truth and the execution path is direct native, container, or native
+  structured `docker compose up` with explicit `project.publication.compose.service` ownership
 - `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, ambiguous multi-listener projections without one primary listener, native compose publications without `project.publication.compose.service`, and native compose engines other than `docker`
 - stream-mode endpoint banners such as `External:` and `Internal:` are printed only after ota
   itself confirms the projected endpoint; workload logs like `ready` or framework-local URLs are
@@ -2341,6 +2352,7 @@ ota up --stream [PATH]
 ota up --dry-run [PATH]
 ota up --dry-run --json [PATH]
 ota up --mode container --ephemeral [PATH]
+ota up --workflow app --native --host-port 3002 [PATH]
 ota up --effect-override network:broad=allow [PATH]
 ota up --workflow verify --replay-baseline promoted [PATH]
 ota up --member api [PATH]
@@ -2384,6 +2396,11 @@ Current behavior:
 - mixed-backend workflows now keep selected prerequisites on their own execution boundary during
   `ota up` preflight, so a native run task is diagnosed on the host while a container setup task is
   diagnosed in the selected container lane instead of flattening both into one doctor mode
+- `--host-port <port>` selects the primary host-facing listener for the workflow run or setup task
+  that owns it; dependencies, hooks, and interactive attach helpers do not inherit the option.
+  Direct native execution changes bind and projected host port together, while container and
+  native Compose execution remap only host publication. Dry-run JSON retains the admitted option
+  under `overrides.host_port`
 - selected toolchain preview lines stay toolchain-owned: when a declared toolchain owns the
   selected ecosystem path, `ota up --dry-run` describes that provider-owned toolchain requirement
   instead of pretending owned capabilities are standalone setup tools, and the preview now names

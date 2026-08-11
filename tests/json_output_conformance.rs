@@ -2968,12 +2968,14 @@ fn receipt_json_schema_accepts_execution_conflict_metadata() {
             "status": "blocked",
             "blocked": [
                 "execution_conflict:host_service",
-                "execution_conflict:compose_project"
+                "execution_conflict:compose_project",
+                "execution_conflict:runtime_listener"
             ],
             "execution_conflict": {
                 "reasons": [
                     "host_service",
-                    "compose_project"
+                    "compose_project",
+                    "runtime_listener"
                 ]
             },
             "steps": [],
@@ -4379,6 +4381,647 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_active_execution_conflict_publishes_runtime_owner_identity() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-active-runtime
+tasks:
+  dev:
+    run: echo dev
+"#,
+    );
+    let state_dir = fixture.path().join(".ota").join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        state_dir.join("active-executions.json"),
+        serde_json::to_vec_pretty(&serde_json::json!([{
+            "id": "active-runtime",
+            "task": "dev",
+            "execution_mode": "container",
+            "runtime_owners": [{
+                "task": "dev",
+                "listener": "site",
+                "namespace": "host",
+                "protocol": "tcp",
+                "address": "127.0.0.1",
+                "port": 3002,
+                "allocation": "fixed"
+            }],
+            "service_task": true,
+            "pid": std::process::id(),
+            "started_at": "2026-08-11T12:00:00Z"
+        }]))
+        .expect("active state"),
+    )
+    .expect("write active state");
+
+    let json = run_ota_with_env(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
+    assert_eq!(json["reason"], "active_execution_conflict");
+    assert_eq!(json["owners"][0]["runtime_owners"][0]["port"], 3002);
+    assert_eq!(
+        json["owners"][0]["runtime_owners"][0]["allocation"],
+        "fixed"
+    );
+}
+
+#[cfg(unix)]
+fn write_active_service_owner(fixture: &TempDir, port: u16) {
+    let state_dir = fixture.path().join(".ota").join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        state_dir.join("active-executions.json"),
+        serde_json::to_vec_pretty(&serde_json::json!([{
+            "id": "active-container-dev",
+            "task": "dev",
+            "requested_mode": "container",
+            "execution_mode": "container",
+            "lifecycle": "ephemeral",
+            "write_paths": ["sentinel"],
+            "write_owners": [{
+                "path": "sentinel",
+                "namespace": "container-isolated:test (sentinel)"
+            }],
+            "runtime_owners": [{
+                "task": "dev",
+                "listener": "site",
+                "namespace": "host",
+                "protocol": "tcp",
+                "address": "127.0.0.1",
+                "port": port,
+                "allocation": "fixed"
+            }],
+            "service_task": true,
+            "pid": std::process::id(),
+            "started_at": "2026-08-11T12:00:00Z"
+        }]))
+        .expect("active state"),
+    )
+    .expect("write active state");
+}
+
+#[cfg(unix)]
+fn write_legacy_active_service_owner(fixture: &TempDir, task: &str) {
+    let state_dir = fixture.path().join(".ota").join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        state_dir.join("active-executions.json"),
+        serde_json::to_vec_pretty(&serde_json::json!([{
+            "id": "legacy-active-container-dev",
+            "task": task,
+            "execution_mode": "container",
+            "lifecycle": "ephemeral",
+            "write_paths": ["sentinel"],
+            "write_owners": [{
+                "path": "sentinel",
+                "namespace": "container-isolated:legacy (sentinel)"
+            }],
+            "service_task": true,
+            "pid": std::process::id(),
+            "started_at": "2026-08-11T14:18:46Z"
+        }]))
+        .expect("active state"),
+    )
+    .expect("write active state");
+}
+
+#[cfg(unix)]
+fn write_native_service_contract(fixture: &TempDir) {
+    write_contract(
+        fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-admission
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dev]
+  writable_paths: [sentinel]
+tasks:
+  dev:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+"#,
+    );
+}
+
+#[cfg(unix)]
+fn write_native_projected_service_contract(fixture: &TempDir) {
+    write_contract(
+        fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-projected-admission
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dev]
+  writable_paths: [sentinel]
+tasks:
+  dev:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 43111 }
+              primary: true
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_admits_disjoint_native_and_container_service_ownership() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_active_service_owner(&fixture, 43112);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("sentinel")).expect("sentinel"),
+        "admitted"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_legacy_service_owner_explains_required_restart() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_legacy_active_service_owner(&fixture, "dev");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("active service record predates runtime-listener ownership"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("runtime ownership: `legacy_or_unresolved`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("restart it once with the current ota binary"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_differently_named_legacy_service_owner_still_fails_closed() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_legacy_active_service_owner(&fixture, "legacy-preview");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("active service record predates runtime-listener ownership"));
+    assert!(stderr.contains("restart it once with the current ota binary"));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_native_host_port_override_updates_effective_listener_and_bind_env() {
+    if !Command::new("sh")
+        .args(["-c", "command -v python3 >/dev/null 2>&1"])
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        return;
+    }
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: native-host-port-override
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dev, record-hook]
+  writable_paths: [ports.txt, server.pid, hook.txt]
+tasks:
+  dev:
+    context: host
+    after_success: [record-hook]
+    env:
+      PORT: "49999"
+    command:
+      exe: sh
+      args: [-c, "printf '%s|%s|%s' \"$PORT\" \"$OTA_BIND_PORT\" \"$OTA_PUBLIC_PORT\" > ports.txt; python3 -m http.server \"$PORT\" --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > server.pid"]
+    effects:
+      writes: [ports.txt, server.pid]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 43111 }
+              primary: true
+  record-hook:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf hook-ran > hook.txt"]
+    effects:
+      writes: [hook.txt]
+    safe_for_agent: true
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "dev",
+            "--native",
+            "--host-port",
+            "43112",
+            "--agent",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    let projected_ports = fs::read_to_string(fixture.path().join("ports.txt"));
+    if let Ok(pid) = fs::read_to_string(fixture.path().join("server.pid")) {
+        let _ = Command::new("kill").arg(pid.trim()).status();
+    }
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        projected_ports.expect("projected ports"),
+        "43112|43112|43112"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("hook.txt")).expect("hook output"),
+        "hook-ran"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_native_host_port_override_participates_in_listener_conflicts() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_projected_service_contract(&fixture);
+    write_active_service_owner(&fixture, 43112);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "dev",
+            "--native",
+            "--host-port",
+            "43112",
+            "--agent",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("runtime_listener"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_native_host_port_override_reports_override_owned_bind_conflict() {
+    let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("occupied listener");
+    let occupied_port = occupied.local_addr().expect("occupied address").port();
+    let occupied_port_arg = occupied_port.to_string();
+    let fixture = TempDir::new().expect("fixture");
+    write_native_projected_service_contract(&fixture);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "dev",
+            "--native",
+            "--host-port",
+            occupied_port_arg.as_str(),
+            "--agent",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Field: execution.host_port"), "{stderr}");
+    assert!(
+        stderr.contains("or rerun with `--host-port <free port>`"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn up_native_host_port_override_targets_the_workflow_listener_owner() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: native-up-host-port-override
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "true"]
+  dev:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "true"]
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 43111 }
+              primary: true
+workflows:
+  default: dev
+  dev:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "up",
+            "--workflow",
+            "dev",
+            "--native",
+            "--host-port",
+            "43112",
+            "--dry-run",
+            "--json",
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("up.json", &json);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["preview_status"], "RUNNABLE");
+    assert_eq!(json["overrides"]["host_port"], 43112);
+    assert_eq!(json["blockers"], Value::Null);
+}
+
+#[cfg(unix)]
+#[test]
+fn run_refuses_same_listener_before_selected_task_mutation() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_active_service_owner(&fixture, 43111);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Active execution conflict"));
+    assert!(stderr.contains("runtime_listener"));
+    assert!(stderr.contains("host:site (127.0.0.1:43111; dev)"));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_refuses_different_task_name_on_same_listener() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-different-task
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [preview]
+  writable_paths: [sentinel]
+tasks:
+  preview:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        preview:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 43111 }
+"#,
+    );
+    write_active_service_owner(&fixture, 43111);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "preview", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("runtime_listener"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_skip_deps_does_not_claim_skipped_dependency_listener() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-skip-deps
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dependency, verify]
+  writable_paths: [sentinel]
+tasks:
+  dependency:
+    context: host
+    run: sh -c "exit 99"
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+  verify:
+    context: host
+    depends_on: [dependency]
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+"#,
+    );
+    write_active_service_owner(&fixture, 43111);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "verify",
+            "--native",
+            "--agent",
+            "--skip-deps",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("sentinel")).expect("sentinel"),
+        "admitted"
+    );
 }
 
 #[test]

@@ -251,7 +251,7 @@ enum Commands {
         /// Shorthand for `--lifecycle persistent`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
         persistent: bool,
-        /// Override the projected host/public port for this invocation.
+        /// Override the selected host-facing listener port for this invocation.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
         /// Override the container memory request for this invocation.
@@ -594,7 +594,7 @@ enum Commands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
-        /// Override the selected projected host listener publication for this proof run.
+        /// Override the selected host-facing listener port for this invocation.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
         /// Include the execution receipt in text output.
@@ -1055,7 +1055,7 @@ enum ProofCommands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
-        /// Override the selected projected host listener publication for this proof run.
+        /// Override the selected host-facing listener port for this proof run.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
         /// Inspect one merged monorepo member contract declared by the root contract.
@@ -16390,7 +16390,7 @@ tasks:
     }
 
     #[test]
-    fn run_text_rejects_host_port_override_for_native_execution() {
+    fn run_text_rejects_host_port_override_without_projected_native_listener() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16406,11 +16406,13 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("ERROR  Host port override requires container execution"));
+        assert!(stderr.contains("ERROR  Host port override is not applicable"));
         assert!(
-            stderr.contains("`--host-port` only applies to projected container host publication")
+            stderr.contains(
+                "task `dev` does not declare any projected host listener under `runtime.listeners.*.project.host`"
+            )
         );
-        assert!(stderr.contains("ota run dev --mode container"));
+        assert!(stderr.contains("rerun without `--host-port`"));
     }
 
     #[test]

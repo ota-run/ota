@@ -86,6 +86,7 @@
             "task": { "type": "string" }
           }
         },
+        "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
         "plan": {
           "type": "object",
           "additionalProperties": false,
@@ -320,6 +321,7 @@
                   "task": { "type": "string" }
                 }
               },
+              "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
               "plan": {
                 "type": "object",
                 "additionalProperties": false,
