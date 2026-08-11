@@ -271,14 +271,20 @@ durable agent workflow belongs in the canonical Ota skill.
   Retained pressure artifacts may bind only the signing key ID and public verifier identity, never
   private credential material. The launcher never holds the producer signing credential, and a
   fixture that injects verified observations is not acceptable pressure evidence.
-  The next uncommitted collector batch adds the additive
-  `ota.authority-launcher.systemd/v2` profile with identity
+  The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
+  `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
+  `fddb10393aa0e79258ff048e32774a685d5fac04`, and Core
+  `e3febf3d8d4226dc26ef20ddebaf1e1b23ef5fd3` publishes profile identity
   `sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42`. It preserves V1 archive
   verification while replacing launcher-owned credential settings with producer socket metadata
   and the public verifier set. Core accepts only the exact registered V1 or V2 profile-ID/identity
   pair, and the Launcher collector assembles observations in canonical order while refusing any
-  unavailable source. Concrete Linux probes and producer invocation remain unwired, so this is not
-  yet real V3 evidence.
+  unavailable source. The next uncommitted Launcher batch activates the first live Linux
+  job-principal preflight before repository opening or child creation: socket-bound pidfd,
+  protected UID/GID mapping, exact `/proc` UID/GID slots, empty supplementary groups and
+  inheritable/permitted/effective/ambient capabilities, and `NoNewPrivs=1`. The remaining protected
+  file, systemd, containment, account/policy, target-access, and Ota process-access probes plus
+  producer invocation remain unwired, so this is not yet complete collector or real V3 evidence.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
