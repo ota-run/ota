@@ -1044,11 +1044,19 @@ but it models a launcher-owned attestor credential and cannot authorize the sepa
 path.
 The service unit requires these exact semantic settings:
 
-- `User=root`, `Group=root`, empty supplementary and ambient capabilities, `UMask=0077`,
-  `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`,
+- `User=root`, `Group=root`, empty supplementary groups, `AmbientCapabilities=CAP_SETUID`,
+  `UMask=0077`, `NoNewPrivileges=yes`, `RestrictSUIDSGID=no`, `LockPersonality=yes`,
   `MemoryDenyWriteExecute=no`, `RestrictRealtime=yes`, and native system-call architecture. The
   profile deliberately does not claim executable-memory denial because selected language runtimes
-  may require JIT compilation;
+  may require JIT compilation. The launcher receives only ambient `CAP_SETUID` because it must
+  perform one verified `setresuid` transition for its target-principal helper and systemd otherwise
+  removes that capability while applying the sandbox. The launcher retains race-resistant
+  `openat2` resolution; on supported systemd hosts the `RestrictSUIDSGID` seccomp filter blocks that
+  syscall, so this launcher-TCB setting is explicitly disabled while `NoNewPrivileges`, strict
+  filesystem protection, and exact writable carve-outs remain mandatory. The transition to the
+  non-root target clears the ambient capability before selected code can execute; selected job and
+  execution evidence requires empty inheritable, permitted, effective, and ambient capability
+  sets;
 - capability bounding set exactly `CAP_SETUID CAP_SETGID CAP_KILL`; no other capability is
   permitted. The launcher does not write the cgroup filesystem directly; the systemd manager
   creates and stops child scopes through its root manager channel;
@@ -1223,8 +1231,9 @@ sends one content-addressed startup continuation bound to the invocation, record
 directory, posture, and principal mapping. Core consumes the launcher-only startup environment into
 private memory and removes it before CLI dispatch. The continuation is not authority; it only
 permits Core to parse the requested command, derive the exact semantic scope, and create its fresh
-broker challenge on the same private descriptor. The launcher relays that challenge to the
-protected root-owned proxy and relays one structurally V3 response back. Core remains the sole owner
+broker challenge on the same private descriptor. The launcher submits that challenge plus the
+complete observed claims to the separately credentialed protected producer and relays only its
+independently verified signed V3 response. Core remains the sole owner
 of signature, trust-root, freshness, complete profile, process-posture, principal, and exact scope
 verification, and reconciles the signed invocation, child, working-directory, posture, and
 principal identities against the retained startup continuation. Reaching the next exact
@@ -1237,6 +1246,29 @@ receipt/archive evidence. Malformed, substituted, or internally contradictory br
 `pre_authorization_protocol_refused_boundary_removed`; it is never labeled as an authority
 decision. The slice requires immutable Linux/x64 pressure before the historical status above can
 be advanced.
+
+The committed candidate at Authority Protocol
+`574563d1f69a674960d0b3228c5a13b13bc42c19`, Authority Launcher
+`13bf6db71610b86c81a251f440b80b9b8947a67d`, and Core
+`31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9` implements the complete
+protected collector and producer bridge described below. Local ARM64 OrbStack PID 1 systemd pressure verified protected installation
+identity, exact systemd runtime properties, process containment, account/sudo/Polkit posture,
+protected-path and host-socket denial, Ota process-access denial, producer-owned signing, and Core's
+independent complete-profile reconciliation. The positive path reached the exact authorization
+request, withheld it, and finalized with zero selected work, receipts, broker decision/lease state,
+active slots, or scopes. Installation drift, runtime-property drift, and unavailable producer
+credentials refused before authorization. A pressure-only crash after durable scope recording left
+one slot; the next activation reconciled it to zero before accepting another request. This advances
+local candidate evidence only. Immutable hosted Linux/x64 V3 pressure, broker authorization,
+one-use lease consumption, selected execution, crossing receipt/archive evidence, and
+provider-attested separation remain open.
+
+Authority Launcher now carries the dedicated immutable Linux/x64 PID 1 systemd workflow for that
+gate. It requires the contract-selected clean Core source build, an immutable Protocol dependency,
+the complete signed admission path, exact terminal cleanup, installation and runtime drift
+refusals, unavailable producer credential refusal, and crash-after-scope recovery. The workflow
+definition is prepared but unrun; it does not satisfy this acceptance bar until one exact green run
+and its retained bounded artifacts are reviewed.
 
 ###### Protected V3 attestation producer protocol
 

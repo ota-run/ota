@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "9244eb2bc6a44151c4172c0634ac44bdb216a65a"
-consumer_commit: "57e9b07a2c8ba339d67b711fca544fd79ac99b4e"
+reviewed_ota_commit: "31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9"
+consumer_commit: "48179cf49646031f2e44f1a7433e9bd1b7b1c68a"
 waiver_reason: ""
 notes: >
-  Synced V11.7 broker consumption recovery, fail-closed uncertain outcomes, fresh-attestation
-  recovery semantics, archive compatibility boundaries, and pressure expectations.
+  Synced direct-native versus published host-port ownership and conflict-remediation guidance.
+  The execution-disabled V3 carrier adds no usable authoring or agent command surface yet.

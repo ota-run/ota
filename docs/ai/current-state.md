@@ -85,6 +85,22 @@ durable agent workflow belongs in the canonical Ota skill.
   records two explicit boundaries: the clean host remains Doctor-blocked on the declared missing
   `just` tool, and pre-boundary sandbox refusal is inline receipt evidence rather than a durable
   refusal archive.
+- The active-execution registry now derives runtime listener ownership across the complete selected
+  closure and compares actual execution namespace, network protocol, bind/publication address, and
+  host port. This closes both sides of the earlier task-name heuristic: disjoint native/container
+  service endpoints and isolated write namespaces can coexist, while different task names sharing
+  one listener refuse. Shared write and env-materialization ownership also detects nested path
+  overlap. Existing registry entries without runtime or write-namespace identity remain fail-closed
+  until restarted. One-run `--host-port` selection now participates in that same resource identity
+  for direct native service tasks as well as container and native Compose publication. Direct
+  native execution applies the selected port to both bind and public runtime truth, including typed
+  launch arguments and canonical runtime env, because there is no separate host-publication layer.
+  When one fixed host listener collides, text output now names the host port, requested and active
+  execution modes, and exact owner before suggesting `--host-port <free port>` when the selected
+  lane's own execution-option preflight admits that override; mixed listener/write conflicts remain
+  broader active-execution failures but retain port-specific remediation. The compact summary keeps
+  its established ordering and adds only `Reason`/`Reasons` and `Host port` when that conflict
+  evidence exists.
 - V11.7 audited-crossing authority is active and partially implemented after independent design
   review. Core now derives one canonical content-addressed crossing scope from the selected
   task/workflow execution graph, refuses unresolved task-input identity, and supports an opt-in
@@ -250,27 +266,36 @@ durable agent workflow belongs in the canonical Ota skill.
   Site propagation is required for this internal execution-disabled carrier step because it adds no
   contract, CLI, operator, receipt, or archive surface; those surfaces must move with the first
   usable production adapter.
-  VPS preflight confirmed that the preceding protected configuration named
-  `/run/ota/broker-proxy.sock` but no protected producer owned that socket. The reviewed bridge
-  sent only `BrokerChallenge`, which was insufficient for a real external producer to sign the
-  complete V3 child and profile evidence. The current uncommitted foundation now defines a
-  canonical identity-bound
-  launcher-to-producer signing request over a fixed protected `SOCK_SEQPACKET` endpoint, complete
-  launcher-collected observations, producer-owned freshness and signing-key use, durable
-  idempotent issuance, deterministic bounded validity, socket-bound `SO_PEERPIDFD` live-peer
-  verification on both sides of the producer exchange, refusal of any additional response packet
-  already queued at admission, and exact
-  domain-separated claims projection and returned-evidence reconciliation. Authority Protocol now
-  carries the canonical claims/request/response and protected producer binding at immutable
-  revision `845f9a36e4f680e0cbc23838959aa266ae269528`. Launcher revision
-  `f8832541a8c5e5e3989bb3d8fb0ca596bb927407` pins that Protocol revision and contains an execution-disabled
-  `ota-authority-attestor` service foundation plus a separate public-key response verifier. Local
-  Linux tests prove deterministic signing and exact unexpired replay from fsynced protected state.
-  The production launcher does not yet collect the complete closed
-  observation set or invoke the producer, so no real V3 bridge or immutable pressure claim exists.
-  Retained pressure artifacts may bind only the signing key ID and public verifier identity, never
-  private credential material. The launcher never holds the producer signing credential, and a
-  fixture that injects verified observations is not acceptable pressure evidence.
+  The committed systemd V3 candidate at Authority Protocol
+  `574563d1f69a674960d0b3228c5a13b13bc42c19`, Authority Launcher
+  `13bf6db71610b86c81a251f440b80b9b8947a67d`, and Core
+  `31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9` completes the protected collector and producer
+  bridge. Authority Protocol defines the canonical domain-separated claims/request/response,
+  protected producer binding, `ota.authority-launcher.systemd/v3` profile identity
+  `sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480`, and paired
+  `ota.authority-job-principal.systemd/v2` identity
+  `sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659`. The Launcher verifies
+  protected installation identities, exact systemd unit/socket/scope properties, process
+  containment, account/sudo/Polkit posture, protected-path and host-socket denial, and Ota
+  process-access denial before invoking the separately credentialed `ota-authority-attestor` over
+  fixed `SOCK_SEQPACKET`. The producer owns signing key, clock, and durable idempotent issuance;
+  the launcher owns only public verification and exact request/response reconciliation. Core now
+  independently re-derives the complete ordered profile, nested identities, signed claims, and
+  retained startup binding before emitting an authorization request.
+  Local ARM64 OrbStack PID 1 systemd pressure reached `authorization_received`, then the launcher
+  deliberately withheld the request and removed the exact scope, cgroup, child, and active slot.
+  Selected-work sentinel, receipt store, and broker decision/lease state remained empty.
+  Protected-installation drift, systemd runtime drift, and missing producer credentials refused
+  before authorization with zero terminal slots/scopes. A pressure-only exit after durable scope
+  recording retained one recovery slot; the next activation reconciled it to zero before accepting
+  another request. This is local candidate evidence, not immutable hosted Linux/x64 proof. Retained
+  artifacts may bind only signing-key ID and public verifier identity, never private credentials.
+  Authority Launcher now carries a dedicated Linux/x64 PID 1 systemd workflow that binds the exact
+  contract-selected Core source build and immutable Protocol revision, then repeats the positive,
+  drift, unavailable-credential, and crash/recovery controls. It is prepared but unrun and must not
+  be cited as hosted evidence until its retained artifacts have been reviewed.
+  No authorization decision, one-use lease, selected execution, crossing receipt/archive,
+  provider-attested separation, or hosted V3 pressure claim exists yet.
   The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
   `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
   `fddb10393aa0e79258ff048e32774a685d5fac04`, and Core
@@ -286,9 +311,8 @@ durable agent workflow belongs in the canonical Ota skill.
   groups and inheritable/permitted/effective/ambient capabilities, and `NoNewPrivs=1`. Launcher
   `d437aed99daf4ae55e5d8299a99ce5df535fb07f` additionally retains and revalidates the protected
   broker-proxy pidfd before and after bridge traffic, with an orchestration regression proving peer
-  exit during that window refuses. The remaining protected file, systemd, containment,
-  account/policy, target-access, and Ota process-access probes plus producer invocation remain
-  unwired, so this is not yet complete collector or real V3 evidence.
+  exit during that window refuses. Those committed slices remain historical foundations for the
+  complete committed collector and producer path described above.
   `ota up` evaluates
   unrelated blockers and the complete ordered prerequisite-instance preflight
   before broker contact; those prerequisite instances execute once inside the parent work unit.
@@ -874,17 +898,20 @@ constrained Ota child, disjoint broker/attestor keys, one-use live/refusal/recov
 distinct catch-all work units, and archive-valid runtime/lifecycle proof transactions. This is
 bounded pressure-peer conformance: the GitHub workflow controller provisions the root-only fixed
 test authority, so it does not prove independently administered provider/launcher separation.
-The next V11.7 gate is now planned as the Linux-only
-`systemd_protected_launcher/v1` production adapter: an independently administered socket-activated
-service that derives a fixed job-peer identity through `SO_PEERCRED`, maps it one-to-one onto a
-distinct non-dumpable execution principal, binds a target-principal-opened repository-directory
-identity, keeps producer and broker material outside the child, and submits only the existing
-complete protected-launcher profile to a separately credentialed producer after Ota's challenge.
-Its design has passed independent review. The current execution-disabled implementation extends
-that foundation through an identity-bound startup continuation and includes the producer protocol,
-signing-service foundation, and launcher-side response verifier. Complete observation collection
-and real producer invocation remain unwired. No selected execution, lease consumption,
-receipt/archive carrier, or complete production launcher path exists yet, and it does not make
+The current committed V11.7 gate at Protocol
+`574563d1f69a674960d0b3228c5a13b13bc42c19`, Launcher
+`13bf6db71610b86c81a251f440b80b9b8947a67d`, and Core
+`31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9` completes the Linux-only
+`systemd_protected_launcher/v1` execution-disabled adapter through the full closed collector and
+separately credentialed producer. Local ARM64 OrbStack PID 1 pressure proves exact signed V3
+admission, authorization-request observation without forwarding, terminal boundary cleanup,
+pre-authorization drift/refusal controls, and crash-after-scope recovery. Core re-derives the exact
+V3 launcher/job profiles, rejects schema-2 or legacy-profile evidence inside a V3 binding or signed
+payload, and published schemas enforce the same branch. Historical V1/V2 evidence remains readable
+only through its original carrier/schema branch. This remains candidate
+evidence until immutable Linux/x64 hosted pressure binds exact Protocol, Launcher, and Core
+revisions. No authorization decision, lease consumption, selected execution, crossing
+receipt/archive, or provider-attested carrier exists yet, and it does not make
 `provider_attested_one_use` true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and

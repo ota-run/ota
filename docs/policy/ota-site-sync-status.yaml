@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "9244eb2bc6a44151c4172c0634ac44bdb216a65a"
-consumer_commit: "eff4970559198202541c84a2e5f1024dfce2a2d9"
+reviewed_ota_commit: "31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9"
+consumer_commit: "77fbdafbc74f843e849b7a11176d48caec1fdda1"
 waiver_reason: ""
 notes: >
-  Synced V11.7 broker consumption recovery, fail-closed uncertain outcomes, fresh-attestation
-  recovery semantics, archive compatibility boundaries, and the remaining hosted-pressure limits.
+  Synced public command and reference guidance for direct-native host-port ownership and typed
+  listener-conflict remediation. The execution-disabled V3 carrier remains internal and unlisted.
