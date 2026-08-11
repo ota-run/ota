@@ -1258,17 +1258,26 @@ independent complete-profile reconciliation. The positive path reached the exact
 request, withheld it, and finalized with zero selected work, receipts, broker decision/lease state,
 active slots, or scopes. Installation drift, runtime-property drift, and unavailable producer
 credentials refused before authorization. A pressure-only crash after durable scope recording left
-one slot; the next activation reconciled it to zero before accepting another request. This advances
-local candidate evidence only. Immutable hosted Linux/x64 V3 pressure, broker authorization,
-one-use lease consumption, selected execution, crossing receipt/archive evidence, and
-provider-attested separation remain open.
+one slot; the next activation reconciled it to zero before accepting another request. This
+established local candidate evidence before the immutable hosted gate below.
 
 Authority Launcher now carries the dedicated immutable Linux/x64 PID 1 systemd workflow for that
 gate. It requires the contract-selected clean Core source build, an immutable Protocol dependency,
 the complete signed admission path, exact terminal cleanup, installation and runtime drift
 refusals, unavailable producer credential refusal, and crash-after-scope recovery. The workflow
-definition is prepared but unrun; it does not satisfy this acceptance bar until one exact green run
-and its retained bounded artifacts are reviewed.
+passed in run
+[31530832876](https://github.com/ota-run/authority-launcher/actions/runs/31530832876) against exact
+Protocol `574563d1f69a674960d0b3228c5a13b13bc42c19`, Launcher
+`c69ad3afc6afef0e260a7eeaa4f7340971db50af`, and clean source-built Core
+`31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9`. Its retained cursor-isolated journals bind the exact
+positive signed stages and typed terminal refusal, prove each installation/runtime/credential
+negative control remains pre-authorization, and retain the injected `scope_attached` crash slot
+before successful recovery. Every terminal case has zero slots/scopes, repository manifests are
+byte-identical, no selected-work or `.ota` state exists, and the artifact contains public verifier
+identity rather than private credential material or path. This closes only the immutable hosted
+Linux/x64 execution-disabled V3 admission gate. Broker authorization, one-use lease consumption,
+selected execution, crossing receipt/archive evidence, independently administered
+provider/launcher separation, and provider attestation remain open.
 
 ###### Protected V3 attestation producer protocol
 

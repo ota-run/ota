@@ -289,14 +289,19 @@ durable agent workflow belongs in the canonical Ota skill.
   Protected-installation drift, systemd runtime drift, and missing producer credentials refused
   before authorization with zero terminal slots/scopes. A pressure-only exit after durable scope
   recording retained one recovery slot; the next activation reconciled it to zero before accepting
-  another request. This is local candidate evidence, not immutable hosted Linux/x64 proof. Retained
-  artifacts may bind only signing-key ID and public verifier identity, never private credentials.
-  Authority Launcher now carries a dedicated Linux/x64 PID 1 systemd workflow that binds the exact
-  contract-selected Core source build and immutable Protocol revision, then repeats the positive,
-  drift, unavailable-credential, and crash/recovery controls. It is prepared but unrun and must not
-  be cited as hosted evidence until its retained artifacts have been reviewed.
-  No authorization decision, one-use lease, selected execution, crossing receipt/archive,
-  provider-attested separation, or hosted V3 pressure claim exists yet.
+  another request. That was local candidate evidence. Immutable Linux/x64 PID 1 systemd run
+  [31530832876](https://github.com/ota-run/authority-launcher/actions/runs/31530832876) now binds exact
+  Protocol `574563d1f69a674960d0b3228c5a13b13bc42c19`, Launcher
+  `c69ad3afc6afef0e260a7eeaa4f7340971db50af`, and clean source-built Core
+  `31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9`. Its retained cursor-isolated artifact proves the
+  complete signed positive/recovery stage sequence and typed terminal refusal; installation drift,
+  runtime-property drift, unavailable producer credentials, and the injected pre-session crash do
+  not reach authorization. It records one durable `scope_attached` crash slot, zero terminal
+  slots/scopes, byte-identical repository manifests, no selected-work or `.ota` state, and only the
+  public verifier identity. This closes the hosted execution-disabled V3 admission gate only. The
+  GitHub workflow controller still provisions the root services, so independently administered
+  provider/launcher separation is not proved. No authorization decision, one-use lease, selected
+  execution, crossing receipt/archive, or provider-attested separation exists yet.
   The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
   `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
   `fddb10393aa0e79258ff048e32774a685d5fac04`, and Core
@@ -904,15 +909,19 @@ The current committed V11.7 gate at Protocol
 `13bf6db71610b86c81a251f440b80b9b8947a67d`, and Core
 `31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9` completes the Linux-only
 `systemd_protected_launcher/v1` execution-disabled adapter through the full closed collector and
-separately credentialed producer. Local ARM64 OrbStack PID 1 pressure proves exact signed V3
+separately credentialed producer. Local ARM64 OrbStack PID 1 pressure first proved exact signed V3
 admission, authorization-request observation without forwarding, terminal boundary cleanup,
-pre-authorization drift/refusal controls, and crash-after-scope recovery. Core re-derives the exact
+pre-authorization drift/refusal controls, and crash-after-scope recovery. Immutable Linux/x64 run
+[31530832876](https://github.com/ota-run/authority-launcher/actions/runs/31530832876) repeats that
+bounded gate against exact Launcher `c69ad3afc6afef0e260a7eeaa4f7340971db50af`, retains
+cursor-isolated refusal and cleanup evidence, and binds the same exact Protocol and Core revisions.
+Core re-derives the exact
 V3 launcher/job profiles, rejects schema-2 or legacy-profile evidence inside a V3 binding or signed
 payload, and published schemas enforce the same branch. Historical V1/V2 evidence remains readable
-only through its original carrier/schema branch. This remains candidate
-evidence until immutable Linux/x64 hosted pressure binds exact Protocol, Launcher, and Core
-revisions. No authorization decision, lease consumption, selected execution, crossing
-receipt/archive, or provider-attested carrier exists yet, and it does not make
+only through its original carrier/schema branch. The hosted run closes only execution-disabled V3
+admission. No authorization decision, lease consumption, selected execution, crossing
+receipt/archive, independently administered provider/launcher separation, or provider-attested
+carrier exists yet, and it does not make
 `provider_attested_one_use` true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
