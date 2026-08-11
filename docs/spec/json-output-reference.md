@@ -5466,9 +5466,11 @@ The nested `receipt` object can also include:
   listeners use `isolated`; they are recorded without claiming or conflicting on a host listener.
   For a single fixed runtime-listener collision, receipt `next`/`next_steps` carries the same
   `--host-port <free port>` remediation as human output only when the selected lane admits that
-  override; otherwise it points to the declared listener. The stable machine classification
-  remains `active_execution_conflict` with `runtime_listener`; Ota does not silently remap an
-  explicitly requested port.
+  override; otherwise it points to the declared listener. Mixed conflicts identify that the port
+  choice resolves only `runtime_listener` and retain the remaining typed reasons. Suggested
+  commands preserve agent mode. The stable machine classification remains
+  `active_execution_conflict` with `runtime_listener`; Ota does not silently remap an explicitly
+  requested port.
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.

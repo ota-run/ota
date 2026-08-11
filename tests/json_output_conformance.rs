@@ -4781,7 +4781,7 @@ fn run_native_host_port_override_participates_in_listener_conflicts() {
     );
     assert!(
         stderr.contains(
-            "rerun `ota run dev --mode native --host-port <free port>` to select a different host port"
+            "rerun `ota run dev --mode native --host-port <free port> --agent` to select a different host port"
         ),
         "{stderr}"
     );

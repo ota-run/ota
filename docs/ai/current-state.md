@@ -98,9 +98,10 @@ durable agent workflow belongs in the canonical Ota skill.
   When one fixed host listener collides, text output now names the host port, requested and active
   execution modes, and exact owner before suggesting `--host-port <free port>` when the selected
   lane's own execution-option preflight admits that override; mixed listener/write conflicts remain
-  broader active-execution failures but retain port-specific remediation. The compact summary keeps
-  its established ordering and adds only `Reason`/`Reasons` and `Host port` when that conflict
-  evidence exists.
+  broader active-execution failures, identify the free-port choice as resolving only
+  `runtime_listener`, and name every remaining typed reason that must be resolved before retrying.
+  Suggested reruns preserve agent mode. The compact summary keeps its established ordering and adds
+  only `Reason`/`Reasons` and `Host port` when that conflict evidence exists.
 - V11.7 audited-crossing authority is active and partially implemented after independent design
   review. Core now derives one canonical content-addressed crossing scope from the selected
   task/workflow execution graph, refuses unresolved task-input identity, and supports an opt-in

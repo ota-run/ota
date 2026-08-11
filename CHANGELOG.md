@@ -42,7 +42,8 @@
   truthful `--host-port <free port>` rerun when that selected lane admits host-port overrides, and
   preserves the existing run-summary layout with additive `Reason` and `Host port` rows. Mixed
   ownership conflicts keep the broader active-conflict title while still carrying port-specific
-  remediation.
+  remediation, preserves the original agent lane in suggested commands, and states which remaining
+  typed reasons must also be resolved before retrying.
 - Extended `ota run <task> --host-port <port>` to direct native service execution. Container and
   native Compose lanes still remap only the host publication, while direct native lanes apply the
   selected port to both the canonical bind and projected host endpoint because no publication
