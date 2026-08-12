@@ -58,21 +58,24 @@ use ota_authority_protocol::OtaProcessPostureV1;
 use ota_authority_protocol::{
     AUTHORIZATION_DECISION_ADMISSION, AuthorizationDecision, AuthorizationDecisionAdmissionV1,
     AuthorizationDecisionPayload, AuthorizationDecisionRelayEvidenceV1, AuthorizationRequest,
-    BrokerChallenge, LEASE_CONSUMPTION_ADMISSION, LEASE_CONSUMPTION_INTENT_PERSISTENCE,
-    LEASE_CONSUMPTION_PERSISTENCE, LeaseConsumptionAdmissionV1,
-    LeaseConsumptionIntentPersistenceV1, LeaseConsumptionIntentRelayEvidenceV1,
-    LeaseConsumptionPersistenceV1, MAX_FRAME_BYTES, PreparedLeasePayload,
-    RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RUNTIME_BOUNDARY_SCHEMA_VERSION_V1,
-    RuntimeBoundaryObservationState, RuntimeBoundarySemanticIdentityPosture,
-    SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2, SYSTEMD_LAUNCHER_PROFILE_ID_V3,
-    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
-    SignedLauncherAttestation, SignedLauncherAttestationV2, SignedLauncherAttestationV3,
+    BrokerChallenge, LAUNCHER_EXECUTION_COMPLETION, LEASE_CONSUMPTION_ADMISSION,
+    LEASE_CONSUMPTION_INTENT_PERSISTENCE, LEASE_CONSUMPTION_PERSISTENCE,
+    LauncherExecutionCompletionPersistenceV1, LauncherExecutionCompletionV1,
+    LauncherExecutionOutcomeV1, LeaseConsumptionAdmissionV1, LeaseConsumptionIntentPersistenceV1,
+    LeaseConsumptionIntentRelayEvidenceV1, LeaseConsumptionPersistenceV1, MAX_FRAME_BYTES,
+    PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
+    RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
+    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2,
+    SYSTEMD_LAUNCHER_PROFILE_ID_V3, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
+    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
+    SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     authorization_decision_admission_v1_identity,
     authorization_decision_relay_evidence_v1_identity,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
     launcher_attestation_identity_v2, launcher_attestation_identity_v3,
-    launcher_principal_mapping_identity, lease_consumption_admission_v1_identity,
-    lease_consumption_intent_persistence_v1_identity,
+    launcher_execution_completion_persistence_v1_identity,
+    launcher_execution_completion_v1_identity, launcher_principal_mapping_identity,
+    lease_consumption_admission_v1_identity, lease_consumption_intent_persistence_v1_identity,
     lease_consumption_intent_relay_evidence_v1_identity, lease_consumption_persistence_v1_identity,
     message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
     ota_process_posture_identity, runtime_boundary_profile_by_id,
@@ -483,7 +486,17 @@ pub(crate) struct PreparedBrokerCrossing {
 pub(crate) struct ConsumedBrokerCrossing {
     admission: BrokerAdmissionEvidence,
     transaction: crate::crossing_transaction::CrossingTransactionGuard,
-    execution_disabled: bool,
+    systemd_completion: Option<SystemdExecutionCompletion>,
+}
+
+#[cfg(unix)]
+pub(crate) struct SystemdExecutionCompletion {
+    session: LauncherSession,
+    invocation_id: String,
+    lease_consumption_admission_identity: String,
+    work_unit_identity: String,
+    pending_crossing_transaction_identity: String,
+    persisted: Option<LauncherExecutionCompletionV1>,
 }
 
 #[cfg(unix)]
@@ -645,8 +658,8 @@ impl PreparedBrokerCrossing {
         } = self;
         // The verified startup continuation, not ambient process state, determines whether this
         // consumed crossing belongs to the execution-disabled systemd carrier.
-        let execution_disabled = session.systemd_startup_binding.is_some();
-        let mut transaction = if execution_disabled {
+        let systemd_startup_binding = session.systemd_startup_binding.clone();
+        let mut transaction = if systemd_startup_binding.is_some() {
             crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(
                 &admission.crossing_admission(),
             )
@@ -684,10 +697,34 @@ impl PreparedBrokerCrossing {
                 "broker lease consumption did not persist transaction-bound evidence",
             ));
         }
+        let systemd_completion = match systemd_startup_binding {
+            Some(startup) => Some(SystemdExecutionCompletion {
+                lease_consumption_admission_identity: session
+                    .lease_consumption_admission_identity
+                    .clone()
+                    .ok_or_else(|| {
+                        String::from(
+                            "systemd launcher lease consumption admission identity is unavailable",
+                        )
+                    })?,
+                work_unit_identity: admission.authorization_request.work_unit_identity.clone(),
+                pending_crossing_transaction_identity: transaction
+                    .evidence()
+                    .broker_consumption
+                    .as_ref()
+                    .expect("verified systemd consumption evidence")
+                    .pending_transaction_identity
+                    .clone(),
+                invocation_id: startup.invocation_id,
+                session,
+                persisted: None,
+            }),
+            None => None,
+        };
         Ok(ConsumedBrokerCrossing {
             admission,
             transaction,
-            execution_disabled,
+            systemd_completion,
         })
     }
 }
@@ -710,10 +747,7 @@ impl ConsumedBrokerCrossing {
         &self.transaction
     }
 
-    pub(crate) fn execution_disabled(&self) -> bool {
-        self.execution_disabled
-    }
-
+    #[cfg(test)]
     pub(crate) fn transaction_mut(
         &mut self,
     ) -> &mut crate::crossing_transaction::CrossingTransactionGuard {
@@ -725,8 +759,79 @@ impl ConsumedBrokerCrossing {
     ) -> (
         BrokerAdmissionEvidence,
         crate::crossing_transaction::CrossingTransactionGuard,
+        Option<SystemdExecutionCompletion>,
     ) {
-        (self.admission, self.transaction)
+        (self.admission, self.transaction, self.systemd_completion)
+    }
+}
+
+#[cfg(unix)]
+impl SystemdExecutionCompletion {
+    pub(crate) fn persist_terminal_completion(
+        &mut self,
+        transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+        ok: bool,
+        interrupted: bool,
+        receipt_status: &str,
+    ) -> Result<LauncherExecutionCompletionV1, String> {
+        if transaction.state == "pending" || receipt_status.is_empty() {
+            return Err(String::from(
+                "systemd launcher completion requires terminal transaction evidence",
+            ));
+        }
+        let outcome = if ok {
+            LauncherExecutionOutcomeV1::Completed
+        } else if interrupted {
+            LauncherExecutionOutcomeV1::Interrupted
+        } else {
+            LauncherExecutionOutcomeV1::Failed
+        };
+        let exit_code = match outcome {
+            LauncherExecutionOutcomeV1::Completed => Some(0),
+            LauncherExecutionOutcomeV1::Failed => Some(1),
+            LauncherExecutionOutcomeV1::Interrupted => Some(130),
+        };
+        let mut completion = LauncherExecutionCompletionV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: LAUNCHER_EXECUTION_COMPLETION.into(),
+            invocation_id: self.invocation_id.clone(),
+            lease_consumption_admission_identity: self.lease_consumption_admission_identity.clone(),
+            work_unit_identity: self.work_unit_identity.clone(),
+            crossing_transaction_id: transaction.transaction_id.clone(),
+            pending_crossing_transaction_identity: self
+                .pending_crossing_transaction_identity
+                .clone(),
+            crossing_transaction_identity: transaction.identity.clone(),
+            outcome,
+            exit_code,
+            receipt_status: receipt_status.to_string(),
+        };
+        completion.identity = launcher_execution_completion_v1_identity(&completion)
+            .map_err(|_| String::from("systemd launcher completion identity is invalid"))?;
+        if let Some(persisted) = &self.persisted {
+            return if persisted == &completion {
+                Ok(persisted.clone())
+            } else {
+                Err(String::from(
+                    "systemd launcher completion changed after durable acknowledgement",
+                ))
+            };
+        }
+        self.session.send_json(&completion)?;
+        let persistence: LauncherExecutionCompletionPersistenceV1 = self.session.receive_json()?;
+        if launcher_execution_completion_persistence_v1_identity(&persistence)
+            .ok()
+            .as_deref()
+            != Some(persistence.identity.as_str())
+            || persistence.completion_identity != completion.identity
+        {
+            return Err(String::from(
+                "systemd launcher completion persistence acknowledgement is invalid",
+            ));
+        }
+        self.persisted = Some(completion.clone());
+        Ok(completion)
     }
 }
 
@@ -2211,6 +2316,7 @@ pub(crate) struct LauncherSession {
     prepared_lease_identity: Option<String>,
     consume_request_identity: Option<String>,
     consume_request: Option<LeaseConsumeRequest>,
+    lease_consumption_admission_identity: Option<String>,
     authorization_request: Option<AuthorizationRequest>,
     read_buffer: Vec<u8>,
     operation_timeout: std::time::Duration,
@@ -2299,6 +2405,7 @@ impl LauncherSession {
             prepared_lease_identity: None,
             consume_request_identity: None,
             consume_request: None,
+            lease_consumption_admission_identity: None,
             authorization_request: None,
             read_buffer: Vec::new(),
             operation_timeout,
@@ -3082,6 +3189,7 @@ impl LauncherSession {
                 lease_consumption_admission_v1_identity(&admission).map_err(|_| {
                     String::from("systemd launcher consumption acknowledgement is invalid")
                 })?;
+            self.lease_consumption_admission_identity = Some(admission.identity.clone());
             self.send_json(&admission).map_err(|error| {
                 self.state = LauncherSessionState::Refused;
                 error
@@ -5432,6 +5540,81 @@ pub(crate) mod tests {
             .expect("atomic consumption response is durably recorded");
         assert_eq!(session.state(), LauncherSessionState::Complete);
         assert!(transaction.evidence().broker_consumption.is_some());
+    }
+
+    #[test]
+    fn systemd_completion_requires_exact_launcher_persistence_acknowledgement() {
+        let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
+        let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
+        let session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("connected Unix launcher descriptor");
+        let mut completion = SystemdExecutionCompletion {
+            session,
+            invocation_id: String::from("invocation-123"),
+            lease_consumption_admission_identity: identity('1'),
+            work_unit_identity: identity('2'),
+            pending_crossing_transaction_identity: identity('8'),
+            persisted: None,
+        };
+        let transaction = crate::crossing_transaction::CrossingTransactionEvidence {
+            schema_version: crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION,
+            identity: identity('3'),
+            authentication_posture: String::from("launcher_active_slot_content_addressed"),
+            transaction_id: String::from("crossing-123"),
+            authority_carrier: Some(String::from("authority_broker")),
+            authority_id: String::from("release"),
+            admission_identity: identity('4'),
+            grant_identity: None,
+            authorization_identity: Some(identity('5')),
+            scope_identity: identity('6'),
+            contract_identity: identity('7'),
+            broker_consumption_intent: None,
+            broker_consumption: None,
+            broker_consumption_recovery: None,
+            state: String::from("completed"),
+            created_at: String::from("2026-08-12T00:00:00Z"),
+            finalized_at: Some(String::from("2026-08-12T00:00:01Z")),
+            receipt_status: Some(String::from("completed")),
+        };
+        let launcher_thread = std::thread::spawn(move || {
+            let observed: LauncherExecutionCompletionV1 = read_json_frame(&mut launcher);
+            assert_eq!(
+                launcher_execution_completion_v1_identity(&observed).expect("completion identity"),
+                observed.identity
+            );
+            assert_eq!(observed.crossing_transaction_identity, identity('3'));
+            assert_eq!(
+                observed.pending_crossing_transaction_identity,
+                identity('8')
+            );
+            let mut persistence = LauncherExecutionCompletionPersistenceV1 {
+                schema_version: 1,
+                identity: String::new(),
+                message_kind: ota_authority_protocol::LAUNCHER_EXECUTION_COMPLETION_PERSISTENCE
+                    .into(),
+                completion_identity: observed.identity,
+            };
+            persistence.identity =
+                launcher_execution_completion_persistence_v1_identity(&persistence)
+                    .expect("persistence identity");
+            write_json_frame(&mut launcher, &persistence);
+        });
+        let observed = completion
+            .persist_terminal_completion(&transaction, true, false, "completed")
+            .expect("exact completion acknowledgement");
+        assert_eq!(observed.crossing_transaction_identity, transaction.identity);
+        assert_eq!(
+            completion
+                .persist_terminal_completion(&transaction, true, false, "completed")
+                .expect("exact idempotent completion"),
+            observed
+        );
+        assert!(
+            completion
+                .persist_terminal_completion(&transaction, false, false, "failed")
+                .is_err()
+        );
+        launcher_thread.join().expect("launcher thread");
     }
 
     fn pending_consumption_fixture(

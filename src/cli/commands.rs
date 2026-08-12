@@ -16242,6 +16242,10 @@ thread_local! {
         const { RefCell::new(None) };
     static ACTIVE_PROOF_PARENT_AUTHORITY: RefCell<Option<ProofParentAuthorityCapability>> =
         const { RefCell::new(None) };
+    #[cfg(unix)]
+    static ACTIVE_SYSTEMD_EXECUTION_COMPLETION:
+        RefCell<Option<Rc<RefCell<crate::broker_session::SystemdExecutionCompletion>>>> =
+        const { RefCell::new(None) };
 }
 
 const PROOF_PARENT_AUTHORITY_FD_ENV: &str = "OTA_PROOF_PARENT_AUTHORITY_FD";
@@ -17008,6 +17012,9 @@ fn active_crossing_grant_preview() -> Option<crate::output::CrossingGrantAdmissi
 
 struct ActiveCrossingTransactionGuard {
     previous: Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>,
+    #[cfg(unix)]
+    previous_systemd_completion:
+        Option<Rc<RefCell<crate::broker_session::SystemdExecutionCompletion>>>,
 }
 
 impl ActiveCrossingTransactionGuard {
@@ -17026,15 +17033,28 @@ impl ActiveCrossingTransactionGuard {
             )?,
         ));
         let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
-        Ok(Some(Self { previous }))
+        Ok(Some(Self {
+            previous,
+            #[cfg(unix)]
+            previous_systemd_completion: None,
+        }))
     }
 
     fn activate_existing(
         transaction: crate::crossing_transaction::CrossingTransactionGuard,
+        #[cfg(unix)] systemd_completion: Option<crate::broker_session::SystemdExecutionCompletion>,
     ) -> Self {
         let transaction = Rc::new(RefCell::new(transaction));
         let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
-        Self { previous }
+        #[cfg(unix)]
+        let previous_systemd_completion = ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|active| {
+            active.replace(systemd_completion.map(|completion| Rc::new(RefCell::new(completion))))
+        });
+        Self {
+            previous,
+            #[cfg(unix)]
+            previous_systemd_completion,
+        }
     }
 }
 
@@ -17148,7 +17168,7 @@ fn activate_crossing_authority_plan(
                         .with_authority_source("authority_broker")
                         .with_scope(semantic_scope.clone())
                 })?;
-                let mut consumed = prepared
+                let consumed = prepared
                     .consume(repo_root, || {
                         crate::runner::command_interrupted_since(interrupt_epoch)
                     })
@@ -17157,27 +17177,11 @@ fn activate_crossing_authority_plan(
                             .with_authority_source("authority_broker")
                             .with_scope(semantic_scope.clone())
                     })?;
-                if consumed.execution_disabled() {
-                    consumed
-                        .transaction_mut()
-                        .finalize(
-                            "incomplete",
-                            Some("systemd_lease_consumed_execution_disabled"),
-                        )
-                        .map_err(|details| {
-                            GrantAdmissionError::new("crossing_systemd_execution_disabled", details)
-                                .with_authority_source("authority_broker")
-                                .with_scope(semantic_scope.clone())
-                        })?;
-                    return Err(GrantAdmissionError::new(
-                        "crossing_systemd_execution_disabled",
-                        "the protected systemd carrier consumed one lease but selected execution remains disabled",
-                    )
-                    .with_authority_source("authority_broker")
-                    .with_scope(semantic_scope));
-                }
-                let (admission, transaction) = consumed.into_parts();
-                let transaction = ActiveCrossingTransactionGuard::activate_existing(transaction);
+                let (admission, transaction, systemd_completion) = consumed.into_parts();
+                let transaction = ActiveCrossingTransactionGuard::activate_existing(
+                    transaction,
+                    systemd_completion,
+                );
                 let authority = ActiveCrossingGrantGuard::activate(Some(
                     VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission),
                 ));
@@ -17201,6 +17205,10 @@ impl Drop for ActiveCrossingTransactionGuard {
     fn drop(&mut self) {
         ACTIVE_CROSSING_TRANSACTION.with(|active| {
             active.replace(self.previous.take());
+        });
+        #[cfg(unix)]
+        ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|active| {
+            active.replace(self.previous_systemd_completion.take());
         });
     }
 }
@@ -17365,6 +17373,27 @@ fn active_crossing_transaction_is_pending() -> bool {
     active_crossing_transaction_evidence().is_some_and(|evidence| evidence.state == "pending")
 }
 
+#[cfg(unix)]
+fn persist_active_systemd_execution_completion(
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+    ok: bool,
+    interrupted: bool,
+    receipt_status: &str,
+) -> Result<(), String> {
+    ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|completion| {
+        let Some(completion) = completion.borrow().as_ref().cloned() else {
+            return Ok::<(), String>(());
+        };
+        completion.borrow_mut().persist_terminal_completion(
+            transaction,
+            ok,
+            interrupted,
+            receipt_status,
+        )?;
+        Ok(())
+    })
+}
+
 fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<(), String> {
     ACTIVE_CROSSING_TRANSACTION.with(|active| {
         let Some(transaction) = active.borrow().as_ref().cloned() else {
@@ -17379,7 +17408,22 @@ fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<()
         };
         transaction
             .borrow_mut()
-            .finalize(state, receipt.status.as_deref())
+            .finalize(state, receipt.status.as_deref())?;
+        #[cfg(unix)]
+        {
+            let transaction = transaction.borrow().evidence();
+            let receipt_status = transaction
+                .receipt_status
+                .as_deref()
+                .unwrap_or(if receipt.ok { "completed" } else { "failed" });
+            persist_active_systemd_execution_completion(
+                &transaction,
+                receipt.ok,
+                receipt.status.as_deref() == Some("interrupted"),
+                receipt_status,
+            )?;
+        }
+        Ok(())
     })
 }
 
@@ -17434,6 +17478,16 @@ fn finalize_active_proof_crossing_transaction(
     transaction
         .borrow_mut()
         .finalize(state, Some(receipt_status.as_str()))?;
+    #[cfg(unix)]
+    {
+        let terminal_transaction = transaction.borrow().evidence();
+        persist_active_systemd_execution_completion(
+            &terminal_transaction,
+            ok,
+            interrupted,
+            receipt_status.as_str(),
+        )?;
+    }
     let authority = active_crossing_grant_authority().ok_or_else(|| {
         String::from("proof crossing transaction has no matching verified authority admission")
     })?;
@@ -104017,7 +104071,7 @@ workflows:
         let transaction =
             crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
                 .expect("pending transaction");
-        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction);
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction, None);
         let execution_id = format!("sha256:{}", "5".repeat(64));
 
         let output = super::fail_active_proof_crossing_transaction(
@@ -104054,7 +104108,7 @@ workflows:
         let transaction =
             crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
                 .expect("pending transaction");
-        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction);
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction, None);
         let execution_id = format!("sha256:{}", "5".repeat(64));
 
         let _ = super::finalize_active_proof_crossing_transaction(

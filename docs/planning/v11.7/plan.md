@@ -1335,6 +1335,20 @@ provider/launcher separation, and provider attestation remain required before V1
 The replay reopens the durable state but does not restart the pressure broker process, so restart
 persistence remains a separate pressure requirement before any broader broker durability claim.
 
+The next selected-execution candidate is implemented locally but is not yet immutable pressure
+evidence. After exact V3 admission and atomic one-use consumption, Core retains the protected
+launcher session while executing only the frozen work unit. Core finalizes the crossing transaction
+and receipt first, sends one identity-bound completion, and requires the launcher to persist that
+exact record before Core exits. The launcher then reconciles the observed child exit, reaps that
+child, removes the exact systemd scope and cgroup, removes the active slot, and emits one terminal
+finalization record. Completion alone never proves cleanup, and cleanup uncertainty remains a
+retained boundary failure. The current portable Ota archive re-verifies the broker admission,
+consumption, semantic scope, and terminal crossing transaction; launcher finalization is retained
+only by the outer systemd client artifact in this candidate. Binding that post-process finalization
+into portable archive evidence remains a separate acceptance gate. Immutable Linux/x64 PID 1
+pressure must prove completed, failed, interrupted, pre-execution refusal, and crash-recovery paths
+before this paragraph can become a pressure-completion claim.
+
 ###### Protected V3 attestation producer protocol
 
 Immutable pressure for that bridge requires a real protected producer; a deterministic fixture
