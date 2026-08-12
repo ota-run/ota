@@ -369,9 +369,11 @@ durable agent workflow belongs in the canonical Ota skill.
   terminal cancellation before an undeliverable late approval, insufficient pre-wait attestation
   freshness refusing before authorization, and two executions of one broad three-task semantic
   scope consuming distinct work units with two valid archives. V11.7 remains open for stronger
-  provider/launcher-attested separation. V11.22
-  remains planning-only and inactive; it does not consume crossing records as approval authority. See
-  [V11.7](../planning/v11.7/plan.md) and [V11.22](../planning/v11.22/plan.md).
+  provider/launcher-attested separation. V11.22 remains planning-only and inactive; it does not
+  consume crossing records as approval authority. V12 effect-bound refusal assurance is also
+  planning-only and inactive until both V11.7 and V11.22 complete; it does not widen the active
+  crossing implementation. See [V11.7](../planning/v11.7/plan.md),
+  [V11.22](../planning/v11.22/plan.md), and [V12](../planning/v12/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
@@ -927,7 +929,9 @@ Provider-specific attestation remains deferred until it has its own complete pro
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
-V11.22 remains planning-only and inactive. The local real-OCI
+V11.22 remains planning-only and inactive. V12 effect-bound refusal assurance is documented but
+also remains planning-only and inactive until V11.7 and V11.22 complete; do not widen the current
+authority implementation for it. The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
 and Caddy run [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898)
