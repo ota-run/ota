@@ -483,6 +483,7 @@ pub(crate) struct PreparedBrokerCrossing {
 pub(crate) struct ConsumedBrokerCrossing {
     admission: BrokerAdmissionEvidence,
     transaction: crate::crossing_transaction::CrossingTransactionGuard,
+    execution_disabled: bool,
 }
 
 #[cfg(unix)]
@@ -641,7 +642,10 @@ impl PreparedBrokerCrossing {
             prepared_lease,
             admission,
         } = self;
-        let mut transaction = if systemd_launcher_execution_disabled() {
+        // The verified startup continuation, not ambient process state, determines whether this
+        // consumed crossing belongs to the execution-disabled systemd carrier.
+        let execution_disabled = session.systemd_startup_binding.is_some();
+        let mut transaction = if execution_disabled {
             crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(
                 &admission.crossing_admission(),
             )
@@ -682,6 +686,7 @@ impl PreparedBrokerCrossing {
         Ok(ConsumedBrokerCrossing {
             admission,
             transaction,
+            execution_disabled,
         })
     }
 }
@@ -694,6 +699,10 @@ impl ConsumedBrokerCrossing {
 
     pub(crate) fn transaction(&self) -> &crate::crossing_transaction::CrossingTransactionGuard {
         &self.transaction
+    }
+
+    pub(crate) fn execution_disabled(&self) -> bool {
+        self.execution_disabled
     }
 
     pub(crate) fn transaction_mut(

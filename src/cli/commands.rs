@@ -17157,7 +17157,7 @@ fn activate_crossing_authority_plan(
                             .with_authority_source("authority_broker")
                             .with_scope(semantic_scope.clone())
                     })?;
-                if crate::broker_session::systemd_launcher_execution_disabled() {
+                if consumed.execution_disabled() {
                     consumed
                         .transaction_mut()
                         .finalize(
