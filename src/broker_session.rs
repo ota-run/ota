@@ -564,14 +564,19 @@ impl PreparedBrokerCrossing {
                 &authorization_request_identity,
                 &mut cancelled,
             )?;
-        let (prepared_lease, prepared_lease_identity) = session.receive_prepared_lease(
-            &binding,
-            &challenge,
-            &attestation,
-            &authorization_request,
-            &authorization_decision,
-            &mut cancelled,
-        )?;
+        let (prepared_lease, prepared_lease_identity) = session
+            .receive_prepared_lease(
+                &binding,
+                &challenge,
+                &attestation,
+                &authorization_request,
+                &authorization_decision,
+                &mut cancelled,
+            )
+            .map_err(|error| {
+                report_systemd_launcher_verification_refusal("prepared_lease_verification");
+                error
+            })?;
         let admitted_at = OffsetDateTime::now_utc();
         let admission = build_broker_admission(
             &binding,
@@ -587,8 +592,15 @@ impl PreparedBrokerCrossing {
             &prepared_lease_identity,
             actor_mode,
             admitted_at,
-        )?;
-        verify_broker_admission_evidence(&admission)?;
+        )
+        .map_err(|error| {
+            report_systemd_launcher_verification_refusal("broker_admission_build");
+            error
+        })?;
+        verify_broker_admission_evidence(&admission).map_err(|error| {
+            report_systemd_launcher_verification_refusal("broker_admission_verification");
+            error
+        })?;
         Ok(Self {
             session,
             binding,
