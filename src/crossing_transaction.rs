@@ -107,7 +107,23 @@ pub(crate) struct BrokerConsumptionEvidence {
 pub(crate) struct CrossingTransactionGuard {
     lock_file: Option<File>,
     journal_path: Option<PathBuf>,
+    persistence_owner: CrossingTransactionPersistenceOwner,
     evidence: CrossingTransactionEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CrossingTransactionPersistenceOwner {
+    RepositoryJournal,
+    LauncherActiveSlot,
+}
+
+impl CrossingTransactionPersistenceOwner {
+    fn authentication_posture(self) -> &'static str {
+        match self {
+            Self::RepositoryJournal => "runner_local_content_addressed",
+            Self::LauncherActiveSlot => "launcher_active_slot_content_addressed",
+        }
+    }
 }
 
 pub(crate) struct PendingBrokerConsumptionRecovery {
@@ -242,6 +258,7 @@ impl CrossingTransactionGuard {
         Ok(Self {
             lock_file: Some(lock_file),
             journal_path: Some(journal_path),
+            persistence_owner: CrossingTransactionPersistenceOwner::RepositoryJournal,
             evidence,
         })
     }
@@ -276,6 +293,7 @@ impl CrossingTransactionGuard {
         Ok(Self {
             lock_file: None,
             journal_path: None,
+            persistence_owner: CrossingTransactionPersistenceOwner::LauncherActiveSlot,
             evidence,
         })
     }
@@ -305,7 +323,12 @@ impl CrossingTransactionGuard {
         if persisted != self.evidence
             || persisted.state != "pending"
             || persisted.identity != transaction_identity(&persisted)?
-            || !transaction_matches_admission(&persisted, admission, false)
+            || !transaction_matches_admission(
+                &persisted,
+                admission,
+                false,
+                self.persistence_owner.authentication_posture(),
+            )
         {
             return Err(String::from(
                 "pending crossing transaction journal does not match broker admission",
@@ -651,6 +674,7 @@ pub(crate) fn pending_broker_consumption_recovery(
         transaction: CrossingTransactionGuard {
             lock_file: Some(lock_file),
             journal_path: Some(journal_path),
+            persistence_owner: CrossingTransactionPersistenceOwner::RepositoryJournal,
             evidence,
         },
         intent,
@@ -715,16 +739,46 @@ mod tests {
     }
 
     #[test]
-    fn launcher_owned_transaction_never_creates_repository_state() {
+    fn transaction_posture_must_match_its_persistence_owner() {
         let root = tempdir().expect("repository root");
-        let transaction =
-            CrossingTransactionGuard::begin_launcher_owned(&broker_admission(&"6".repeat(64)))
-                .expect("launcher-owned transaction");
+        let admission = broker_admission(&"6".repeat(64));
+        let mut transaction = CrossingTransactionGuard::begin_launcher_owned(&admission)
+            .expect("launcher-owned transaction");
         assert_eq!(
             transaction.evidence().authentication_posture,
             "launcher_active_slot_content_addressed"
         );
+        transaction
+            .verified_pending_evidence(&admission)
+            .expect("launcher-owned pending transaction");
         assert!(!root.path().join(".ota").exists());
+
+        transaction.evidence.authentication_posture =
+            String::from("runner_local_content_addressed");
+        transaction.evidence.identity =
+            transaction_identity(&transaction.evidence).expect("changed identity");
+        assert!(
+            transaction
+                .verified_pending_evidence(&admission)
+                .expect_err("launcher ownership substitution must refuse")
+                .contains("does not match broker admission")
+        );
+
+        let mut repository_transaction = CrossingTransactionGuard::begin(root.path(), &admission)
+            .expect("repository-owned transaction");
+        repository_transaction.evidence.authentication_posture =
+            String::from("launcher_active_slot_content_addressed");
+        repository_transaction.evidence.identity =
+            transaction_identity(&repository_transaction.evidence).expect("changed identity");
+        repository_transaction
+            .persist()
+            .expect("changed repository journal");
+        assert!(
+            repository_transaction
+                .verified_pending_evidence(&admission)
+                .expect_err("repository ownership substitution must refuse")
+                .contains("does not match broker admission")
+        );
     }
 
     fn record_broker_consumption(transaction: &mut CrossingTransactionGuard) {
@@ -1093,8 +1147,12 @@ pub(crate) fn verify_crossing_transaction_evidence(
         Some(consumption) => consumption.identity == broker_consumption_identity(consumption)?,
         None => true,
     };
-    if !transaction_matches_admission(evidence, admission, true)
-        || !broker_consumption_valid
+    if !transaction_matches_admission(
+        evidence,
+        admission,
+        true,
+        CrossingTransactionPersistenceOwner::RepositoryJournal.authentication_posture(),
+    ) || !broker_consumption_valid
         || evidence.broker_consumption_intent.is_some()
         || evidence.broker_consumption_recovery.is_some()
         || evidence.state == "pending"
@@ -1132,8 +1190,12 @@ pub(crate) fn verify_pending_crossing_transaction_evidence(
                 && evidence.broker_consumption_recovery.is_none()
         }
     };
-    if !transaction_matches_admission(evidence, admission, true)
-        || !broker_consumption_valid
+    if !transaction_matches_admission(
+        evidence,
+        admission,
+        true,
+        CrossingTransactionPersistenceOwner::RepositoryJournal.authentication_posture(),
+    ) || !broker_consumption_valid
         || evidence.state != "pending"
         || evidence.finalized_at.is_some()
         || evidence.receipt_status.is_some()
@@ -1184,6 +1246,7 @@ fn transaction_matches_admission(
     evidence: &CrossingTransactionEvidence,
     admission: &CrossingAuthorityAdmission,
     require_broker_consumption: bool,
+    expected_authentication_posture: &str,
 ) -> bool {
     let expected_carrier = match admission.carrier {
         crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile => "prebound_file",
@@ -1219,7 +1282,7 @@ fn transaction_matches_admission(
         _ => false,
     };
     carrier_matches
-        && evidence.authentication_posture == "runner_local_content_addressed"
+        && evidence.authentication_posture == expected_authentication_posture
         && evidence.authority_id == admission.authority_id
         && evidence.admission_identity == admission.admission_identity
         && evidence.scope_identity == admission.scope_identity

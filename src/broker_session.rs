@@ -6090,6 +6090,19 @@ pub(crate) mod tests {
                 .contains("signature")
         );
 
+        let launcher_root = tempdir().expect("launcher transaction root");
+        let launcher_transaction =
+            crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(&admission)
+                .expect("launcher-owned transaction");
+        let (launcher_consume_request, _) =
+            build_lease_consume_request(&admission_evidence, &launcher_transaction)
+                .expect("launcher-owned transaction-bound consume request");
+        assert_eq!(
+            launcher_consume_request.crossing_transaction_identity,
+            launcher_transaction.evidence().identity
+        );
+        assert!(!launcher_root.path().join(".ota").exists());
+
         let root = tempdir().expect("transaction root");
         let mut transaction =
             crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
