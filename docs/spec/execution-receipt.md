@@ -172,14 +172,17 @@ verified V3 admission, atomic consumption, exact semantic scope, and terminal cr
 while the outer launcher independently emits post-process child/scope/cgroup/active-slot
 finalization. That launcher finalization is not yet part of the portable Ota archive, so local tests
 and a future hosted artifact must not overstate archive-enforced cleanup through completion.
-`authority.transaction.authentication_posture: runner_local_content_addressed` is an explicit
-boundary: the journal is runner-authored, locked, and content-addressed, but the first local carrier
-is not independently authenticated against another same-user process with write access to
-`.ota/state`. Archive verification proves signed grant admission plus internal transaction,
-crossing-record, and receipt reconciliation. Broker-backed `run`, `up`, runtime-proof, and
-lifecycle-proof archives add independently signed per-use protocol evidence. Proof archives own
-one transaction across their complete invocation set and embed the terminal carrier admission
-directly; hosted broker proof pressure remains open V11.7 work.
+`authority.transaction.authentication_posture` is an explicit persistence boundary. Signed-file
+and legacy broker transactions use `runner_local_content_addressed`: the journal is runner-authored,
+locked, and content-addressed, but is not independently authenticated against another same-user
+process with write access to `.ota/state`. A V3 systemd broker transaction instead uses
+`launcher_active_slot_content_addressed`; the protected launcher owns the private active-slot
+journal and Core re-verifies that exact posture from the archived V3 admission. Neither posture by
+itself is provider-attested separation. Archive verification proves signed authority admission plus
+internal transaction, crossing-record, and receipt reconciliation. Broker-backed `run`, `up`,
+runtime-proof, and lifecycle-proof archives add independently signed per-use protocol evidence.
+Proof archives own one transaction across their complete invocation set and embed the terminal
+carrier admission directly; hosted broker proof pressure remains open V11.7 work.
 Authority `actor_mode` is runner-observed as `agent` or `non_agent`; it does not claim a verified
 human identity merely because agent mode was absent.
 When grant admission refuses, the receipt carries no `crossing`. Its typed `refusal` instead names

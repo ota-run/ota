@@ -1529,11 +1529,13 @@ Current behavior:
   resource values, and retain a public verification binding without the live launcher descriptor.
   Ota refuses before provisioning, dependencies, setup, or child execution when
   authority, attestation, signature, freshness, revocation, consumption, or scope evidence does not
-  reconcile. After admission, real execution creates a durable runner-owned crossing transaction
-  before selected-lane side effects and finalizes it for every terminal outcome. The transaction is
-  explicitly
-  `runner_local_content_addressed`: it is locked and internally reconciled, but is not independent
-  same-user tamper attestation. A grant never bypasses `--agent` safety refusal
+  reconcile. After admission, real execution creates a durable crossing transaction before
+  selected-lane side effects and finalizes it for every terminal outcome. Signed-file and legacy
+  broker transactions are `runner_local_content_addressed`: they are locked and internally
+  reconciled, but are not independent same-user tamper attestation. V3 systemd broker transactions
+  are `launcher_active_slot_content_addressed` and remain bound to the protected launcher's private
+  active slot; this still does not imply provider-attested separation. A grant never bypasses
+  `--agent` safety refusal
 - supplying `--grant` to a contract without a crossing authority, or to a selected closure that
   does not require a crossing, is an input error rather than ignored intent
 - `--dry-run` uses the same semantic scope and carrier selection without consuming authority. A

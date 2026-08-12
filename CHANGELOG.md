@@ -33,7 +33,8 @@
   the exact scope, cgroup, and active slot before emitting terminal finalization. Local tests cover
   exact acknowledgement, identity substitution, failure, interruption, and carrier-specific
   transaction persistence posture. V3 receipt archives accept only launcher-active-slot
-  transactions, while legacy broker carriers remain repository-journal-bound. Immutable Linux/x64
+  transactions in both runtime verification and the published receipt schema, while signed-file
+  and legacy broker carriers remain repository-journal-bound. Immutable Linux/x64
   PID 1 pressure and portable archive binding of launcher finalization remain required before this
   becomes completion evidence.
 

@@ -965,7 +965,12 @@
       "properties": {
         "schema_version": { "enum": [1, 2] },
         "identity": { "$ref": "#/$defs/sha256Identity" },
-        "authentication_posture": { "const": "runner_local_content_addressed" },
+        "authentication_posture": {
+          "enum": [
+            "runner_local_content_addressed",
+            "launcher_active_slot_content_addressed"
+          ]
+        },
         "transaction_id": {
           "type": "string",
           "pattern": "^crossing-[0-9]+-[0-9a-f]{64}$"
@@ -1111,7 +1116,16 @@
               }
             }
           },
-          "then": { "not": { "required": ["carrier_admission"] } }
+          "then": {
+            "not": { "required": ["carrier_admission"] },
+            "properties": {
+              "transaction": {
+                "properties": {
+                  "authentication_posture": { "const": "runner_local_content_addressed" }
+                }
+              }
+            }
+          }
         },
         {
           "if": {
@@ -1128,7 +1142,10 @@
                 "properties": { "carrier": { "const": "prebound_file" } }
               },
               "transaction": {
-                "properties": { "authority_carrier": { "const": "prebound_file" } }
+                "properties": {
+                  "authority_carrier": { "const": "prebound_file" },
+                  "authentication_posture": { "const": "runner_local_content_addressed" }
+                }
               }
             }
           }
@@ -1225,7 +1242,47 @@
             }
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "admission": {
+                "properties": {
+                  "binding_snapshot": {
+                    "properties": { "schema_version": { "const": 3 } },
+                    "required": ["schema_version"]
+                  }
+                },
+                "required": ["binding_snapshot"]
+              }
+            },
+            "required": ["admission"]
+          },
+          "then": {
+            "properties": {
+              "transaction": {
+                "properties": {
+                  "authentication_posture": {
+                    "const": "launcher_active_slot_content_addressed"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "transaction": {
+                "properties": {
+                  "authentication_posture": {
+                    "const": "runner_local_content_addressed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "executionBoundaryBrokerAuthority": {
       "type": "object",

@@ -2122,8 +2122,11 @@ fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
         ])
     );
     assert_eq!(
-        receipt["$defs"]["crossingTransaction"]["properties"]["authentication_posture"]["const"],
-        json!("runner_local_content_addressed")
+        receipt["$defs"]["crossingTransaction"]["properties"]["authentication_posture"]["enum"],
+        json!([
+            "runner_local_content_addressed",
+            "launcher_active_slot_content_addressed"
+        ])
     );
     assert_eq!(
         preview["$defs"]["singleTarget"]["properties"]["crossing_grant_admission"]["$ref"],
@@ -2762,6 +2765,22 @@ fn receipt_crossing_archive_schema_enforces_carrier_version_branches() {
             .validate(&archive(transaction(1, "prebound_file"), None))
             .is_ok()
     );
+    let mut legacy_launcher_owned = transaction(1, "prebound_file");
+    legacy_launcher_owned["authentication_posture"] =
+        Value::String(String::from("launcher_active_slot_content_addressed"));
+    assert!(
+        schema
+            .validate(&archive(legacy_launcher_owned, None))
+            .is_err()
+    );
+    let mut launcher_owned = transaction(2, "prebound_file");
+    launcher_owned["authentication_posture"] =
+        Value::String(String::from("launcher_active_slot_content_addressed"));
+    assert!(
+        schema
+            .validate(&archive(launcher_owned, Some(carrier_admission.clone()),))
+            .is_err()
+    );
     assert!(
         schema
             .validate(&archive(
@@ -2791,6 +2810,51 @@ fn receipt_crossing_archive_schema_enforces_carrier_version_branches() {
                 transaction(2, "authority_broker"),
                 Some(broker_carrier),
             ))
+            .is_err()
+    );
+}
+
+#[test]
+fn receipt_broker_archive_schema_binds_transaction_persistence_to_attestation_version() {
+    let receipt = load_schema("docs/spec/json-schemas/receipt.json");
+    let schema = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "allOf": receipt["$defs"]["brokerArchiveEvidence"]["allOf"].clone()
+    });
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("broker archive persistence schema");
+    let archive = |binding_version, authentication_posture| {
+        json!({
+            "admission": {
+                "binding_snapshot": { "schema_version": binding_version }
+            },
+            "transaction": {
+                "authentication_posture": authentication_posture
+            }
+        })
+    };
+
+    assert!(
+        compiled
+            .validate(&archive(3, "launcher_active_slot_content_addressed"))
+            .is_ok()
+    );
+    assert!(
+        compiled
+            .validate(&archive(3, "runner_local_content_addressed"))
+            .is_err()
+    );
+    assert!(
+        compiled
+            .validate(&archive(2, "runner_local_content_addressed"))
+            .is_ok()
+    );
+    assert!(
+        compiled
+            .validate(&archive(2, "launcher_active_slot_content_addressed"))
             .is_err()
     );
 }
