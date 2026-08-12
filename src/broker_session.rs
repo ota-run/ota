@@ -56,13 +56,15 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 #[cfg(unix)]
 use ota_authority_protocol::OtaProcessPostureV1;
 use ota_authority_protocol::{
-    AuthorizationDecision, AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge,
-    MAX_FRAME_BYTES, PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
+    AUTHORIZATION_DECISION_ADMISSION, AuthorizationDecision, AuthorizationDecisionAdmissionV1,
+    AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge, MAX_FRAME_BYTES,
+    PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
     RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
     RuntimeBoundarySemanticIdentityPosture, SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2,
     SYSTEMD_LAUNCHER_PROFILE_ID_V3, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
     SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
     SignedLauncherAttestationV2, SignedLauncherAttestationV3,
+    authorization_decision_admission_v1_identity,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
     launcher_attestation_identity_v2, launcher_attestation_identity_v3,
     launcher_principal_mapping_identity, message_identity as protocol_message_identity,
@@ -1085,6 +1087,30 @@ fn verify_authorization_decision_message(
         binding.message_domains.authorization_decision.as_bytes(),
         decision,
     )
+}
+
+fn build_authorization_decision_admission(
+    request: &AuthorizationRequest,
+    request_identity: &str,
+    decision: &SignedBrokerMessage<AuthorizationDecisionPayload>,
+    decision_identity: &str,
+) -> Result<AuthorizationDecisionAdmissionV1, String> {
+    let mut admission = AuthorizationDecisionAdmissionV1 {
+        schema_version: 1,
+        identity: String::new(),
+        message_kind: String::from(AUTHORIZATION_DECISION_ADMISSION),
+        request_identity: request_identity.to_string(),
+        authorization_decision_identity: decision_identity.to_string(),
+        binding_identity: request.binding_identity.clone(),
+        attestation_identity: request.attestation_identity.clone(),
+        work_unit_identity: request.work_unit_identity.clone(),
+        contract_identity: request.contract_identity.clone(),
+        semantic_scope_identity: request.semantic_scope_identity.clone(),
+        decision: decision.payload.decision,
+    };
+    admission.identity = authorization_decision_admission_v1_identity(&admission)
+        .map_err(|_| String::from("failed to identify authorization decision admission"))?;
+    Ok(admission)
 }
 
 fn verify_prepared_lease(
@@ -2122,6 +2148,7 @@ pub(crate) struct LauncherSession {
     systemd_startup_binding: Option<LauncherStartupContinuationV1>,
     attestation_identity: Option<String>,
     pending_decision_identity: Option<String>,
+    pending_decision_revision: Option<u64>,
     authorization_request_identity: Option<String>,
     authorization_decision_identity: Option<String>,
     prepared_lease_identity: Option<String>,
@@ -2209,6 +2236,7 @@ impl LauncherSession {
             systemd_startup_binding: None,
             attestation_identity: None,
             pending_decision_identity: None,
+            pending_decision_revision: None,
             authorization_request_identity: None,
             authorization_decision_identity: None,
             prepared_lease_identity: None,
@@ -2663,17 +2691,47 @@ impl LauncherSession {
                 self.state = LauncherSessionState::Refused;
                 error
             })?;
+            if decision.payload.decision == AuthorizationDecision::Pending
+                && self
+                    .pending_decision_identity
+                    .as_deref()
+                    .is_some_and(|previous| previous != identity)
+            {
+                self.state = LauncherSessionState::Refused;
+                return Err(String::from(
+                    "broker authorization returned ambiguous pending decisions",
+                ));
+            }
+            if decision.payload.decision != AuthorizationDecision::Pending
+                && self
+                    .pending_decision_revision
+                    .is_some_and(|revision| decision.payload.broker_revision <= revision)
+            {
+                self.state = LauncherSessionState::Refused;
+                return Err(String::from(
+                    "broker authorization final decision did not advance the pending revision",
+                ));
+            }
+            if self.systemd_startup_binding.is_some() {
+                let admission = build_authorization_decision_admission(
+                    request,
+                    request_identity,
+                    &decision,
+                    &identity,
+                )
+                .map_err(|error| {
+                    self.state = LauncherSessionState::Refused;
+                    error
+                })?;
+                self.send_json(&admission).map_err(|error| {
+                    self.state = LauncherSessionState::Refused;
+                    error
+                })?;
+            }
             match decision.payload.decision {
                 AuthorizationDecision::Pending => {
-                    if let Some(previous) = self.pending_decision_identity.as_deref()
-                        && previous != identity
-                    {
-                        self.state = LauncherSessionState::Refused;
-                        return Err(String::from(
-                            "broker authorization returned ambiguous pending decisions",
-                        ));
-                    }
                     self.pending_decision_identity = Some(identity);
+                    self.pending_decision_revision = Some(decision.payload.broker_revision);
                 }
                 AuthorizationDecision::Denied => {
                     self.state = LauncherSessionState::Refused;
@@ -4850,6 +4908,214 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn systemd_launcher_session_acknowledges_only_verified_authorization_decision() {
+        let now = OffsetDateTime::now_utc();
+        let (binding, signing_key) =
+            crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (_, _, scope) = crate::crossing_authority::tests::fixture(now);
+        let challenge = freeze_broker_challenge(&binding, &scope).expect("frozen challenge");
+        let attestation = signed_attestation(&binding, &signing_key, &challenge, now);
+        let attestation_identity =
+            verify_launcher_attestation(&binding, &challenge, &attestation, now)
+                .expect("verified attestation");
+        let (request, request_identity) = build_authorization_request(
+            &binding,
+            &challenge,
+            &attestation,
+            &attestation_identity,
+            &scope,
+            "non_agent",
+            60,
+            now,
+        )
+        .expect("authorization request");
+        let broker = TestBroker::new(signing_key);
+        let decision = broker.authorization_decision(&binding, &request, &request_identity, now);
+        let mut startup = LauncherStartupContinuationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: String::from(ota_authority_protocol::LAUNCHER_STARTUP_CONTINUATION),
+            invocation_id: String::from("invocation-decision"),
+            child_process_identity: format!("sha256:{}", "1".repeat(64)),
+            working_directory_identity: format!("sha256:{}", "2".repeat(64)),
+            process_posture_identity: format!("sha256:{}", "3".repeat(64)),
+            principal_mapping_identity: format!("sha256:{}", "4".repeat(64)),
+        };
+        startup.identity = launcher_startup_continuation_identity(&startup)
+            .expect("startup continuation identity");
+
+        let (mut launcher, ota) = UnixStream::pair().expect("launcher pair");
+        let mut session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("launcher session");
+        session.state = LauncherSessionState::AwaitingAuthorization;
+        session.approval_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        session.authorization_request_identity = Some(request_identity.clone());
+        session.authorization_request = Some(request.clone());
+        session.systemd_startup_binding = Some(startup.clone());
+        write_json_frame(&mut launcher, &decision);
+        let (_, decision_identity) = session
+            .wait_for_authorization_decision(&binding, &request, &request_identity, || false)
+            .expect("verified decision");
+        let admission: AuthorizationDecisionAdmissionV1 = read_json_frame(&mut launcher);
+        assert_eq!(admission.message_kind, AUTHORIZATION_DECISION_ADMISSION);
+        assert_eq!(admission.authorization_decision_identity, decision_identity);
+        assert_eq!(admission.request_identity, request_identity);
+        assert_eq!(
+            authorization_decision_admission_v1_identity(&admission).expect("admission identity"),
+            admission.identity
+        );
+
+        let (mut launcher, ota) = UnixStream::pair().expect("invalid launcher pair");
+        let mut refused = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("invalid launcher session");
+        refused.state = LauncherSessionState::AwaitingAuthorization;
+        refused.approval_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        refused.authorization_request_identity = Some(request_identity.clone());
+        refused.authorization_request = Some(request.clone());
+        refused.systemd_startup_binding = Some(startup.clone());
+        let mut substituted = decision;
+        substituted.payload.semantic_scope_identity = format!("sha256:{}", "f".repeat(64));
+        write_json_frame(&mut launcher, &substituted);
+        assert!(
+            refused
+                .wait_for_authorization_decision(&binding, &request, &request_identity, || false,)
+                .is_err()
+        );
+        launcher
+            .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+            .expect("read timeout");
+        let mut byte = [0_u8; 1];
+        assert!(launcher.read(&mut byte).is_err());
+
+        let (mut launcher, ota) = UnixStream::pair().expect("ambiguous launcher pair");
+        let mut ambiguous = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("ambiguous launcher session");
+        ambiguous.state = LauncherSessionState::AwaitingAuthorization;
+        ambiguous.approval_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        ambiguous.authorization_request_identity = Some(request_identity.clone());
+        ambiguous.authorization_request = Some(request.clone());
+        ambiguous.systemd_startup_binding = Some(startup.clone());
+        let pending = broker.authorization_decision_with(
+            &binding,
+            &request,
+            &request_identity,
+            AuthorizationDecision::Pending,
+            1,
+            now,
+        );
+        let conflicting = broker.authorization_decision_with(
+            &binding,
+            &request,
+            &request_identity,
+            AuthorizationDecision::Pending,
+            2,
+            now,
+        );
+        write_json_frame(&mut launcher, &pending);
+        write_json_frame(&mut launcher, &conflicting);
+        assert!(
+            ambiguous
+                .wait_for_authorization_decision(&binding, &request, &request_identity, || false,)
+                .expect_err("conflicting pending decisions must refuse")
+                .contains("ambiguous")
+        );
+        let first_admission: AuthorizationDecisionAdmissionV1 = read_json_frame(&mut launcher);
+        assert_eq!(first_admission.decision, AuthorizationDecision::Pending);
+        launcher
+            .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+            .expect("read timeout");
+        assert!(launcher.read(&mut byte).is_err());
+
+        for final_revision in [1, 2] {
+            let (mut launcher, ota) = UnixStream::pair().expect("rollback launcher pair");
+            let mut rollback = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+                .expect("rollback launcher session");
+            rollback.state = LauncherSessionState::AwaitingAuthorization;
+            rollback.approval_deadline =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+            rollback.authorization_request_identity = Some(request_identity.clone());
+            rollback.authorization_request = Some(request.clone());
+            rollback.systemd_startup_binding = Some(startup.clone());
+            let pending_revision_two = broker.authorization_decision_with(
+                &binding,
+                &request,
+                &request_identity,
+                AuthorizationDecision::Pending,
+                2,
+                now,
+            );
+            let non_advancing_allowed = broker.authorization_decision_with(
+                &binding,
+                &request,
+                &request_identity,
+                AuthorizationDecision::Allowed,
+                final_revision,
+                now,
+            );
+            write_json_frame(&mut launcher, &pending_revision_two);
+            write_json_frame(&mut launcher, &non_advancing_allowed);
+            assert!(
+                rollback
+                    .wait_for_authorization_decision(&binding, &request, &request_identity, || {
+                        false
+                    },)
+                    .expect_err("final decision must advance the pending revision")
+                    .contains("did not advance")
+            );
+            let pending_admission: AuthorizationDecisionAdmissionV1 =
+                read_json_frame(&mut launcher);
+            assert_eq!(pending_admission.decision, AuthorizationDecision::Pending);
+            launcher
+                .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+                .expect("rollback read timeout");
+            assert!(launcher.read(&mut byte).is_err());
+        }
+
+        let (mut launcher, ota) = UnixStream::pair().expect("progression launcher pair");
+        let mut progression = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
+            .expect("progression launcher session");
+        progression.state = LauncherSessionState::AwaitingAuthorization;
+        progression.approval_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        progression.authorization_request_identity = Some(request_identity.clone());
+        progression.authorization_request = Some(request.clone());
+        progression.systemd_startup_binding = Some(startup);
+        let pending_revision_one = broker.authorization_decision_with(
+            &binding,
+            &request,
+            &request_identity,
+            AuthorizationDecision::Pending,
+            1,
+            now,
+        );
+        let allowed_revision_two = broker.authorization_decision_with(
+            &binding,
+            &request,
+            &request_identity,
+            AuthorizationDecision::Allowed,
+            2,
+            now,
+        );
+        write_json_frame(&mut launcher, &pending_revision_one);
+        write_json_frame(&mut launcher, &allowed_revision_two);
+        let (allowed, allowed_identity) = progression
+            .wait_for_authorization_decision(&binding, &request, &request_identity, || false)
+            .expect("newer final decision must advance pending authority");
+        assert_eq!(allowed.payload.decision, AuthorizationDecision::Allowed);
+        let first_admission: AuthorizationDecisionAdmissionV1 = read_json_frame(&mut launcher);
+        let final_admission: AuthorizationDecisionAdmissionV1 = read_json_frame(&mut launcher);
+        assert_eq!(first_admission.decision, AuthorizationDecision::Pending);
+        assert_eq!(final_admission.decision, AuthorizationDecision::Allowed);
+        assert_eq!(
+            final_admission.authorization_decision_identity,
+            allowed_identity
+        );
+    }
+
+    #[test]
     fn launcher_session_orders_pending_authorization_lease_and_atomic_consumption() {
         let now = OffsetDateTime::now_utc();
         let (binding, signing_key) =
@@ -4891,7 +5157,15 @@ pub(crate) mod tests {
             1,
             now,
         );
-        let allowed = broker.authorization_decision(&binding, &request, &request_identity, now);
+        let allowed = broker.authorization_decision_with(
+            &binding,
+            &request,
+            &request_identity,
+            AuthorizationDecision::Allowed,
+            2,
+            now,
+        );
+        broker.revision = 2;
         write_json_frame(&mut launcher, &pending);
         write_json_frame(&mut launcher, &pending);
         write_json_frame(&mut launcher, &allowed);

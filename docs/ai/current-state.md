@@ -300,8 +300,34 @@ durable agent workflow belongs in the canonical Ota skill.
   slots/scopes, byte-identical repository manifests, no selected-work or `.ota` state, and only the
   public verifier identity. This closes the hosted execution-disabled V3 admission gate only. The
   GitHub workflow controller still provisions the root services, so independently administered
-  provider/launcher separation is not proved. No authorization decision, one-use lease, selected
-  execution, crossing receipt/archive, or provider-attested separation exists yet.
+  provider/launcher separation is not proved. At those immutable revisions, no authorization
+  decision, one-use lease, selected execution, crossing receipt/archive, or provider-attested
+  separation existed.
+  The current follow-on candidate advances only through signed authorization-decision admission.
+  Protocol adds a Core-authored, identity-bound decision acknowledgement and launcher relay
+  envelope. The Launcher binds a protected pressure broker executable and service/socket identity,
+  rechecks the live pidfd-bound executable around relay traffic, forwards Core's exact request only
+  after complete V3 admission, relays only signed decisions, requires Core's exact acknowledgement,
+  and durably journals that relay before exact boundary cleanup. Core acknowledges only a decision
+  that passes canonical signature, freshness, request,
+  attestation, contract, work-unit, and semantic-scope verification. Allowed decisions end at
+  `authorization_decision_verified_before_lease_boundary_removed`; denied or invalid decisions
+  remain bounded refusals. The prepared hosted matrix covers allowed, denied, stale, wrong-scope,
+  pending-timeout, ambiguous, and unavailable-proxy cases with zero worktree, receipt, active-slot,
+  or scope residue. Negative cases require exact pressure-peer response checkpoints and Core
+  acknowledgement counts rather than the generic protocol-refusal terminal alone. The artifact
+  retains public signed decisions, the public broker verifier binding, and bounded relay envelopes
+  for independent identity and signature re-verification after cleanup, never private signing
+  material. Core also requires a final response after pending authority to advance the broker
+  revision, preventing an older still-valid final response from replacing newer pending state. The
+  matrix injects a crash after durable allowed-decision recording and requires
+  cleanup-only recovery before a fresh request, with complete repository-manifest equality for each
+  decision scenario. Until that matrix is green against immutable revisions, this is local
+  implementation evidence only. No
+  lease issuance/consumption, selected execution,
+  receipt/archive, independently administered separation, or provider attestation is claimed.
+  Site, Skills, and Examples remain unaffected because this candidate adds no public command,
+  contract-authoring, receipt, archive, or usable operator surface.
   The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
   `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
   `fddb10393aa0e79258ff048e32774a685d5fac04`, and Core

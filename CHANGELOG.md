@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Add Core's protected systemd V3 authorization-decision acknowledgement. After canonical broker
+  signature, freshness, request, contract, and semantic-scope verification, Core returns one
+  identity-bound `authorization_decision_admission` on the private launcher session. Substituted or
+  invalid decisions receive no acknowledgement. A final response following pending authority must
+  advance the broker revision; equal or older finalization also refuses before acknowledgement. The
+  execution-disabled Launcher candidate uses this only to journal exact relay evidence before
+  cleanup; it still cannot issue or consume a lease, execute selected work, or emit crossing
+  receipt/archive evidence.
+
 - Native task progress loaders now show the selected execution class explicitly, for example
   `Running setup:dev (native)`, matching the existing container and remote labels.
 
