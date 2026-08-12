@@ -632,7 +632,11 @@ impl PreparedBrokerCrossing {
         let mut transaction = if systemd_launcher_execution_disabled() {
             crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(
                 &admission.crossing_admission(),
-            )?
+            )
+            .map_err(|error| {
+                report_systemd_launcher_verification_refusal("lease_transaction_begin");
+                error
+            })?
         } else {
             crate::crossing_transaction::CrossingTransactionGuard::begin(
                 repo_root,
