@@ -44,6 +44,10 @@ bind the exact selected invocation, complete executable closure, and normalized 
 set. A crossing grant authorizes one bounded work unit; it does not prove that an effect policy is
 complete or that equivalent paths are covered.
 
+Planned follow-on: [V12.1 Secret Delivery Governance](../v12.1/plan.md) remains inactive and may be
+activated only after V12 completes and its own activation gates are satisfied. This link does not
+change V12 status or authorize V12.1 implementation.
+
 ## Why This Is V12
 
 V11 made selected-lane execution, proof, refusal, policy, replay, sandboxing, and authority more
