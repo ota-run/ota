@@ -506,6 +506,7 @@ impl PreparedBrokerCrossing {
         }
         let challenge = freeze_broker_challenge(&binding, scope)?;
         let mut session = LauncherSession::from_binding(&binding)?;
+        let systemd_session = session.systemd_startup_binding.is_some();
         session.send_systemd_process_posture_preface(&binding)?;
         session.send_challenge(&challenge.challenge)?;
         let (attestation, attestation_identity) =
@@ -575,7 +576,7 @@ impl PreparedBrokerCrossing {
                 &mut cancelled,
             )
             .map_err(|error| {
-                report_systemd_launcher_verification_refusal("prepared_lease_verification");
+                report_systemd_session_refusal(systemd_session, "prepared_lease_verification");
                 error
             })?;
         let admitted_at = OffsetDateTime::now_utc();
@@ -595,11 +596,11 @@ impl PreparedBrokerCrossing {
             admitted_at,
         )
         .map_err(|error| {
-            report_systemd_launcher_verification_refusal("broker_admission_build");
+            report_systemd_session_refusal(systemd_session, "broker_admission_build");
             error
         })?;
         verify_broker_admission_evidence(&admission).map_err(|error| {
-            report_systemd_launcher_verification_refusal("broker_admission_verification");
+            report_systemd_session_refusal(systemd_session, "broker_admission_verification");
             error
         })?;
         Ok(Self {
@@ -688,6 +689,14 @@ impl PreparedBrokerCrossing {
             transaction,
             execution_disabled,
         })
+    }
+}
+
+#[cfg(unix)]
+fn report_systemd_session_refusal(systemd_session: bool, stage: &str) {
+    if systemd_session {
+        // Stages are fixed protocol labels; do not expose authority paths or signed payloads.
+        eprintln!("ota: systemd protected-launcher verification refused stage={stage}");
     }
 }
 
