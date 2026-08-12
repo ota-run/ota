@@ -17148,7 +17148,7 @@ fn activate_crossing_authority_plan(
                         .with_authority_source("authority_broker")
                         .with_scope(semantic_scope.clone())
                 })?;
-                let consumed = prepared
+                let mut consumed = prepared
                     .consume(repo_root, || {
                         crate::runner::command_interrupted_since(interrupt_epoch)
                     })
@@ -17157,6 +17157,25 @@ fn activate_crossing_authority_plan(
                             .with_authority_source("authority_broker")
                             .with_scope(semantic_scope.clone())
                     })?;
+                if crate::broker_session::systemd_launcher_execution_disabled() {
+                    consumed
+                        .transaction_mut()
+                        .finalize(
+                            "incomplete",
+                            Some("systemd_lease_consumed_execution_disabled"),
+                        )
+                        .map_err(|details| {
+                            GrantAdmissionError::new("crossing_systemd_execution_disabled", details)
+                                .with_authority_source("authority_broker")
+                                .with_scope(semantic_scope.clone())
+                        })?;
+                    return Err(GrantAdmissionError::new(
+                        "crossing_systemd_execution_disabled",
+                        "the protected systemd carrier consumed one lease but selected execution remains disabled",
+                    )
+                    .with_authority_source("authority_broker")
+                    .with_scope(semantic_scope));
+                }
                 let (admission, transaction) = consumed.into_parts();
                 let transaction = ActiveCrossingTransactionGuard::activate_existing(transaction);
                 let authority = ActiveCrossingGrantGuard::activate(Some(

@@ -332,8 +332,17 @@ durable agent workflow belongs in the canonical Ota skill.
   selected-work, `.ota`, lease, receipt, archive, private-key, or credential residue. No
   lease issuance/consumption, selected execution,
   receipt/archive, independently administered separation, or provider attestation is claimed.
-  Site, Skills, and Examples remain unaffected because this slice adds no public command,
-  contract-authoring, receipt, archive, or usable operator surface.
+  The current uncommitted follow-on advances only an execution-disabled consumed-response relay
+  foundation. Core derives the transaction identity in memory and never creates repository-local
+  `.ota` state. Launcher fsyncs the exact allowed decision, prepared lease, and consume intent in
+  its root-owned active slot before forwarding to the broker, then fsyncs the exact consumed response
+  and Core acknowledgement before replying. Core finalizes its ephemeral transaction as `incomplete`
+  and refuses before any selected task, hook, service, receipt, or archive can start. This does not
+  prove atomic one-use consumption: the pressure peer is still stateless. Immutable PID 1 systemd
+  consumed-response pressure, lost-ack recovery, broker atomicity, and all selected-execution,
+  receipt, and archive claims remain open. Site, Skills, and Examples remain unaffected because
+  this slice adds no public command, contract-authoring, receipt, archive, or usable operator
+  surface.
   The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
   `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
   `fddb10393aa0e79258ff048e32774a685d5fac04`, and Core
@@ -405,7 +414,8 @@ durable agent workflow belongs in the canonical Ota skill.
   consume crossing records as approval authority. V12 effect-bound refusal assurance is also
   planning-only and inactive until both V11.7 and V11.22 complete; it does not widen the active
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
-  [V11.22](../planning/v11.22/plan.md), and [V12](../planning/v12/plan.md).
+  [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
+  inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).
 - completed V11.17 trusted replay-baseline regeneration: Core now has an additive
   `artifacts.<name>.replay` authority chain: explicit producer record, immutable
   recorded attestation, exact promotion, then replay consumption. A portable authority manifest
@@ -966,9 +976,10 @@ Provider-specific attestation remains deferred until it has its own complete pro
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
-V11.22 remains planning-only and inactive. V12 effect-bound refusal assurance is documented but
-also remains planning-only and inactive until V11.7 and V11.22 complete; do not widen the current
-authority implementation for it. The local real-OCI
+V11.22 remains planning-only and inactive. V12 effect-bound refusal assurance and V12.1
+secret-delivery governance are documented but also remain planning-only and inactive until their
+published prerequisites complete; do not widen the current authority implementation for either.
+The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
 and Caddy run [30544809898](https://github.com/bobaikato/caddy/actions/runs/30544809898)

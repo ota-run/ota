@@ -57,19 +57,26 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use ota_authority_protocol::OtaProcessPostureV1;
 use ota_authority_protocol::{
     AUTHORIZATION_DECISION_ADMISSION, AuthorizationDecision, AuthorizationDecisionAdmissionV1,
-    AuthorizationDecisionPayload, AuthorizationRequest, BrokerChallenge, MAX_FRAME_BYTES,
-    PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
-    RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
-    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2,
-    SYSTEMD_LAUNCHER_PROFILE_ID_V3, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
-    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
-    SignedLauncherAttestationV2, SignedLauncherAttestationV3,
+    AuthorizationDecisionPayload, AuthorizationDecisionRelayEvidenceV1, AuthorizationRequest,
+    BrokerChallenge, LEASE_CONSUMPTION_ADMISSION, LEASE_CONSUMPTION_INTENT_PERSISTENCE,
+    LEASE_CONSUMPTION_PERSISTENCE, LeaseConsumptionAdmissionV1,
+    LeaseConsumptionIntentPersistenceV1, LeaseConsumptionIntentRelayEvidenceV1,
+    LeaseConsumptionPersistenceV1, MAX_FRAME_BYTES, PreparedLeasePayload,
+    RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RUNTIME_BOUNDARY_SCHEMA_VERSION_V1,
+    RuntimeBoundaryObservationState, RuntimeBoundarySemanticIdentityPosture,
+    SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2, SYSTEMD_LAUNCHER_PROFILE_ID_V3,
+    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
+    SignedLauncherAttestation, SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     authorization_decision_admission_v1_identity,
+    authorization_decision_relay_evidence_v1_identity,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
     launcher_attestation_identity_v2, launcher_attestation_identity_v3,
-    launcher_principal_mapping_identity, message_identity as protocol_message_identity,
-    nonce_commitment as protocol_nonce_commitment, ota_process_posture_identity,
-    runtime_boundary_profile_by_id, runtime_boundary_profile_identity, sha256_identity,
+    launcher_principal_mapping_identity, lease_consumption_admission_v1_identity,
+    lease_consumption_intent_persistence_v1_identity,
+    lease_consumption_intent_relay_evidence_v1_identity, lease_consumption_persistence_v1_identity,
+    message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
+    ota_process_posture_identity, runtime_boundary_profile_by_id,
+    runtime_boundary_profile_identity, sha256_identity,
     signed_message_identity as protocol_signed_message_identity,
     systemd_job_principal_profile_by_id, systemd_launcher_profile_by_id,
     systemd_protected_launcher_instance_v3_foundation_identity,
@@ -272,6 +279,16 @@ pub(crate) fn enter_systemd_launcher_startup_gate() -> Result<(), String> {
     store_systemd_launcher_startup_binding(continuation)?;
     let _ = stream.into_raw_fd();
     Ok(())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+pub(crate) fn systemd_launcher_execution_disabled() -> bool {
+    SYSTEMD_LAUNCHER_SESSION_ACTIVE.load(Ordering::Acquire)
+}
+
+#[cfg(not(all(unix, target_os = "linux")))]
+pub(crate) fn systemd_launcher_execution_disabled() -> bool {
+    false
 }
 
 #[cfg(all(unix, target_os = "linux"))]
@@ -612,10 +629,16 @@ impl PreparedBrokerCrossing {
             prepared_lease,
             admission,
         } = self;
-        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
-            repo_root,
-            &admission.crossing_admission(),
-        )?;
+        let mut transaction = if systemd_launcher_execution_disabled() {
+            crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(
+                &admission.crossing_admission(),
+            )?
+        } else {
+            crate::crossing_transaction::CrossingTransactionGuard::begin(
+                repo_root,
+                &admission.crossing_admission(),
+            )?
+        };
         if cancelled() {
             return Err(String::from(
                 "broker authority was cancelled before lease consumption",
@@ -2855,6 +2878,49 @@ impl LauncherSession {
             self.state = LauncherSessionState::Refused;
             return Err(error);
         }
+        if self.systemd_startup_binding.is_some() {
+            let decision_admission = build_authorization_decision_admission(
+                &admission_evidence.authorization_request,
+                &admission_evidence.authorization_request_identity,
+                &admission_evidence.authorization_decision,
+                &admission_evidence.authorization_decision_identity,
+            )?;
+            let mut decision_relay = AuthorizationDecisionRelayEvidenceV1 {
+                schema_version: 1,
+                identity: String::new(),
+                request_identity: admission_evidence.authorization_request_identity.clone(),
+                authorization_decision: admission_evidence.authorization_decision.clone(),
+                authorization_decision_identity: admission_evidence
+                    .authorization_decision_identity
+                    .clone(),
+                admission: decision_admission,
+            };
+            decision_relay.identity =
+                authorization_decision_relay_evidence_v1_identity(&decision_relay)
+                    .map_err(|_| String::from("launcher consume intent identity is invalid"))?;
+            let mut intent = LeaseConsumptionIntentRelayEvidenceV1 {
+                schema_version: 1,
+                identity: String::new(),
+                authorization_decision_relay_identity: decision_relay.identity,
+                prepared_lease: admission_evidence.prepared_lease.clone(),
+                prepared_lease_identity: admission_evidence.prepared_lease_identity.clone(),
+                consume_request: request.clone(),
+                consume_request_identity: request_identity.clone(),
+            };
+            intent.identity = lease_consumption_intent_relay_evidence_v1_identity(&intent)
+                .map_err(|_| String::from("launcher consume intent identity is invalid"))?;
+            let persistence: LeaseConsumptionIntentPersistenceV1 =
+                self.receive_json().map_err(|error| {
+                    self.state = LauncherSessionState::Refused;
+                    error
+                })?;
+            if !launcher_consumption_intent_persistence_matches(&persistence, &intent.identity) {
+                self.state = LauncherSessionState::Refused;
+                return Err(String::from(
+                    "launcher consume intent persistence acknowledgement is invalid",
+                ));
+            }
+        }
         self.consume_request_identity = Some(request_identity.clone());
         self.consume_request = Some(request.clone());
         self.state = LauncherSessionState::AwaitingConsume;
@@ -2953,6 +3019,55 @@ impl LauncherSession {
             self.state = LauncherSessionState::Refused;
             error
         })?;
+        if self.systemd_startup_binding.is_some() {
+            let transaction_evidence = transaction.evidence();
+            let consumption = transaction_evidence
+                .broker_consumption
+                .as_ref()
+                .ok_or_else(|| {
+                    self.state = LauncherSessionState::Refused;
+                    String::from(
+                        "systemd launcher consumption acknowledgement has no durable evidence",
+                    )
+                })?;
+            let mut admission = LeaseConsumptionAdmissionV1 {
+                schema_version: 1,
+                identity: String::new(),
+                message_kind: LEASE_CONSUMPTION_ADMISSION.into(),
+                binding_identity: request.binding_identity.clone(),
+                prepared_lease_identity: lease_identity,
+                consume_request_identity: request_identity.to_string(),
+                consume_response_identity: identity.clone(),
+                work_unit_identity: request.work_unit_identity.clone(),
+                crossing_transaction_id: request.crossing_transaction_id.clone(),
+                crossing_transaction_identity: consumption.pending_transaction_identity.clone(),
+            };
+            admission.identity =
+                lease_consumption_admission_v1_identity(&admission).map_err(|_| {
+                    String::from("systemd launcher consumption acknowledgement is invalid")
+                })?;
+            self.send_json(&admission).map_err(|error| {
+                self.state = LauncherSessionState::Refused;
+                error
+            })?;
+            let persistence: LeaseConsumptionPersistenceV1 =
+                self.receive_json().map_err(|error| {
+                    self.state = LauncherSessionState::Refused;
+                    error
+                })?;
+            if lease_consumption_persistence_v1_identity(&persistence)
+                .ok()
+                .as_deref()
+                != Some(persistence.identity.as_str())
+                || persistence.message_kind != LEASE_CONSUMPTION_PERSISTENCE
+                || persistence.consumption_admission_identity != admission.identity
+            {
+                self.state = LauncherSessionState::Refused;
+                return Err(String::from(
+                    "systemd launcher consumption persistence acknowledgement is invalid",
+                ));
+            }
+        }
         self.state = LauncherSessionState::Complete;
         Ok(identity)
     }
@@ -3001,6 +3116,18 @@ impl LauncherSession {
             Err(error) => Err(error),
         }
     }
+}
+
+fn launcher_consumption_intent_persistence_matches(
+    persistence: &LeaseConsumptionIntentPersistenceV1,
+    expected_intent_identity: &str,
+) -> bool {
+    lease_consumption_intent_persistence_v1_identity(persistence)
+        .ok()
+        .as_deref()
+        == Some(persistence.identity.as_str())
+        && persistence.message_kind == LEASE_CONSUMPTION_INTENT_PERSISTENCE
+        && persistence.consumption_intent_identity == expected_intent_identity
 }
 
 #[cfg(all(unix, target_os = "linux"))]
@@ -3969,6 +4096,39 @@ pub(crate) mod tests {
             Some(value) => unsafe { std::env::set_var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV, value) },
             None => unsafe { std::env::remove_var(SYSTEMD_LAUNCHER_STARTUP_GATE_ENV) },
         }
+    }
+
+    #[test]
+    fn systemd_intent_persistence_acknowledgement_is_exact_and_not_replayable() {
+        let expected_intent = format!("sha256:{}", "a".repeat(64));
+        let mut matching = LeaseConsumptionIntentPersistenceV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: LEASE_CONSUMPTION_INTENT_PERSISTENCE.into(),
+            consumption_intent_identity: expected_intent.clone(),
+        };
+        matching.identity = lease_consumption_intent_persistence_v1_identity(&matching)
+            .expect("matching persistence identity");
+        assert!(launcher_consumption_intent_persistence_matches(
+            &matching,
+            &expected_intent
+        ));
+
+        let mut replayed = matching.clone();
+        replayed.consumption_intent_identity = format!("sha256:{}", "b".repeat(64));
+        replayed.identity = lease_consumption_intent_persistence_v1_identity(&replayed)
+            .expect("replayed persistence identity");
+        assert!(!launcher_consumption_intent_persistence_matches(
+            &replayed,
+            &expected_intent
+        ));
+
+        let mut malformed = matching;
+        malformed.identity = format!("sha256:{}", "c".repeat(64));
+        assert!(!launcher_consumption_intent_persistence_matches(
+            &malformed,
+            &expected_intent
+        ));
     }
 
     #[test]

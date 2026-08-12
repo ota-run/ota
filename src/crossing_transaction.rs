@@ -105,8 +105,8 @@ pub(crate) struct BrokerConsumptionEvidence {
 }
 
 pub(crate) struct CrossingTransactionGuard {
-    lock_file: File,
-    journal_path: PathBuf,
+    lock_file: Option<File>,
+    journal_path: Option<PathBuf>,
     evidence: CrossingTransactionEvidence,
 }
 
@@ -240,10 +240,57 @@ impl CrossingTransactionGuard {
         let journal_path = state_dir.join(format!("{transaction_id}.json"));
         atomic_write_json(&journal_path, &evidence)?;
         Ok(Self {
-            lock_file,
-            journal_path,
+            lock_file: Some(lock_file),
+            journal_path: Some(journal_path),
             evidence,
         })
+    }
+
+    /// The execution-disabled systemd carrier records consume evidence in the launcher-owned
+    /// active-slot journal. Do not create repository-local state before that acknowledgement.
+    pub(crate) fn begin_launcher_owned(
+        admission: &CrossingAuthorityAdmission,
+    ) -> Result<Self, String> {
+        let now = OffsetDateTime::now_utc();
+        let mut evidence = CrossingTransactionEvidence {
+            schema_version: CROSSING_TRANSACTION_SCHEMA_VERSION,
+            identity: String::new(),
+            authentication_posture: String::from("launcher_active_slot_content_addressed"),
+            transaction_id: new_transaction_id(now)?,
+            authority_carrier: Some(String::from("authority_broker")),
+            authority_id: admission.authority_id.clone(),
+            admission_identity: admission.admission_identity.clone(),
+            grant_identity: None,
+            authorization_identity: Some(admission.authorization_identity.clone()),
+            scope_identity: admission.scope_identity.clone(),
+            contract_identity: admission.contract_identity.clone(),
+            broker_consumption_intent: None,
+            broker_consumption: None,
+            broker_consumption_recovery: None,
+            state: String::from("pending"),
+            created_at: format_time(now)?,
+            finalized_at: None,
+            receipt_status: None,
+        };
+        evidence.identity = transaction_identity(&evidence)?;
+        Ok(Self {
+            lock_file: None,
+            journal_path: None,
+            evidence,
+        })
+    }
+
+    fn persisted(&self) -> Result<CrossingTransactionEvidence, String> {
+        self.journal_path.as_ref().map_or_else(
+            || Ok(self.evidence.clone()),
+            |path| read_transaction_evidence(path),
+        )
+    }
+
+    fn persist(&self) -> Result<(), String> {
+        self.journal_path
+            .as_ref()
+            .map_or_else(|| Ok(()), |path| atomic_write_json(path, &self.evidence))
     }
 
     pub(crate) fn evidence(&self) -> CrossingTransactionEvidence {
@@ -254,7 +301,7 @@ impl CrossingTransactionGuard {
         &self,
         admission: &CrossingAuthorityAdmission,
     ) -> Result<CrossingTransactionEvidence, String> {
-        let persisted = read_transaction_evidence(&self.journal_path)?;
+        let persisted = self.persisted()?;
         if persisted != self.evidence
             || persisted.state != "pending"
             || persisted.identity != transaction_identity(&persisted)?
@@ -331,7 +378,7 @@ impl CrossingTransactionGuard {
             && intent_matches
             && self.evidence.broker_consumption.as_ref() == Some(&consumption)
         {
-            let persisted = read_transaction_evidence(&self.journal_path)?;
+            let persisted = self.persisted()?;
             if persisted != self.evidence {
                 return Err(String::from(
                     "crossing transaction journal changed before recovered broker consumption was reconciled",
@@ -373,7 +420,7 @@ impl CrossingTransactionGuard {
         ] {
             validate_sha256_identity(identity, label)?;
         }
-        let persisted = read_transaction_evidence(&self.journal_path)?;
+        let persisted = self.persisted()?;
         if persisted != self.evidence {
             return Err(String::from(
                 "crossing transaction journal changed before broker consumption was recorded",
@@ -384,7 +431,7 @@ impl CrossingTransactionGuard {
         }
         self.evidence.broker_consumption = Some(consumption);
         self.evidence.identity = transaction_identity(&self.evidence)?;
-        atomic_write_json(&self.journal_path, &self.evidence)
+        self.persist()
     }
 
     pub(crate) fn record_broker_consumption_intent(
@@ -415,7 +462,7 @@ impl CrossingTransactionGuard {
                 "broker consumption intent cannot attach to this pending crossing transaction",
             ));
         }
-        let persisted = read_transaction_evidence(&self.journal_path)?;
+        let persisted = self.persisted()?;
         if persisted != self.evidence {
             return Err(String::from(
                 "crossing transaction journal changed before broker consumption intent",
@@ -431,7 +478,7 @@ impl CrossingTransactionGuard {
         intent.identity = broker_consumption_intent_identity(&intent)?;
         self.evidence.broker_consumption_intent = Some(intent);
         self.evidence.identity = transaction_identity(&self.evidence)?;
-        atomic_write_json(&self.journal_path, &self.evidence)
+        self.persist()
     }
 
     pub(crate) fn record_broker_consumption_recovery(
@@ -447,7 +494,7 @@ impl CrossingTransactionGuard {
                 "broker consumption recovery cannot attach to this pending transaction",
             ));
         }
-        let persisted = read_transaction_evidence(&self.journal_path)?;
+        let persisted = self.persisted()?;
         if persisted != self.evidence {
             return Err(String::from(
                 "crossing transaction journal changed before broker recovery was recorded",
@@ -455,7 +502,7 @@ impl CrossingTransactionGuard {
         }
         self.evidence.broker_consumption_recovery = Some(evidence);
         self.evidence.identity = transaction_identity(&self.evidence)?;
-        atomic_write_json(&self.journal_path, &self.evidence)
+        self.persist()
     }
 
     pub(crate) fn finalize(
@@ -479,7 +526,7 @@ impl CrossingTransactionGuard {
                 "broker crossing transaction cannot finalize without durable lease consumption",
             ));
         }
-        let persisted = read_transaction_evidence(&self.journal_path)?;
+        let persisted = self.persisted()?;
         if persisted != self.evidence {
             return Err(String::from(
                 "crossing transaction journal changed after admission",
@@ -492,7 +539,7 @@ impl CrossingTransactionGuard {
         self.evidence.finalized_at = Some(format_time(OffsetDateTime::now_utc())?);
         self.evidence.receipt_status = receipt_status.map(str::to_string);
         self.evidence.identity = transaction_identity(&self.evidence)?;
-        atomic_write_json(&self.journal_path, &self.evidence)
+        self.persist()
     }
 }
 
@@ -602,8 +649,8 @@ pub(crate) fn pending_broker_consumption_recovery(
     };
     Ok(Some(PendingBrokerConsumptionRecovery {
         transaction: CrossingTransactionGuard {
-            lock_file,
-            journal_path,
+            lock_file: Some(lock_file),
+            journal_path: Some(journal_path),
             evidence,
         },
         intent,
@@ -665,6 +712,19 @@ mod tests {
             decision: String::from("allowed"),
             admitted_at: String::from("2026-01-01T00:00:00Z"),
         }
+    }
+
+    #[test]
+    fn launcher_owned_transaction_never_creates_repository_state() {
+        let root = tempdir().expect("repository root");
+        let transaction =
+            CrossingTransactionGuard::begin_launcher_owned(&broker_admission(&"6".repeat(64)))
+                .expect("launcher-owned transaction");
+        assert_eq!(
+            transaction.evidence().authentication_posture,
+            "launcher_active_slot_content_addressed"
+        );
+        assert!(!root.path().join(".ota").exists());
     }
 
     fn record_broker_consumption(transaction: &mut CrossingTransactionGuard) {
@@ -905,7 +965,10 @@ mod tests {
         changed.authority_id = String::from("authority:substituted");
         changed.identity = transaction_identity(&changed).expect("changed identity should derive");
         fs::write(
-            &transaction.journal_path,
+            transaction
+                .journal_path
+                .as_ref()
+                .expect("persisted journal path"),
             serde_json::to_vec_pretty(&changed).expect("journal should serialize"),
         )
         .expect("journal mutation should be written");
@@ -922,7 +985,7 @@ mod tests {
         let scope = "5".repeat(64);
         let first = CrossingTransactionGuard::begin_with_binding(root.path(), &binding(&scope))
             .expect("first transaction should begin");
-        let first_path = first.journal_path.clone();
+        let first_path = first.journal_path.clone().expect("persisted journal path");
         let mut abandoned = first.evidence();
         drop(first);
         abandoned.state = String::from("pending");
@@ -989,7 +1052,7 @@ mod tests {
         let scope = "8".repeat(64);
         let first = CrossingTransactionGuard::begin_with_binding(root.path(), &binding(&scope))
             .expect("first transaction should begin");
-        let first_path = first.journal_path.clone();
+        let first_path = first.journal_path.clone().expect("persisted journal path");
         let mut abandoned = first.evidence();
         drop(first);
         abandoned.state = String::from("pending");
@@ -1016,7 +1079,9 @@ impl Drop for CrossingTransactionGuard {
         if self.evidence.state == "pending" && self.evidence.broker_consumption_intent.is_none() {
             let _ = self.finalize("incomplete", None);
         }
-        let _ = FileExt::unlock(&self.lock_file);
+        if let Some(lock_file) = &self.lock_file {
+            let _ = FileExt::unlock(lock_file);
+        }
     }
 }
 
