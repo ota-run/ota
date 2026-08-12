@@ -332,17 +332,30 @@ durable agent workflow belongs in the canonical Ota skill.
   selected-work, `.ota`, lease, receipt, archive, private-key, or credential residue. No
   lease issuance/consumption, selected execution,
   receipt/archive, independently administered separation, or provider attestation is claimed.
-  The current uncommitted follow-on advances only an execution-disabled consumed-response relay
-  foundation. Core derives the transaction identity in memory and never creates repository-local
-  `.ota` state. Launcher fsyncs the exact allowed decision, prepared lease, and consume intent in
-  its root-owned active slot before forwarding to the broker, then fsyncs the exact consumed response
-  and Core acknowledgement before replying. Core finalizes its ephemeral transaction as `incomplete`
-  and refuses before any selected task, hook, service, receipt, or archive can start. This does not
-  prove atomic one-use consumption: the pressure peer is still stateless. Immutable PID 1 systemd
-  consumed-response pressure, lost-ack recovery, broker atomicity, and all selected-execution,
-  receipt, and archive claims remain open. Site, Skills, and Examples remain unaffected because
-  this slice adds no public command, contract-authoring, receipt, archive, or usable operator
-  surface.
+  The execution-disabled one-use lease boundary is now immutable-hosted pressure evidence. Protocol
+  `899718c93f205eea8ae403e041be9449daa89192`, Launcher
+  `2185682777c3603ae428dda68d47b1e39d709753`, and clean source-built Core
+  `874c5954798453f92a0141bfc964fe1a90db8d92` passed Linux/x64 PID 1 systemd run
+  [31631358796](https://github.com/ota-run/authority-launcher/actions/runs/31631358796). Core freezes a
+  launcher-owned pending transaction without repository state, binds its authentication posture to
+  the private active-slot persistence owner, and emits one exact consume request only after signed
+  V3 attestation, authorization, and prepared-lease verification. Launcher fsyncs the consume intent
+  before broker relay and the signed consumed response before terminal cleanup. The pressure-only
+  broker atomically persists spent lease identities in root-owned `0700`/`0600` state before its
+  first response; replaying the identical lease and consume request produces one signed
+  `already_consumed` response while Core records exactly one accepted consumption. The matrix also
+  covers denial, stale and wrong-scope responses, pending timeout, ambiguity, unavailable broker,
+  protected installation/runtime/credential drift, and both intent/acknowledgement and
+  post-consumption crash recovery. Its retained artifact has byte-identical repository manifests,
+  one deliberate pending recovery slot only at each injected crash boundary, and zero terminal
+  slots/scopes or selected-work, `.ota`, receipt, and archive residue. This proves one-use lease
+  consumption only for the execution-disabled systemd carrier and pressure broker. Selected
+  execution, crossing receipts and archive re-verification for launcher-owned evidence, and
+  independently administered provider/launcher separation remain open; V11.7 remains active and
+  partial. Site, Skills, and Examples remain unaffected because this slice adds no public command,
+  contract-authoring, receipt, archive, or usable operator surface.
+  The exact replay reopens root-owned durable state but does not restart the pressure broker
+  process; restart persistence is not separately pressure-proven.
   The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
   `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
   `fddb10393aa0e79258ff048e32774a685d5fac04`, and Core

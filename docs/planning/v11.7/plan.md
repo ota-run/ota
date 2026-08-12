@@ -1316,6 +1316,25 @@ decision admission and cleanup pressure. One-use lease consumption, selected exe
 receipt/archive evidence, independently administered provider/launcher separation, and provider
 attestation remain open.
 
+The execution-disabled one-use lease boundary is now pressure-proven in immutable Linux/x64 PID 1
+systemd run [31631358796](https://github.com/ota-run/authority-launcher/actions/runs/31631358796),
+binding Protocol `899718c93f205eea8ae403e041be9449daa89192`, Launcher
+`2185682777c3603ae428dda68d47b1e39d709753`, and clean source-built Core
+`874c5954798453f92a0141bfc964fe1a90db8d92`. The carrier persists the exact consume intent before
+broker transport, verifies and records one signed consumed response, and then refuses before
+selected execution while removing the exact scope, cgroup, child, and active slot. The pressure-only
+broker atomically records each spent lease identity in root-owned durable state before returning
+`consumed`; replaying the identical lease and consume request returns a signed `already_consumed`
+response, while Core accepts only the first consumption. Pressure also covers typed decision
+refusals, timeout and ambiguity, unavailable broker, installation/runtime/credential drift, and
+intent/acknowledgement plus post-consumption crash recovery. Repository manifests remain
+byte-identical and no selected-work, `.ota`, receipt, or archive residue is produced. This closes
+only execution-disabled one-use consumption for this systemd carrier and pressure broker. Selected
+execution, launcher-owned crossing receipt/archive evidence, independently administered
+provider/launcher separation, and provider attestation remain required before V11.7 can complete.
+The replay reopens the durable state but does not restart the pressure broker process, so restart
+persistence remains a separate pressure requirement before any broader broker durability claim.
+
 ###### Protected V3 attestation producer protocol
 
 Immutable pressure for that bridge requires a real protected producer; a deterministic fixture

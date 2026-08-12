@@ -26,14 +26,24 @@
 
 ## Unreleased
 
-- Add Core's protected systemd V3 authorization-decision acknowledgement. After canonical broker
-  signature, freshness, request, contract, and semantic-scope verification, Core returns one
-  identity-bound `authorization_decision_admission` on the private launcher session. Substituted or
-  invalid decisions receive no acknowledgement. A final response following pending authority must
-  advance the broker revision; equal or older finalization also refuses before acknowledgement. The
-  execution-disabled Launcher path uses this only to journal exact relay evidence before
-  cleanup; it still cannot issue or consume a lease, execute selected work, or emit crossing
-  receipt/archive evidence.
+- Add protected systemd V3 one-use lease consumption after exact authorization-decision admission.
+  Core binds pending transaction posture to its private persistence owner, so launcher active-slot
+  transactions can emit the exact consume request without creating repository state while ordinary
+  receipt/archive verification remains repository-journal-only. The Launcher persists the consume
+  intent before relay, records the signed consumed response, and still refuses selected execution
+  before exact scope, cgroup, child, and active-slot cleanup. Immutable Linux/x64 PID 1 systemd run
+  [31631358796](https://github.com/ota-run/authority-launcher/actions/runs/31631358796) passes against
+  Protocol `899718c93f205eea8ae403e041be9449daa89192`, Launcher
+  `2185682777c3603ae428dda68d47b1e39d709753`, and clean source-built Core
+  `874c5954798453f92a0141bfc964fe1a90db8d92`. Its pressure-only broker atomically persists spent
+  lease identities in root-owned state before returning `consumed`, then returns a signed
+  `already_consumed` response for the identical lease and consume request while Core accepts only
+  the first consumption. The matrix also proves signed refusal and ambiguity controls,
+  protected-installation/runtime/credential drift, unavailable broker, intent/acknowledgement and
+  post-consumption crash recovery, byte-identical repository state, and zero terminal slots/scopes
+  or selected-work, `.ota`, receipt, and archive residue. Selected execution, crossing
+  receipt/archive evidence, and independently administered provider/launcher separation remain
+  open.
 - Immutable Linux/x64 PID 1 systemd run
   [31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) binds exact
   Protocol `6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
