@@ -31,9 +31,19 @@
   identity-bound `authorization_decision_admission` on the private launcher session. Substituted or
   invalid decisions receive no acknowledgement. A final response following pending authority must
   advance the broker revision; equal or older finalization also refuses before acknowledgement. The
-  execution-disabled Launcher candidate uses this only to journal exact relay evidence before
+  execution-disabled Launcher path uses this only to journal exact relay evidence before
   cleanup; it still cannot issue or consume a lease, execute selected work, or emit crossing
   receipt/archive evidence.
+- Immutable Linux/x64 PID 1 systemd run
+  [31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) binds exact
+  Protocol `6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
+  `77ab20aa6ed5e3dd42cc6815ba2de7cd36d543bf`, and clean source-built Core
+  `b71b78ca33ea2edd7bb03ceb66c5e1e104217cd9`. It proves execution-disabled allowed, denied, stale,
+  wrong-scope, pending-timeout, ambiguous, unavailable-proxy, protected-installation/runtime drift,
+  missing-credential, and crash-recovery paths with independently re-verifiable public signed
+  decision/relay identities, zero terminal slots/scopes, byte-identical repository manifests, and no
+  selected-work, `.ota`, lease, receipt, archive, private-key, or credential residue. One-use lease
+  consumption, selected execution, crossing evidence, and provider-attested separation remain open.
 
 - Native task progress loaders now show the selected execution class explicitly, for example
   `Running setup:dev (native)`, matching the existing container and remote labels.

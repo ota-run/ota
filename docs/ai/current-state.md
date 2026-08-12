@@ -303,7 +303,7 @@ durable agent workflow belongs in the canonical Ota skill.
   provider/launcher separation is not proved. At those immutable revisions, no authorization
   decision, one-use lease, selected execution, crossing receipt/archive, or provider-attested
   separation existed.
-  The current follow-on candidate advances only through signed authorization-decision admission.
+  The signed authorization-decision slice advances only through decision admission.
   Protocol adds a Core-authored, identity-bound decision acknowledgement and launcher relay
   envelope. The Launcher binds a protected pressure broker executable and service/socket identity,
   rechecks the live pidfd-bound executable around relay traffic, forwards Core's exact request only
@@ -312,21 +312,27 @@ durable agent workflow belongs in the canonical Ota skill.
   that passes canonical signature, freshness, request,
   attestation, contract, work-unit, and semantic-scope verification. Allowed decisions end at
   `authorization_decision_verified_before_lease_boundary_removed`; denied or invalid decisions
-  remain bounded refusals. The prepared hosted matrix covers allowed, denied, stale, wrong-scope,
-  pending-timeout, ambiguous, and unavailable-proxy cases with zero worktree, receipt, active-slot,
+  remain bounded refusals. Immutable Linux/x64 PID 1 systemd run
+  [31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) covers allowed,
+  denied, stale, wrong-scope, pending-timeout, ambiguous, and unavailable-proxy cases with zero
+  worktree, receipt, active-slot,
   or scope residue. Negative cases require exact pressure-peer response checkpoints and Core
   acknowledgement counts rather than the generic protocol-refusal terminal alone. The artifact
   retains public signed decisions, the public broker verifier binding, and bounded relay envelopes
   for independent identity and signature re-verification after cleanup, never private signing
   material. Core also requires a final response after pending authority to advance the broker
   revision, preventing an older still-valid final response from replacing newer pending state. The
-  matrix injects a crash after durable allowed-decision recording and requires
+  matrix injects crashes after durable scope and allowed-decision recording and requires
   cleanup-only recovery before a fresh request, with complete repository-manifest equality for each
-  decision scenario. Until that matrix is green against immutable revisions, this is local
-  implementation evidence only. No
+  decision scenario. It binds exact Protocol `6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
+  `77ab20aa6ed5e3dd42cc6815ba2de7cd36d543bf`, and clean source-built Core
+  `b71b78ca33ea2edd7bb03ceb66c5e1e104217cd9`. Independent artifact inspection re-verified all eight
+  signed decisions, all five relayed admission/decision identity pairs, zero terminal slots/scopes,
+  two cleanup-only crash recoveries, fourteen byte-identical repository-manifest pairs, and no
+  selected-work, `.ota`, lease, receipt, archive, private-key, or credential residue. No
   lease issuance/consumption, selected execution,
   receipt/archive, independently administered separation, or provider attestation is claimed.
-  Site, Skills, and Examples remain unaffected because this candidate adds no public command,
+  Site, Skills, and Examples remain unaffected because this slice adds no public command,
   contract-authoring, receipt, archive, or usable operator surface.
   The committed additive `ota.authority-launcher.systemd/v2` foundation at Protocol
   `cb5f539a4c3d9d75e2dd36692da8e69be5ba6e14`, Launcher
@@ -946,10 +952,15 @@ cursor-isolated refusal and cleanup evidence, and binds the same exact Protocol 
 Core re-derives the exact
 V3 launcher/job profiles, rejects schema-2 or legacy-profile evidence inside a V3 binding or signed
 payload, and published schemas enforce the same branch. Historical V1/V2 evidence remains readable
-only through its original carrier/schema branch. The hosted run closes only execution-disabled V3
-admission. No authorization decision, lease consumption, selected execution, crossing
-receipt/archive, independently administered provider/launcher separation, or provider-attested
-carrier exists yet, and it does not make
+only through its original carrier/schema branch. That hosted run closes execution-disabled V3
+attestation admission. Follow-on immutable Linux/x64 run
+[31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) binds Protocol
+`6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
+`77ab20aa6ed5e3dd42cc6815ba2de7cd36d543bf`, and Core
+`b71b78ca33ea2edd7bb03ceb66c5e1e104217cd9` while proving execution-disabled signed-decision
+admission, typed negative outcomes, exact relay evidence, terminal cleanup, and crash recovery. No
+one-use lease consumption, selected execution, crossing receipt/archive, independently administered
+provider/launcher separation, or provider-attested carrier exists yet, and the run does not make
 `provider_attested_one_use` true.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and

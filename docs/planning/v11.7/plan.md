@@ -1279,8 +1279,8 @@ Linux/x64 execution-disabled V3 admission gate. Broker authorization, one-use le
 selected execution, crossing receipt/archive evidence, independently administered
 provider/launcher separation, and provider attestation remain open.
 
-The current execution-disabled authorization-decision candidate advances exactly one protocol
-boundary beyond that hosted gate. Protocol defines a Core-authored
+The execution-disabled authorization-decision slice advances exactly one protocol boundary beyond
+that hosted gate. Protocol defines a Core-authored
 `authorization_decision_admission` identity and a launcher-owned relay envelope. The Launcher binds
 one protected broker-proxy executable and unit set in its installation manifest, rechecks the live
 pidfd-bound executable around relay traffic, forwards only the exact Core request after complete V3
@@ -1290,20 +1290,31 @@ acknowledgement only after canonical signature, freshness, request,
 attestation, contract, work-unit, and semantic-scope verification. Allowed decisions terminate at
 `authorization_decision_verified_before_lease_boundary_removed`; denied decisions and malformed,
 stale, wrong-scope, ambiguous, timed-out, or unavailable broker outcomes remain execution-disabled
-refusals. This candidate issues and consumes no lease, executes no selected work, and creates no
-crossing receipt/archive. Its prepared Linux/x64 PID 1 systemd matrix must pass against immutable
-Protocol, Launcher, and Core revisions before this boundary becomes pressure evidence.
-The matrix must not accept the shared protocol-refusal terminal by itself. Pressure-only broker
+refusals. This slice issues and consumes no lease, executes no selected work, and creates no crossing
+receipt/archive. Immutable Linux/x64 PID 1 systemd run
+[31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) passed against
+exact Protocol `6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
+`77ab20aa6ed5e3dd42cc6815ba2de7cd36d543bf`, and clean source-built Core
+`b71b78ca33ea2edd7bb03ceb66c5e1e104217cd9`. The matrix does not accept the shared
+protocol-refusal terminal by itself. Pressure-only broker
 checkpoints bind scenario, response ordinal, decision posture, and signed decision identity. Stale
 and wrong-scope cases require a relayed signed response with zero Core acknowledgements; pending
 timeout requires exactly one acknowledged pending decision; ambiguity requires two distinct signed
 pending responses and exactly one acknowledgement. The retained artifact includes the public broker
 verifier binding, public signed decision responses, and complete bounded relay envelope so the
 signed decision, Core acknowledgement, and their identities remain independently re-verifiable
-after active-slot cleanup. It must also crash after durable allowed-decision recording and prove
+after active-slot cleanup. The matrix also crashes after durable allowed-decision recording and proves
 cleanup-only recovery of the exact slot, child, cgroup, and scope before a fresh request proceeds.
-Each decision scenario compares the complete repository manifest before and after. Private signing
-keys and credentials are never archived.
+Each decision scenario compares the complete repository manifest before and after. Retained evidence
+independently re-verifies all eight public signed decisions, all five relayed decision/admission
+identity pairs, and exact decision-to-relay reconciliation. Every terminal case has zero active slots
+and scopes; both crash injections retain one deliberate recovery slot before the next activation
+removes it. Fourteen before/after repository-manifest pairs are byte-identical, and no selected-work,
+`.ota`, lease, receipt, or archive state exists. The artifact contains only public verifier material;
+private signing keys and credentials are never archived. This closes only execution-disabled signed
+decision admission and cleanup pressure. One-use lease consumption, selected execution, crossing
+receipt/archive evidence, independently administered provider/launcher separation, and provider
+attestation remain open.
 
 ###### Protected V3 attestation producer protocol
 
