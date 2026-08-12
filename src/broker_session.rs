@@ -1068,7 +1068,11 @@ pub(crate) fn verify_broker_consumption_evidence(
     transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
 ) -> Result<String, String> {
     let admission = verify_broker_admission_evidence(admission_evidence)?;
-    crate::crossing_transaction::verify_crossing_transaction_evidence(transaction, &admission)?;
+    crate::crossing_transaction::verify_crossing_transaction_evidence_with_authentication_posture(
+        transaction,
+        &admission,
+        broker_transaction_authentication_posture(admission_evidence),
+    )?;
     verify_broker_consumption_fields(admission_evidence, transaction)
 }
 
@@ -1077,11 +1081,21 @@ pub(crate) fn verify_pending_broker_consumption_evidence(
     transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
 ) -> Result<String, String> {
     let admission = verify_broker_admission_evidence(admission_evidence)?;
-    crate::crossing_transaction::verify_pending_crossing_transaction_evidence(
+    crate::crossing_transaction::verify_pending_crossing_transaction_evidence_with_authentication_posture(
         transaction,
         &admission,
+        broker_transaction_authentication_posture(admission_evidence),
     )?;
     verify_broker_consumption_fields(admission_evidence, transaction)
+}
+
+fn broker_transaction_authentication_posture(admission: &BrokerAdmissionEvidence) -> &'static str {
+    match &admission.attestation {
+        LauncherAttestationEvidence::V3(_) => "launcher_active_slot_content_addressed",
+        LauncherAttestationEvidence::V1(_) | LauncherAttestationEvidence::V2(_) => {
+            "runner_local_content_addressed"
+        }
+    }
 }
 
 fn verify_broker_consumption_fields(
@@ -6744,11 +6758,12 @@ pub(crate) mod tests {
         )
         .expect("broker admission");
         let root = tempdir().expect("transaction root");
-        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
-            root.path(),
-            &admission.crossing_admission(),
-        )
-        .expect("transaction");
+        let mut transaction =
+            crate::crossing_transaction::CrossingTransactionGuard::begin_launcher_owned(
+                &admission.crossing_admission(),
+            )
+            .expect("launcher-owned V3 transaction");
+        assert!(!root.path().join(".ota").exists());
         let (consume_request, consume_request_identity) =
             build_lease_consume_request(&admission, &transaction).expect("consume request");
         transaction

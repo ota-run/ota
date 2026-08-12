@@ -26,12 +26,14 @@
 
 ## Unreleased
 
-- Add the uncommitted selected-execution candidate for the protected systemd authority carrier.
+- Add the selected-execution candidate for the protected systemd authority carrier.
   After exact V3 admission and atomic one-use lease consumption, Core may execute only the frozen
   work unit, finalize its crossing transaction and receipt, and require the launcher to persist
   that exact completion before Core exits. The launcher independently reaps the child and removes
   the exact scope, cgroup, and active slot before emitting terminal finalization. Local tests cover
-  exact acknowledgement, identity substitution, failure, and interruption; immutable Linux/x64
+  exact acknowledgement, identity substitution, failure, interruption, and carrier-specific
+  transaction persistence posture. V3 receipt archives accept only launcher-active-slot
+  transactions, while legacy broker carriers remain repository-journal-bound. Immutable Linux/x64
   PID 1 pressure and portable archive binding of launcher finalization remain required before this
   becomes completion evidence.
 

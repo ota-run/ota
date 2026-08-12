@@ -358,8 +358,8 @@ durable agent workflow belongs in the canonical Ota skill.
   process; restart persistence is not separately pressure-proven.
   The selected-execution candidate pins Protocol
   `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c` and Launcher
-  `84a990723c38682c8afdccbfeace82b5c8a9c789`. Core retains the launcher session after atomic consumption, executes only the frozen
-  work unit, finalizes the crossing transaction and receipt, and requires exact launcher
+  `84a990723c38682c8afdccbfeace82b5c8a9c789`. Core retains the launcher session after atomic
+  consumption, executes only the frozen work unit, finalizes the crossing transaction and receipt, and requires exact launcher
   persistence acknowledgement before exiting. The launcher then reconciles the child exit and
   emits terminal finalization only after the exact child, scope, cgroup, and active slot are absent.
   Protocol, Core, Launcher, Skill, and Site checks are green. This is not immutable hosted evidence yet,

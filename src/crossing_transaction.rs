@@ -1143,16 +1143,24 @@ pub(crate) fn verify_crossing_transaction_evidence(
     evidence: &CrossingTransactionEvidence,
     admission: &CrossingAuthorityAdmission,
 ) -> Result<(), String> {
+    verify_crossing_transaction_evidence_with_authentication_posture(
+        evidence,
+        admission,
+        CrossingTransactionPersistenceOwner::RepositoryJournal.authentication_posture(),
+    )
+}
+
+pub(crate) fn verify_crossing_transaction_evidence_with_authentication_posture(
+    evidence: &CrossingTransactionEvidence,
+    admission: &CrossingAuthorityAdmission,
+    expected_authentication_posture: &str,
+) -> Result<(), String> {
     let broker_consumption_valid = match evidence.broker_consumption.as_ref() {
         Some(consumption) => consumption.identity == broker_consumption_identity(consumption)?,
         None => true,
     };
-    if !transaction_matches_admission(
-        evidence,
-        admission,
-        true,
-        CrossingTransactionPersistenceOwner::RepositoryJournal.authentication_posture(),
-    ) || !broker_consumption_valid
+    if !transaction_matches_admission(evidence, admission, true, expected_authentication_posture)
+        || !broker_consumption_valid
         || evidence.broker_consumption_intent.is_some()
         || evidence.broker_consumption_recovery.is_some()
         || evidence.state == "pending"
@@ -1172,6 +1180,18 @@ pub(crate) fn verify_pending_crossing_transaction_evidence(
     evidence: &CrossingTransactionEvidence,
     admission: &CrossingAuthorityAdmission,
 ) -> Result<(), String> {
+    verify_pending_crossing_transaction_evidence_with_authentication_posture(
+        evidence,
+        admission,
+        CrossingTransactionPersistenceOwner::RepositoryJournal.authentication_posture(),
+    )
+}
+
+pub(crate) fn verify_pending_crossing_transaction_evidence_with_authentication_posture(
+    evidence: &CrossingTransactionEvidence,
+    admission: &CrossingAuthorityAdmission,
+    expected_authentication_posture: &str,
+) -> Result<(), String> {
     let broker_consumption_valid = match admission.carrier {
         crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile => {
             evidence.broker_consumption_intent.is_none()
@@ -1190,12 +1210,8 @@ pub(crate) fn verify_pending_crossing_transaction_evidence(
                 && evidence.broker_consumption_recovery.is_none()
         }
     };
-    if !transaction_matches_admission(
-        evidence,
-        admission,
-        true,
-        CrossingTransactionPersistenceOwner::RepositoryJournal.authentication_posture(),
-    ) || !broker_consumption_valid
+    if !transaction_matches_admission(evidence, admission, true, expected_authentication_posture)
+        || !broker_consumption_valid
         || evidence.state != "pending"
         || evidence.finalized_at.is_some()
         || evidence.receipt_status.is_some()
