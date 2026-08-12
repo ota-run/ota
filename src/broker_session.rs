@@ -2869,12 +2869,14 @@ impl LauncherSession {
                 "broker admission does not match this launcher's verified phase identities",
             ));
         }
-        transaction.record_broker_consumption_intent(
-            admission_evidence,
-            &request,
-            &request_identity,
-        )?;
+        transaction
+            .record_broker_consumption_intent(admission_evidence, &request, &request_identity)
+            .map_err(|error| {
+                report_systemd_launcher_verification_refusal("lease_consumption_intent_recording");
+                error
+            })?;
         if let Err(error) = self.send_json(&request) {
+            report_systemd_launcher_verification_refusal("lease_consume_send");
             self.state = LauncherSessionState::Refused;
             return Err(error);
         }
