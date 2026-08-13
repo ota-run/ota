@@ -40219,18 +40219,53 @@ fn format_receipt_metadata_timestamp(now: OffsetDateTime) -> Result<String, Stri
 
 fn next_receipt_archive_path(root: &Path, prefix: &str) -> Result<PathBuf, String> {
     let archive_dir = receipt_archive_dir(root);
-    fs::create_dir_all(&archive_dir).map_err(|error| {
-        format!(
-            "failed to create receipt archive directory `{}`: {error}",
-            compact_path(&archive_dir, ".")
-        )
-    })?;
+    ensure_private_receipt_archive_directory(root, &archive_dir)?;
     let stamp = OffsetDateTime::now_utc()
         .format(&format_description!(
             "[year][month][day]-[hour][minute][second]-[subsecond digits:3]Z"
         ))
         .map_err(|error| format!("failed to format receipt archive timestamp: {error}"))?;
     Ok(archive_dir.join(format!("{prefix}-{stamp}.json")))
+}
+
+fn ensure_private_receipt_archive_directory(root: &Path, archive_dir: &Path) -> Result<(), String> {
+    let ota_dir = root.join(".ota");
+    for directory in [&ota_dir, archive_dir] {
+        match fs::create_dir(directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to create receipt archive directory `{}`: {error}",
+                    compact_path(directory, ".")
+                ));
+            }
+        }
+        let metadata = fs::symlink_metadata(directory).map_err(|error| {
+            format!(
+                "failed to inspect receipt archive directory `{}`: {error}",
+                compact_path(directory, ".")
+            )
+        })?;
+        if !metadata.file_type().is_dir() {
+            return Err(format!(
+                "receipt archive directory `{}` is not a directory",
+                compact_path(directory, ".")
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).map_err(|error| {
+                format!(
+                    "failed to protect receipt archive directory `{}`: {error}",
+                    compact_path(directory, ".")
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn receipt_storage_path_display(path: &Path) -> String {
@@ -60958,6 +60993,38 @@ mod tests {
             payload
         );
         assert!(super::write_receipt_archive_create_new_durable(&path, &payload).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_archive_path_protects_existing_runtime_directories() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().expect("archive root");
+        let ota_dir = root.path().join(".ota");
+        fs::create_dir(&ota_dir).expect("ota directory");
+        fs::set_permissions(&ota_dir, fs::Permissions::from_mode(0o755))
+            .expect("widen ota directory for the control");
+
+        let path = super::next_receipt_archive_path(root.path(), "repo-receipt")
+            .expect("private receipt archive path");
+
+        assert_eq!(
+            fs::symlink_metadata(&ota_dir)
+                .expect("ota metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::symlink_metadata(path.parent().expect("receipt parent"))
+                .expect("receipt metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
     }
 
     #[test]
