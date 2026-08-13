@@ -1016,7 +1016,10 @@ finalization verification without
   and atomically publishes the root-owned sidecar; the job principal only acknowledges the exact
   result. Core publishes the archive with atomic create-new semantics and file/directory sync, while
   the launcher requires execution-principal-owned `.ota` and `.ota/receipts` directories at mode
-  `0700`. Core then re-verifies both signatures and all identities in local archive regressions.
+  `0700`. The signed launcher profile now binds `CAP_DAC_OVERRIDE` in its exact bounding set, but
+  not ambiently, so the root launcher can traverse that hierarchy; protected signing-key paths,
+  explicit writable roots, owner/mode checks, and signed archive identity remain mandatory. Core
+  then re-verifies both signatures and all identities in local archive regressions.
   The pressure-only client remains a proof harness,
   not a production attachment surface, and immutable PID 1 crash pressure has not run for this batch.
   The canonical Skill, both installed mirrors, and the Site reference carry the same boundary;

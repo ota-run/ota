@@ -1356,8 +1356,11 @@ execution-principal repository descriptor, verifies its owner, content identity,
 transaction, and atomically publishes the root-owned sidecar. Core must publish that archive with
 atomic create-new semantics and sync the file plus containing directory first. The launcher accepts
 only execution-principal-owned `.ota` and `.ota/receipts` directories with mode `0700`, then retains
-and replays the exact terminal until a separate identity-bound client acknowledgement. Reconnect
-recovery begins from the
+and replays the exact terminal until a separate identity-bound client acknowledgement. Archive
+access requires `CAP_DAC_OVERRIDE` in the launcher's exact signed capability bounding set, never
+its ambient set; the protected mount namespace, inaccessible signing-key paths, explicit writable
+roots, owner/mode checks, and signed archive identity remain mandatory. Reconnect recovery begins
+from the
 protected journal and original launcher-request identity; it never asks the job to discover or read
 the private receipt directory. The
 signed consume exchange binds launcher-owned transaction schema v3, which requires broker-archive

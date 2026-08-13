@@ -2467,7 +2467,7 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
                         "no_new_privs": true, "dumpable": 0, "ptracer_clear_applied": true,
                         "principal_mapping_identity": identity
                     },
-                    "systemd_launcher_profile_identity": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480",
+                    "systemd_launcher_profile_identity": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf",
                     "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
                     "launcher_session_binding_identity": identity,
                     "systemd_invocation_identity": identity,
@@ -2606,7 +2606,7 @@ fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and
         "attestation": {
             "protocol_version": "ota-systemd-protected-launcher-attestation/v3", "adapter": "systemd_protected_launcher/v1",
             "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v3",
-            "systemd_launcher_profile_identity": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480",
+            "systemd_launcher_profile_identity": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf",
             "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v2",
             "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
             "launcher_session_binding_identity": identity, "issuer": "systemd-launcher", "audience": "ota-crossing-broker",

@@ -37,7 +37,9 @@
   content, and transaction identity, and atomically publishes the root-owned sidecar; the job
   principal only acknowledges it. Core publishes the archive with atomic create-new semantics and
   file/directory durability; the launcher requires private execution-principal-owned `0700`
-  directories and retains the exact terminal until a separate identity-bound acknowledgement.
+  directories and retains the exact terminal until a separate identity-bound acknowledgement. Its
+  signed profile binds `CAP_DAC_OVERRIDE` in the exact bounding set, but not ambiently, solely so
+  the root launcher can traverse that private hierarchy inside its protected mount namespace.
   Core then independently verifies both signatures and every identity relationship. Immutable PID
   1 crash pressure and a production operator client remain required before shipment.
 

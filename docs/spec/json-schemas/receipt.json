@@ -219,7 +219,7 @@
         "protocol_version": { "const": "ota-systemd-protected-launcher-attestation/v3" },
         "adapter": { "const": "systemd_protected_launcher/v1" },
         "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v3" },
-        "systemd_launcher_profile_identity": { "const": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480" },
+        "systemd_launcher_profile_identity": { "const": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf" },
         "systemd_job_principal_profile_id": { "const": "ota.authority-job-principal.systemd/v2" },
         "systemd_job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" },
         "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
@@ -628,7 +628,7 @@
                 "ptracer_clear_applied": { "const": true }, "principal_mapping_identity": { "$ref": "#/$defs/sha256Identity" }
               }
             },
-            "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42", "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480"] },
+            "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42", "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf"] },
             "systemd_job_principal_profile_identity": { "enum": ["sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d", "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659"] },
             "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
             "systemd_invocation_identity": { "$ref": "#/$defs/sha256Identity" },
@@ -699,7 +699,7 @@
               "instance_v1": {
                 "properties": {
                   "principal_mapping": { "properties": { "job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" } } },
-                  "systemd_launcher_profile_identity": { "const": "sha256:b5853a12e72c4ca32b0f93a38bc8f1097c7809039b58449f67fcf9019d0ea480" },
+                  "systemd_launcher_profile_identity": { "const": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf" },
                   "systemd_job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" }
                 }
               },
