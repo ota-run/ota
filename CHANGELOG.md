@@ -37,9 +37,9 @@
   and legacy broker carriers remain repository-journal-bound. Receipt history preserves that
   carrier distinction instead of reinterpreting a verified launcher-owned V3 transaction as a
   repository journal. Immutable Linux/x64 PID 1 pressure run
-  [31663366909](https://github.com/ota-run/authority-launcher/actions/runs/31663366909)
+  [31664495937](https://github.com/ota-run/authority-launcher/actions/runs/31664495937)
   binds Core `06976f3eb4919a0bddaa318ed0824a6b9448aaaf`, Launcher
-  `cf82b240e96cdab7c8cdbe26bb673bf430358447`, and Protocol
+  `e8b6ae5108559508cfb75141cb9b317d46c182f3`, and Protocol
   `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c`. It proves completed, failed,
   interrupted, replay-refused, and crash-recovered selected execution with exact child, scope,
   cgroup, and active-slot cleanup. Portable archive binding of launcher finalization remains open.

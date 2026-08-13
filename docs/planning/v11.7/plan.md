@@ -1336,10 +1336,10 @@ The replay reopens the durable state but does not restart the pressure broker pr
 persistence remains a separate pressure requirement before any broader broker durability claim.
 
 The selected-execution carrier is now immutable Linux/x64 PID 1 pressure evidence from
-[run 31663366909](https://github.com/ota-run/authority-launcher/actions/runs/31663366909),
+[run 31664495937](https://github.com/ota-run/authority-launcher/actions/runs/31664495937),
 binding Protocol `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c`, Core
 `06976f3eb4919a0bddaa318ed0824a6b9448aaaf`, and Launcher
-`cf82b240e96cdab7c8cdbe26bb673bf430358447`. After exact V3 admission and
+`e8b6ae5108559508cfb75141cb9b317d46c182f3`. After exact V3 admission and
 atomic one-use consumption, Core retains the protected
 launcher session while executing only the frozen work unit. Core finalizes the crossing transaction
 and receipt first, sends one identity-bound completion, and requires the launcher to persist that

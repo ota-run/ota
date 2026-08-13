@@ -357,10 +357,10 @@ durable agent workflow belongs in the canonical Ota skill.
   The exact replay reopens root-owned durable state but does not restart the pressure broker
   process; restart persistence is not separately pressure-proven.
   Immutable Linux/x64 PID 1 pressure run
-  [31663366909](https://github.com/ota-run/authority-launcher/actions/runs/31663366909)
+  [31664495937](https://github.com/ota-run/authority-launcher/actions/runs/31664495937)
   binds Protocol `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c`, Core
   `06976f3eb4919a0bddaa318ed0824a6b9448aaaf`, and Launcher
-  `cf82b240e96cdab7c8cdbe26bb673bf430358447`. Core retains the launcher session after atomic
+  `e8b6ae5108559508cfb75141cb9b317d46c182f3`. Core retains the launcher session after atomic
   consumption, executes only the frozen work unit, finalizes the crossing transaction and receipt,
   and requires exact launcher persistence acknowledgement before exiting. The launcher then
   reconciles the child exit and
