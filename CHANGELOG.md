@@ -32,9 +32,14 @@
   v2 and broker-archive v1 evidence retain their original compatibility posture. The launcher now retains protected
   post-cleanup recovery state until the client acknowledges a producer-signed sidecar binding exact
   cleanup evidence, receipt-archive identity, and crossing transaction. Core durably publishes the
-  exact execution receipt archive before emitting launcher completion, then independently verifies
-  both signatures and every identity relationship. Immutable PID 1 crash pressure and a production
-  operator client remain required before shipment.
+  exact execution receipt archive before emitting launcher completion. The root launcher reopens
+  that private archive through the execution-principal repository descriptor, requires exact owner,
+  content, and transaction identity, and atomically publishes the root-owned sidecar; the job
+  principal only acknowledges it. Core publishes the archive with atomic create-new semantics and
+  file/directory durability; the launcher requires private execution-principal-owned `0700`
+  directories and retains the exact terminal until a separate identity-bound acknowledgement.
+  Core then independently verifies both signatures and every identity relationship. Immutable PID
+  1 crash pressure and a production operator client remain required before shipment.
 
 - Add the selected-execution candidate for the protected systemd authority carrier.
   After exact V3 admission and atomic one-use lease consumption, Core may execute only the frozen

@@ -1002,16 +1002,22 @@ one-use lease consumption, selected execution, crossing receipt/archive, indepen
 provider/launcher separation, or provider-attested carrier existed at those immutable revisions,
 and that run does not make `provider_attested_one_use` true. The later immutable one-use
 consumption and selected-execution gates are green. The current Core portable-finalization batch is
-pinned to immutable Protocol `b7c4c4017a5441d77a631c4a1c0b05733b464010` and Launcher
-`0517b48dc967b558e93441a881b6fdd99894aedc`; it binds launcher-owned transaction schema v3 into
+pinned to immutable Protocol `866bb2a4f9b5a9e9658cf80a1b6a2e2150ebedfb` and Launcher
+`c1317aa6dea96300eb15284f141841df58e4410a`; it binds launcher-owned transaction schema v3 into
 the signed consume exchange. That transaction requires broker-archive schema v2 and portable
 finalization verification without
   invalidating historical transaction v2 archives. It now
   fsyncs protected recovery state before active-slot deletion, survives every modeled intermediate
-  stage until exact sidecar acknowledgement, and carries separate producer signatures for cleanup
+  stage until exact sidecar acknowledgement, retains the exact terminal until a separate
+  identity-bound acknowledgement, and carries separate producer signatures for cleanup
   and the exact receipt-archive/crossing-transaction association. Core durably writes the exact
-  receipt archive before publishing launcher completion, then re-verifies both signatures and all
-  identities in local archive regressions. The pressure-only client remains a proof harness,
+  receipt archive before publishing launcher completion. The root launcher reopens it through the
+  execution-principal repository descriptor, verifies owner, content, and transaction identity,
+  and atomically publishes the root-owned sidecar; the job principal only acknowledges the exact
+  result. Core publishes the archive with atomic create-new semantics and file/directory sync, while
+  the launcher requires execution-principal-owned `.ota` and `.ota/receipts` directories at mode
+  `0700`. Core then re-verifies both signatures and all identities in local archive regressions.
+  The pressure-only client remains a proof harness,
   not a production attachment surface, and immutable PID 1 crash pressure has not run for this batch.
   The canonical Skill, both installed mirrors, and the Site reference carry the same boundary;
   Examples are unaffected because no contract-authoring shape changed. Independently administered

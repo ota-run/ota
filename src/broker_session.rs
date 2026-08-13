@@ -790,6 +790,7 @@ impl SystemdExecutionCompletion {
     pub(crate) fn persist_terminal_completion(
         &mut self,
         transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+        receipt_archive_identity: Option<&str>,
         ok: bool,
         interrupted: bool,
         exit_code: Option<i32>,
@@ -798,6 +799,13 @@ impl SystemdExecutionCompletion {
         if transaction.state == "pending" || receipt_status.is_empty() {
             return Err(String::from(
                 "systemd launcher completion requires terminal transaction evidence",
+            ));
+        }
+        if receipt_archive_identity
+            .is_some_and(|identity| !identity.starts_with("sha256:") || identity.len() != 71)
+        {
+            return Err(String::from(
+                "systemd launcher completion requires an immutable receipt archive identity",
             ));
         }
         let outcome = if ok {
@@ -820,6 +828,7 @@ impl SystemdExecutionCompletion {
                 .pending_crossing_transaction_identity
                 .clone(),
             crossing_transaction_identity: transaction.identity.clone(),
+            receipt_archive_identity: receipt_archive_identity.map(str::to_string),
             outcome,
             exit_code,
             receipt_status: receipt_status.to_string(),
@@ -5798,18 +5807,39 @@ pub(crate) mod tests {
             write_json_frame(&mut launcher, &persistence);
         });
         let observed = completion
-            .persist_terminal_completion(&transaction, true, false, Some(0), "completed")
+            .persist_terminal_completion(
+                &transaction,
+                Some(format!("sha256:{}", "a".repeat(64)).as_str()),
+                true,
+                false,
+                Some(0),
+                "completed",
+            )
             .expect("exact completion acknowledgement");
         assert_eq!(observed.crossing_transaction_identity, transaction.identity);
         assert_eq!(
             completion
-                .persist_terminal_completion(&transaction, true, false, Some(0), "completed")
+                .persist_terminal_completion(
+                    &transaction,
+                    Some(format!("sha256:{}", "a".repeat(64)).as_str()),
+                    true,
+                    false,
+                    Some(0),
+                    "completed",
+                )
                 .expect("exact idempotent completion"),
             observed
         );
         assert!(
             completion
-                .persist_terminal_completion(&transaction, false, false, Some(1), "failed")
+                .persist_terminal_completion(
+                    &transaction,
+                    Some(format!("sha256:{}", "a".repeat(64)).as_str()),
+                    false,
+                    false,
+                    Some(1),
+                    "failed",
+                )
                 .is_err()
         );
         launcher_thread.join().expect("launcher thread");
@@ -7041,6 +7071,7 @@ pub(crate) mod tests {
             broker_archive_identity(&downgraded).expect("downgraded archive identity");
         verify_broker_archive_evidence(root.path(), &downgraded)
             .expect_err("portable finalization cannot be downgraded out of signed V3 evidence");
+        let receipt_archive_identity = format!("sha256:{}", "b".repeat(64));
         let mut completion = LauncherExecutionCompletionV1 {
             schema_version: 1,
             identity: String::new(),
@@ -7057,6 +7088,7 @@ pub(crate) mod tests {
                 .pending_transaction_identity
                 .clone(),
             crossing_transaction_identity: archive.transaction.identity.clone(),
+            receipt_archive_identity: Some(receipt_archive_identity.clone()),
             outcome: LauncherExecutionOutcomeV1::Completed,
             exit_code: Some(0),
             receipt_status: String::from("passed"),
@@ -7100,7 +7132,6 @@ pub(crate) mod tests {
         signed_finalization.identity =
             signed_launcher_execution_finalization_v1_identity(&signed_finalization)
                 .expect("signed finalization identity");
-        let receipt_archive_identity = format!("sha256:{}", "b".repeat(64));
         let archive_issued_at = (now + time::Duration::seconds(1))
             .format(&Rfc3339)
             .expect("archive issued at");
@@ -7142,10 +7173,8 @@ pub(crate) mod tests {
         wrong_archive.signed_archive.identity =
             signed_launcher_finalization_archive_v1_identity(&wrong_archive.signed_archive)
                 .expect("wrong archive signed identity");
-        wrong_archive.identity = launcher_finalization_archive_sidecar_v1_identity(&wrong_archive)
-            .expect("wrong archive sidecar identity");
-        verify_launcher_finalization_sidecar(&archive, &wrong_archive, &receipt_archive_identity)
-            .expect_err("archive substitution must refuse");
+        launcher_finalization_archive_sidecar_v1_identity(&wrong_archive)
+            .expect_err("archive substitution must contradict signed completion");
         let mut wrong_signature = sidecar.clone();
         wrong_signature.signed_archive.signature = URL_SAFE_NO_PAD.encode([0_u8; 64]);
         wrong_signature.signed_archive.identity =

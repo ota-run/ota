@@ -170,13 +170,22 @@ original v1, v2, or v3 branch in local regressions; it never upgrades legacy evi
 newer fields. The systemd carrier currently archives the
 verified V3 admission, atomic consumption, exact semantic scope, and terminal crossing transaction,
 while the outer launcher emits post-process child/scope/cgroup/active-slot finalization. The current
-candidate durably retains post-cleanup finalization until a client acknowledges a producer-signed
-sidecar. One signature binds cleanup; a separate signature binds that exact finalization to the
-receipt-archive identity and crossing transaction. New launcher-owned crossing transaction schema
+candidate durably retains post-cleanup finalization until the root launcher verifies the exact
+execution-principal-owned private archive, atomically publishes a root-owned producer-signed
+sidecar, and receives the client's exact acknowledgement. The job principal does not read the
+private archive directory: `.ota` and `.ota/receipts` are execution-principal-owned and mode
+`0700`. Core publishes the archive atomically with create-new semantics and syncs both file and
+directory before completion. The launcher retains and replays the exact terminal until the client
+acknowledges its identity. One signature binds cleanup; a separate signature binds that exact
+finalization to the receipt-archive identity and crossing transaction. New launcher-owned crossing transaction schema
 v3 is bound into the signed consume exchange and requires broker-archive schema v2 plus portable
 finalization verification. Historical transaction v2 and broker-archive v1 evidence remain
 readable under their original schema rather than being silently upgraded. This carrier remains unshipped until immutable PID 1 crash
 pressure and a production operator client prove the complete attachment path.
+Current pressure inspects private history from an administrative context. A production
+least-privilege operator history/attachment client remains separate work; local archive storage is
+not tamper-proof against later deletion by the execution principal, although deletion cannot forge
+valid producer-signed evidence.
 `authority.transaction.authentication_posture` is an explicit persistence boundary. Signed-file
 and legacy broker transactions use `runner_local_content_addressed`: the journal is runner-authored,
 locked, and content-addressed, but is not independently authenticated against another same-user

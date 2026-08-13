@@ -194,8 +194,14 @@ human text output:
   a protected post-cleanup recovery journal plus separate producer signatures for cleanup and the
   exact receipt-archive/crossing-transaction association. The signed consume exchange binds
   launcher-owned transaction schema v3; that transaction requires broker-archive schema v2 and
-  portable finalization re-verification. Historical transaction v2 and broker-archive v1 evidence
-  are not upgraded. Immutable PID 1 crash pressure and a production operator client remain open.
+  portable finalization re-verification. The root launcher, not the job principal, verifies the
+  private archive through the execution-principal repository descriptor and atomically publishes
+  the root-owned sidecar before exact client acknowledgement. Core first uses atomic create-new
+  archive publication and file/directory sync; the launcher requires execution-principal-owned
+  `0700` archive directories and retains the exact terminal until its separate identity-bound
+  acknowledgement. Historical transaction v2 and
+  broker-archive v1 evidence are not upgraded. Immutable PID 1 crash pressure and a production
+  operator client remain open.
   Neither posture implies provider-attested separation.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker

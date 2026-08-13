@@ -17380,6 +17380,7 @@ fn active_crossing_transaction_is_pending() -> bool {
 #[cfg(unix)]
 fn persist_active_systemd_execution_completion(
     transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+    receipt_archive_identity: Option<&str>,
     ok: bool,
     interrupted: bool,
     exit_code: Option<i32>,
@@ -17408,6 +17409,7 @@ fn persist_active_systemd_execution_completion(
         };
         completion.borrow_mut().persist_terminal_completion(
             transaction,
+            receipt_archive_identity,
             ok,
             interrupted,
             exit_code,
@@ -17443,6 +17445,7 @@ fn finalize_active_crossing_transaction(
 #[cfg(unix)]
 fn persist_active_crossing_systemd_completion(
     receipt: &ExecutionReceipt,
+    receipt_archive_identity: &str,
     terminal_exit_code: Option<i32>,
 ) -> Result<(), String> {
     let Some(transaction) = active_crossing_transaction_evidence() else {
@@ -17454,6 +17457,7 @@ fn persist_active_crossing_systemd_completion(
         .unwrap_or(if receipt.ok { "completed" } else { "failed" });
     persist_active_systemd_execution_completion(
         &transaction,
+        Some(receipt_archive_identity),
         receipt.ok,
         receipt.status.as_deref() == Some("interrupted"),
         terminal_exit_code,
@@ -17518,6 +17522,7 @@ fn finalize_active_proof_crossing_transaction(
         let terminal_transaction = transaction.borrow().evidence();
         persist_active_systemd_execution_completion(
             &terminal_transaction,
+            None,
             ok,
             interrupted,
             Some(proof_command_exit_code(ok, interrupted)),
@@ -40324,6 +40329,139 @@ fn write_receipt_archive(path: &Path, payload: &impl Serialize) -> Result<(), St
     })
 }
 
+fn write_receipt_archive_create_new_durable(
+    path: &Path,
+    payload: &impl Serialize,
+) -> Result<(), String> {
+    let content = serde_json::to_vec_pretty(payload)
+        .map_err(|error| format!("failed to serialize receipt archive: {error}"))?;
+    let parent = path.parent().ok_or_else(|| {
+        format!(
+            "receipt archive `{}` has no parent directory",
+            compact_path(path, ".")
+        )
+    })?;
+    let mut suffix = [0_u8; 16];
+    getrandom::getrandom(&mut suffix)
+        .map_err(|_| String::from("failed to derive a receipt archive temporary name"))?;
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("receipt.json"),
+        suffix
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary).map_err(|error| {
+        format!(
+            "failed to create receipt archive temporary file `{}`: {error}",
+            compact_path(&temporary, ".")
+        )
+    })?;
+    let result = (|| {
+        file.write_all(&content)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to persist receipt archive temporary file `{}`: {error}",
+                    compact_path(&temporary, ".")
+                )
+            })?;
+        fs::hard_link(&temporary, path).map_err(|error| {
+            format!(
+                "failed to publish receipt archive `{}` with create-new semantics: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        fs::remove_file(&temporary).map_err(|error| {
+            format!(
+                "failed to remove receipt archive temporary link `{}`: {error}",
+                compact_path(&temporary, ".")
+            )
+        })?;
+        #[cfg(unix)]
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to sync receipt archive directory `{}`: {error}",
+                    compact_path(parent, ".")
+                )
+            })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn read_durable_receipt_archive(path: &Path) -> Result<Vec<u8>, String> {
+    #[cfg(target_os = "linux")]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        options.open(path)
+    }
+    .map_err(|error| {
+        format!(
+            "failed to reopen receipt archive `{}` for durable publication: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    #[cfg(not(target_os = "linux"))]
+    let mut file = File::open(path).map_err(|error| {
+        format!(
+            "failed to reopen receipt archive `{}`: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        format!(
+            "failed to read receipt archive `{}` after publication: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    #[cfg(target_os = "linux")]
+    {
+        file.sync_all().map_err(|error| {
+            format!(
+                "failed to sync receipt archive `{}`: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        let parent = path.parent().ok_or_else(|| {
+            format!(
+                "receipt archive `{}` has no parent directory",
+                compact_path(path, ".")
+            )
+        })?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to sync receipt archive directory `{}`: {error}",
+                    compact_path(parent, ".")
+                )
+            })?;
+    }
+    Ok(bytes)
+}
+
 fn prune_receipt_archives(
     root: &Path,
     prefix: &str,
@@ -40361,12 +40499,30 @@ fn prune_receipt_archives(
             continue;
         }
         let sidecar = path.with_extension("launcher-finalization");
+        if receipt_archive_requires_portable_finalization(&path) && !sidecar.is_file() {
+            continue;
+        }
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(sidecar);
         removed += 1;
     }
 
     Ok(())
+}
+
+fn receipt_archive_requires_portable_finalization(path: &Path) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| {
+            value
+                .pointer("/receipt/crossing/authority/archive_evidence/transaction/schema_version")
+                .and_then(serde_json::Value::as_u64)
+        })
+        == Some(
+            crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION
+                as u64,
+        )
 }
 
 fn resolve_receipt_history_root(
@@ -60785,6 +60941,53 @@ mod tests {
         assert!(tail.len() <= super::LIFECYCLE_ASSERTION_OUTPUT_TAIL_LIMIT);
         assert!(tail.ends_with("<redacted>"));
         assert!(!tail.contains("lifecycle-secret"));
+    }
+
+    #[test]
+    fn selected_execution_archive_publication_is_durable_and_create_new() {
+        let root = tempfile::tempdir().expect("archive root");
+        let path = root.path().join("receipt.json");
+        let payload = serde_json::json!({"ok": true, "identity": "receipt-1"});
+        super::write_receipt_archive_create_new_durable(&path, &payload)
+            .expect("durable archive publication");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &super::read_durable_receipt_archive(&path).expect("durable archive bytes")
+            )
+            .expect("archive JSON"),
+            payload
+        );
+        assert!(super::write_receipt_archive_create_new_durable(&path, &payload).is_err());
+    }
+
+    #[test]
+    fn pruning_preserves_portable_archives_until_their_sidecar_exists() {
+        let root = tempfile::tempdir().expect("archive root");
+        let receipts = root.path().join(".ota/receipts");
+        fs::create_dir_all(&receipts).expect("receipt directory");
+        let pending = receipts.join("repo-receipt-00.json");
+        fs::write(
+            &pending,
+            serde_json::to_vec(&serde_json::json!({
+                "receipt": {"crossing": {"authority": {"archive_evidence": {
+                    "transaction": {"schema_version": crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION}
+                }}}}
+            }))
+            .expect("pending archive"),
+        )
+        .expect("pending archive write");
+        for index in 1..=10 {
+            fs::write(
+                receipts.join(format!("repo-receipt-{index:02}.json")),
+                b"{}",
+            )
+            .expect("ordinary archive");
+        }
+
+        super::prune_receipt_archives(root.path(), "repo-receipt", 10, None)
+            .expect("archive pruning");
+        assert!(pending.exists());
+        assert!(!receipts.join("repo-receipt-01.json").exists());
     }
 
     #[cfg(unix)]
@@ -115287,11 +115490,22 @@ fn archive_sandbox_execution_receipt(
         ),
         findings: &findings,
     };
-    write_receipt_archive(&archive_path, &payload)?;
+    write_receipt_archive_create_new_durable(&archive_path, &payload)?;
+    let archive_bytes = read_durable_receipt_archive(&archive_path)?;
+    let receipt_archive_identity = format!("sha256:{:x}", Sha256::digest(&archive_bytes));
     write_proof_runtime_crossing_handoff(root, receipt, &archive_path)?;
-    prune_receipt_archives(root, "repo-receipt", RECEIPT_ARCHIVE_LIMIT, None)?;
     #[cfg(unix)]
-    persist_active_crossing_systemd_completion(receipt, terminal_exit_code)?;
+    persist_active_crossing_systemd_completion(
+        receipt,
+        receipt_archive_identity.as_str(),
+        terminal_exit_code,
+    )?;
+    prune_receipt_archives(
+        root,
+        "repo-receipt",
+        RECEIPT_ARCHIVE_LIMIT,
+        Some(&archive_path),
+    )?;
     Ok(Some(archive_path))
 }
 

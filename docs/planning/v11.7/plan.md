@@ -1351,13 +1351,26 @@ semantic scope, and terminal crossing transaction. The current candidate durably
 post-cleanup finalization intent before deleting the active slot, signs the exact completed
 finalization afterward, obtains a separate producer signature over the exact archive/crossing
 association, and retains the protected journal until the sidecar is durably acknowledged. The
+root launcher, not the job principal, reopens the private archive through the retained
+execution-principal repository descriptor, verifies its owner, content identity, and crossing
+transaction, and atomically publishes the root-owned sidecar. Core must publish that archive with
+atomic create-new semantics and sync the file plus containing directory first. The launcher accepts
+only execution-principal-owned `.ota` and `.ota/receipts` directories with mode `0700`, then retains
+and replays the exact terminal until a separate identity-bound client acknowledgement. Reconnect
+recovery begins from the
+protected journal and original launcher-request identity; it never asks the job to discover or read
+the private receipt directory. The
 signed consume exchange binds launcher-owned transaction schema v3, which requires broker-archive
 schema v2 and portable finalization verification without reinterpreting historical transaction v2
 archives. The immutable run proves completed, failed, interrupted,
 replay-refused, pre-execution refusal, and crash-recovery paths; every terminal path removes the
 exact child, scope, cgroup, and active slot, and receipt history reports one valid archive with zero
 invalid archives for the successful lane. A production operator attachment surface and a fresh
-immutable PID 1 crash run remain required before this acceptance gate can close.
+least-privilege history client remain open; pressure may inspect private history only from an
+administrative context. Later deletion by the execution principal can remove local evidence but
+cannot create valid producer-signed evidence. A production operator attachment surface,
+least-privilege history client, and fresh immutable PID 1 crash run remain required before this
+acceptance gate can close.
 
 ###### Protected V3 attestation producer protocol
 
