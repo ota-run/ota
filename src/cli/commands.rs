@@ -40618,6 +40618,16 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                         compact_path(path, ".")
                     )
                 })?;
+                crate::crossing_transaction::verify_crossing_transaction_evidence(
+                    transaction,
+                    &transaction_admission,
+                )
+                .map_err(|error| {
+                    format!(
+                        "receipt archive `{}` contains unreconciled crossing transaction evidence: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
                 let expected = crossing_grant_authority_output_with_transaction(
                     &archived.admission,
                     Some(transaction.clone()),
@@ -40657,16 +40667,6 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                 compact_path(path, ".")
             ));
         }
-        crate::crossing_transaction::verify_crossing_transaction_evidence(
-            transaction,
-            &transaction_admission,
-        )
-        .map_err(|error| {
-            format!(
-                "receipt archive `{}` contains unreconciled crossing transaction evidence: {error}",
-                compact_path(path, ".")
-            )
-        })?;
         let crossing = record.payload.receipt.crossing.as_ref().ok_or_else(|| {
             format!(
                 "receipt archive `{}` carries crossing authority without a crossing record",

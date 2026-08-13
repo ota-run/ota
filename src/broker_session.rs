@@ -6815,6 +6815,14 @@ pub(crate) mod tests {
         let _trust_guard =
             crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
         verify_broker_archive_evidence(root.path(), &archive).expect("v3 archive re-verifies");
+        assert!(
+            crate::crossing_transaction::verify_crossing_transaction_evidence(
+                &archive.transaction,
+                &admission.crossing_admission(),
+            )
+            .is_err(),
+            "launcher-owned V3 evidence must not be reinterpreted as a repository journal"
+        );
 
         let mut wrong_version = archive.clone();
         wrong_version
