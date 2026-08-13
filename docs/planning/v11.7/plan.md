@@ -1335,8 +1335,12 @@ provider/launcher separation, and provider attestation remain required before V1
 The replay reopens the durable state but does not restart the pressure broker process, so restart
 persistence remains a separate pressure requirement before any broader broker durability claim.
 
-The next selected-execution candidate is implemented locally but is not yet immutable pressure
-evidence. After exact V3 admission and atomic one-use consumption, Core retains the protected
+The selected-execution carrier is now immutable Linux/x64 PID 1 pressure evidence from
+[run 31663366909](https://github.com/ota-run/authority-launcher/actions/runs/31663366909),
+binding Protocol `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c`, Core
+`06976f3eb4919a0bddaa318ed0824a6b9448aaaf`, and Launcher
+`cf82b240e96cdab7c8cdbe26bb673bf430358447`. After exact V3 admission and
+atomic one-use consumption, Core retains the protected
 launcher session while executing only the frozen work unit. Core finalizes the crossing transaction
 and receipt first, sends one identity-bound completion, and requires the launcher to persist that
 exact record before Core exits. The launcher then reconciles the observed child exit, reaps that
@@ -1344,10 +1348,11 @@ child, removes the exact systemd scope and cgroup, removes the active slot, and 
 finalization record. Completion alone never proves cleanup, and cleanup uncertainty remains a
 retained boundary failure. The current portable Ota archive re-verifies the broker admission,
 consumption, semantic scope, and terminal crossing transaction; launcher finalization is retained
-only by the outer systemd client artifact in this candidate. Binding that post-process finalization
-into portable archive evidence remains a separate acceptance gate. Immutable Linux/x64 PID 1
-pressure must prove completed, failed, interrupted, pre-execution refusal, and crash-recovery paths
-before this paragraph can become a pressure-completion claim.
+only by the outer systemd client artifact. The immutable run proves completed, failed, interrupted,
+replay-refused, pre-execution refusal, and crash-recovery paths; every terminal path removes the
+exact child, scope, cgroup, and active slot, and receipt history reports one valid archive with zero
+invalid archives for the successful lane. Binding launcher-authored post-process finalization into
+portable archive evidence remains a separate acceptance gate.
 
 ###### Protected V3 attestation producer protocol
 

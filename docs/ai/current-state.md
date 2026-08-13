@@ -356,14 +356,19 @@ durable agent workflow belongs in the canonical Ota skill.
   contract-authoring, receipt, archive, or usable operator surface.
   The exact replay reopens root-owned durable state but does not restart the pressure broker
   process; restart persistence is not separately pressure-proven.
-  The selected-execution candidate pins Protocol
-  `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c` and Launcher
-  `84a990723c38682c8afdccbfeace82b5c8a9c789`. Core retains the launcher session after atomic
-  consumption, executes only the frozen work unit, finalizes the crossing transaction and receipt, and requires exact launcher
-  persistence acknowledgement before exiting. The launcher then reconciles the child exit and
+  Immutable Linux/x64 PID 1 pressure run
+  [31663366909](https://github.com/ota-run/authority-launcher/actions/runs/31663366909)
+  binds Protocol `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c`, Core
+  `06976f3eb4919a0bddaa318ed0824a6b9448aaaf`, and Launcher
+  `cf82b240e96cdab7c8cdbe26bb673bf430358447`. Core retains the launcher session after atomic
+  consumption, executes only the frozen work unit, finalizes the crossing transaction and receipt,
+  and requires exact launcher persistence acknowledgement before exiting. The launcher then
+  reconciles the child exit and
   emits terminal finalization only after the exact child, scope, cgroup, and active slot are absent.
-  Protocol, Core, Launcher, Skill, and Site checks are green. This is not immutable hosted evidence yet,
-  and portable Ota archives do not yet embed the launcher-authored post-process finalization; the
+  The run proves completed, failed, interrupted, replay-refused, pre-execution refusal, and five
+  crash-recovery boundaries with exact child, scope, cgroup, and active-slot removal. Receipt
+  history reports one valid archive and zero invalid archives for the successful lane. Portable Ota
+  archives do not yet embed the launcher-authored post-process finalization; the
   outer pressure artifact is the only current carrier for that cleanup record. The canonical Skill
   and Site broker reference carry that distinction. Examples and the public command index are
   unaffected because this candidate adds no contract shape, command, or flag.
@@ -996,7 +1001,8 @@ admission, typed negative outcomes, exact relay evidence, terminal cleanup, and 
 one-use lease consumption, selected execution, crossing receipt/archive, independently administered
 provider/launcher separation, or provider-attested carrier existed at those immutable revisions,
 and that run does not make `provider_attested_one_use` true. The later immutable one-use
-consumption gate is green; selected execution remains the uncommitted candidate described above.
+consumption and selected-execution gates are green. Portable launcher-finalization archive binding
+and independently administered/provider-attested separation remain open.
 Provider-specific attestation remains deferred until it has its own complete profile and adapter.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
