@@ -3654,9 +3654,10 @@ pub fn proof_lifecycle_with_grant(
     let error = transaction.error;
 
     let ok = error.is_none();
+    let interrupted = finalization.after_interruption;
     let crossing_evidence = match finalize_active_proof_crossing_transaction(
         ok,
-        finalization.after_interruption,
+        interrupted,
         if ok {
             "passed_with_unproven_boundaries"
         } else {
@@ -3771,7 +3772,7 @@ pub fn proof_lifecycle_with_grant(
                 },
             ),
             stderr: None,
-            exit_code: if ok { 0 } else { 1 },
+            exit_code: proof_command_exit_code(ok, interrupted),
         },
         OutputFormat::Text => {
             let mut text = format!(
@@ -3807,7 +3808,7 @@ pub fn proof_lifecycle_with_grant(
             CommandOutput {
                 stdout: text,
                 stderr: None,
-                exit_code: if ok { 0 } else { 1 },
+                exit_code: proof_command_exit_code(ok, interrupted),
             }
         }
     }
@@ -4664,7 +4665,7 @@ pub fn proof_runtime_with_grant(
                         CommandOutput {
                             stdout,
                             stderr: None,
-                            exit_code: if ok { 0 } else { 1 },
+                            exit_code: proof_command_exit_code(ok, status == "interrupted"),
                         }
                     }
                     OutputFormat::Json => {
@@ -4757,7 +4758,7 @@ pub fn proof_runtime_with_grant(
                                 },
                             ),
                             stderr: None,
-                            exit_code: if ok { 0 } else { 1 },
+                            exit_code: proof_command_exit_code(ok, status == "interrupted"),
                         }
                     }
                 }
@@ -17396,7 +17397,10 @@ fn persist_active_systemd_execution_completion(
     })
 }
 
-fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<(), String> {
+fn finalize_active_crossing_transaction(
+    receipt: &ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
+) -> Result<(), String> {
     ACTIVE_CROSSING_TRANSACTION.with(|active| {
         let Some(transaction) = active.borrow().as_ref().cloned() else {
             return Ok(());
@@ -17422,7 +17426,7 @@ fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<()
                 &transaction,
                 receipt.ok,
                 receipt.status.as_deref() == Some("interrupted"),
-                receipt.steps.iter().rev().find_map(|step| step.exit_code),
+                terminal_exit_code,
                 receipt_status,
             )?;
         }
@@ -17432,11 +17436,12 @@ fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<()
 
 fn finalize_and_attach_active_crossing_transaction(
     receipt: &mut ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
 ) -> Result<(), String> {
     if active_crossing_transaction_evidence().is_none() {
         return Ok(());
     }
-    finalize_active_crossing_transaction(receipt)?;
+    finalize_active_crossing_transaction(receipt, terminal_exit_code)?;
     let authority = active_crossing_grant_authority().ok_or_else(|| {
         String::from("active crossing transaction has no matching verified grant admission")
     })?;
@@ -17488,13 +17493,7 @@ fn finalize_active_proof_crossing_transaction(
             &terminal_transaction,
             ok,
             interrupted,
-            Some(if ok {
-                0
-            } else if interrupted {
-                130
-            } else {
-                1
-            }),
+            Some(proof_command_exit_code(ok, interrupted)),
             receipt_status.as_str(),
         )?;
     }
@@ -17512,6 +17511,16 @@ fn finalize_active_proof_crossing_transaction(
         scope_identity: authority.scope_identity.clone(),
         authority: Some(authority),
     }))
+}
+
+fn proof_command_exit_code(ok: bool, interrupted: bool) -> i32 {
+    if ok {
+        0
+    } else if interrupted {
+        130
+    } else {
+        1
+    }
 }
 
 fn fail_active_proof_crossing_transaction(
@@ -97285,6 +97294,9 @@ tasks:
 
     #[test]
     fn interrupted_non_service_receipt_summary_status_is_interrupted() {
+        assert_eq!(super::proof_command_exit_code(false, true), 130);
+        assert_eq!(super::proof_command_exit_code(false, false), 1);
+        assert_eq!(super::proof_command_exit_code(true, false), 0);
         let mut receipt = ExecutionReceipt {
             ok: false,
             path: String::from("./ota.yaml"),
@@ -97348,6 +97360,7 @@ tasks:
         super::apply_interrupted_run_classification(&mut receipt, None, false, 130);
 
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.status.as_deref(), Some("interrupted"));
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
             &receipt,
             Some("dev"),
@@ -97423,6 +97436,7 @@ tasks:
 
         assert!(!receipt.ok);
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.status.as_deref(), Some("interrupted"));
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
             &receipt,
             Some("dev"),
@@ -107850,7 +107864,8 @@ fn run_selected_precondition_failure(
     }
     refresh_execution_receipt_status(&mut receipt);
     if active_crossing_transaction_is_pending()
-        && let Err(failure) = archive_sandbox_run_receipt(contract, contract_path, &mut receipt)
+        && let Err(failure) =
+            archive_sandbox_run_receipt(contract, contract_path, &mut receipt, Some(1))
     {
         return Some(failure);
     }
@@ -107941,9 +107956,12 @@ fn ensure_crossing_run_failure_evidence(
         .push(String::from("CROSSING_EXECUTION_FAILED_BEFORE_RECEIPT"));
     attach_task_crossing_to_receipt(&mut receipt, contract, task_name, overrides, agent, reason);
     refresh_execution_receipt_status(&mut receipt);
-    if let Err(mut archive_failure) =
-        archive_sandbox_run_receipt(contract, contract_path, &mut receipt)
-    {
+    if let Err(mut archive_failure) = archive_sandbox_run_receipt(
+        contract,
+        contract_path,
+        &mut receipt,
+        Some(failure.exit_code),
+    ) {
         archive_failure.message = format!("{}\n{}", failure.message, archive_failure.message);
         return archive_failure;
     }
@@ -108442,7 +108460,12 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
-            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -108526,7 +108549,12 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
-            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -108631,7 +108659,12 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
-            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(1),
+            )?;
             let summary = render_run_error_summary_block(&receipt, task_name.as_str(), &error);
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
@@ -108806,7 +108839,12 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
-            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -108896,7 +108934,12 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
-            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -109001,7 +109044,12 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
-            archive_sandbox_run_receipt(&target.contract, &target.contract_path, &mut receipt)?;
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(1),
+            )?;
             let summary = render_run_error_summary_block(&receipt, task_name.as_str(), &error);
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
@@ -109918,6 +109966,7 @@ fn apply_interrupted_run_classification(
     }
 
     receipt.ok = false;
+    receipt.status = Some(String::from("interrupted"));
     if receipt.summary.error_count > 0 {
         receipt.summary.error_count = 0;
     }
@@ -115054,8 +115103,9 @@ fn archive_sandbox_execution_receipt(
     contract: &Contract,
     contract_path: &Path,
     receipt: &mut ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
 ) -> Result<Option<PathBuf>, String> {
-    finalize_and_attach_active_crossing_transaction(receipt)?;
+    finalize_and_attach_active_crossing_transaction(receipt, terminal_exit_code)?;
     let application = receipt.witnessed_observations.sandbox_application.as_ref();
     let crossing_authority = receipt
         .crossing
@@ -115241,8 +115291,9 @@ fn archive_sandbox_run_receipt(
     contract: &Contract,
     contract_path: &Path,
     receipt: &mut ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
 ) -> Result<(), RunCommandFailure> {
-    archive_sandbox_execution_receipt(contract, contract_path, receipt)
+    archive_sandbox_execution_receipt(contract, contract_path, receipt, terminal_exit_code)
         .map(|_| ())
         .map_err(|message| RunCommandFailure {
             message: stylize_text_failure(
@@ -133298,12 +133349,16 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
         );
     }
     if !dry_run && result.receipt.crossing.is_some() {
-        finalize_and_attach_active_crossing_transaction(&mut result.receipt)?;
+        finalize_and_attach_active_crossing_transaction(&mut result.receipt, result.exit_code)?;
     }
     if !dry_run && has_grant_admission && result.receipt.crossing.is_some() {
-        archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt).map_err(
-            |error| format!("crossing authority evidence could not be archived: {error}"),
-        )?;
+        archive_sandbox_execution_receipt(
+            contract,
+            resolved_path,
+            &mut result.receipt,
+            result.exit_code,
+        )
+        .map_err(|error| format!("crossing authority evidence could not be archived: {error}"))?;
     }
     Ok(*result)
 }
@@ -133501,10 +133556,15 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
     if !dry_run {
         result.receipt.witnessed_observations.sandbox_application = sandbox_application;
         if !active_crossing_authority_is_configured() {
-            archive_sandbox_execution_receipt(contract, resolved_path, &mut result.receipt)
-                .map_err(|error| {
-                    format!("sandbox enforcement evidence could not be archived: {error}")
-                })?;
+            archive_sandbox_execution_receipt(
+                contract,
+                resolved_path,
+                &mut result.receipt,
+                result.exit_code,
+            )
+            .map_err(|error| {
+                format!("sandbox enforcement evidence could not be archived: {error}")
+            })?;
         }
     }
     Ok(result)
