@@ -1003,13 +1003,15 @@ provider/launcher separation, or provider-attested carrier existed at those immu
 and that run does not make `provider_attested_one_use` true. The later immutable one-use
 consumption and selected-execution gates are green. The current Core portable-finalization batch is
 pinned to immutable Protocol `b7c4c4017a5441d77a631c4a1c0b05733b464010` and Launcher
-`0517b48dc967b558e93441a881b6fdd99894aedc`; it binds launcher-owned transaction schema v3 into the signed consume exchange. That
-transaction requires broker-archive schema v2 and portable finalization verification without
+`0517b48dc967b558e93441a881b6fdd99894aedc`; it binds launcher-owned transaction schema v3 into
+the signed consume exchange. That transaction requires broker-archive schema v2 and portable
+finalization verification without
   invalidating historical transaction v2 archives. It now
   fsyncs protected recovery state before active-slot deletion, survives every modeled intermediate
   stage until exact sidecar acknowledgement, and carries separate producer signatures for cleanup
-  and the exact receipt-archive/crossing-transaction association. Core re-verifies both signatures
-  and all identities in local archive regressions. The pressure-only client remains a proof harness,
+  and the exact receipt-archive/crossing-transaction association. Core durably writes the exact
+  receipt archive before publishing launcher completion, then re-verifies both signatures and all
+  identities in local archive regressions. The pressure-only client remains a proof harness,
   not a production attachment surface, and immutable PID 1 crash pressure has not run for this batch.
   The canonical Skill, both installed mirrors, and the Site reference carry the same boundary;
   Examples are unaffected because no contract-authoring shape changed. Independently administered

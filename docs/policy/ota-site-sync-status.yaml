@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9"
-consumer_commit: "77fbdafbc74f843e849b7a11176d48caec1fdda1"
+reviewed_ota_commit: "13af6dd2bd376c170c6186caaca24be78ef772ff"
+consumer_commit: "30f635092761fe83b6b494273fb6c98da6dbe624"
 waiver_reason: ""
 notes: >
-  Synced public command and reference guidance for direct-native host-port ownership and typed
-  listener-conflict remediation. The execution-disabled V3 carrier remains internal and unlisted.
+  Synced the bounded portable launcher-finalization reference, including signed sidecar,
+  archive-verification, pressure-harness, and still-unproved production attachment boundaries.

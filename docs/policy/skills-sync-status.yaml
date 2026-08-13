@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "31fa95b4d28a8a4971ee3fd65c841d40e54ac4d9"
-consumer_commit: "48179cf49646031f2e44f1a7433e9bd1b7b1c68a"
+reviewed_ota_commit: "13af6dd2bd376c170c6186caaca24be78ef772ff"
+consumer_commit: "d082bf2eb13e1b4360555f94eaa65eb0ddd26de3"
 waiver_reason: ""
 notes: >
-  Synced direct-native versus published host-port ownership and conflict-remediation guidance.
-  The execution-disabled V3 carrier adds no usable authoring or agent command surface yet.
+  Synced the bounded portable launcher-finalization review guidance, including signed sidecar,
+  archive-verification, pressure-harness, and still-unproved production attachment boundaries.

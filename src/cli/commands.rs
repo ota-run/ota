@@ -16247,6 +16247,9 @@ thread_local! {
     static ACTIVE_SYSTEMD_EXECUTION_COMPLETION:
         RefCell<Option<Rc<RefCell<crate::broker_session::SystemdExecutionCompletion>>>> =
         const { RefCell::new(None) };
+    #[cfg(test)]
+    static EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE: RefCell<Option<PathBuf>> =
+        const { RefCell::new(None) };
 }
 
 const PROOF_PARENT_AUTHORITY_FD_ENV: &str = "OTA_PROOF_PARENT_AUTHORITY_FD";
@@ -17382,6 +17385,23 @@ fn persist_active_systemd_execution_completion(
     exit_code: Option<i32>,
     receipt_status: &str,
 ) -> Result<(), String> {
+    #[cfg(test)]
+    EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE.with(|expected| {
+        if let Some(root) = expected.borrow_mut().take() {
+            let archive_dir = receipt_archive_dir(&root);
+            let archive_exists = fs::read_dir(archive_dir).is_ok_and(|entries| {
+                entries.filter_map(Result::ok).any(|entry| {
+                    entry.file_name().to_str().is_some_and(|name| {
+                        name.starts_with("repo-receipt-") && name.ends_with(".json")
+                    })
+                })
+            });
+            assert!(
+                archive_exists,
+                "systemd completion must follow durable receipt archive publication"
+            );
+        }
+    });
     ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|completion| {
         let Some(completion) = completion.borrow().as_ref().cloned() else {
             return Ok::<(), String>(());
@@ -17415,23 +17435,30 @@ fn finalize_active_crossing_transaction(
         transaction
             .borrow_mut()
             .finalize(state, receipt.status.as_deref())?;
-        #[cfg(unix)]
-        {
-            let transaction = transaction.borrow().evidence();
-            let receipt_status = transaction
-                .receipt_status
-                .as_deref()
-                .unwrap_or(if receipt.ok { "completed" } else { "failed" });
-            persist_active_systemd_execution_completion(
-                &transaction,
-                receipt.ok,
-                receipt.status.as_deref() == Some("interrupted"),
-                terminal_exit_code,
-                receipt_status,
-            )?;
-        }
+        let _ = terminal_exit_code;
         Ok(())
     })
+}
+
+#[cfg(unix)]
+fn persist_active_crossing_systemd_completion(
+    receipt: &ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
+) -> Result<(), String> {
+    let Some(transaction) = active_crossing_transaction_evidence() else {
+        return Ok(());
+    };
+    let receipt_status = transaction
+        .receipt_status
+        .as_deref()
+        .unwrap_or(if receipt.ok { "completed" } else { "failed" });
+    persist_active_systemd_execution_completion(
+        &transaction,
+        receipt.ok,
+        receipt.status.as_deref() == Some("interrupted"),
+        terminal_exit_code,
+        receipt_status,
+    )
 }
 
 fn finalize_and_attach_active_crossing_transaction(
@@ -73125,6 +73152,9 @@ tasks:
             attestor_signing_key,
             time::OffsetDateTime::now_utc(),
         );
+        super::EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE.with(|expected| {
+            expected.replace(Some(repo.path().to_path_buf()));
+        });
 
         let output = super::run_command_with_agent_reason_and_grant(
             "publish",
@@ -73147,6 +73177,12 @@ tasks:
             false,
         );
         broker.join().expect("broker thread");
+        super::EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE.with(|expected| {
+            assert!(
+                expected.borrow().is_none(),
+                "crossing completion ordering assertion must be exercised"
+            );
+        });
 
         assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
         assert!(repo.path().join("broker-executed").exists());
@@ -115254,6 +115290,8 @@ fn archive_sandbox_execution_receipt(
     write_receipt_archive(&archive_path, &payload)?;
     write_proof_runtime_crossing_handoff(root, receipt, &archive_path)?;
     prune_receipt_archives(root, "repo-receipt", RECEIPT_ARCHIVE_LIMIT, None)?;
+    #[cfg(unix)]
+    persist_active_crossing_systemd_completion(receipt, terminal_exit_code)?;
     Ok(Some(archive_path))
 }
 
@@ -133401,9 +133439,6 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
             agent,
             reason,
         );
-    }
-    if !dry_run && result.receipt.crossing.is_some() {
-        finalize_and_attach_active_crossing_transaction(&mut result.receipt, terminal_exit_code)?;
     }
     if !dry_run && has_grant_admission && result.receipt.crossing.is_some() {
         archive_sandbox_execution_receipt(
