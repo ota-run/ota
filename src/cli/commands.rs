@@ -59922,13 +59922,13 @@ fn render_up_result(
             CommandOutput {
                 stdout,
                 stderr: None,
-                exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+                exit_code: repo_up_exit_code(&result),
             }
         }
         OutputFormat::Json if result.preview.is_some() => CommandOutput {
             stdout: to_json_value(up_result_json_value(path, &result)),
             stderr: None,
-            exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+            exit_code: repo_up_exit_code(&result),
         },
         OutputFormat::Json => render_up(
             path,
@@ -59972,7 +59972,7 @@ fn render_up_replay_result(
             CommandOutput {
                 stdout: to_json_value(root),
                 stderr: None,
-                exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+                exit_code: repo_up_exit_code(&result),
             }
         }
     }
@@ -103296,7 +103296,7 @@ workflows:
             None => unsafe { env::remove_var("PATH") },
         }
         assert_eq!(
-            assertion_interrupted.exit_code, 1,
+            assertion_interrupted.exit_code, 130,
             "{}",
             assertion_interrupted.stdout
         );
@@ -103352,7 +103352,7 @@ workflows:
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
-        assert_eq!(start_failure.exit_code, 1, "{}", start_failure.stdout);
+        assert_eq!(start_failure.exit_code, 130, "{}", start_failure.stdout);
         let start_failure_json: serde_json::Value =
             serde_json::from_str(&start_failure.stdout).unwrap();
         assert_eq!(
@@ -103616,7 +103616,7 @@ workflows:
             None => unsafe { env::remove_var("PATH") },
         }
 
-        assert_eq!(interrupted.exit_code, 1, "{}", interrupted.stdout);
+        assert_eq!(interrupted.exit_code, 130, "{}", interrupted.stdout);
         let json: serde_json::Value = serde_json::from_str(&interrupted.stdout).unwrap();
         assert_eq!(json["services"][1]["start"]["state"], "interrupted");
         assert_eq!(
@@ -126335,6 +126335,10 @@ struct RepoUpResult {
     stderr: String,
 }
 
+fn repo_up_exit_code(result: &RepoUpResult) -> i32 {
+    result.exit_code.unwrap_or(if result.ok { 0 } else { 1 })
+}
+
 fn attach_crossing_to_up_result(
     result: &mut RepoUpResult,
     contract: &Contract,
@@ -133333,6 +133337,7 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
             error,
         ));
     }
+    let terminal_exit_code = Some(repo_up_exit_code(&result));
     if dry_run {
         if let Some(preview) = result.preview.as_mut() {
             preview.crossing_grant_admission = active_crossing_grant_preview().map(Box::new);
@@ -133349,14 +133354,14 @@ fn execute_repo_up_with_behavior_with_agent_and_grant(
         );
     }
     if !dry_run && result.receipt.crossing.is_some() {
-        finalize_and_attach_active_crossing_transaction(&mut result.receipt, result.exit_code)?;
+        finalize_and_attach_active_crossing_transaction(&mut result.receipt, terminal_exit_code)?;
     }
     if !dry_run && has_grant_admission && result.receipt.crossing.is_some() {
         archive_sandbox_execution_receipt(
             contract,
             resolved_path,
             &mut result.receipt,
-            result.exit_code,
+            terminal_exit_code,
         )
         .map_err(|error| format!("crossing authority evidence could not be archived: {error}"))?;
     }
@@ -133541,6 +133546,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
         },
     );
     let mut result = result?;
+    let terminal_exit_code = Some(repo_up_exit_code(&result));
     let sandbox_admission_json = sandbox_admission.as_ref().map(sandbox_admission_json);
     if let Some(preview) = result.preview.as_mut() {
         preview.sandbox_admission = sandbox_admission_json.clone();
@@ -133560,7 +133566,7 @@ fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
                 contract,
                 resolved_path,
                 &mut result.receipt,
-                result.exit_code,
+                terminal_exit_code,
             )
             .map_err(|error| {
                 format!("sandbox enforcement evidence could not be archived: {error}")
