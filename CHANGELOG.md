@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Add the locally tested portable protected-systemd launcher-finalization candidate. New
+  launcher-owned crossing transaction schema v3 is bound into the signed consume exchange and
+  requires broker-archive schema v2 plus portable finalization verification. Historical transaction
+  v2 and broker-archive v1 evidence retain their original compatibility posture. The launcher now retains protected
+  post-cleanup recovery state until the client acknowledges a producer-signed sidecar binding exact
+  cleanup evidence, receipt-archive identity, and crossing transaction. Core independently verifies
+  both signatures and every identity relationship. Immutable PID 1 crash pressure and a production
+  operator client remain required before shipment.
+
 - Add the selected-execution candidate for the protected systemd authority carrier.
   After exact V3 admission and atomic one-use lease consumption, Core may execute only the frozen
   work unit, finalize its crossing transaction and receipt, and require the launcher to persist

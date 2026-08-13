@@ -34,6 +34,7 @@ use crate::crossing_authority::CrossingAuthorityAdmission;
 use crate::semantic_identity::semantic_contract_identity;
 
 pub(crate) const CROSSING_TRANSACTION_SCHEMA_VERSION: u32 = 2;
+pub(crate) const PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -270,7 +271,7 @@ impl CrossingTransactionGuard {
     ) -> Result<Self, String> {
         let now = OffsetDateTime::now_utc();
         let mut evidence = CrossingTransactionEvidence {
-            schema_version: CROSSING_TRANSACTION_SCHEMA_VERSION,
+            schema_version: PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION,
             identity: String::new(),
             authentication_posture: String::from("launcher_active_slot_content_addressed"),
             transaction_id: new_transaction_id(now)?,
@@ -706,8 +707,9 @@ mod tests {
 
     use super::{
         CrossingTransactionBinding, CrossingTransactionEvidence, CrossingTransactionGuard,
-        transaction_identity, verify_crossing_transaction_evidence,
-        verify_crossing_transaction_outcome, verify_pending_crossing_transaction_journal,
+        PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION, transaction_identity,
+        verify_crossing_transaction_evidence, verify_crossing_transaction_outcome,
+        verify_pending_crossing_transaction_journal,
     };
     use crate::crossing_authority::{CrossingAuthorityAdmission, CrossingAuthorityCarrier};
 
@@ -747,6 +749,10 @@ mod tests {
         assert_eq!(
             transaction.evidence().authentication_posture,
             "launcher_active_slot_content_addressed"
+        );
+        assert_eq!(
+            transaction.evidence().schema_version,
+            PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION
         );
         transaction
             .verified_pending_evidence(&admission)
@@ -1276,8 +1282,16 @@ fn transaction_matches_admission(
                     == Some(admission.authorization_identity.as_str())
                 && evidence.authorization_identity.is_none()
         }
-        CROSSING_TRANSACTION_SCHEMA_VERSION => {
+        CROSSING_TRANSACTION_SCHEMA_VERSION
+        | PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION => {
+            let schema_matches_posture = evidence.schema_version
+                == CROSSING_TRANSACTION_SCHEMA_VERSION
+                || (expected_carrier == "authority_broker"
+                    && expected_authentication_posture
+                        == CrossingTransactionPersistenceOwner::LauncherActiveSlot
+                            .authentication_posture());
             evidence.authority_carrier.as_deref() == Some(expected_carrier)
+                && schema_matches_posture
                 && evidence.grant_identity.is_none()
                 && evidence.authorization_identity.as_deref()
                     == Some(admission.authorization_identity.as_str())
@@ -1427,6 +1441,27 @@ fn transaction_identity(evidence: &CrossingTransactionEvidence) -> Result<String
     let mut unsigned = evidence.clone();
     unsigned.identity.clear();
     semantic_contract_identity(&unsigned)
+}
+
+#[cfg(test)]
+pub(crate) fn recompute_transaction_identity_for_tests(
+    evidence: &CrossingTransactionEvidence,
+) -> String {
+    transaction_identity(evidence).expect("crossing transaction identity")
+}
+
+pub(crate) fn rederive_preconsumption_transaction_identity(
+    evidence: &CrossingTransactionEvidence,
+) -> Result<String, String> {
+    let mut pending = evidence.clone();
+    pending.identity.clear();
+    pending.broker_consumption_intent = None;
+    pending.broker_consumption = None;
+    pending.broker_consumption_recovery = None;
+    pending.state = String::from("pending");
+    pending.finalized_at = None;
+    pending.receipt_status = None;
+    transaction_identity(&pending)
 }
 
 fn broker_consumption_identity(evidence: &BrokerConsumptionEvidence) -> Result<String, String> {

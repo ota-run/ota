@@ -188,11 +188,15 @@ human text output:
   v1 by injecting defaults. The additive v3 systemd protected-launcher carrier instead binds
   Core's process-posture preface to the complete ordered launcher and job-principal profile
   observations; it emits `systemd_protected_launcher_attested_one_use` only when every required
-  observation verifies. The uncommitted selected-execution candidate additionally requires atomic
+  observation verifies. Selected execution additionally requires atomic
   lease consumption and one terminal Core crossing transaction before the outer launcher can emit
-  exact child/scope/cgroup/active-slot finalization. That outer finalization is pressure-client
-  evidence and is not yet embedded in the portable Ota archive. Neither posture implies
-  provider-attested separation.
+  exact child/scope/cgroup/active-slot finalization. The portable archive-attachment candidate uses
+  a protected post-cleanup recovery journal plus separate producer signatures for cleanup and the
+  exact receipt-archive/crossing-transaction association. The signed consume exchange binds
+  launcher-owned transaction schema v3; that transaction requires broker-archive schema v2 and
+  portable finalization re-verification. Historical transaction v2 and broker-archive v1 evidence
+  are not upgraded. Immutable PID 1 crash pressure and a production operator client remain open.
+  Neither posture implies provider-attested separation.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker
   selection with `authority_carrier: authority_broker` and

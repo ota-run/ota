@@ -167,11 +167,16 @@ principal profiles. V3 authority requires instance schema 3 with exactly
 remain readable only through their original evidence branch. It proves only that signed systemd
 profile instance; it is not provider-attested separation. Core archive history re-verifies the
 original v1, v2, or v3 branch in local regressions; it never upgrades legacy evidence by defaulting
-newer fields. The systemd carrier has an uncommitted selected-execution candidate: Core archives the
+newer fields. The systemd carrier currently archives the
 verified V3 admission, atomic consumption, exact semantic scope, and terminal crossing transaction,
-while the outer launcher independently emits post-process child/scope/cgroup/active-slot
-finalization. That launcher finalization is not yet part of the portable Ota archive, so local tests
-and a future hosted artifact must not overstate archive-enforced cleanup through completion.
+while the outer launcher emits post-process child/scope/cgroup/active-slot finalization. The current
+candidate durably retains post-cleanup finalization until a client acknowledges a producer-signed
+sidecar. One signature binds cleanup; a separate signature binds that exact finalization to the
+receipt-archive identity and crossing transaction. New launcher-owned crossing transaction schema
+v3 is bound into the signed consume exchange and requires broker-archive schema v2 plus portable
+finalization verification. Historical transaction v2 and broker-archive v1 evidence remain
+readable under their original schema rather than being silently upgraded. This carrier remains unshipped until immutable PID 1 crash
+pressure and a production operator client prove the complete attachment path.
 `authority.transaction.authentication_posture` is an explicit persistence boundary. Signed-file
 and legacy broker transactions use `runner_local_content_addressed`: the journal is runner-authored,
 locked, and content-addressed, but is not independently authenticated against another same-user

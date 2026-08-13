@@ -40333,7 +40333,9 @@ fn prune_receipt_archives(
         if preserved_path.as_deref() == Some(path.as_path()) {
             continue;
         }
+        let sidecar = path.with_extension("launcher-finalization");
         let _ = fs::remove_file(path);
+        let _ = fs::remove_file(sidecar);
         removed += 1;
     }
 
@@ -40419,18 +40421,20 @@ fn repo_receipt_archive_timestamp(path: &Path) -> Option<String> {
 }
 
 fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRecord, String> {
-    let payload = fs::read_to_string(path).map_err(|error| {
+    let payload_bytes = fs::read(path).map_err(|error| {
         format!(
             "failed to read receipt archive `{}`: {error}",
             compact_path(path, ".")
         )
     })?;
-    let payload: ArchivedRepoReceiptEnvelope = serde_json::from_str(&payload).map_err(|error| {
-        format!(
-            "failed to parse receipt archive `{}`: {error}",
-            compact_path(path, ".")
-        )
-    })?;
+    let receipt_archive_identity = contract_snapshot_hash(&payload_bytes);
+    let payload: ArchivedRepoReceiptEnvelope =
+        serde_json::from_slice(&payload_bytes).map_err(|error| {
+            format!(
+                "failed to parse receipt archive `{}`: {error}",
+                compact_path(path, ".")
+            )
+        })?;
     if let Some(mode) = payload.mode.as_deref()
         && mode != "receipt"
     {
@@ -40664,6 +40668,13 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                                 compact_path(path, ".")
                             )
                         })?;
+                if archived.requires_portable_launcher_finalization() {
+                    verify_receipt_launcher_finalization_sidecar(
+                        path,
+                        &receipt_archive_identity,
+                        archived,
+                    )?;
+                }
                 let expected = crossing_authority_output_with_transaction(
                     &VerifiedCrossingAuthorityAdmission::AuthorityBroker(
                         archived.admission.clone(),
@@ -40717,6 +40728,44 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
         })?;
     }
     Ok(record)
+}
+
+fn verify_receipt_launcher_finalization_sidecar(
+    archive_path: &Path,
+    receipt_archive_identity: &str,
+    broker_archive: &crate::broker_session::BrokerArchiveEvidence,
+) -> Result<(), String> {
+    let sidecar_path = archive_path.with_extension("launcher-finalization");
+    let bytes = fs::read(&sidecar_path).map_err(|_| {
+        format!(
+            "receipt archive `{}` omits required launcher finalization evidence",
+            compact_path(archive_path, ".")
+        )
+    })?;
+    let sidecar: ota_authority_protocol::LauncherFinalizationArchiveSidecarV1 =
+        serde_json::from_slice(&bytes).map_err(|_| {
+            format!(
+                "receipt archive `{}` has malformed launcher finalization evidence",
+                compact_path(archive_path, ".")
+            )
+        })?;
+    if serde_jcs::to_vec(&sidecar).ok().as_deref() != Some(bytes.as_slice()) {
+        return Err(format!(
+            "receipt archive `{}` has non-canonical launcher finalization evidence",
+            compact_path(archive_path, ".")
+        ));
+    }
+    crate::broker_session::verify_launcher_finalization_sidecar(
+        broker_archive,
+        &sidecar,
+        receipt_archive_identity,
+    )
+    .map_err(|error| {
+        format!(
+            "receipt archive `{}` contains unreconciled launcher finalization evidence: {error}",
+            compact_path(archive_path, ".")
+        )
+    })
 }
 
 fn archived_receipt_crossing_required(

@@ -1346,13 +1346,18 @@ and receipt first, sends one identity-bound completion, and requires the launche
 exact record before Core exits. The launcher then reconciles the observed child exit, reaps that
 child, removes the exact systemd scope and cgroup, removes the active slot, and emits one terminal
 finalization record. Completion alone never proves cleanup, and cleanup uncertainty remains a
-retained boundary failure. The current portable Ota archive re-verifies the broker admission,
-consumption, semantic scope, and terminal crossing transaction; launcher finalization is retained
-only by the outer systemd client artifact. The immutable run proves completed, failed, interrupted,
+retained boundary failure. The portable Ota archive re-verifies the broker admission, consumption,
+semantic scope, and terminal crossing transaction. The current candidate durably records a
+post-cleanup finalization intent before deleting the active slot, signs the exact completed
+finalization afterward, obtains a separate producer signature over the exact archive/crossing
+association, and retains the protected journal until the sidecar is durably acknowledged. The
+signed consume exchange binds launcher-owned transaction schema v3, which requires broker-archive
+schema v2 and portable finalization verification without reinterpreting historical transaction v2
+archives. The immutable run proves completed, failed, interrupted,
 replay-refused, pre-execution refusal, and crash-recovery paths; every terminal path removes the
 exact child, scope, cgroup, and active slot, and receipt history reports one valid archive with zero
-invalid archives for the successful lane. Binding launcher-authored post-process finalization into
-portable archive evidence remains a separate acceptance gate.
+invalid archives for the successful lane. A production operator attachment surface and a fresh
+immutable PID 1 crash run remain required before this acceptance gate can close.
 
 ###### Protected V3 attestation producer protocol
 

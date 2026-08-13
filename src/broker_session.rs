@@ -61,20 +61,22 @@ use ota_authority_protocol::{
     BrokerChallenge, LAUNCHER_EXECUTION_COMPLETION, LEASE_CONSUMPTION_ADMISSION,
     LEASE_CONSUMPTION_INTENT_PERSISTENCE, LEASE_CONSUMPTION_PERSISTENCE,
     LauncherExecutionCompletionPersistenceV1, LauncherExecutionCompletionV1,
-    LauncherExecutionOutcomeV1, LeaseConsumptionAdmissionV1, LeaseConsumptionIntentPersistenceV1,
-    LeaseConsumptionIntentRelayEvidenceV1, LeaseConsumptionPersistenceV1, MAX_FRAME_BYTES,
-    PreparedLeasePayload, RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2,
-    RUNTIME_BOUNDARY_SCHEMA_VERSION_V1, RuntimeBoundaryObservationState,
-    RuntimeBoundarySemanticIdentityPosture, SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2,
-    SYSTEMD_LAUNCHER_PROFILE_ID_V3, SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1,
-    SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3, SignedLauncherAttestation,
-    SignedLauncherAttestationV2, SignedLauncherAttestationV3,
+    LauncherExecutionOutcomeV1, LauncherFinalizationArchiveSidecarV1, LeaseConsumptionAdmissionV1,
+    LeaseConsumptionIntentPersistenceV1, LeaseConsumptionIntentRelayEvidenceV1,
+    LeaseConsumptionPersistenceV1, MAX_FRAME_BYTES, PreparedLeasePayload,
+    RUNTIME_BOUNDARY_ATTESTATION_PROTOCOL_V2, RUNTIME_BOUNDARY_SCHEMA_VERSION_V1,
+    RuntimeBoundaryObservationState, RuntimeBoundarySemanticIdentityPosture,
+    SYSTEMD_JOB_PRINCIPAL_PROFILE_ID_V2, SYSTEMD_LAUNCHER_PROFILE_ID_V3,
+    SYSTEMD_PROTECTED_LAUNCHER_ADAPTER_V1, SYSTEMD_PROTECTED_LAUNCHER_ATTESTATION_PROTOCOL_V3,
+    SignedLauncherAttestation, SignedLauncherAttestationV2, SignedLauncherAttestationV3,
     authorization_decision_admission_v1_identity,
     authorization_decision_relay_evidence_v1_identity,
     derive_work_unit_identity as protocol_work_unit_identity, domain_separated,
     launcher_attestation_identity_v2, launcher_attestation_identity_v3,
     launcher_execution_completion_persistence_v1_identity,
-    launcher_execution_completion_v1_identity, launcher_principal_mapping_identity,
+    launcher_execution_completion_v1_identity, launcher_execution_finalization_signature_bytes_v1,
+    launcher_finalization_archive_sidecar_v1_identity,
+    launcher_finalization_archive_signature_bytes_v1, launcher_principal_mapping_identity,
     lease_consumption_admission_v1_identity, lease_consumption_intent_persistence_v1_identity,
     lease_consumption_intent_relay_evidence_v1_identity, lease_consumption_persistence_v1_identity,
     message_identity as protocol_message_identity, nonce_commitment as protocol_nonce_commitment,
@@ -87,10 +89,14 @@ use ota_authority_protocol::{
 #[cfg(test)]
 use ota_authority_protocol::{
     LauncherAttestationPayload, LauncherAttestationPayloadV2, LauncherAttestationPayloadV3,
-    LauncherPrincipalMappingV1, RuntimeBoundaryAttestation, RuntimeBoundaryObservation,
-    SystemdJobPrincipalObservation, SystemdLauncherObservation,
-    SystemdProtectedLauncherInstanceEvidenceV1, SystemdProtectedLauncherInstanceEvidenceV2,
-    UnixPrincipalIdentity,
+    LauncherExecutionFinalizationV1, LauncherPrincipalMappingV1, RuntimeBoundaryAttestation,
+    RuntimeBoundaryObservation, SignedLauncherExecutionFinalizationV1,
+    SignedLauncherFinalizationArchiveV1, SystemdJobPrincipalObservation,
+    SystemdLauncherObservation, SystemdProtectedLauncherInstanceEvidenceV1,
+    SystemdProtectedLauncherInstanceEvidenceV2, UnixPrincipalIdentity,
+    launcher_execution_finalization_v1_identity,
+    signed_launcher_execution_finalization_v1_identity,
+    signed_launcher_finalization_archive_v1_identity,
 };
 #[cfg(unix)]
 use ota_authority_protocol::{
@@ -110,6 +116,14 @@ pub(crate) enum LauncherAttestationEvidence {
 }
 
 impl LauncherAttestationEvidence {
+    fn key_id(&self) -> &str {
+        match self {
+            Self::V3(value) => value.key_id.as_str(),
+            Self::V2(value) => value.key_id.as_str(),
+            Self::V1(value) => value.key_id.as_str(),
+        }
+    }
+
     fn expires_at(&self) -> &str {
         match self {
             Self::V3(value) => value.payload.expires_at.as_str(),
@@ -462,6 +476,12 @@ pub(crate) struct BrokerArchiveEvidence {
     pub identity: String,
     pub admission: BrokerAdmissionEvidence,
     pub transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+}
+
+impl BrokerArchiveEvidence {
+    pub(crate) fn requires_portable_launcher_finalization(&self) -> bool {
+        self.schema_version == 2
+    }
 }
 
 /// A verified broker authorization that has not yet consumed its one-use lease.
@@ -879,8 +899,14 @@ pub(crate) fn build_broker_archive_evidence(
     transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
 ) -> Result<BrokerArchiveEvidence, String> {
     verify_broker_consumption_evidence(admission, transaction)?;
+    let portable_launcher_finalization_required = transaction.schema_version
+        == crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION;
     let mut evidence = BrokerArchiveEvidence {
-        schema_version: 1,
+        schema_version: if portable_launcher_finalization_required {
+            2
+        } else {
+            1
+        },
         identity: String::new(),
         admission: admission.clone(),
         transaction: transaction.clone(),
@@ -893,7 +919,20 @@ pub(crate) fn verify_broker_archive_evidence(
     repo_root: &Path,
     evidence: &BrokerArchiveEvidence,
 ) -> Result<CrossingAuthorityAdmission, String> {
-    if evidence.schema_version != 1 || evidence.identity != broker_archive_identity(evidence)? {
+    let supported_schema = match evidence.schema_version {
+        1 => {
+            evidence.transaction.schema_version
+                == crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION
+        }
+        2 => evidence.transaction.schema_version
+            == crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION
+            && matches!(
+                evidence.admission.attestation,
+                LauncherAttestationEvidence::V3(_)
+            ),
+        _ => false,
+    };
+    if !supported_schema || evidence.identity != broker_archive_identity(evidence)? {
         return Err(String::from(
             "broker archive evidence has an unsupported schema or invalid identity",
         ));
@@ -925,6 +964,125 @@ pub(crate) fn verify_broker_archive_evidence(
     let admission = verify_broker_admission_evidence(&evidence.admission)?;
     verify_broker_consumption_evidence(&evidence.admission, &evidence.transaction)?;
     Ok(admission)
+}
+
+pub(crate) fn verify_launcher_finalization_sidecar(
+    archive: &BrokerArchiveEvidence,
+    sidecar: &LauncherFinalizationArchiveSidecarV1,
+    receipt_archive_identity: &str,
+) -> Result<(), String> {
+    if launcher_finalization_archive_sidecar_v1_identity(sidecar)
+        .ok()
+        .as_deref()
+        != Some(sidecar.identity.as_str())
+        || sidecar.signed_archive.receipt_archive_identity != receipt_archive_identity
+        || sidecar.signed_archive.crossing_transaction_identity != archive.transaction.identity
+        || sidecar.signed_archive.signed_finalization_identity
+            != sidecar.signed_finalization.identity
+        || sidecar
+            .signed_finalization
+            .finalization
+            .completion
+            .crossing_transaction_identity
+            != archive.transaction.identity
+        || sidecar
+            .signed_finalization
+            .finalization
+            .completion
+            .crossing_transaction_id
+            != archive.transaction.transaction_id
+        || sidecar
+            .signed_finalization
+            .finalization
+            .completion
+            .work_unit_identity
+            != archive.admission.challenge.work_unit_identity
+        || sidecar.signed_finalization.key_id != archive.admission.attestation.key_id()
+        || sidecar.signed_archive.key_id != sidecar.signed_finalization.key_id
+        || sidecar.signed_archive.producer_binding_identity
+            != sidecar.signed_finalization.producer_binding_identity
+        || sidecar.signed_finalization.algorithm != "ed25519"
+        || sidecar.signed_archive.algorithm != "ed25519"
+    {
+        return Err(String::from(
+            "launcher finalization sidecar does not match its broker transaction",
+        ));
+    }
+    let verifier = archive
+        .admission
+        .binding_snapshot
+        .attestation
+        .verifiers()
+        .iter()
+        .find(|verifier| verifier.key_id == sidecar.signed_finalization.key_id)
+        .ok_or_else(|| String::from("launcher finalization signer is not trusted"))?;
+    let public_key = decode_fixed::<32>(&verifier.public_key, "launcher finalization key")?;
+    let signature = decode_fixed::<64>(
+        &sidecar.signed_finalization.signature,
+        "launcher finalization signature",
+    )?;
+    let signed_bytes = launcher_execution_finalization_signature_bytes_v1(
+        &sidecar.signed_finalization.finalization,
+        &sidecar.signed_finalization.producer_binding_identity,
+        &sidecar.signed_finalization.issued_at,
+    )
+    .map_err(|_| String::from("launcher finalization signed payload is invalid"))?;
+    VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| String::from("launcher finalization public key is invalid"))?
+        .verify(&signed_bytes, &Signature::from_bytes(&signature))
+        .map_err(|_| String::from("launcher finalization signature is invalid"))?;
+    let archive_signature = decode_fixed::<64>(
+        &sidecar.signed_archive.signature,
+        "launcher finalization archive signature",
+    )?;
+    let archive_signed_bytes =
+        launcher_finalization_archive_signature_bytes_v1(&sidecar.signed_archive)
+            .map_err(|_| String::from("launcher finalization archive payload is invalid"))?;
+    VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| String::from("launcher finalization public key is invalid"))?
+        .verify(
+            &archive_signed_bytes,
+            &Signature::from_bytes(&archive_signature),
+        )
+        .map_err(|_| String::from("launcher finalization archive signature is invalid"))?;
+    let transaction_finalized_at = archive
+        .transaction
+        .finalized_at
+        .as_deref()
+        .ok_or_else(|| String::from("broker transaction is not terminal"))
+        .and_then(|value| {
+            OffsetDateTime::parse(value, &Rfc3339)
+                .map_err(|_| String::from("broker transaction finalization time is invalid"))
+        })?;
+    let finalization_issued_at =
+        OffsetDateTime::parse(&sidecar.signed_finalization.issued_at, &Rfc3339)
+            .map_err(|_| String::from("launcher finalization issuance time is invalid"))?;
+    let archive_issued_at = OffsetDateTime::parse(&sidecar.signed_archive.issued_at, &Rfc3339)
+        .map_err(|_| String::from("launcher finalization archive issuance time is invalid"))?;
+    let skew = time::Duration::seconds(
+        archive
+            .admission
+            .binding_snapshot
+            .attestation
+            .maximum_clock_skew_seconds() as i64,
+    );
+    let maximum_delay = time::Duration::seconds(
+        archive
+            .admission
+            .binding_snapshot
+            .attestation
+            .maximum_age_seconds() as i64,
+    );
+    if finalization_issued_at < transaction_finalized_at - skew
+        || finalization_issued_at > transaction_finalized_at + maximum_delay + skew
+        || archive_issued_at < finalization_issued_at
+        || archive_issued_at > transaction_finalized_at + maximum_delay + skew
+    {
+        return Err(String::from(
+            "launcher finalization issuance is not bound to the terminal transaction window",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn verify_pending_broker_archive_evidence(
@@ -1136,6 +1294,10 @@ fn verify_broker_consumption_fields(
         || consumption.consume_request.crossing_transaction_id != transaction.transaction_id
         || consumption.consume_request.crossing_transaction_identity
             != consumption.pending_transaction_identity
+        || consumption.pending_transaction_identity
+            != crate::crossing_transaction::rederive_preconsumption_transaction_identity(
+                transaction,
+            )?
     {
         return Err(String::from(
             "broker atomic consumption evidence does not bind the admitted transaction",
@@ -5589,7 +5751,7 @@ pub(crate) mod tests {
             invocation_id: String::from("invocation-123"),
             lease_consumption_admission_identity: identity('1'),
             work_unit_identity: identity('2'),
-            pending_crossing_transaction_identity: identity('8'),
+            pending_crossing_transaction_identity: format!("sha256:{}", "8".repeat(64)),
             persisted: None,
         };
         let transaction = crate::crossing_transaction::CrossingTransactionEvidence {
@@ -5603,7 +5765,7 @@ pub(crate) mod tests {
             grant_identity: None,
             authorization_identity: Some(identity('5')),
             scope_identity: identity('6'),
-            contract_identity: identity('7'),
+            contract_identity: format!("sha256:{}", "7".repeat(64)),
             broker_consumption_intent: None,
             broker_consumption: None,
             broker_consumption_recovery: None,
@@ -5621,7 +5783,7 @@ pub(crate) mod tests {
             assert_eq!(observed.crossing_transaction_identity, identity('3'));
             assert_eq!(
                 observed.pending_crossing_transaction_identity,
-                identity('8')
+                format!("sha256:{}", "8".repeat(64))
             );
             let mut persistence = LauncherExecutionCompletionPersistenceV1 {
                 schema_version: 1,
@@ -6822,6 +6984,36 @@ pub(crate) mod tests {
             .expect("finalization");
         let archive =
             build_broker_archive_evidence(&admission, &transaction.evidence()).expect("v3 archive");
+        assert_eq!(archive.schema_version, 2);
+        assert!(archive.requires_portable_launcher_finalization());
+        assert_eq!(
+            archive.transaction.schema_version,
+            crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION
+        );
+
+        let receipt_schema: serde_json::Value =
+            serde_json::from_str(include_str!("../docs/spec/json-schemas/receipt.json"))
+                .expect("receipt schema");
+        let broker_archive_schema = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/brokerArchiveEvidence",
+            "$defs": receipt_schema["$defs"].clone()
+        });
+        let compiled_archive_schema = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&broker_archive_schema)
+            .expect("broker archive schema");
+        let archive_json = serde_json::to_value(&archive).expect("archive JSON");
+        assert!(
+            compiled_archive_schema.validate(&archive_json).is_ok(),
+            "new portable V3 archive must satisfy the published schema"
+        );
+        let mut schema_downgrade = archive_json;
+        schema_downgrade["schema_version"] = serde_json::json!(1);
+        assert!(
+            compiled_archive_schema.validate(&schema_downgrade).is_err(),
+            "published schema must reject removal of the portable finalization branch"
+        );
 
         let trust_root = tempdir().expect("broker trust root");
         let trust_store = trust_root.path().join("crossing-brokers.json");
@@ -6837,6 +7029,133 @@ pub(crate) mod tests {
         let _trust_guard =
             crate::crossing_authority::TestBrokerTrustStoreGuard::install(trust_store);
         verify_broker_archive_evidence(root.path(), &archive).expect("v3 archive re-verifies");
+        let mut downgraded = archive.clone();
+        downgraded.schema_version = 1;
+        downgraded.transaction.schema_version =
+            crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION;
+        downgraded.transaction.identity =
+            crate::crossing_transaction::recompute_transaction_identity_for_tests(
+                &downgraded.transaction,
+            );
+        downgraded.identity =
+            broker_archive_identity(&downgraded).expect("downgraded archive identity");
+        verify_broker_archive_evidence(root.path(), &downgraded)
+            .expect_err("portable finalization cannot be downgraded out of signed V3 evidence");
+        let mut completion = LauncherExecutionCompletionV1 {
+            schema_version: 1,
+            identity: String::new(),
+            message_kind: ota_authority_protocol::LAUNCHER_EXECUTION_COMPLETION.into(),
+            invocation_id: String::from("invocation-0123456789abcdef0123456789abcdef"),
+            lease_consumption_admission_identity: format!("sha256:{}", "9".repeat(64)),
+            work_unit_identity: archive.admission.challenge.work_unit_identity.clone(),
+            crossing_transaction_id: archive.transaction.transaction_id.clone(),
+            pending_crossing_transaction_identity: archive
+                .transaction
+                .broker_consumption
+                .as_ref()
+                .expect("consumption")
+                .pending_transaction_identity
+                .clone(),
+            crossing_transaction_identity: archive.transaction.identity.clone(),
+            outcome: LauncherExecutionOutcomeV1::Completed,
+            exit_code: Some(0),
+            receipt_status: String::from("passed"),
+        };
+        completion.identity =
+            launcher_execution_completion_v1_identity(&completion).expect("completion identity");
+        let mut finalization = LauncherExecutionFinalizationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            completion,
+            child_identity: format!("sha256:{}", "7".repeat(64)),
+            scope_identity: format!("sha256:{}", "8".repeat(64)),
+            observed_exit_code: Some(0),
+            child_reaped: true,
+            scope_removed: true,
+            cgroup_empty_or_absent: true,
+            active_slot_removed: true,
+        };
+        finalization.identity = launcher_execution_finalization_v1_identity(&finalization)
+            .expect("finalization identity");
+        let producer_binding_identity = format!("sha256:{}", "a".repeat(64));
+        let issued_at = now.format(&Rfc3339).expect("issued at");
+        let signature = attestor_signing_key.sign(
+            &launcher_execution_finalization_signature_bytes_v1(
+                &finalization,
+                &producer_binding_identity,
+                &issued_at,
+            )
+            .expect("finalization signing bytes"),
+        );
+        let mut signed_finalization = SignedLauncherExecutionFinalizationV1 {
+            schema_version: 1,
+            identity: String::new(),
+            finalization,
+            producer_binding_identity,
+            issued_at,
+            key_id: binding.attestation.verifiers()[0].key_id.clone(),
+            algorithm: String::from("ed25519"),
+            signature: URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+        };
+        signed_finalization.identity =
+            signed_launcher_execution_finalization_v1_identity(&signed_finalization)
+                .expect("signed finalization identity");
+        let receipt_archive_identity = format!("sha256:{}", "b".repeat(64));
+        let archive_issued_at = (now + time::Duration::seconds(1))
+            .format(&Rfc3339)
+            .expect("archive issued at");
+        let mut signed_archive = SignedLauncherFinalizationArchiveV1 {
+            schema_version: 1,
+            identity: String::new(),
+            signed_finalization_identity: signed_finalization.identity.clone(),
+            receipt_archive_identity: receipt_archive_identity.clone(),
+            crossing_transaction_identity: archive.transaction.identity.clone(),
+            producer_binding_identity: signed_finalization.producer_binding_identity.clone(),
+            issued_at: archive_issued_at,
+            key_id: signed_finalization.key_id.clone(),
+            algorithm: String::from("ed25519"),
+            signature: String::new(),
+        };
+        signed_archive.signature = URL_SAFE_NO_PAD.encode(
+            attestor_signing_key
+                .sign(
+                    &launcher_finalization_archive_signature_bytes_v1(&signed_archive)
+                        .expect("archive signature bytes"),
+                )
+                .to_bytes(),
+        );
+        signed_archive.identity = signed_launcher_finalization_archive_v1_identity(&signed_archive)
+            .expect("signed archive identity");
+        let mut sidecar = LauncherFinalizationArchiveSidecarV1 {
+            schema_version: 1,
+            identity: String::new(),
+            signed_finalization,
+            signed_archive,
+        };
+        sidecar.identity =
+            launcher_finalization_archive_sidecar_v1_identity(&sidecar).expect("sidecar identity");
+        verify_launcher_finalization_sidecar(&archive, &sidecar, &receipt_archive_identity)
+            .expect("portable finalization re-verifies");
+        let mut wrong_archive = sidecar.clone();
+        wrong_archive.signed_archive.receipt_archive_identity =
+            format!("sha256:{}", "c".repeat(64));
+        wrong_archive.signed_archive.identity =
+            signed_launcher_finalization_archive_v1_identity(&wrong_archive.signed_archive)
+                .expect("wrong archive signed identity");
+        wrong_archive.identity = launcher_finalization_archive_sidecar_v1_identity(&wrong_archive)
+            .expect("wrong archive sidecar identity");
+        verify_launcher_finalization_sidecar(&archive, &wrong_archive, &receipt_archive_identity)
+            .expect_err("archive substitution must refuse");
+        let mut wrong_signature = sidecar.clone();
+        wrong_signature.signed_archive.signature = URL_SAFE_NO_PAD.encode([0_u8; 64]);
+        wrong_signature.signed_archive.identity =
+            signed_launcher_finalization_archive_v1_identity(&wrong_signature.signed_archive)
+                .expect("wrong signature envelope identity");
+        wrong_signature.identity =
+            launcher_finalization_archive_sidecar_v1_identity(&wrong_signature)
+                .expect("wrong signature sidecar identity");
+        verify_launcher_finalization_sidecar(&archive, &wrong_signature, &receipt_archive_identity)
+            .expect_err("signature substitution must refuse");
         assert!(
             crate::crossing_transaction::verify_crossing_transaction_evidence(
                 &archive.transaction,
