@@ -772,6 +772,7 @@ impl SystemdExecutionCompletion {
         transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
         ok: bool,
         interrupted: bool,
+        exit_code: Option<i32>,
         receipt_status: &str,
     ) -> Result<LauncherExecutionCompletionV1, String> {
         if transaction.state == "pending" || receipt_status.is_empty() {
@@ -786,11 +787,7 @@ impl SystemdExecutionCompletion {
         } else {
             LauncherExecutionOutcomeV1::Failed
         };
-        let exit_code = match outcome {
-            LauncherExecutionOutcomeV1::Completed => Some(0),
-            LauncherExecutionOutcomeV1::Failed => Some(1),
-            LauncherExecutionOutcomeV1::Interrupted => Some(130),
-        };
+        let exit_code = terminal_completion_exit_code(&outcome, exit_code)?;
         let mut completion = LauncherExecutionCompletionV1 {
             schema_version: 1,
             identity: String::new(),
@@ -832,6 +829,22 @@ impl SystemdExecutionCompletion {
         }
         self.persisted = Some(completion.clone());
         Ok(completion)
+    }
+}
+
+fn terminal_completion_exit_code(
+    outcome: &LauncherExecutionOutcomeV1,
+    observed: Option<i32>,
+) -> Result<Option<i32>, String> {
+    match outcome {
+        LauncherExecutionOutcomeV1::Completed => Ok(Some(0)),
+        LauncherExecutionOutcomeV1::Failed => Ok(observed.or(Some(1))),
+        LauncherExecutionOutcomeV1::Interrupted => match observed {
+            Some(code @ (129 | 130 | 131 | 143)) => Ok(Some(code)),
+            _ => Err(String::from(
+                "systemd launcher interrupted completion requires an interruption exit code",
+            )),
+        },
     }
 }
 
@@ -5558,6 +5571,15 @@ pub(crate) mod tests {
 
     #[test]
     fn systemd_completion_requires_exact_launcher_persistence_acknowledgement() {
+        assert_eq!(
+            terminal_completion_exit_code(&LauncherExecutionOutcomeV1::Interrupted, Some(143))
+                .expect("SIGTERM interruption"),
+            Some(143)
+        );
+        assert!(
+            terminal_completion_exit_code(&LauncherExecutionOutcomeV1::Interrupted, Some(1))
+                .is_err()
+        );
         let identity = |value: char| format!("sha256:{}", value.to_string().repeat(64));
         let (mut launcher, ota) = UnixStream::pair().expect("socket pair");
         let session = LauncherSession::from_inherited_descriptor(ota.into_raw_fd())
@@ -5614,18 +5636,18 @@ pub(crate) mod tests {
             write_json_frame(&mut launcher, &persistence);
         });
         let observed = completion
-            .persist_terminal_completion(&transaction, true, false, "completed")
+            .persist_terminal_completion(&transaction, true, false, Some(0), "completed")
             .expect("exact completion acknowledgement");
         assert_eq!(observed.crossing_transaction_identity, transaction.identity);
         assert_eq!(
             completion
-                .persist_terminal_completion(&transaction, true, false, "completed")
+                .persist_terminal_completion(&transaction, true, false, Some(0), "completed")
                 .expect("exact idempotent completion"),
             observed
         );
         assert!(
             completion
-                .persist_terminal_completion(&transaction, false, false, "failed")
+                .persist_terminal_completion(&transaction, false, false, Some(1), "failed")
                 .is_err()
         );
         launcher_thread.join().expect("launcher thread");

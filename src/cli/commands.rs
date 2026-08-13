@@ -17378,6 +17378,7 @@ fn persist_active_systemd_execution_completion(
     transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
     ok: bool,
     interrupted: bool,
+    exit_code: Option<i32>,
     receipt_status: &str,
 ) -> Result<(), String> {
     ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|completion| {
@@ -17388,6 +17389,7 @@ fn persist_active_systemd_execution_completion(
             transaction,
             ok,
             interrupted,
+            exit_code,
             receipt_status,
         )?;
         Ok(())
@@ -17420,6 +17422,7 @@ fn finalize_active_crossing_transaction(receipt: &ExecutionReceipt) -> Result<()
                 &transaction,
                 receipt.ok,
                 receipt.status.as_deref() == Some("interrupted"),
+                receipt.steps.iter().rev().find_map(|step| step.exit_code),
                 receipt_status,
             )?;
         }
@@ -17485,6 +17488,13 @@ fn finalize_active_proof_crossing_transaction(
             &terminal_transaction,
             ok,
             interrupted,
+            Some(if ok {
+                0
+            } else if interrupted {
+                130
+            } else {
+                1
+            }),
             receipt_status.as_str(),
         )?;
     }
