@@ -10489,8 +10489,12 @@ project:
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         );
+        let normalized = strip_ansi(&rendered)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(
-            strip_ansi(&rendered).contains("path and contract-file overrides are not allowed"),
+            normalized.contains("path and contract-file overrides are not allowed"),
             "{rendered}"
         );
     }
