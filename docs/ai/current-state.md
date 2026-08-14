@@ -1001,9 +1001,10 @@ admission, typed negative outcomes, exact relay evidence, terminal cleanup, and 
 one-use lease consumption, selected execution, crossing receipt/archive, independently administered
 provider/launcher separation, or provider-attested carrier existed at those immutable revisions,
 and that run does not make `provider_attested_one_use` true. The later immutable one-use
-consumption and selected-execution gates are green. The current Core portable-finalization batch is
-pinned to immutable Protocol `866bb2a4f9b5a9e9658cf80a1b6a2e2150ebedfb` and Launcher
-`c1317aa6dea96300eb15284f141841df58e4410a`; it binds launcher-owned transaction schema v3 into
+  consumption and selected-execution gates are green. The pressure-proven portable-finalization
+  batch binds immutable Protocol `3e912f721ba9673090d14bcf5f88a2ee27a6b58a`, Core
+  `cf3114f3d96d5c030c748a12b2e359586f0ded8c`, and Launcher
+  `6954a39aefd35b8df648534a6028c0206c0372f9`; it binds launcher-owned transaction schema v3 into
 the signed consume exchange. That transaction requires broker-archive schema v2 and portable
 finalization verification without
   invalidating historical transaction v2 archives. It now
@@ -1024,11 +1025,20 @@ finalization verification without
   not a production attachment surface. Crash recovery now distinguishes live schema-v1
   finalization, where the launcher directly observed and reaped the child, from schema-v2
   `recovered_absent_completion_bound`, where a restarted launcher proves absence against Core's
-  durable completion without claiming an observed exit or child reaping. Immutable PID 1 crash
-  pressure has not passed for this corrected batch.
+  durable completion without claiming an observed exit or child reaping. Immutable Linux/x64 PID 1
+  [run 31758094819](https://github.com/ota-run/authority-launcher/actions/runs/31758094819)
+  passed for the corrected batch against Protocol
+  `3e912f721ba9673090d14bcf5f88a2ee27a6b58a`, Core
+  `cf3114f3d96d5c030c748a12b2e359586f0ded8c`, and Launcher
+  `6954a39aefd35b8df648534a6028c0206c0372f9`. The artifact reports zero terminal
+  active slots, finalization journals, and scopes across 21 boundaries; one valid and zero invalid
+  archives for positive execution and all three terminal crash-recovery points; consumed one-use
+  authority; unchanged refusal/crash worktrees; and separate root-owned cleanup-finalization and
+  archive-attachment issuance records.
   The canonical Skill, both installed mirrors, and the Site reference carry the same boundary;
-  Examples are unaffected because no contract-authoring shape changed. Independently administered
-  launcher separation also remains open.
+  Examples are unaffected because no contract-authoring shape changed. A production attachment and
+  least-privilege history client, independently administered launcher separation, and provider-
+  attested authority remain open, so V11.7 remains active and partial.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and

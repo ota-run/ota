@@ -1369,15 +1369,23 @@ schema v2 instead binds verified child absence to that completion under
 restarted launcher reaped the old child. The
 signed consume exchange binds launcher-owned transaction schema v3, which requires broker-archive
 schema v2 and portable finalization verification without reinterpreting historical transaction v2
-archives. The immutable run proves completed, failed, interrupted,
-replay-refused, pre-execution refusal, and crash-recovery paths; every terminal path removes the
-exact child, scope, cgroup, and active slot, and receipt history reports one valid archive with zero
-invalid archives for the successful lane. A production operator attachment surface and a fresh
-least-privilege history client remain open; pressure may inspect private history only from an
-administrative context. Later deletion by the execution principal can remove local evidence but
-cannot create valid producer-signed evidence. A production operator attachment surface,
-least-privilege history client, and fresh immutable PID 1 crash run remain required before this
-acceptance gate can close.
+archives. Immutable Linux/x64 PID 1 systemd
+[run 31758094819](https://github.com/ota-run/authority-launcher/actions/runs/31758094819)
+proves the corrected portable-finalization carrier against Protocol
+`3e912f721ba9673090d14bcf5f88a2ee27a6b58a`, Core
+`cf3114f3d96d5c030c748a12b2e359586f0ded8c`, and Launcher
+`6954a39aefd35b8df648534a6028c0206c0372f9`. It covers completed, failed,
+interrupted, replay-refused, pre-execution refusal, and crash-recovery paths; all 21 terminal
+boundary records report zero active slots, finalization journals, and scopes. Positive execution
+and completion-, finalization-, and terminal-crash recovery each retain one valid archive with zero
+invalid archives. Completion-crash recovery uses schema v2, proves
+`recovered_absent_completion_bound`, and claims neither an observed exit nor child reaping. The
+artifact also binds the consumed lease, unchanged refusal/crash repository manifests, root-owned
+mode-`0600` producer issuance records, and separate cleanup-finalization and archive-attachment
+issuance classes. A production operator attachment surface and least-privilege history client
+remain open; pressure inspects private history only from an administrative context. Later deletion
+by the execution principal can remove local evidence but cannot create valid producer-signed
+evidence.
 
 ###### Protected V3 attestation producer protocol
 

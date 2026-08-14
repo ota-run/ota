@@ -30,6 +30,10 @@
   observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with
   `recovered_absent_completion_bound`, verified child absence, and no claimed observed exit or
   reaping. Receipt history re-verifies either exact version without upgrading legacy evidence.
+  Immutable Linux/x64 PID 1 run
+  [31758094819](https://github.com/ota-run/authority-launcher/actions/runs/31758094819)
+  proves the corrected portable-finalization path, one-use consumption, exact crash recovery,
+  valid archive history, zero terminal boundary residue, and unchanged refusal/crash worktrees.
 
 - Add the locally tested portable protected-systemd launcher-finalization candidate. New
   launcher-owned crossing transaction schema v3 is bound into the signed consume exchange and
