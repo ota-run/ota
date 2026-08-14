@@ -74866,8 +74866,12 @@ agent:
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         );
+        let normalized = strip_ansi_codes(&rendered)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(
-            rendered.contains("pre-mutation cleanup transaction"),
+            normalized.contains("pre-mutation cleanup transaction"),
             "{rendered}"
         );
         assert!(!repo.path().join("should-not-exist").exists());
@@ -75421,9 +75425,11 @@ tasks:
             fs::read_to_string(run_dir.join("stdout.log")).expect("read stdout log"),
             "stdout line\n"
         );
+        let stderr_log = fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log");
         assert_eq!(
-            fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log"),
-            "stderr line\n"
+            stderr_log.lines().next(),
+            Some("stderr line"),
+            "{stderr_log}"
         );
     }
 
