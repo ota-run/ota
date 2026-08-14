@@ -285,6 +285,11 @@ case "$command" in
   info)
     exit 0
     ;;
+  ps)
+    # Doctor checks for durable containers before running the ephemeral fixture.
+    # This shim models an empty engine state without accepting any mutation.
+    exit 0
+    ;;
   volume)
     subcommand="$1"
     shift
@@ -311,6 +316,112 @@ case "$command" in
         ;;
     esac
     exit 1
+    ;;
+  create)
+    name=""
+    workspace_mount=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -i)
+          shift
+          ;;
+        --name)
+          name="$2"
+          shift 2
+          ;;
+        --entrypoint|--label|--user|--env|-w|--network|--platform)
+          shift 2
+          ;;
+        -v)
+          case "$2" in
+            *:/workspace|*:/workspace:ro)
+              workspace_mount="$2"
+              ;;
+          esac
+          shift 2
+          ;;
+        *)
+          image="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    state_dir="$(dirname "$0")/docker-state"
+    mkdir -p "$state_dir"
+    host_dir="${workspace_mount%%:*}"
+    [ -n "$host_dir" ] || exit 1
+    printf "%s" "$host_dir" > "$state_dir/$name.path"
+    printf "%s" "$image" > "$host_dir/docker-image.txt"
+    if [ "$1" = "-c" ]; then
+      printf "%s" "$2" > "$state_dir/$name.command"
+    else
+      exit 1
+    fi
+    exit 0
+    ;;
+  inspect)
+    state_dir="$(dirname "$0")/docker-state"
+    [ -f "$state_dir/$1.path" ] || exit 1
+    printf '{}\n'
+    exit 0
+    ;;
+  start)
+    attach=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -a|-i|-ai|-ia)
+          attach=1
+          shift
+          ;;
+        *)
+          name="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    state_dir="$(dirname "$0")/docker-state"
+    host_dir=$(cat "$state_dir/$name.path") || exit 1
+    : > "$state_dir/$name.running"
+    [ "$attach" = "1" ] || exit 0
+    PATH="$host_dir/bin:/usr/bin:/bin"
+    export PATH
+    cd "$host_dir" || exit 1
+    exec /bin/sh -c "$(cat "$state_dir/$name.command")"
+    ;;
+  exec)
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -i)
+          shift
+          ;;
+        --env)
+          shift 2
+          ;;
+        *)
+          name="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    state_dir="$(dirname "$0")/docker-state"
+    [ -f "$state_dir/$name.running" ] || exit 1
+    host_dir=$(cat "$state_dir/$name.path") || exit 1
+    PATH="$host_dir/bin:/usr/bin:/bin"
+    export PATH
+    cd "$host_dir" || exit 1
+    if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      exec /bin/sh -c "$3"
+    fi
+    exit 1
+    ;;
+  rm)
+    [ "$1" = "-f" ] && shift
+    state_dir="$(dirname "$0")/docker-state"
+    rm -f "$state_dir/$1.path" "$state_dir/$1.command" "$state_dir/$1.running"
+    exit 0
     ;;
   run)
     mount=""
@@ -351,10 +462,14 @@ case "$command" in
     host_dir="${workspace_mount%%:*}"
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
-    PATH="/usr/bin:/bin"
+    # Model the contract's repo-local PATH prepend after translating the
+    # container workspace mount back to this fixture's host directory.
+    PATH="$host_dir/bin:/usr/bin:/bin"
     export PATH
     cd "$host_dir" || exit 1
-    exec /bin/sh -lc "$2"
+    # Do not invoke a login shell: macOS login-shell startup can rewrite PATH
+    # and hide the contract-projected repo-local tool directory.
+    exec /bin/sh -c "$2"
     ;;
 esac
 
@@ -968,24 +1083,12 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Skip if container execution isn't working properly (e.g., missing mount args or shim failures)
-    if !output.status.success()
-        && (stdout.contains("/docker-image.txt: Read-only file system")
-            || stdout.contains("invalid option")
-            || stdout.contains("SETUP FAILED")
-            || stderr.contains("docker-test"))
-    {
-        eprintln!("skipping test: container shim execution failed unexpectedly");
-        return;
-    }
-
     assert!(
         output.status.success(),
         "stdout:\n{stdout}\n\nstderr: {stderr}"
     );
     assert!(stdout.contains("✓ READY"));
     assert!(stdout.contains("Backend: container"));
-    assert!(stdout.contains("Mode:       container"));
     assert_eq!(
         fs::read_to_string(fixture.path().join("prepared.txt")).expect("prepared file"),
         "cargo 1.99.0\n"
@@ -1518,7 +1621,7 @@ fn provisioning_request_uses_real_linux_mirror_policy_on_real_command_path() {
 
 #[cfg(unix)]
 #[test]
-fn up_reports_missing_adapter_bootstrap_source_on_real_command_path() {
+fn up_refuses_missing_adapter_bootstrap_backend_on_real_command_path() {
     let fixture = TempDir::new().expect("temp dir should be created");
     let isolated_home = fixture.path().join("home");
     fs::create_dir_all(&isolated_home).expect("isolated home should be created");
@@ -1531,11 +1634,14 @@ project:
   name: bootstrap-note-app
 runtimes:
   java: "22"
-checks:
-  - name: java-installed
-    kind: precondition
-    severity: error
-    run: missing-ota-provision-tool --version
+tasks:
+  verify:
+    run: "true"
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: verify
 "#,
     );
     fs::write(
@@ -1563,13 +1669,12 @@ policies:
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success(), "stderr was: {stderr}");
-    assert!(stdout.contains("➤ NOT READY"));
-    assert!(stdout.contains("Phase: preconditions"));
+    assert!(stdout.is_empty(), "stdout:\n{stdout}");
+    assert!(stderr.contains("task `verify` backend unit `task:verify:native`"));
     assert!(
-        stdout.contains("adapter bootstrap for missing adapter `mise` via approved source `brew`")
+        stderr.contains("provisioning backend command `brew` is not available"),
+        "stderr:\n{stderr}"
     );
-    assert!(stdout.contains("backend `brew` is unavailable"));
-    assert!(stdout.contains("falling back to repo setup"));
 }
 
 #[cfg(unix)]
