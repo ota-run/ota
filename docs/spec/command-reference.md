@@ -2229,6 +2229,8 @@ ota receipt --snapshot promoted [PATH]
 ota receipt --snapshot ./.ota/contracts/sha256-....json [PATH]
 ota receipt --snapshot ./.ota/receipts/repo-receipt-....json [PATH]
 ota receipt --history [PATH]
+ota receipt --history --source systemd_protected_launcher
+ota receipt --history --source systemd_protected_launcher --archive-identity sha256:...
 ota receipt --member api [PATH]
 ```
 
@@ -2272,6 +2274,19 @@ Current behavior:
 - `--archive --promote-baseline` also writes `.ota/receipts/repo-baseline.json`, pointing at the archived receipt as the repo's explicit promoted baseline
 - `--history` lists valid archived repo receipts from `.ota/receipts` newest first without loading
   or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- `--history --source systemd_protected_launcher` is the Linux production history path for a
+  protected systemd Launcher deployment. It connects only to the fixed
+  `/run/ota/authority-history.sock`, derives repository and catalog selection from the live
+  least-privilege operator peer plus administrator-owned mapping, retrieves the receipt archive,
+  immutable contract snapshot, and launcher-finalization sidecar as one bounded content-addressed
+  catalog snapshot, then runs Core's existing semantic archive verifier over those exact bytes
+- protected history accepts optional `--archive-identity <sha256:...>` for one exact archive. It
+  accepts no repository path, `--file`, or `OTA_FILE` override, exposes no protected storage path,
+  and never falls back to `.ota/receipts` when the service, mapping, catalog, object, framing, or
+  verification path refuses. Each returned archive carries its content identity and protected
+  catalog-entry identity; ordinary local history omits those protected-selection fields
+- operator deployment, fixed Linux layout, ownership, and bounded trust claims are documented in
+  the public [Broker Crossing Authority reference](https://ota.run/docs/reference/broker-crossing-authority)
 - archives created before normalized snapshot references are retained under `invalid_archives[]`
   with `posture: legacy_unverified`. They remain inspectable, but cannot be selected as a latest or
   promoted baseline, proof input, or crossing-authority record
@@ -2302,7 +2317,10 @@ Text output:
 - header: `RECEIPT <path>`
 - prints the receipt steps, compact contract identity, summary, env sources, policy lines, and blocked items when present
 - `--archive --promote-baseline` adds `Baseline:` and `Promoted:` summary lines so the operator can see which archive became the explicit repo baseline
-- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, archived status, contract path, and any preserved execution identity fields such as context, backend, target, provider, lifecycle, and cwd; malformed archived files are skipped and surfaced under `Skipped Archives`
+- `--history` switches the text header to `RECEIPT HISTORY <path>`, reports the selected source and
+  completeness posture, and lists archived receipts with their archived time, status, contract,
+  and preserved execution identity fields; malformed or semantically invalid archives are surfaced
+  under `Skipped Archives`
 - `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
 - `--baseline` also preserves execution identity on both sides when present, including archived/current `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd`
 - `--baseline` includes the advisory correlation posture inside the `Drift:` overview line so
@@ -2324,7 +2342,11 @@ JSON output:
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, compact contract counts, and optional `receipt.workflow_env_artifacts` when the selected/default workflow owns rendered env artifacts
 - `findings`
-- `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
+- `--history` switches `mode` to `history` and returns `history_source`,
+  `completeness_posture`, `summary.archive_count`, `summary.invalid_archive_count`, an `archives`
+  array for valid archived receipts, and `invalid_archives` for malformed or semantically invalid
+  evidence. Protected history additionally returns its bounded operator-profile posture,
+  repository-binding identity, catalog-namespace identity, and complete catalog-snapshot identity
 - `--snapshot` switches `mode` to `snapshot` and returns additive `source`, `selection_kind`,
   `selection_path`, `archive_path`, `archived_at`, `promoted_at`, `snapshot_hash`,
   `snapshot_path`, `contract`, and the normalized archived `snapshot`

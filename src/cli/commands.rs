@@ -50,7 +50,7 @@ use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistHostScopeArg,
     AssistNormalizeIntoArg, AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
     AssistTaskListenerProtocolArg, AssistTaskTargetActivationModeArg,
-    AssistTaskTargetAddressViewArg,
+    AssistTaskTargetAddressViewArg, ReceiptHistorySource,
 };
 use crate::adapter_inputs::bind_workflow_adapter_overlays;
 use crate::ci_projection::{
@@ -31250,6 +31250,8 @@ pub fn receipt(
     baseline: Option<&str>,
     fail_on_new_blockers: bool,
     history: bool,
+    history_source: ReceiptHistorySource,
+    archive_identity: Option<&str>,
     archive: bool,
     promote_baseline: bool,
     debug: bool,
@@ -31258,6 +31260,30 @@ pub fn receipt(
     let mode = mode_override.unwrap_or(DoctorMode::Native);
     let doctor_lifecycle = overrides.lifecycle;
     if history {
+        let protected_source = history_source == ReceiptHistorySource::SystemdProtectedLauncher;
+        let history_selection_error = if protected_source
+            && (path.is_some() || file_override.is_some() || env::var_os("OTA_FILE").is_some())
+        {
+            Some(String::from(
+                "systemd protected receipt history derives the repository from its protected peer mapping; path and contract-file overrides are not allowed",
+            ))
+        } else if !protected_source && archive_identity.is_some() {
+            Some(String::from(
+                "`--archive-identity` is supported only with `--source systemd_protected_launcher`",
+            ))
+        } else {
+            None
+        };
+        if let Some(error) = history_selection_error {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Json => CommandOutput::failure(error),
+                },
+                debug,
+                vec![String::from("DEBUG command=receipt.history")],
+            );
+        }
         let history_root = match resolve_receipt_history_root(path, file_override) {
             Ok(root) => root,
             Err(error) => {
@@ -31291,7 +31317,11 @@ pub fn receipt(
             format!("DEBUG receipt_root={history_path}"),
         ];
         return finalize_debug(
-            match load_repo_receipt_history(&history_root) {
+            match if protected_source {
+                load_protected_repo_receipt_history(&history_root, archive_identity)
+            } else {
+                load_repo_receipt_history(&history_root)
+            } {
                 Ok(report) => render_repo_receipt_history(
                     &compact_repo_path(&history_root),
                     &history_path,
@@ -40601,6 +40631,14 @@ fn resolve_receipt_history_file_root(path: &Path, source: &str) -> Result<PathBu
             path.display()
         ));
     }
+    if source == "PATH"
+        && path.file_name().and_then(|name| name.to_str()) != Some(DEFAULT_CONTRACT_FILE)
+    {
+        return Err(format!(
+            "receipt history path must point to `{DEFAULT_CONTRACT_FILE}` or a repo directory: `{}`",
+            path.display()
+        ));
+    }
     Ok(contract_working_dir(path).to_path_buf())
 }
 
@@ -40645,6 +40683,15 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
             compact_path(path, ".")
         )
     })?;
+    read_repo_receipt_archive_record_from_bytes(path, &payload_bytes, None, None)
+}
+
+fn read_repo_receipt_archive_record_from_bytes(
+    path: &Path,
+    payload_bytes: &[u8],
+    contract_snapshot_bytes: Option<&[u8]>,
+    launcher_finalization_bytes: Option<&[u8]>,
+) -> Result<RepoReceiptArchiveRecord, String> {
     let receipt_archive_identity = contract_snapshot_hash(&payload_bytes);
     let payload: ArchivedRepoReceiptEnvelope =
         serde_json::from_slice(&payload_bytes).map_err(|error| {
@@ -40673,14 +40720,22 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
             compact_path(path, ".")
         ));
     }
+    let archived_at = payload
+        .archive_path
+        .as_deref()
+        .and_then(|value| repo_receipt_archive_timestamp(Path::new(value)))
+        .or_else(|| repo_receipt_archive_timestamp(path));
     let record = RepoReceiptArchiveRecord {
         archive_path: path.to_path_buf(),
-        archived_at: repo_receipt_archive_timestamp(path),
+        archived_at,
         payload,
     };
     // Receipt history is archive-only verification. Do not consult the mutable worktree contract:
     // every archived repo receipt must carry the exact normalized snapshot it was issued from.
-    let (crossing_snapshot, _) = required_archived_repo_receipt_snapshot_with_path(&record)?;
+    let (crossing_snapshot, _) = required_archived_repo_receipt_snapshot_with_path_and_bytes(
+        &record,
+        contract_snapshot_bytes,
+    )?;
     let crossing_contract = serde_json::from_value::<Contract>(crossing_snapshot).map_err(|error| {
         format!(
             "receipt archive `{}` contains a contract snapshot that cannot re-derive crossing authority: {error}",
@@ -40885,13 +40940,22 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
                                 "receipt archive `{}` contains unreconciled broker authority evidence: {error}",
                                 compact_path(path, ".")
                             )
-                        })?;
+                })?;
                 if archived.requires_portable_launcher_finalization() {
-                    verify_receipt_launcher_finalization_sidecar(
-                        path,
-                        &receipt_archive_identity,
-                        archived,
-                    )?;
+                    if let Some(bytes) = launcher_finalization_bytes {
+                        verify_receipt_launcher_finalization_sidecar_with_bytes(
+                            path,
+                            &receipt_archive_identity,
+                            archived,
+                            Some(bytes),
+                        )?;
+                    } else {
+                        verify_receipt_launcher_finalization_sidecar(
+                            path,
+                            &receipt_archive_identity,
+                            archived,
+                        )?;
+                    }
                 }
                 let expected = crossing_authority_output_with_transaction(
                     &VerifiedCrossingAuthorityAdmission::AuthorityBroker(
@@ -40960,14 +41024,34 @@ fn verify_receipt_launcher_finalization_sidecar(
             compact_path(archive_path, ".")
         )
     })?;
+    verify_receipt_launcher_finalization_sidecar_with_bytes(
+        archive_path,
+        receipt_archive_identity,
+        broker_archive,
+        Some(&bytes),
+    )
+}
+
+fn verify_receipt_launcher_finalization_sidecar_with_bytes(
+    archive_path: &Path,
+    receipt_archive_identity: &str,
+    broker_archive: &crate::broker_session::BrokerArchiveEvidence,
+    bytes: Option<&[u8]>,
+) -> Result<(), String> {
+    let bytes = bytes.ok_or_else(|| {
+        format!(
+            "receipt archive `{}` omits required launcher finalization evidence",
+            compact_path(archive_path, ".")
+        )
+    })?;
     let sidecar: ota_authority_protocol::LauncherFinalizationArchiveSidecarV1 =
-        serde_json::from_slice(&bytes).map_err(|_| {
+        serde_json::from_slice(bytes).map_err(|_| {
             format!(
                 "receipt archive `{}` has malformed launcher finalization evidence",
                 compact_path(archive_path, ".")
             )
         })?;
-    if serde_jcs::to_vec(&sidecar).ok().as_deref() != Some(bytes.as_slice()) {
+    if serde_jcs::to_vec(&sidecar).ok().as_deref() != Some(bytes) {
         return Err(format!(
             "receipt archive `{}` has non-canonical launcher finalization evidence",
             compact_path(archive_path, ".")
@@ -41332,10 +41416,14 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
 }
 
 fn receipt_history_invalid_archive_posture(path: &Path) -> String {
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Ok(contents) = fs::read(path) else {
         return String::from("invalid");
     };
-    let Ok(payload) = serde_json::from_str::<ArchivedRepoReceiptEnvelope>(&contents) else {
+    receipt_history_invalid_archive_posture_from_bytes(&contents)
+}
+
+fn receipt_history_invalid_archive_posture_from_bytes(contents: &[u8]) -> String {
+    let Ok(payload) = serde_json::from_slice::<ArchivedRepoReceiptEnvelope>(contents) else {
         return String::from("invalid");
     };
     if payload
@@ -41358,28 +41446,95 @@ fn receipt_history_invalid_archive_posture(path: &Path) -> String {
 fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, String> {
     let scan = scan_repo_receipt_archives(root)?;
     Ok(RepoReceiptHistoryReport {
+        history_source: String::from("local"),
+        completeness_posture: String::from("local_archive_directory_observed"),
+        operator_profile_posture: None,
+        operator_profile_identity: None,
+        operator_peer_identity: None,
+        repository_binding_identity: None,
+        catalog_namespace_identity: None,
+        catalog_snapshot_identity: None,
         archives: scan
             .archives
             .into_iter()
-            .map(|archive| ReceiptHistoryEntry {
-                archive_path: receipt_storage_path_display(&archive.archive_path),
-                archived_at: archive
-                    .archived_at
-                    .unwrap_or_else(|| String::from("unknown")),
-                ok: archive.payload.ok,
-                contract: archive.payload.receipt.contract,
-                workflow: archive.payload.workflow,
-                status: archive.payload.receipt.status,
-                backend: archive.payload.receipt.backend,
-                target: archive.payload.receipt.target,
-                provider: archive.payload.receipt.provider,
-                context: archive.payload.receipt.context,
-                lifecycle: archive.payload.receipt.lifecycle,
-                cwd: archive.payload.receipt.cwd,
-                summary: archive.payload.summary.into(),
-            })
+            .map(repo_receipt_history_entry)
             .collect(),
         invalid_archives: scan.invalid_archives,
+    })
+}
+
+fn repo_receipt_history_entry(archive: RepoReceiptArchiveRecord) -> ReceiptHistoryEntry {
+    ReceiptHistoryEntry {
+        archive_path: receipt_storage_path_display(&archive.archive_path),
+        archive_identity: None,
+        catalog_identity: None,
+        archived_at: archive
+            .archived_at
+            .unwrap_or_else(|| String::from("unknown")),
+        ok: archive.payload.ok,
+        contract: archive.payload.receipt.contract,
+        workflow: archive.payload.workflow,
+        status: archive.payload.receipt.status,
+        backend: archive.payload.receipt.backend,
+        target: archive.payload.receipt.target,
+        provider: archive.payload.receipt.provider,
+        context: archive.payload.receipt.context,
+        lifecycle: archive.payload.receipt.lifecycle,
+        cwd: archive.payload.receipt.cwd,
+        summary: archive.payload.summary.into(),
+    }
+}
+
+fn load_protected_repo_receipt_history(
+    root: &Path,
+    archive_identity: Option<&str>,
+) -> Result<RepoReceiptHistoryReport, String> {
+    let protected = crate::protected_history::load_protected_history(archive_identity)?;
+    let mut archives = Vec::new();
+    let mut invalid_archives = Vec::new();
+    for entry in protected.entries {
+        let logical_name = format!(
+            "protected-{}.json",
+            entry.archive_identity.trim_start_matches("sha256:")
+        );
+        let logical_path = root.join(".ota").join("receipts").join(logical_name);
+        match read_repo_receipt_archive_record_from_bytes(
+            &logical_path,
+            &entry.archive,
+            Some(&entry.contract_snapshot),
+            Some(&entry.sidecar),
+        ) {
+            Ok(mut record) => {
+                record.archive_path = PathBuf::from(format!(
+                    "systemd_protected_launcher:{}",
+                    entry.archive_identity
+                ));
+                let mut history_entry = repo_receipt_history_entry(record);
+                history_entry.archive_identity = Some(entry.archive_identity);
+                history_entry.catalog_identity = Some(entry.catalog_identity);
+                archives.push(history_entry);
+            }
+            Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
+                archive_path: format!(
+                    "systemd_protected_launcher:{}:{}",
+                    entry.catalog_identity, entry.archive_identity
+                ),
+                posture: receipt_history_invalid_archive_posture_from_bytes(&entry.archive),
+                error,
+            }),
+        }
+    }
+    Ok(RepoReceiptHistoryReport {
+        history_source: String::from("systemd_protected_launcher"),
+        completeness_posture: String::from("complete_selected_catalog_snapshot"),
+        operator_profile_posture: Some(protected.operator_posture),
+        operator_profile_identity: Some(protected.operator_profile_identity),
+        operator_peer_identity: Some(protected.operator_peer_identity),
+        repository_binding_identity: Some(protected.repository_binding_identity),
+        catalog_namespace_identity: Some(protected.catalog_namespace_identity),
+        catalog_snapshot_identity: Some(protected.catalog_snapshot_identity),
+        archives,
+        invalid_archives,
     })
 }
 
@@ -41754,8 +41909,9 @@ fn archived_repo_receipt_snapshot_with_path(
     Ok(Some((snapshot, snapshot_path)))
 }
 
-fn required_archived_repo_receipt_snapshot_with_path(
+fn required_archived_repo_receipt_snapshot_with_path_and_bytes(
     record: &RepoReceiptArchiveRecord,
+    protected_snapshot_bytes: Option<&[u8]>,
 ) -> Result<(JsonValue, PathBuf), String> {
     let snapshot_ref = record
         .payload
@@ -41782,15 +41938,18 @@ fn required_archived_repo_receipt_snapshot_with_path(
                 "receipt archive `{}` is unverifiable because it omits immutable `receipt.contract_snapshot_hash`",
                 compact_path(&record.archive_path, ".")
             )
-        })?;
-    let snapshot_path = resolve_diff_snapshot_ref(&record.archive_path, snapshot_ref);
-    let contents = fs::read(&snapshot_path).map_err(|error| {
-        format!(
-            "failed to load archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
-            snapshot_path.display(),
-            record.archive_path.display()
-        )
     })?;
+    let snapshot_path = resolve_diff_snapshot_ref(&record.archive_path, snapshot_ref);
+    let contents = match protected_snapshot_bytes {
+        Some(contents) => contents.to_vec(),
+        None => fs::read(&snapshot_path).map_err(|error| {
+            format!(
+                "failed to load archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+                snapshot_path.display(),
+                record.archive_path.display()
+            )
+        })?,
+    };
     let observed_hash = contract_snapshot_hash(&contents);
     if observed_hash != expected_hash {
         return Err(format!(
@@ -66301,6 +66460,8 @@ workflows:
             None,
             false,
             false,
+            crate::cli::ReceiptHistorySource::Local,
+            None,
             true,
             false,
             false,
@@ -66320,6 +66481,8 @@ workflows:
             None,
             false,
             false,
+            crate::cli::ReceiptHistorySource::Local,
+            None,
             true,
             false,
             false,
@@ -66339,6 +66502,8 @@ workflows:
             Some("latest"),
             false,
             false,
+            crate::cli::ReceiptHistorySource::Local,
+            None,
             false,
             false,
             false,
@@ -73950,6 +74115,47 @@ tasks:
             error.contains("carrier-neutral admission evidence that does not match"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn protected_receipt_history_uses_injected_snapshot_without_local_fallback() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let snapshot = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "project": {"name": "protected-history"}
+        }))
+        .expect("snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        let archive = serde_json::to_vec(&serde_json::json!({
+            "ok": true,
+            "mode": "receipt",
+            "receipt": {
+                "scope": "repo",
+                "contract": "ota.yaml",
+                "contract_snapshot_hash": snapshot_hash,
+                "contract_snapshot_ref": ".ota/contracts/protected-history.json"
+            }
+        }))
+        .expect("archive");
+        let logical_path = repo.path().join(".ota/receipts/protected-history.json");
+
+        super::read_repo_receipt_archive_record_from_bytes(
+            &logical_path,
+            &archive,
+            Some(&snapshot),
+            None,
+        )
+        .expect("protected snapshot bytes should satisfy semantic verification");
+        assert!(!repo.path().join(".ota/contracts").exists());
+
+        let error = super::read_repo_receipt_archive_record_from_bytes(
+            &logical_path,
+            &archive,
+            Some(b"{}"),
+            None,
+        )
+        .expect_err("substituted protected snapshot must refuse");
+        assert!(error.contains("expected"), "{error}");
     }
 
     #[test]
@@ -126781,6 +126987,14 @@ struct RepoReceiptReport {
 }
 
 struct RepoReceiptHistoryReport {
+    history_source: String,
+    completeness_posture: String,
+    operator_profile_posture: Option<String>,
+    operator_profile_identity: Option<String>,
+    operator_peer_identity: Option<String>,
+    repository_binding_identity: Option<String>,
+    catalog_namespace_identity: Option<String>,
+    catalog_snapshot_identity: Option<String>,
     archives: Vec<ReceiptHistoryEntry>,
     invalid_archives: Vec<ReceiptHistoryInvalidArchive>,
 }
@@ -128386,6 +128600,18 @@ fn render_repo_receipt_history(
                 paint_key("Archives:"),
                 report.archives.len()
             ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Source:"),
+                report.history_source
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Completeness:"),
+                report.completeness_posture
+            ));
             if !report.invalid_archives.is_empty() {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
@@ -128470,6 +128696,14 @@ fn render_repo_receipt_history(
                 ok: true,
                 path: json_path,
                 mode: "history",
+                history_source: &report.history_source,
+                completeness_posture: &report.completeness_posture,
+                operator_profile_posture: report.operator_profile_posture.as_deref(),
+                operator_profile_identity: report.operator_profile_identity.as_deref(),
+                operator_peer_identity: report.operator_peer_identity.as_deref(),
+                repository_binding_identity: report.repository_binding_identity.as_deref(),
+                catalog_namespace_identity: report.catalog_namespace_identity.as_deref(),
+                catalog_snapshot_identity: report.catalog_snapshot_identity.as_deref(),
                 summary: ReceiptHistorySummary {
                     archive_count: report.archives.len(),
                     invalid_archive_count: report.invalid_archives.len(),

@@ -5785,6 +5785,8 @@ Current receipt diff JSON fields:
   "ok": true,
   "path": "/abs/path/to/repo",
   "mode": "history",
+  "history_source": "local",
+  "completeness_posture": "local_archive_directory_observed",
   "summary": {
     "archive_count": 2,
     "invalid_archive_count": 1
@@ -5807,6 +5809,7 @@ Current receipt diff JSON fields:
   "invalid_archives": [
     {
       "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260412-090000-000Z.json",
+      "posture": "invalid",
       "error": "failed to parse receipt archive `./.ota/receipts/repo-receipt-20260412-090000-000Z.json`: EOF while parsing a value at line 1 column 10"
     }
   ]
@@ -5818,10 +5821,19 @@ Current receipt history JSON fields:
 - `ok`
 - `path` (resolved repo boundary for the archive read)
 - `mode` (`history`)
+- `history_source` (`local | systemd_protected_launcher`)
+- `completeness_posture` (`local_archive_directory_observed` for the ordinary archive directory,
+  or `complete_selected_catalog_snapshot` for a fully returned protected manifest)
+- `operator_profile_posture`, `operator_profile_identity`, and `operator_peer_identity` for the
+  protected least-privilege `non_agent` operator session
+- `repository_binding_identity`, `catalog_namespace_identity`, and `catalog_snapshot_identity`
+  for protected history; these are bounded selection evidence, not human or CI identity
 - `summary.archive_count`
 - `summary.invalid_archive_count`
 - `archives[]`
 - `archives[].archive_path`
+- `archives[].archive_identity` and `archives[].catalog_identity` for protected history; local
+  history omits both because it has no protected catalog selection
 - `archives[].archived_at`
 - `archives[].ok`
 - `archives[].contract`
@@ -5832,7 +5844,14 @@ Current receipt history JSON fields:
 - `archives[].summary`
 - `invalid_archives[]` when malformed archive files were skipped
 - `invalid_archives[].archive_path`
+- `invalid_archives[].posture` (`legacy_unverified | invalid`)
 - `invalid_archives[].error`
+
+`ota receipt --json --history --source systemd_protected_launcher` is Linux-only and uses the
+fixed protected Launcher history socket. It accepts no path, `--file`, or `OTA_FILE` override and
+never falls back to local archives. Launcher proves protected acquisition, catalog, and object
+integrity; Core reconstructs the exact archive, immutable contract snapshot, and finalization
+sidecar bytes and remains the sole semantic receipt verifier.
 
 When `--member <name>` is set against a monorepo root, `receipt.contract` points at the selected
 member contract path while the readiness findings reflect the merged member target.

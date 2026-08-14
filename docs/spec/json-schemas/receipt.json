@@ -3031,11 +3031,34 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "mode", "summary", "archives"],
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "history_source",
+        "completeness_posture",
+        "summary",
+        "archives"
+      ],
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },
         "mode": { "const": "history" },
+        "history_source": { "enum": ["local", "systemd_protected_launcher"] },
+        "completeness_posture": {
+          "enum": [
+            "local_archive_directory_observed",
+            "complete_selected_catalog_snapshot"
+          ]
+        },
+        "operator_profile_posture": {
+          "const": "least_privilege_operator_peer_verified"
+        },
+        "operator_profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "operator_peer_identity": { "$ref": "#/$defs/sha256Identity" },
+        "repository_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "catalog_namespace_identity": { "$ref": "#/$defs/sha256Identity" },
+        "catalog_snapshot_identity": { "$ref": "#/$defs/sha256Identity" },
         "summary": {
           "type": "object",
           "additionalProperties": false,
@@ -3053,6 +3076,8 @@
             "required": ["archive_path", "archived_at", "ok", "contract", "summary"],
             "properties": {
               "archive_path": { "type": "string" },
+              "archive_identity": { "$ref": "#/$defs/sha256Identity" },
+              "catalog_identity": { "$ref": "#/$defs/sha256Identity" },
               "archived_at": { "type": "string" },
               "ok": { "type": "boolean" },
               "contract": { "type": "string" },
@@ -3093,7 +3118,65 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "history_source": { "const": "systemd_protected_launcher" }
+            }
+          },
+          "then": {
+            "required": [
+              "operator_profile_posture",
+              "operator_profile_identity",
+              "operator_peer_identity",
+              "repository_binding_identity",
+              "catalog_namespace_identity",
+              "catalog_snapshot_identity"
+            ],
+            "properties": {
+              "completeness_posture": {
+                "const": "complete_selected_catalog_snapshot"
+              },
+              "archives": {
+                "items": {
+                  "required": ["archive_identity", "catalog_identity"]
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "completeness_posture": {
+                "const": "local_archive_directory_observed"
+              }
+            },
+            "not": {
+              "anyOf": [
+                { "required": ["operator_profile_posture"] },
+                { "required": ["operator_profile_identity"] },
+                { "required": ["operator_peer_identity"] },
+                { "required": ["repository_binding_identity"] },
+                { "required": ["catalog_namespace_identity"] },
+                { "required": ["catalog_snapshot_identity"] }
+              ]
+            },
+            "properties": {
+              "archives": {
+                "items": {
+                  "not": {
+                    "anyOf": [
+                      { "required": ["archive_identity"] },
+                      { "required": ["catalog_identity"] }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",

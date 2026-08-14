@@ -487,6 +487,17 @@ enum Commands {
             ]
         )]
         history: bool,
+        /// Select the local archive directory or the protected systemd Launcher history service.
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = ReceiptHistorySource::Local,
+            requires = "history"
+        )]
+        source: ReceiptHistorySource,
+        /// Select one exact protected receipt archive identity.
+        #[arg(long, value_name = "SHA256", requires = "history")]
+        archive_identity: Option<String>,
         /// Archive the receipt JSON to `.ota/receipts`.
         #[arg(long, action = ArgAction::SetTrue)]
         archive: bool,
@@ -1492,6 +1503,29 @@ enum WorkspaceExecutionCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+pub(super) enum ReceiptHistorySource {
+    #[default]
+    Local,
+    #[value(name = "systemd_protected_launcher")]
+    SystemdProtectedLauncher,
+}
+
+impl ReceiptHistorySource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::SystemdProtectedLauncher => "systemd_protected_launcher",
+        }
+    }
+}
+
+impl std::fmt::Display for ReceiptHistorySource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -5595,6 +5629,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             baseline,
             fail_on_new_blockers,
             history,
+            source,
+            archive_identity,
             archive,
             promote_baseline,
             backend,
@@ -5623,6 +5659,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             baseline.as_deref(),
             fail_on_new_blockers,
             history,
+            source,
+            archive_identity.as_deref(),
             archive,
             promote_baseline,
             debug,
@@ -10428,6 +10466,30 @@ tasks:
     }
 
     #[test]
+    fn protected_receipt_history_refuses_repository_path_overrides_before_connecting() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+"#,
+        );
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--history",
+            "--source",
+            "systemd_protected_launcher",
+            fixture.path(),
+        ]);
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            strip_ansi(&output.stderr.unwrap_or(output.stdout))
+                .contains("path and contract-file overrides are not allowed")
+        );
+    }
+
+    #[test]
     fn receipt_history_json_lists_archived_receipts() {
         let fixture = ContractFixture::new(
             r#"
@@ -10559,34 +10621,7 @@ tasks:
     #[test]
     fn receipt_history_json_preserves_status_and_remote_execution_fields() {
         let fixture = ContractFixture::new_dir();
-
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
-            r#"
-{
-  "ok": false,
-  "mode": "receipt",
-  "summary": {
-    "error_count": 1,
-    "warn_count": 0,
-    "info_count": 0,
-    "step_count": 2
-  },
-  "receipt": {
-    "scope": "repo",
-    "contract": "./ota.yaml",
-    "status": "interrupted",
-    "backend": "remote",
-    "target": "sandbox-dev",
-    "provider": "daytona",
-    "context": "remote_app",
-    "lifecycle": "persistent",
-    "cwd": "/workspace/app"
-  },
-  "findings": []
-}
-"#,
-        );
+        write_remote_history_receipt(&fixture);
 
         let output = run_with(["ota", "receipt", "--json", "--history", fixture.path()]);
 
@@ -10604,34 +10639,7 @@ tasks:
     #[test]
     fn receipt_history_text_reports_status_context_and_target() {
         let fixture = ContractFixture::new_dir();
-
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
-            r#"
-{
-  "ok": false,
-  "mode": "receipt",
-  "summary": {
-    "error_count": 1,
-    "warn_count": 0,
-    "info_count": 0,
-    "step_count": 2
-  },
-  "receipt": {
-    "scope": "repo",
-    "contract": "./ota.yaml",
-    "status": "interrupted",
-    "backend": "remote",
-    "target": "sandbox-dev",
-    "provider": "daytona",
-    "context": "remote_app",
-    "lifecycle": "persistent",
-    "cwd": "/workspace/app"
-  },
-  "findings": []
-}
-"#,
-        );
+        write_remote_history_receipt(&fixture);
 
         let output = run_with(["ota", "receipt", "--history", fixture.path()]);
 
@@ -19961,6 +19969,8 @@ tasks:
                     baseline: None,
                     fail_on_new_blockers: false,
                     history: false,
+                    source: super::ReceiptHistorySource::Local,
+                    archive_identity: None,
                     archive: false,
                     promote_baseline: false,
                     backend: None,
@@ -28899,6 +28909,39 @@ policies:
                 assert!(backend.is_none());
                 assert!(lifecycle.is_none());
                 assert_eq!(path.as_deref(), Some(Path::new(".")));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn receipt_protected_history_source_and_exact_archive_identity_parse() {
+        let identity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cli = try_parse_cli_on_test_stack(&[
+            "ota",
+            "receipt",
+            "--history",
+            "--source",
+            "systemd_protected_launcher",
+            "--archive-identity",
+            identity,
+        ])
+        .expect("protected receipt history flags should parse");
+        match cli.command {
+            Commands::Receipt {
+                history,
+                source,
+                archive_identity,
+                path,
+                ..
+            } => {
+                assert!(history);
+                assert_eq!(
+                    source,
+                    super::ReceiptHistorySource::SystemdProtectedLauncher
+                );
+                assert_eq!(archive_identity.as_deref(), Some(identity));
+                assert!(path.is_none());
             }
             other => panic!("unexpected command parsed: {other:?}"),
         }
@@ -50475,6 +50518,48 @@ tasks:
             std::str::from_utf8(&bytes).expect("utf8 snapshot"),
         );
         (relative, hash)
+    }
+
+    fn write_remote_history_receipt(fixture: &ContractFixture) {
+        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+            fixture,
+            "remote-history",
+            serde_json::json!({
+                "version": 1,
+                "project": {"name": "receipt-demo"}
+            }),
+        );
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
+            &format!(
+                r#"
+{{
+  "ok": false,
+  "mode": "receipt",
+  "summary": {{
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  }},
+  "receipt": {{
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "contract_snapshot_ref": "{snapshot_ref}",
+    "contract_snapshot_hash": "{snapshot_hash}",
+    "status": "interrupted",
+    "backend": "remote",
+    "target": "sandbox-dev",
+    "provider": "daytona",
+    "context": "remote_app",
+    "lifecycle": "persistent",
+    "cwd": "/workspace/app"
+  }},
+  "findings": []
+}}
+"#
+            ),
+        );
     }
 
     #[test]

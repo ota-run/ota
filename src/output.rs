@@ -2711,6 +2711,10 @@ pub struct ReceiptHistorySummary {
 #[derive(Debug, Serialize, Clone)]
 pub struct ReceiptHistoryEntry {
     pub archive_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_identity: Option<String>,
     pub archived_at: String,
     pub ok: bool,
     pub contract: String,
@@ -2747,6 +2751,20 @@ pub struct ReceiptHistorySuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub mode: &'a str,
+    pub history_source: &'a str,
+    pub completeness_posture: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator_profile_posture: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator_profile_identity: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operator_peer_identity: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_binding_identity: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_namespace_identity: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_snapshot_identity: Option<&'a str>,
     pub summary: ReceiptHistorySummary,
     pub archives: &'a [ReceiptHistoryEntry],
     #[serde(skip_serializing_if = "slice_is_empty")]

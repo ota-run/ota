@@ -1035,23 +1035,32 @@ finalization verification without
   archives for positive execution and all three terminal crash-recovery points; consumed one-use
   authority; unchanged refusal/crash worktrees; and separate root-owned cleanup-finalization and
   archive-attachment issuance records.
-  The canonical Skill, both installed mirrors, and the Site reference carry the same boundary;
-  Examples are unaffected because no contract-authoring shape changed. A production attachment and
-  least-privilege history client, independently administered launcher separation, and provider-
-  attested authority remain open, so V11.7 remains active and partial.
-  The next planning batch defines those first two production surfaces without widening crossing
-  authority: an installed `ota-authority-systemd-client` reuses the existing untrusted invocation
-  request, while `ota receipt --history --source systemd_protected_launcher` queries a fixed
-  protected history socket. An administrator-owned mapping resolves one exact working-directory
-  instance to one authority and catalog namespace; moves, remounts, and fresh checkouts require
-  explicit rebinding. Launcher freezes the archive through its retained repository descriptor,
-  obtains both producer signatures, freezes the resulting sidecar, and only then publishes
-  root-owned content-addressed blobs and a catalog entry. Launcher owns protected acquisition and
-  storage integrity; Core remains the sole semantic archive verifier. The first history protocol is
-  one bounded snapshot with no pagination, accepts an optional archive identity rather than paths,
-  uses distinct pre-query-refusal, query-refusal, and completed-manifest terminal identities, never
-  falls back to local history, and exposes no general read primitive. This is design-only and
-  unimplemented pending independent re-review; do not advertise either command as shipped.
+  The current uncommitted delivery candidate implements the production operator attachment and
+  protected-history surfaces across Protocol, Launcher, and Core. The installed
+  `ota-authority-systemd-client` reuses the existing untrusted invocation request without exposing
+  pressure controls. Before terminal acknowledgement, Launcher freezes and durably publishes the
+  exact receipt archive, referenced immutable contract snapshot, and signed finalization sidecar as
+  three root-owned content-addressed blobs plus one catalog entry. Its separate history service
+  admits only the exact installed non-root client under the bounded operator profile, retains and
+  rechecks the pidfd-bound executable, process posture, working-directory instance, and peer
+  identity, and derives repository/catalog selection only from the protected mapping.
+  `ota receipt --history --source systemd_protected_launcher` is the explicit Linux Core consumer.
+  It accepts no path, `--file`, or `OTA_FILE` redirect, optionally selects one exact archive content
+  identity, requires a complete bounded manifest, and never falls back to local history. Protocol
+  entries bind the ordered archive, contract-snapshot, and sidecar object identities without a
+  circular hash dependency. Launcher owns protected storage and producer-signature verification;
+  Core reconstructs the exact three objects and remains the sole semantic archive verifier. JSON
+  output distinguishes `local_archive_directory_observed` from
+  `complete_selected_catalog_snapshot` and carries the bounded operator, repository, catalog, and
+  per-entry identities only for the protected source.
+  Protocol commit `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf` now carries the immutable wire
+  contract. Launcher commit `5888436b7a4f4a32c8f659de502d6442ae5a8868` and this Core delivery
+  batch pin that exact revision. Compilation, archive/schema/JSON conformance, protected-history
+  framing, Launcher Linux tests, Skill validation, and Site type/reference checks are green for the
+  pinned implementation. Installed Linux/x64 PID 1 systemd pressure remains required before this
+  becomes immutable runtime evidence. Independently administered launcher separation and provider-
+  attested authority also remain open, so V11.7 remains active and partial. Examples remain
+  unaffected because no contract-authoring shape changed.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and

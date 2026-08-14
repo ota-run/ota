@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Add the production protected receipt-history Core surface for the Linux systemd Launcher.
+  `ota receipt --history --source systemd_protected_launcher` uses one fixed protected socket,
+  rejects repository and contract-file overrides, and never falls back to local archives. The
+  bounded manifest binds the admitted non-agent operator profile and live peer, repository and
+  catalog identities, and three content-addressed objects per entry: receipt archive, immutable
+  contract snapshot, and launcher-finalization sidecar. Core reconstructs those exact bytes and
+  applies the existing semantic archive verifier; optional `--archive-identity` selects one exact
+  archive without exposing a protected path. Local history remains the default and now publishes
+  an explicit source and completeness posture in text and JSON.
+
 - Preserve honest launcher crash-recovery evidence. Live systemd finalization keeps its directly
   observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with
   `recovered_absent_completion_bound`, verified child absence, and no claimed observed exit or

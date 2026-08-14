@@ -1481,16 +1481,18 @@ UID/GID, groups, capabilities, working-directory instance, and liveness before t
 and before terminal completion.
 
 Before deleting a successful portable-finalization journal, Launcher must atomically persist the
-exact verified archive and sidecar as root-owned mode-`0600` content-addressed blobs beneath
+exact verified archive, referenced immutable contract snapshot, and sidecar as root-owned
+mode-`0600` content-addressed blobs beneath
 `/var/lib/ota/authority-launcher/history/blobs/`, then publish one root-owned mode-`0600` catalog
 entry beneath `/var/lib/ota/authority-launcher/history/catalog/`. The entry binds:
 
-- authority, launcher request, work unit, crossing transaction, archive, sidecar, signed
+- authority, launcher request, work unit, crossing transaction, archive, immutable contract
+  snapshot, sidecar, signed
   finalization, and signed archive-association identities;
 - the protected repository-binding and catalog-namespace identities, plus the original
   `LauncherWorkingDirectoryV1` identity, canonical path, device, and inode;
-- archive and sidecar owner, mode, device, inode, link-count, size, and content identity observed at
-  attachment time, plus their protected blob identities and sizes;
+- archive, immutable contract snapshot, and sidecar owner, mode, device, inode, link-count, size,
+  and content identity observed at attachment time, plus their protected blob identities and sizes;
 - catalog schema/profile identity and creation posture; and
 - the finalization-journal identity from which the entry was created.
 
@@ -1498,7 +1500,7 @@ Blob and catalog publication uses same-directory temporary files, file and direc
 create-new, regular-file/no-symlink/no-hardlink checks, and exact idempotent replay. Blob files are
 named only by their verified SHA-256 content identity; a pre-existing exact blob is reused only
 after complete byte and metadata reconciliation. A conflicting entry or blob, unsafe parent,
-changed archive/sidecar, or uncertain durability retains the finalization journal and cannot
+changed archive/snapshot/sidecar, or uncertain durability retains the finalization journal and cannot
 produce a terminal claiming production history attachment. Existing portable archives remain valid
 without a catalog entry; they are locally verifiable but are not eligible for the new protected-
 history source. Historical evidence is never upgraded by copying it into protected history after
@@ -1512,12 +1514,16 @@ field; record ordering, object kind, ordinals, lengths, and chunk bytes are iden
   identity, and query identity. Repository instance, authority, and catalog namespace are derived
   by Launcher from the live peer and protected mapping, never selected by the query;
 - `LauncherHistoryManifestV1`: query identity, stable ordered catalog-entry identities, total
-  selected count, bounded response bytes, protected repository-binding identity, catalog-namespace
-  identity, catalog snapshot identity, and manifest identity;
-- `LauncherHistoryEntryV1`: manifest identity, entry ordinal, catalog identity, archive-object
-  identity, sidecar-object identity, and entry identity;
-- `LauncherHistoryObjectV1`: entry identity, object kind (`archive | sidecar`), verified content
-  identity, byte length, chunk count, and object identity;
+  selected count, bounded response bytes equal to the exact sum of selected archive, contract
+  snapshot, and sidecar object lengths, protected repository-binding identity, catalog-namespace
+  identity, operator-profile and live-peer identities, bounded `non_agent` attribution,
+  least-privilege operator posture, catalog snapshot identity, and manifest identity;
+- `LauncherHistoryEntryV1`: manifest identity, entry ordinal, catalog identity, archive-object,
+  contract-snapshot-object, sidecar-object identities, and entry identity;
+- `LauncherHistoryObjectV1`: manifest identity, entry ordinal, catalog identity, object kind
+  (`archive | contract_snapshot | sidecar`), verified content identity, byte length, chunk count, and
+  object identity. Objects derive first from this acyclic selection binding; the entry then binds
+  their three object identities;
 - `LauncherHistoryChunkV1`: object identity, chunk ordinal, exact bounded bytes, and chunk identity;
   and three phase-specific terminal records with separate identity domains:
   - `LauncherHistoryPreQueryRefusalV1`: message kind/version, server-generated refusal nonce,
@@ -1554,7 +1560,7 @@ least-privilege production proof. The selected operator identity and profile ide
 in response evidence at the bounded `non_agent` attribution level; richer human or CI identity is
 not inferred.
 
-For every selected entry Launcher reopens the catalog and protected blobs using directory
+For every selected entry Launcher reopens the catalog and all three protected blobs using directory
 descriptors and `openat2`-style no-symlink/no-magic-link/no-cross-device constraints. Launcher owns
 protected acquisition and storage integrity only: it rechecks owner, mode, link count, size, content
 identity, catalog/object relationships, and that the producer signatures authenticate the exact
@@ -1598,15 +1604,16 @@ or an independently stored baseline. Public output must preserve that boundary.
 
 **Crash and recovery ordering.** The production order is:
 
-1. Core durably creates the archive.
-2. Launcher reopens the archive only through the retained repository directory descriptor, rejects
-   aliases or changed metadata, copies the exact bytes into protected same-filesystem staging,
-   fsyncs them, and freezes their content identity before any archive-association signing request.
+1. Core durably creates the archive and its immutable contract snapshot.
+2. Launcher reopens the archive and referenced snapshot only through the retained repository
+   directory descriptor, rejects aliases or changed metadata, reconciles the snapshot identity
+   named by the archive, copies the exact bytes into protected same-filesystem staging, fsyncs
+   them, and freezes their content identities before any archive-association signing request.
 3. Launcher revalidates the already persisted signed cleanup finalization, the producer signs the
    archive association over that frozen archive identity, and Launcher constructs the final sidecar
    and freezes its exact bytes and identity in protected staging.
-4. Launcher atomically publishes the frozen protected archive and sidecar blobs, then their catalog
-   entry. Publication never rereads mutable repository bytes.
+4. Launcher atomically publishes the frozen protected archive, contract snapshot, and sidecar
+   blobs, then their catalog entry. Publication never rereads mutable repository bytes.
 5. Launcher records blob and catalog persistence in the retained finalization journal.
 6. Only then may Launcher publish or acknowledge the repository-visible sidecar and terminal
    identities, and only then may it delete the retained journal.
@@ -1629,7 +1636,7 @@ client, not the pressure client, for the positive path and must prove:
   repository history without `sudo`, execution-principal membership, or direct archive access;
 - job, execution, unrelated local, wrong-group, rootless-container, stale-peer, exited-peer, and
   substituted-client identities cannot query history;
-- path, repository mapping, authority, archive, sidecar, catalog, profile, peer, terminal phase,
+- path, repository mapping, authority, archive, contract snapshot, sidecar, catalog, profile, peer, terminal phase,
   ordering, count, framing, and response substitution refuse;
 - missing or mutated local evidence before attachment refuses; deletion or mutation after completed
   attachment leaves the independently verified protected copy readable; and any missing, replaced,

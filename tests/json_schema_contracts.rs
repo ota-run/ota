@@ -1326,6 +1326,14 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff_summary.get("resolved").is_some());
     assert!(diff_summary.get("unchanged").is_some());
     assert!(history.get("archives").is_some());
+    assert!(history.get("history_source").is_some());
+    assert!(history.get("completeness_posture").is_some());
+    assert!(history.get("operator_profile_posture").is_some());
+    assert!(history.get("operator_profile_identity").is_some());
+    assert!(history.get("operator_peer_identity").is_some());
+    assert!(history.get("repository_binding_identity").is_some());
+    assert!(history.get("catalog_namespace_identity").is_some());
+    assert!(history.get("catalog_snapshot_identity").is_some());
     assert!(history_summary.get("archive_count").is_some());
     assert!(history_summary.get("invalid_archive_count").is_some());
     assert!(history.get("invalid_archives").is_some());
@@ -1351,6 +1359,80 @@ fn receipt_schema_includes_receipt_and_findings() {
     );
     assert!(failure.get("errors").is_some());
     assert!(failure.get("error").is_some());
+}
+
+#[test]
+fn receipt_history_schema_separates_local_and_protected_source_posture() {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("receipt schema should compile");
+    let mut local = json!({
+        "ok": true,
+        "path": ".",
+        "mode": "history",
+        "history_source": "local",
+        "completeness_posture": "local_archive_directory_observed",
+        "summary": {"archive_count": 0, "invalid_archive_count": 0},
+        "archives": []
+    });
+    assert!(compiled.validate(&local).is_ok());
+    local["catalog_snapshot_identity"] =
+        json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert!(compiled.validate(&local).is_err());
+    local
+        .as_object_mut()
+        .unwrap()
+        .remove("catalog_snapshot_identity");
+
+    let mut protected = json!({
+        "ok": true,
+        "path": ".",
+        "mode": "history",
+        "history_source": "systemd_protected_launcher",
+        "completeness_posture": "complete_selected_catalog_snapshot",
+        "operator_profile_posture": "least_privilege_operator_peer_verified",
+        "operator_profile_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "operator_peer_identity": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "repository_binding_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalog_namespace_identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "catalog_snapshot_identity": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "summary": {"archive_count": 1, "invalid_archive_count": 0},
+        "archives": [{
+            "archive_path": "systemd_protected_launcher:sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "archive_identity": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "catalog_identity": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "archived_at": "2026-08-14T12:00:00Z",
+            "ok": true,
+            "contract": "ota.yaml",
+            "summary": {"error_count": 0, "warn_count": 0, "info_count": 0, "step_count": 1}
+        }]
+    });
+    assert!(compiled.validate(&protected).is_ok());
+    let mut missing_entry_identity = protected.clone();
+    missing_entry_identity["archives"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("catalog_identity");
+    assert!(compiled.validate(&missing_entry_identity).is_err());
+    protected
+        .as_object_mut()
+        .unwrap()
+        .remove("catalog_snapshot_identity");
+    assert!(compiled.validate(&protected).is_err());
+
+    let mut local_with_protected_entry = local;
+    local_with_protected_entry["archives"] = json!([{
+        "archive_path": ".ota/receipts/receipt.json",
+        "archive_identity": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "catalog_identity": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "archived_at": "2026-08-14T12:00:00Z",
+        "ok": true,
+        "contract": "ota.yaml",
+        "summary": {"error_count": 0, "warn_count": 0, "info_count": 0, "step_count": 1}
+    }]);
+    assert!(compiled.validate(&local_with_protected_entry).is_err());
 }
 
 #[test]
