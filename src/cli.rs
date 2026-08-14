@@ -10467,6 +10467,7 @@ tasks:
 
     #[test]
     fn protected_receipt_history_refuses_repository_path_overrides_before_connecting() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -10665,6 +10666,15 @@ tasks:
     run: echo ok
 "#,
         );
+        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+            &fixture,
+            "receipt-baseline-missing-supported-execution",
+            serde_json::json!({
+                "version": 1,
+                "project": { "name": "receipt-demo" },
+                "tasks": { "demo": { "run": "echo ok" } }
+            }),
+        );
 
         fixture.write(
             ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
@@ -10704,6 +10714,15 @@ tasks:
             .dir
             .path()
             .join(".ota/receipts/repo-receipt-20260414-183513-599Z.json");
+        let mut baseline: Value =
+            serde_json::from_str(&fs::read_to_string(&baseline_path).unwrap()).unwrap();
+        baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
+        baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
+        fs::write(
+            &baseline_path,
+            serde_json::to_string_pretty(&baseline).unwrap(),
+        )
+        .unwrap();
 
         let output = run_with([
             "ota",
@@ -11977,9 +11996,17 @@ workflows:
 "#,
                 );
                 let fixture_root = Path::new(fixture.path());
-                let snapshot_path = fixture_root.join(".ota/contracts/sha256-old.json");
                 let archive_path =
                     fixture_root.join(".ota/receipts/repo-receipt-20260412-101010-123Z.json");
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-snapshot-lineage-fallback",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" },
+                        "tasks": { "build": { "run": "echo build" } }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11999,8 +12026,8 @@ workflows:
                             "path": "/old/location/ota.yaml",
                             "scope": "repo",
                             "contract": "/old/location/ota.yaml",
-                            "contract_snapshot_ref": snapshot_path,
-                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "assumption_set_hash": "sha256:assumptions",
                             "backend": "native",
                             "summary": {
@@ -12028,22 +12055,6 @@ workflows:
                     }))
                     .unwrap(),
                 );
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    &serde_json::to_string_pretty(&serde_json::json!({
-                        "version": 1,
-                        "project": {
-                            "name": "receipt-diff"
-                        },
-                        "tasks": {
-                            "build": {
-                                "run": "echo build"
-                            }
-                        }
-                    }))
-                    .unwrap(),
-                );
-
                 let output = run_with([
                     "ota",
                     "receipt",
@@ -12804,6 +12815,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-text-diff-changes",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -12822,6 +12841,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "backend": "native",
                             "summary": {
                                 "error_count": 2,
@@ -12891,6 +12912,15 @@ tasks:
     run: echo ready
 "#,
                 );
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-text-diff-remote",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" },
+                        "tasks": { "setup": { "run": "echo ready" } }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -12909,6 +12939,8 @@ tasks:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "status": "interrupted",
                             "backend": "remote",
                             "context": "remote_app",
@@ -12989,6 +13021,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-text-gate-fail",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -13007,6 +13047,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "backend": "native",
                             "summary": {
                                 "error_count": 2,
