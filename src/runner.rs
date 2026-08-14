@@ -38691,8 +38691,18 @@ tasks:
 "#,
         )
         .unwrap();
-        let backend =
-            resolve_execution_backend(&contract, "verify", ExecutionOverrides::default()).unwrap();
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("alpine:3.22"),
+            platform: Some(String::from("linux/amd64")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
 
         let env = effective_task_env_for_backend(
             &contract,
