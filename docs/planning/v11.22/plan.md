@@ -29,11 +29,21 @@ not authorize implementation until this plan receives review and is explicitly a
 
 ## Sequencing
 
-V11.7 remains partially implemented: reusable grant authority, crossing-time liveness, scope
-checks, and authorizer binding are deferred. V11.22 neither authorizes execution nor consumes a
-crossing record as candidate authority, so it is not architecturally dependent on that work. Its
-activation must nevertheless explicitly reconfirm the V11.7 deferral in the handoff; V11.22 must
-not imply that a recorded crossing is an approval or grant.
+V11.7 remains active and partially implemented, but its authority foundation is no longer deferred.
+Core implements signed semantic grant scope, crossing-time liveness and revocation, authorizer
+binding, one-use broker authority, selected execution, terminal cleanup, and receipt/archive
+re-verification. The genuinely open boundaries are the installed production invocation client,
+least-privilege protected-history source, independently administered launcher installation, and
+provider/launcher-attested separation described by the active V11.7 plan.
+
+V11.22 neither authorizes execution nor consumes a crossing record as candidate authority, so its
+candidate model does not depend on a crossing record. Version discipline still permits only one
+active slice: V11.22 must not activate while V11.7 remains active unless V11.7 is either completed
+or formally deferred. A formal deferral must be recorded consistently in the V11.7 plan, the V11
+parent plan, and `docs/ai/current-state.md`; it must name the unmet acceptance gates and preserve
+them as explicit future work. Silence, an implementation pause, or a bounded green pressure run is
+not a deferral. Under either path, V11.22 must not imply that a crossing record is approval or grant
+authority.
 
 ## Problem
 

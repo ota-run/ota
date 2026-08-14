@@ -1039,6 +1039,19 @@ finalization verification without
   Examples are unaffected because no contract-authoring shape changed. A production attachment and
   least-privilege history client, independently administered launcher separation, and provider-
   attested authority remain open, so V11.7 remains active and partial.
+  The next planning batch defines those first two production surfaces without widening crossing
+  authority: an installed `ota-authority-systemd-client` reuses the existing untrusted invocation
+  request, while `ota receipt --history --source systemd_protected_launcher` queries a fixed
+  protected history socket. An administrator-owned mapping resolves one exact working-directory
+  instance to one authority and catalog namespace; moves, remounts, and fresh checkouts require
+  explicit rebinding. Launcher freezes the archive through its retained repository descriptor,
+  obtains both producer signatures, freezes the resulting sidecar, and only then publishes
+  root-owned content-addressed blobs and a catalog entry. Launcher owns protected acquisition and
+  storage integrity; Core remains the sole semantic archive verifier. The first history protocol is
+  one bounded snapshot with no pagination, accepts an optional archive identity rather than paths,
+  uses distinct pre-query-refusal, query-refusal, and completed-manifest terminal identities, never
+  falls back to local history, and exposes no general read primitive. This is design-only and
+  unimplemented pending independent re-review; do not advertise either command as shipped.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
@@ -1059,8 +1072,10 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until the stronger attested-separation gate closes its acceptance bar; keep V11.22
-planned until explicitly activated.
+open until its production invocation, protected-history, independently administered installation,
+and stronger attested-separation gates close or are formally deferred across the V11.7 plan, V11
+parent plan, and this handoff. Keep V11.22 planned and inactive until that prerequisite is recorded
+and V11.22 is explicitly activated.
 
 ## Working Rules
 

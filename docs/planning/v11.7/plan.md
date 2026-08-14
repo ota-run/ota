@@ -1387,6 +1387,277 @@ remain open; pressure inspects private history only from an administrative conte
 by the execution principal can remove local evidence but cannot create valid producer-signed
 evidence.
 
+###### Production operator attachment and protected history
+
+The pressure client is not a production command. V11.7 therefore requires two installed surfaces
+before the systemd carrier can satisfy the hardened-launcher completion branch:
+
+1. `ota-authority-systemd-client`, an unprivileged invocation client that replaces the pressure
+   harness for ordinary operator use; and
+2. a protected history bridge consumed by `ota receipt --history`, so an operator can inspect the
+   exact finalized archive without root, without joining the execution principal, and without
+   receiving general repository-read authority.
+
+These surfaces are adapters to Ota, not a second policy engine. They cannot issue authority,
+derive semantic scope, approve a crossing, weaken agent admission, mint a receipt, or establish
+provider attestation.
+
+**Production invocation client.** `ota-authority-systemd-client` lives in Authority Launcher and
+uses only `/run/ota/authority-launcher.sock`. It accepts an untrusted repository and Ota argument
+proposal, canonicalizes the repository before connecting, and emits the existing
+`LauncherInvocationRequestV1`. The protected service still derives peer identity, opens and binds
+the working directory, selects the installed Ota binary, creates the stopped child and exact scope,
+and lets Core derive the semantic work unit. Caller arguments, repository paths, `authority_id`, and
+`--grant` remain intent/selection only; none is authority. The client:
+
+- verifies the fixed socket, parent directory, connected root peer, and bounded I/O timeouts;
+- sends one request and accepts only one versioned response stream: output frames carry one global
+  zero-based ordinal plus `stdout | stderr`, ordinals must be contiguous, and exactly one terminal
+  frame must follow the final output frame; missing, duplicate, reordered, overlapping, or trailing
+  frames refuse;
+- writes each output frame once to its named local descriptor in global ordinal order. Output
+  already emitted is never replayed. A disconnect after invocation acceptance may reconnect only
+  for finalization and terminal retrieval using the exact request and invocation identities; it
+  reports `output_incomplete` whenever the original stream ended before its verified terminal,
+  because v1 has no output acknowledgement or replay authority;
+- returns a verified terminal frame's exact exit code (`0` for selected success, `2` for typed
+  launcher/Core refusal, the selected non-zero code for selected failure, and the observed
+  `129 | 130 | 131 | 143` interruption code). Before a verified terminal exists, command-line
+  usage returns `64`, local client/protocol or protected-identity failure returns `70`, and
+  unavailable service, timeout, or reconnect-eligible disconnect returns `75`;
+- implements finalization reconnect using the existing request identity, never by scanning the
+  repository or guessing the latest journal;
+- accepts no pressure expectations, fault markers, alternate sockets, test authority, signing
+  material, or evidence-self-assertion flags;
+- redacts protected paths and protocol internals from ordinary errors while retaining typed reason
+  families in `--json`; and
+- is installed and hashed by the protected installation manifest. A copied or repository-built
+  client is not admitted. The service verifies the live peer executable against the exact protected
+  installed-client identity; that identity never substitutes for server, Core, attestor, or broker
+  identity.
+
+The natural UX is command-adjacent:
+
+```bash
+ota-authority-systemd-client --authority-id release --repository . -- \
+  run publish --grant release
+```
+
+This is not claimed to be shorter than raw shell. Its acceptance bar is one governed command, no
+policy edit, no reusable lease handling, exact terminal evidence, and actionable refusal. A later
+stable Ota subcommand may wrap this adapter, but must reuse the same protocol rather than create a
+parallel launch path.
+
+**Protected history bridge.** The launcher owns a second fixed socket,
+`/run/ota/authority-history.sock`, with an administrator-selected operator group. The repository,
+job, execution principal, environment, policy pack, workflow, and CLI cannot redirect that path or
+change its service, peer profile, catalog root, or operator mapping. The bridge runs in the existing
+root launcher trust boundary because the validated archive is execution-principal-owned while its
+sidecar is root-owned; granting either principal broader filesystem access merely to read both
+would weaken the boundary. The unprivileged client receives evidence only, never a protected-
+storage path, arbitrary caller-selected file, filesystem descriptor, credential, or general read
+primitive. Exact archives may still contain their own contract paths and recorded `cwd`.
+
+The fixed root-owned `/etc/ota/authority-history.json` binding declares schema/profile identity,
+exact installed Ota client identity, operator group identity, response-size and entry-count
+ceilings, catalog/blob roots, history socket/unit identities, and an administrator-owned repository
+mapping. Each mapping binds exactly one `repository_binding_identity` and catalog namespace to one
+authority identity and one exact working-directory instance selector: canonical absolute path,
+device, and inode. Launcher independently observes the connected client's working directory and
+requires exactly one matching mapping; the query does not choose the authority or namespace. Zero,
+duplicate, or overlapping matches refuse before catalog access.
+
+`LauncherWorkingDirectoryV1` remains an exact directory-instance identity, not a durable repository
+identity. A move, remount, inode replacement, or fresh checkout creates a different instance and
+does not inherit protected history automatically. Relocation requires an administrator to publish
+a new protected mapping and mapping identity. Existing entries remain in their original namespace;
+cross-instance continuity requires an explicit administrator-owned predecessor relationship and is
+out of scope for the first profile. Repository files, `OTA_POLICY`, environment variables,
+workflow inputs, and CLI flags cannot select or override the mapping. The complete binding identity
+is included in every catalog entry and response. Missing, duplicate, symlinked, non-regular,
+non-root-owned, writable, unknown-version, or identity-mismatched bindings refuse. Live peer
+verification retains a pidfd across the complete query and rechecks process start, executable,
+UID/GID, groups, capabilities, working-directory instance, and liveness before the first response
+and before terminal completion.
+
+Before deleting a successful portable-finalization journal, Launcher must atomically persist the
+exact verified archive and sidecar as root-owned mode-`0600` content-addressed blobs beneath
+`/var/lib/ota/authority-launcher/history/blobs/`, then publish one root-owned mode-`0600` catalog
+entry beneath `/var/lib/ota/authority-launcher/history/catalog/`. The entry binds:
+
+- authority, launcher request, work unit, crossing transaction, archive, sidecar, signed
+  finalization, and signed archive-association identities;
+- the protected repository-binding and catalog-namespace identities, plus the original
+  `LauncherWorkingDirectoryV1` identity, canonical path, device, and inode;
+- archive and sidecar owner, mode, device, inode, link-count, size, and content identity observed at
+  attachment time, plus their protected blob identities and sizes;
+- catalog schema/profile identity and creation posture; and
+- the finalization-journal identity from which the entry was created.
+
+Blob and catalog publication uses same-directory temporary files, file and directory fsync, atomic
+create-new, regular-file/no-symlink/no-hardlink checks, and exact idempotent replay. Blob files are
+named only by their verified SHA-256 content identity; a pre-existing exact blob is reused only
+after complete byte and metadata reconciliation. A conflicting entry or blob, unsafe parent,
+changed archive/sidecar, or uncertain durability retains the finalization journal and cannot
+produce a terminal claiming production history attachment. Existing portable archives remain valid
+without a catalog entry; they are locally verifiable but are not eligible for the new protected-
+history source. Historical evidence is never upgraded by copying it into protected history after
+the fact.
+
+The protocol adds versioned, domain-separated records rather than widening existing v1 messages.
+Every identity uses a fixed domain plus JCS serialization after clearing only its own identity
+field; record ordering, object kind, ordinals, lengths, and chunk bytes are identity-bound:
+
+- `LauncherHistoryQueryV1`: message kind/version, fresh query nonce, optional exact archive
+  identity, and query identity. Repository instance, authority, and catalog namespace are derived
+  by Launcher from the live peer and protected mapping, never selected by the query;
+- `LauncherHistoryManifestV1`: query identity, stable ordered catalog-entry identities, total
+  selected count, bounded response bytes, protected repository-binding identity, catalog-namespace
+  identity, catalog snapshot identity, and manifest identity;
+- `LauncherHistoryEntryV1`: manifest identity, entry ordinal, catalog identity, archive-object
+  identity, sidecar-object identity, and entry identity;
+- `LauncherHistoryObjectV1`: entry identity, object kind (`archive | sidecar`), verified content
+  identity, byte length, chunk count, and object identity;
+- `LauncherHistoryChunkV1`: object identity, chunk ordinal, exact bounded bytes, and chunk identity;
+  and three phase-specific terminal records with separate identity domains:
+  - `LauncherHistoryPreQueryRefusalV1`: message kind/version, server-generated refusal nonce,
+    bounded reason code, and terminal identity. It is the only response permitted when peer
+    admission fails or a complete canonical query identity cannot be established; it contains no
+    query, manifest, repository-mapping, authority, or protected-path identity;
+  - `LauncherHistoryQueryRefusalV1`: query identity, bounded reason code, and terminal identity. It
+    represents a valid query refused before manifest creation, including `result_too_large`, zero
+    or ambiguous protected mapping, or catalog-snapshot acquisition failure; and
+  - `LauncherHistoryManifestTerminalV1`: query identity, manifest identity, returned count,
+    completion or post-manifest invalid/incomplete posture, and terminal identity. It is the only
+    successful terminal and requires the exact completed manifest.
+
+The three terminal records are mutually exclusive and cannot be reinterpreted across phases. A
+connection emits at most one. Pre-query refusal never manufactures a query identity; query refusal
+never manufactures a manifest identity; successful completion always requires both. Core rejects a
+terminal whose variant does not match the highest successfully verified protocol phase.
+
+The client sends no raw archive path, sidecar path, repository path, authority identity, catalog
+namespace, glob, arbitrary filename, or `latest` selector. An omitted archive identity means all
+entries for the protected mapping in canonical archive order; an explicit identity means exactly
+one or refusal. The first protocol has no pagination or continuation token: one connection returns
+one complete bounded snapshot. If the selected snapshot exceeds the protected entry-count or byte
+ceiling, Launcher returns `result_too_large` before emitting a manifest and the operator must query
+one exact archive identity. A later pagination profile requires new versioned query, manifest, and
+terminal records and cannot be added by reinterpreting v1.
+
+Launcher accepts a history query only from a live `SO_PEERCRED`/pidfd-bound operator peer matching
+the protected operator profile. The first profile is Linux/systemd-only and requires a non-root
+principal, no effective/permitted/inheritable/ambient capabilities, `NoNewPrivileges=1`, no
+membership in the launcher, execution, attestor, or broker groups, and exact admission through the
+administrator-owned history socket group. Root use is an administrative debug posture, not the
+least-privilege production proof. The selected operator identity and profile identity are recorded
+in response evidence at the bounded `non_agent` attribution level; richer human or CI identity is
+not inferred.
+
+For every selected entry Launcher reopens the catalog and protected blobs using directory
+descriptors and `openat2`-style no-symlink/no-magic-link/no-cross-device constraints. Launcher owns
+protected acquisition and storage integrity only: it rechecks owner, mode, link count, size, content
+identity, catalog/object relationships, and that the producer signatures authenticate the exact
+finalization and archive-association identities named by the sidecar. It does not decide whether
+the receipt's archived contract, semantic scope, crossing requirement, authority admission, or
+terminal transaction are semantically valid. Core remains the sole semantic archive verifier and
+independently repeats signature verification while running the existing receipt/archive and
+portable-finalization verifier. Shared Protocol identity and signature primitives may be reused;
+no second receipt-history evaluator is added to Launcher. Missing blobs, aliasing, conflicting
+catalogs, concurrent catalog mutation, oversized output, or any failed storage/signature
+relationship returns a typed invalid/incomplete result; it never falls back to ordinary filesystem
+history. Deleting or mutating the execution-principal-owned local archive after successful
+attachment cannot remove or alter the protected copy, although it may make ordinary local history
+incomplete.
+
+Core adds an explicit protected source to `ota receipt --history` rather than silently changing
+existing local behavior. The initial command shape is:
+
+```bash
+ota receipt --history --source systemd_protected_launcher --json
+```
+
+Core connects only to the fixed history socket from the repository instance selected by its current
+working directory; Launcher independently observes that instance, verifies the live peer against
+the protected installed-Ota identity, and resolves exactly one protected repository mapping. Core
+validates framing, manifest/order/count/length/chunk identities, reconstructs each exact object, and
+runs the existing receipt/archive and portable-finalization verifier over the returned bytes.
+Duplicate, missing, reordered, overlapping, oversized, or trailing chunks refuse. The JSON report
+preserves the existing
+valid/invalid archive model and adds `history_source`, operator-profile posture, catalog snapshot
+identity, and bounded completeness posture. Local `--history` remains compatible. Combining the
+protected source with `--file`, `OTA_FILE`, arbitrary history roots, or path overrides refuses.
+Zero or multiple protected repository mappings refuse rather than guess. Failure of the protected
+source never falls back to local, root, execution-principal, or current-contract-only verification.
+
+The bridge proves the complete protected catalog snapshot it selected; it does not prove that an
+execution principal never deleted historical local evidence before attachment, that host root
+cannot remove protected state, or that every organization repository was queried. Protected
+catalog omission or deletion is detectable only relative to previously retained catalog identities
+or an independently stored baseline. Public output must preserve that boundary.
+
+**Crash and recovery ordering.** The production order is:
+
+1. Core durably creates the archive.
+2. Launcher reopens the archive only through the retained repository directory descriptor, rejects
+   aliases or changed metadata, copies the exact bytes into protected same-filesystem staging,
+   fsyncs them, and freezes their content identity before any archive-association signing request.
+3. Launcher revalidates the already persisted signed cleanup finalization, the producer signs the
+   archive association over that frozen archive identity, and Launcher constructs the final sidecar
+   and freezes its exact bytes and identity in protected staging.
+4. Launcher atomically publishes the frozen protected archive and sidecar blobs, then their catalog
+   entry. Publication never rereads mutable repository bytes.
+5. Launcher records blob and catalog persistence in the retained finalization journal.
+6. Only then may Launcher publish or acknowledge the repository-visible sidecar and terminal
+   identities, and only then may it delete the retained journal.
+
+A crash at every boundary resumes from the exact journal and idempotently recreates or verifies the
+same blobs and entry. It must never rerun selected work, create a second archive association,
+return an unattached archive through history, or treat an uncertain blob/catalog write as success.
+Protected history survives Launcher restart, host reboot, and later local-receipt deletion. Garbage
+collection is out of scope until it has a separate administrator-owned retention policy and
+signed/audited deletion evidence; the first implementation deletes neither catalog entries nor
+unreferenced blobs automatically.
+
+**Pressure bar.** Immutable native Linux/x64 PID 1 pressure must use the installed production
+client, not the pressure client, for the positive path and must prove:
+
+- success, selected failure, interruption, and completion/finalization/terminal crash recovery
+  produce exactly one catalog entry, one archive association, one selected execution, and valid
+  Core history;
+- a non-root operator in the exact history group can retrieve and re-verify only the bound
+  repository history without `sudo`, execution-principal membership, or direct archive access;
+- job, execution, unrelated local, wrong-group, rootless-container, stale-peer, exited-peer, and
+  substituted-client identities cannot query history;
+- path, repository mapping, authority, archive, sidecar, catalog, profile, peer, terminal phase,
+  ordering, count, framing, and response substitution refuse;
+- missing or mutated local evidence before attachment refuses; deletion or mutation after completed
+  attachment leaves the independently verified protected copy readable; and any missing, replaced,
+  symlinked, hardlinked, mode-changed, or concurrently mutated protected blob or catalog entry fails
+  closed;
+- unavailable service, timeout, partial frame, oversized result, disconnect, service restart, and
+  host reboot preserve exact recovery and never cause local-history fallback;
+- the operator receives no protected-storage path, arbitrary caller-selected file, descriptor,
+  private key, broker credential, launcher session, reusable authority material, or general read
+  primitive. Returned archives may truthfully contain their own contract paths and recorded `cwd`;
+- pre-boundary invocation-client and all history-query refusals create no child, scope, cgroup,
+  active slot, selected work, receipt, archive, sidecar, or catalog mutation;
+- authority or protocol refusal after accepted invocation may have created the stopped child, exact
+  scope, cgroup, and active slot, but must prove their exact cleanup plus zero selected work and zero
+  receipt, archive, sidecar, or catalog evidence; and
+- artifacts retain immutable Protocol/Core/Launcher/client identities, public verifier identities,
+  bounded operator posture, catalog/manifest identities, valid/invalid archive counts, exact cleanup
+  evidence, and unchanged repository manifests without private material.
+
+The independently administered pressure gate is separate: an administrator-owned image or
+provisioner must install and bind Launcher, attestor, broker, production client, history service,
+keys, operator mapping, and systemd profiles before the repository workflow begins. The workflow
+may select the prepared runner and invoke the production client, but it cannot install, replace,
+reconfigure, restart, or credential those services. Passing that gate may satisfy V11.7's hardened-
+launcher separation branch; it still does not establish provider-attested authority. Reboot and
+administrative recovery controls are driven by a separate administrator-owned pressure controller,
+not repository workflow commands.
+
 ###### Protected V3 attestation producer protocol
 
 Immutable pressure for that bridge requires a real protected producer; a deterministic fixture
@@ -2168,6 +2439,15 @@ V11.7 is complete when:
 - Ota can answer whether a crossing was required from contract-owned or contract-derived truth
 - Ota can distinguish routine execution from allowed audited boundary crossings
 - crossing classification is runner-derived governance truth, not merely caller prose
+- the systemd carrier has an installed production invocation client and an explicit protected
+  receipt-history source; neither reuses pressure-only controls, grants root access, accepts caller
+  paths for history, or bypasses Core archive verification
+- successful portable finalization durably attaches one content-addressed protected catalog entry
+  before terminal journal deletion, while legacy archives remain valid but are never upgraded into
+  protected-history evidence
+- immutable PID 1 pressure proves least-privilege operator access, exact catalog/archive/sidecar
+  reconciliation, crash/reboot recovery, no fallback, and independently administered launcher
+  installation before the hardened-launcher branch can complete
 - crossing evidence can attribute the crossing to an actor/principal mode honestly
 - a crossing can carry machine-readable reason state without collapsing into receipt prose
 - reason and runtime evidence attach to the crossing record instead of replacing it

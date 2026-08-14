@@ -128,15 +128,17 @@ The implemented OSS governance slices after that are:
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 
-The following governance continuation is active but remains incomplete until hosted pressure and
-its runner-verifiable work-unit authority bar close:
+The following governance continuation is active but remains incomplete until its production
+operator and independently administered separation bars close:
 
 - [V11.7: audited execution boundary crossings](../v11.7/plan.md) - active continuation:
-  canonical semantic scope and the fixed-trust `prebound_file` signed carrier are implemented;
-  the Unix launcher-session broker carrier now provides one-use work-unit authority for governed
-  `run`/`up` and proof-wide transactions. Hosted broker pressure and stronger attested separation
-  remain open. No later slice may treat a crossing record as reusable approval
-  authority.
+  canonical semantic scope, the fixed-trust `prebound_file` signed carrier, and the Unix
+  launcher-session broker carrier are implemented. The systemd carrier now provides one-use
+  work-unit authority, selected execution, terminal cleanup, crossing receipt/archive evidence,
+  portable finalization, and immutable Linux/x64 PID 1 pressure for governed `run`/`up` and
+  proof-wide transactions. A production invocation client, least-privilege protected-history
+  source, independently administered launcher installation, and provider-attested separation
+  remain open. No later slice may treat a crossing record as reusable approval authority.
 
 The completed trust/product follow-ons are:
 
@@ -145,8 +147,12 @@ The completed trust/product follow-ons are:
 - [V11.5: CI and merge-gate projection](../v11.5/plan.md) - required lanes, drift, and CI-owned
   refusal-canary checks complete through the V11.15 GitHub adapter.
 - [V11.9: governance truth reconciliation and evidence classes](../v11.9/plan.md)
-- [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md)
-- [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
+- [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md) - the
+  scoped first replay carrier and Bedrock pressure target are complete; broader provider-backed
+  replay and baseline-promotion policy remain outside that completed slice.
+- [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md) - the first
+  proof-boundary carrier and Athena seam-control pressure target are complete; proof evidence
+  remains execution-authored and cannot be inherited by a lane that did not execute it.
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
 - [V11.13: generated artifact lineage](../v11.13/plan.md)
 - [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - completed at
