@@ -3648,7 +3648,7 @@ fn decode_fixed<const N: usize>(value: &str, label: &str) -> Result<[u8; N], Str
         .map_err(|bytes: Vec<u8>| format!("{label} has {} bytes; expected {N}", bytes.len()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) mod tests {
     use std::collections::BTreeSet;
     use std::io::{Read, Write};

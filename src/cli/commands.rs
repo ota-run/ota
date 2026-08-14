@@ -104662,7 +104662,11 @@ workflows:
         let transaction =
             crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
                 .expect("pending transaction");
-        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction, None);
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(
+            transaction,
+            #[cfg(unix)]
+            None,
+        );
         let execution_id = format!("sha256:{}", "5".repeat(64));
 
         let output = super::fail_active_proof_crossing_transaction(
@@ -104699,7 +104703,11 @@ workflows:
         let transaction =
             crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
                 .expect("pending transaction");
-        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(transaction, None);
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(
+            transaction,
+            #[cfg(unix)]
+            None,
+        );
         let execution_id = format!("sha256:{}", "5".repeat(64));
 
         let _ = super::finalize_active_proof_crossing_transaction(
