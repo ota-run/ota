@@ -1382,10 +1382,10 @@ invalid archives. Completion-crash recovery uses schema v2, proves
 `recovered_absent_completion_bound`, and claims neither an observed exit nor child reaping. The
 artifact also binds the consumed lease, unchanged refusal/crash repository manifests, root-owned
 mode-`0600` producer issuance records, and separate cleanup-finalization and archive-attachment
-issuance classes. A production operator attachment surface and least-privilege history client
-remain open; pressure inspects private history only from an administrative context. Later deletion
-by the execution principal can remove local evidence but cannot create valid producer-signed
-evidence.
+issuance classes. That run inspected private history only from an administrative context and did
+not prove a production operator attachment surface. The installed production client and
+least-privilege history source are proved separately by run `31823037642` below. Later deletion by
+the execution principal can remove local evidence but cannot create valid producer-signed evidence.
 
 ###### Production operator attachment and protected history
 
@@ -1466,6 +1466,12 @@ authority identity and one exact working-directory instance selector: canonical 
 device, and inode. Launcher independently observes the connected client's working directory and
 requires exactly one matching mapping; the query does not choose the authority or namespace. Zero,
 duplicate, or overlapping matches refuse before catalog access.
+
+The binding carries a domain-separated history-installation projection identity rather than the
+full manifest identity. The projection excludes only the `HistoryBinding` file entry, breaking the
+otherwise circular dependency between binding bytes and manifest identity. The full protected
+installation manifest still binds the exact history-binding path and content identity, and live
+verification requires both the projection and complete manifest identity to re-derive correctly.
 
 `LauncherWorkingDirectoryV1` remains an exact directory-instance identity, not a durable repository
 identity. A move, remount, inode replacement, or fresh checkout creates a different instance and
@@ -1655,6 +1661,21 @@ client, not the pressure client, for the positive path and must prove:
 - artifacts retain immutable Protocol/Core/Launcher/client identities, public verifier identities,
   bounded operator posture, catalog/manifest identities, valid/invalid archive counts, exact cleanup
   evidence, and unchanged repository manifests without private material.
+
+This production-client and protected-history pressure bar is green in immutable Linux/x64 PID 1
+[run 31823037642](https://github.com/ota-run/authority-launcher/actions/runs/31823037642)
+against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+`d9d424168b1c1dad48351651c610789e54f74dcf`, and Launcher
+`c80828aa7b64a4bb8c1d9957d937d4fae4d70828`. The positive production-client path completes one
+selected execution and independently re-verifies one protected archive with zero invalid archives,
+one catalog entry, and three content-addressed objects. The same matrix proves denied, stale,
+wrong-scope, timeout, ambiguity, unavailable-broker, missing-credential, installation/runtime
+drift, selected failure/interruption, replay, and crash-recovery controls with exact cleanup and
+unchanged refusal worktrees. The protected history service required a narrowly bounded
+`openat(O_NOFOLLOW | O_CLOEXEC)` exact-basename fallback when its hardened environment reported
+`openat2` as `ENOSYS`; regular-file, root-owner, mode-`0600`, single-link, size, and digest checks
+remain mandatory. This closes the production attachment and protected-history pressure gate, not
+the independently administered or provider-attested separation gates below.
 
 The independently administered pressure gate is separate: an administrator-owned image or
 provisioner must install and bind Launcher, attestor, broker, production client, history service,

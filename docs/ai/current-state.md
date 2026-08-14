@@ -1035,8 +1035,8 @@ finalization verification without
   archives for positive execution and all three terminal crash-recovery points; consumed one-use
   authority; unchanged refusal/crash worktrees; and separate root-owned cleanup-finalization and
   archive-attachment issuance records.
-  The current uncommitted delivery candidate implements the production operator attachment and
-  protected-history surfaces across Protocol, Launcher, and Core. The installed
+  The production operator attachment and protected-history surfaces are implemented and immutable
+  across Protocol, Launcher, and Core. The installed
   `ota-authority-systemd-client` reuses the existing untrusted invocation request without exposing
   pressure controls. Before terminal acknowledgement, Launcher freezes and durably publishes the
   exact receipt archive, referenced immutable contract snapshot, and signed finalization sidecar as
@@ -1053,14 +1053,19 @@ finalization verification without
   output distinguishes `local_archive_directory_observed` from
   `complete_selected_catalog_snapshot` and carries the bounded operator, repository, catalog, and
   per-entry identities only for the protected source.
-  Protocol commit `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf` now carries the immutable wire
-  contract. Launcher commit `5888436b7a4f4a32c8f659de502d6442ae5a8868` and this Core delivery
-  batch pin that exact revision. Compilation, archive/schema/JSON conformance, protected-history
-  framing, Launcher Linux tests, Skill validation, and Site type/reference checks are green for the
-  pinned implementation. Installed Linux/x64 PID 1 systemd pressure remains required before this
-  becomes immutable runtime evidence. Independently administered launcher separation and provider-
-  attested authority also remain open, so V11.7 remains active and partial. Examples remain
-  unaffected because no contract-authoring shape changed.
+  Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `d9d424168b1c1dad48351651c610789e54f74dcf`, and Launcher
+  `c80828aa7b64a4bb8c1d9957d937d4fae4d70828` passed immutable Linux/x64 PID 1
+  [run 31823037642](https://github.com/ota-run/authority-launcher/actions/runs/31823037642).
+  Its production-client path completes selected execution and re-verifies one valid protected
+  archive with zero invalid archives, one catalog entry, and three content-addressed objects. The
+  paired matrix proves one-use authority, refusal, drift, failure, interruption, replay, and crash
+  recovery with exact cleanup and unchanged refusal worktrees. Retained artifacts contain public
+  verifier and semantic identities but no private signing material. This closes the production
+  invocation and protected-history pressure gates. The workflow controller provisioned the root
+  authority stack, so independently administered launcher separation and provider-attested
+  authority remain open; V11.7 remains active and partial. Examples remain unaffected because no
+  contract-authoring shape changed.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
@@ -1081,10 +1086,9 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until its production invocation, protected-history, independently administered installation,
-and stronger attested-separation gates close or are formally deferred across the V11.7 plan, V11
-parent plan, and this handoff. Keep V11.22 planned and inactive until that prerequisite is recorded
-and V11.22 is explicitly activated.
+open until its independently administered installation and stronger attested-separation gates close
+or are formally deferred across the V11.7 plan, V11 parent plan, and this handoff. Keep V11.22
+planned and inactive until that prerequisite is recorded and V11.22 is explicitly activated.
 
 ## Working Rules
 

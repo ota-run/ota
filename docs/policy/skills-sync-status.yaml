@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "13af6dd2bd376c170c6186caaca24be78ef772ff"
-consumer_commit: "d082bf2eb13e1b4360555f94eaa65eb0ddd26de3"
+reviewed_ota_commit: "d9d424168b1c1dad48351651c610789e54f74dcf"
+consumer_commit: "970a478347ff338b950fe55c41c7fbf21e73bd63"
 waiver_reason: ""
 notes: >
-  Synced the bounded portable launcher-finalization review guidance, including signed sidecar,
-  archive-verification, pressure-harness, and still-unproved production attachment boundaries.
+  Synced immutable production-client and protected-history pressure evidence while preserving the
+  independently administered launcher and provider-attestation boundaries.

@@ -35,6 +35,16 @@
   applies the existing semantic archive verifier; optional `--archive-identity` selects one exact
   archive without exposing a protected path. Local history remains the default and now publishes
   an explicit source and completeness posture in text and JSON.
+  Immutable Linux/x64 PID 1 run
+  [31823037642](https://github.com/ota-run/authority-launcher/actions/runs/31823037642)
+  proves the installed production invocation client and protected-history source against Protocol
+  `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `d9d424168b1c1dad48351651c610789e54f74dcf`, and Launcher
+  `c80828aa7b64a4bb8c1d9957d937d4fae4d70828`. The retained artifacts contain one valid and zero
+  invalid protected archive, one catalog entry and three content-addressed objects, exact terminal
+  cleanup, one-use/refusal/recovery evidence, unchanged refusal worktrees, and no private signing
+  material. The workflow controller provisioned the authority stack, so independently administered
+  launcher separation and provider attestation remain open.
 
 - Preserve honest launcher crash-recovery evidence. Live systemd finalization keeps its directly
   observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with

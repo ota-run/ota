@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "13af6dd2bd376c170c6186caaca24be78ef772ff"
-consumer_commit: "30f635092761fe83b6b494273fb6c98da6dbe624"
+reviewed_ota_commit: "d9d424168b1c1dad48351651c610789e54f74dcf"
+consumer_commit: "c5d1072d43e9a61aad5340bd57c6c115572bc3ea"
 waiver_reason: ""
 notes: >
-  Synced the bounded portable launcher-finalization reference, including signed sidecar,
-  archive-verification, pressure-harness, and still-unproved production attachment boundaries.
+  Synced immutable production-client and protected-history pressure evidence while preserving the
+  independently administered launcher and provider-attestation boundaries.
