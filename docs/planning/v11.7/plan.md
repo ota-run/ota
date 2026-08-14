@@ -1362,7 +1362,11 @@ its ambient set; the protected mount namespace, inaccessible signing-key paths, 
 roots, owner/mode checks, and signed archive identity remain mandatory. Reconnect recovery begins
 from the
 protected journal and original launcher-request identity; it never asks the job to discover or read
-the private receipt directory. The
+the private receipt directory. Live finalization schema v1 binds the exit code directly observed
+while the launcher reaps the child. If the launcher restarts after Core durably recorded completion,
+schema v2 instead binds verified child absence to that completion under
+`recovered_absent_completion_bound`; it carries no observed exit code and cannot claim that the
+restarted launcher reaped the old child. The
 signed consume exchange binds launcher-owned transaction schema v3, which requires broker-archive
 schema v2 and portable finalization verification without reinterpreting historical transaction v2
 archives. The immutable run proves completed, failed, interrupted,

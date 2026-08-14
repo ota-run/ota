@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Preserve honest launcher crash-recovery evidence. Live systemd finalization keeps its directly
+  observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with
+  `recovered_absent_completion_bound`, verified child absence, and no claimed observed exit or
+  reaping. Receipt history re-verifies either exact version without upgrading legacy evidence.
+
 - Add the locally tested portable protected-systemd launcher-finalization candidate. New
   launcher-owned crossing transaction schema v3 is bound into the signed consume exchange and
   requires broker-archive schema v2 plus portable finalization verification. Historical transaction

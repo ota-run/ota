@@ -1021,7 +1021,11 @@ finalization verification without
   explicit writable roots, owner/mode checks, and signed archive identity remain mandatory. Core
   then re-verifies both signatures and all identities in local archive regressions.
   The pressure-only client remains a proof harness,
-  not a production attachment surface, and immutable PID 1 crash pressure has not run for this batch.
+  not a production attachment surface. Crash recovery now distinguishes live schema-v1
+  finalization, where the launcher directly observed and reaped the child, from schema-v2
+  `recovered_absent_completion_bound`, where a restarted launcher proves absence against Core's
+  durable completion without claiming an observed exit or child reaping. Immutable PID 1 crash
+  pressure has not passed for this corrected batch.
   The canonical Skill, both installed mirrors, and the Site reference carry the same boundary;
   Examples are unaffected because no contract-authoring shape changed. Independently administered
   launcher separation also remains open.
