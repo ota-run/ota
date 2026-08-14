@@ -10484,9 +10484,14 @@ project:
             fixture.path(),
         ]);
         assert_eq!(output.exit_code, 1);
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
         assert!(
-            strip_ansi(&output.stderr.unwrap_or(output.stdout))
-                .contains("path and contract-file overrides are not allowed")
+            strip_ansi(&rendered).contains("path and contract-file overrides are not allowed"),
+            "{rendered}"
         );
     }
 
