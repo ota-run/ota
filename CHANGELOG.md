@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- Treat wildcard (`*`) task tool and runtime requirements as executable-availability requirements
+  when a present command does not expose parseable version output. Pinned requirements still fail
+  closed when Ota cannot establish the installed version. This keeps POSIX `sh` tasks portable to
+  Debian and Ubuntu systems where `dash --version` exits nonzero without weakening version pins.
+
 - Add the production protected receipt-history Core surface for the Linux systemd Launcher.
   `ota receipt --history --source systemd_protected_launcher` uses one fixed protected socket,
   rejects repository and contract-file overrides, and never falls back to local archives. The

@@ -19353,7 +19353,12 @@ fn detect_missing_backend_requirements(
 
     for (name, required_version) in tools {
         let executable = task_tool_executable_name(name.as_str());
-        match probe_backend_command_version(backend, working_dir, executable) {
+        match probe_backend_command_requirement_version(
+            backend,
+            working_dir,
+            executable,
+            required_version,
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
@@ -19452,7 +19457,13 @@ fn detect_missing_named_container_requirements(
 
     for (name, required_version) in tools {
         let executable = task_tool_executable_name(name.as_str());
-        match probe_named_container_command_version(engine, container_name, task_name, executable) {
+        match probe_named_container_command_requirement_version(
+            engine,
+            container_name,
+            task_name,
+            executable,
+            required_version,
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
@@ -19613,7 +19624,12 @@ fn probe_backend_runtime_requirement_version(
     let mut first_version = None;
     let mut last_error = None;
     for executable in task_runtime_executable_candidates(runtime_name, required_version) {
-        match probe_backend_command_version(backend, working_dir, executable.as_str()) {
+        match probe_backend_command_requirement_version(
+            backend,
+            working_dir,
+            executable.as_str(),
+            required_version,
+        ) {
             Ok(Some(version)) => {
                 if version_matches_requirement(required_version, &version) {
                     return Ok(Some(version));
@@ -19650,11 +19666,12 @@ fn probe_named_container_runtime_requirement_version(
     let mut first_version = None;
     let mut last_error = None;
     for executable in task_runtime_executable_candidates(runtime_name, required_version) {
-        match probe_named_container_command_version(
+        match probe_named_container_command_requirement_version(
             engine,
             container_name,
             task_name,
             executable.as_str(),
+            required_version,
         ) {
             Ok(Some(version)) => {
                 if version_matches_requirement(required_version, &version) {
@@ -19714,6 +19731,48 @@ fn probe_backend_command_version(
     Err(String::from(
         "version probe did not return a parseable version",
     ))
+}
+
+fn probe_backend_command_requirement_version(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    command_name: &str,
+    required_version: &str,
+) -> Result<Option<String>, String> {
+    match probe_backend_command_version(backend, working_dir, command_name) {
+        Err(_) if required_version.trim() == "*" => {
+            probe_backend_command_available(backend, working_dir, command_name)
+                .map(|available| available.then(|| String::from("*")))
+        }
+        result => result,
+    }
+}
+
+fn probe_backend_command_available(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    command_name: &str,
+) -> Result<bool, String> {
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return Ok(crate::doctor::resolve_command_path(command_name)
+            .or_else(|| resolve_probeable_command_path_in_working_dir(working_dir, command_name))
+            .is_some());
+    }
+
+    let quoted = shell_quote(command_name);
+    let probe_command = if cfg!(windows) {
+        format!("where {quoted} >NUL 2>&1")
+    } else {
+        format!("command -v {quoted} >/dev/null 2>&1")
+    };
+    let output = run_backend_command_captured(
+        "__ota_backend_requirement_presence_probe__",
+        probe_command.as_str(),
+        working_dir,
+        backend,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(output.exit_code == 0)
 }
 
 fn probe_native_backend_command_version(
@@ -19943,6 +20002,41 @@ fn probe_named_container_command_version(
     Err(String::from(
         "version probe did not return a parseable version",
     ))
+}
+
+fn probe_named_container_command_requirement_version(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    command_name: &str,
+    required_version: &str,
+) -> Result<Option<String>, String> {
+    match probe_named_container_command_version(engine, container_name, task_name, command_name) {
+        Err(_) if required_version.trim() == "*" => {
+            let quoted = shell_quote(command_name);
+            let probe_command = format!("command -v {quoted} >/dev/null 2>&1");
+            let path_export = container_task_path_export(engine, container_name, task_name, None)
+                .map_err(|error| error.to_string())?;
+            let probe_command =
+                command_with_optional_path_export(probe_command.as_str(), path_export.as_deref());
+            let output = container_command_output(
+                engine,
+                &[
+                    "exec",
+                    "-i",
+                    container_name,
+                    "sh",
+                    "-lc",
+                    probe_command.as_str(),
+                ],
+                None,
+                task_name,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((output.exit_code == 0).then(|| String::from("*")))
+        }
+        result => result,
+    }
 }
 
 pub(crate) fn tool_runtime_version_probe_commands(
@@ -44678,6 +44772,51 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn wildcard_tool_requirement_accepts_executable_without_version_output() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "portable-sh", "#!/bin/sh\nexit 2\n");
+
+        let original_path = env::var_os("PATH");
+        let joined_path = env::join_paths([bin_dir]).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let backend = super::ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let wildcard = super::probe_backend_command_requirement_version(
+            &backend,
+            temp.path(),
+            "portable-sh",
+            "*",
+        )
+        .expect("wildcard requirement should use executable presence");
+        let pinned = super::probe_backend_command_requirement_version(
+            &backend,
+            temp.path(),
+            "portable-sh",
+            "1.0",
+        );
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(wildcard.as_deref(), Some("*"));
+        assert!(
+            pinned
+                .expect_err("pinned requirement must retain version-probe refusal")
+                .contains("version probe command exited with code 2")
+        );
     }
 
     #[test]
