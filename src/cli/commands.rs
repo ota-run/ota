@@ -74021,6 +74021,7 @@ tasks:
         assert!(error.contains("expected `sha256:0000"), "{error}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn receipt_history_reconciles_crossing_authority_transaction_versions_and_envelopes() {
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -76066,17 +76067,25 @@ tasks:
         let repo = tempfile::tempdir().expect("repo tempdir");
         let bin_dir = repo.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create fake bin");
-        write_executable_script(
-            &fake_command_path(&bin_dir, "docker"),
-            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
-        );
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"version\" echo Docker version 27.0.0& exit /b 0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n"
+        };
+        write_executable_script(&fake_command_path(&bin_dir, "docker"), docker_body);
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\necho 10.0.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho '10.0.0'\n"
+        };
+        write_executable_script(&fake_command_path(&bin_dir, "pnpm"), pnpm_body);
         let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
         unsafe {
-            env::set_var(
-                "PATH",
-                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
-                    .expect("fake PATH"),
-            );
+            env::set_var("PATH", env::join_paths(path_entries).expect("fake PATH"));
         }
         fs::write(
             repo.path().join("ota.yaml"),
@@ -104643,6 +104652,7 @@ workflows:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn proof_post_admission_failure_finalizes_the_pending_transaction_explicitly() {
         let root = TempDir::new().expect("repo tempdir");
@@ -104684,6 +104694,7 @@ workflows:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn proof_crossing_terminal_status_uses_the_final_proof_verdict() {
         let root = TempDir::new().expect("repo tempdir");
