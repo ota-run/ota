@@ -23735,14 +23735,11 @@ fn task_runtime_listener_publications(
         .iter()
         .filter_map(|(listener_name, listener)| {
             let host = listener.project.host.as_ref()?;
+            let bind_port = listener.bind.port.value?;
             Some((
                 listener_name.clone(),
                 ContainerPortPublication {
-                    bind_port: listener
-                        .bind
-                        .port
-                        .value
-                        .expect("validated container runtime listener should declare a bind port"),
+                    bind_port,
                     host_address: host.address.trim().to_string(),
                     host_port_mode: host.port.mode,
                     host_port: host.port.value,
@@ -36486,7 +36483,7 @@ tasks:
             vec![super::RepoExecutionConflictReason::ServiceTask]
         );
 
-        let parent = test_repo_execution_owner(
+        let mut parent = test_repo_execution_owner(
             "build",
             "native",
             vec![],
@@ -36495,7 +36492,8 @@ tasks:
                 namespace: String::from("shared:repo-worktree"),
             }],
         );
-        let child = test_repo_execution_owner(
+        parent.service_task = false;
+        let mut child = test_repo_execution_owner(
             "cache",
             "native",
             vec![],
@@ -36504,6 +36502,7 @@ tasks:
                 namespace: String::from("shared:repo-worktree"),
             }],
         );
+        child.service_task = false;
         assert_eq!(
             super::execution_conflict_reasons_with_active_owner(&child, &parent),
             vec![super::RepoExecutionConflictReason::WritePath]
@@ -47897,6 +47896,8 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  preferred: native
 tasks:
   dev:
     script: |
