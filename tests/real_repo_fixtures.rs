@@ -1667,12 +1667,13 @@ policies:
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let normalized_stderr = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
 
     assert!(!output.status.success(), "stderr was: {stderr}");
     assert!(stdout.is_empty(), "stdout:\n{stdout}");
-    assert!(stderr.contains("task `verify` backend unit `task:verify:native`"));
+    assert!(normalized_stderr.contains("task `verify` backend unit `task:verify:native`"));
     assert!(
-        stderr.contains("provisioning backend command `brew` is not available"),
+        normalized_stderr.contains("provisioning backend command `brew` is not available"),
         "stderr:\n{stderr}"
     );
 }
