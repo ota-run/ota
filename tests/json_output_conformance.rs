@@ -34,6 +34,23 @@ fn run_ota(args: &[&str], cwd: &Path) -> Value {
     run_ota_with_env(args, cwd, &[], true)
 }
 
+fn install_preview_container_engine(bin_dir: &Path) {
+    #[cfg(unix)]
+    {
+        let engine = bin_dir.join("docker");
+        fs::write(&engine, "#!/bin/sh\nexit 0\n").expect("preview container engine");
+        let mut permissions = fs::metadata(&engine)
+            .expect("preview container engine metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(engine, permissions).expect("preview container engine permissions");
+    }
+
+    #[cfg(windows)]
+    fs::write(bin_dir.join("docker.cmd"), "@echo off\r\nexit /b 0\r\n")
+        .expect("preview container engine");
+}
+
 #[test]
 fn relocated_binary_validates_against_its_embedded_published_schema() {
     let temporary = tempfile::tempdir().expect("relocated binary directory");
@@ -3451,6 +3468,9 @@ tasks:
 fn sandbox_run_preview_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     fs::create_dir(fixture.path().join("reports")).expect("sandbox writable path");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir(&bin_dir).expect("preview container engine directory");
+    install_preview_container_engine(&bin_dir);
     write_contract(
         &fixture,
         r#"
@@ -3479,7 +3499,8 @@ agent:
 "#,
     );
 
-    let json = run_ota(
+    let path = bin_dir.to_string_lossy().into_owned();
+    let json = run_ota_with_env(
         &[
             "run",
             "verify",
@@ -3489,6 +3510,8 @@ agent:
             fixture.path().to_str().unwrap(),
         ],
         fixture.path(),
+        &[("PATH", path.as_str())],
+        true,
     );
     assert_matches_schema("run-preview.json", &json);
     assert_eq!(json["sandbox_admission"]["decision"], "admitted");
@@ -3502,6 +3525,9 @@ agent:
 fn sandbox_up_preview_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     fs::create_dir(fixture.path().join("reports")).expect("sandbox writable path");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir(&bin_dir).expect("preview container engine directory");
+    install_preview_container_engine(&bin_dir);
     write_contract(
         &fixture,
         r#"
@@ -3535,7 +3561,8 @@ agent:
 "#,
     );
 
-    let json = run_ota(
+    let path = bin_dir.to_string_lossy().into_owned();
+    let json = run_ota_with_env(
         &[
             "up",
             "--workflow",
@@ -3546,6 +3573,8 @@ agent:
             fixture.path().to_str().unwrap(),
         ],
         fixture.path(),
+        &[("PATH", path.as_str())],
+        true,
     );
     assert_matches_schema("up.json", &json);
     assert_eq!(json["sandbox_admission"]["decision"], "admitted");
@@ -4661,10 +4690,23 @@ fn run_native_host_port_override_updates_effective_listener_and_bind_env() {
     {
         return;
     }
+    let declared_listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("declared listener");
+    let declared_port = declared_listener
+        .local_addr()
+        .expect("declared listener address")
+        .port();
+    drop(declared_listener);
+    let override_listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("override listener");
+    let override_port = override_listener
+        .local_addr()
+        .expect("override listener address")
+        .port();
+    drop(override_listener);
+    assert_ne!(declared_port, override_port);
     let fixture = TempDir::new().expect("fixture");
-    write_contract(
-        &fixture,
-        r#"
+    let contract = r#"
 version: 1
 project:
   name: native-host-port-override
@@ -4709,8 +4751,11 @@ tasks:
     effects:
       writes: [hook.txt]
     safe_for_agent: true
-"#,
-    );
+"#
+    .replace("43111", &declared_port.to_string());
+    write_contract(&fixture, &contract);
+
+    let override_port_arg = override_port.to_string();
 
     let output = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args([
@@ -4718,7 +4763,7 @@ tasks:
             "dev",
             "--native",
             "--host-port",
-            "43112",
+            override_port_arg.as_str(),
             "--agent",
             "--plain",
         ])
@@ -4738,7 +4783,7 @@ tasks:
     );
     assert_eq!(
         projected_ports.expect("projected ports"),
-        "43112|43112|43112"
+        format!("{override_port}|{override_port}|{override_port}")
     );
     assert_eq!(
         fs::read_to_string(fixture.path().join("hook.txt")).expect("hook output"),
