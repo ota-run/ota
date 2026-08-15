@@ -13844,10 +13844,13 @@ fn execute_task_command_with_replay_baseline_mounts(
                 })
                 .transpose()?
                 .flatten();
+            let native_runtime_override =
+                preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
             let result = (|| {
                 let effective_runtime = native_compose_override
                     .as_ref()
                     .map(|override_spec| &override_spec.runtime)
+                    .or(native_runtime_override.as_ref())
                     .or(runtime);
                 let mut resolved_env = env_overrides.clone();
                 if let Some(override_spec) = native_compose_override.as_ref() {
@@ -13926,10 +13929,12 @@ fn execute_task_command_with_replay_baseline_mounts(
             },
         ) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
-                preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
-                preflight_native_runtime_listener_binds(task_name, runtime)?;
+                let runtime_override =
+                    preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+                let effective_runtime = runtime_override.as_ref().or(runtime);
+                preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
                 let mut resolved_env = env_overrides.clone();
-                let runtime_env = runtime_bind_env_for_native(runtime);
+                let runtime_env = runtime_bind_env_for_native(effective_runtime);
                 if host_port_override.is_some() {
                     resolved_env.extend(runtime_env);
                 } else {
@@ -13941,7 +13946,7 @@ fn execute_task_command_with_replay_baseline_mounts(
                     contract,
                     task,
                     task_name,
-                    runtime,
+                    effective_runtime,
                     command.as_str(),
                     *interaction,
                     effective_working_dir.as_path(),
@@ -24123,14 +24128,13 @@ fn preflight_host_port_override(
     runtime: Option<&TaskRuntimeSpec>,
     backend: &ResolvedExecutionBackend,
     host_port_override: Option<u16>,
-) -> Result<(), RunError> {
+) -> Result<Option<TaskRuntimeSpec>, RunError> {
     if host_port_override.is_none() {
-        return Ok(());
+        return Ok(None);
     }
 
     if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
-        selected_native_direct_host_port_override(task_name, runtime, host_port_override)?;
-        return Ok(());
+        return selected_native_direct_host_port_override(task_name, runtime, host_port_override);
     }
     if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
         let backend = match backend {
@@ -24138,7 +24142,7 @@ fn preflight_host_port_override(
             | ResolvedExecutionBackend::Container { .. } => unreachable!(),
             ResolvedExecutionBackend::Remote { .. } => "remote",
             ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
-        };
+            };
         return Err(RunError::HostPortOverrideUnsupportedBackend {
             task: task_name.to_string(),
             backend,
@@ -24152,7 +24156,7 @@ fn preflight_host_port_override(
         &mut listener_publications,
         host_port_override,
     )?;
-    Ok(())
+    Ok(None)
 }
 
 fn container_memory_override_or_default(
