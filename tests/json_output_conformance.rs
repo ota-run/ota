@@ -23,7 +23,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::{env, fs};
 
 use jsonschema::{Draft, JSONSchema};
@@ -4722,11 +4722,9 @@ tasks:
   dev:
     context: host
     after_success: [record-hook]
-    env:
-      PORT: "49999"
     command:
       exe: sh
-      args: [-c, "printf '%s|%s|%s' \"$PORT\" \"$OTA_BIND_PORT\" \"$OTA_PUBLIC_PORT\" > ports.txt; python3 -m http.server \"$PORT\" --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > server.pid"]
+      args: [-c, "python3 - <<'PY'\nimport os\nimport socket\nimport time\nfrom pathlib import Path\n\nbind_port = int(os.environ['OTA_BIND_PORT'])\npublic_port = int(os.environ['OTA_PUBLIC_PORT'])\nPath('ports.txt').write_text(f\"{bind_port}|{bind_port}|{public_port}\")\nPath('server.pid').write_text(str(os.getpid()))\nsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\nsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsock.bind((\"127.0.0.1\", bind_port))\nsock.listen(1)\ntime.sleep(8)\nPY"]
     effects:
       writes: [ports.txt, server.pid]
     safe_for_agent: true
@@ -4773,7 +4771,16 @@ tasks:
         .expect("run Ota");
     let projected_ports = fs::read_to_string(fixture.path().join("ports.txt"));
     if let Ok(pid) = fs::read_to_string(fixture.path().join("server.pid")) {
-        let _ = Command::new("kill").arg(pid.trim()).status();
+        let pid = pid.trim();
+        if Command::new("kill")
+            .arg("-0")
+            .arg(pid)
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            let _ = Command::new("kill").arg(pid).stderr(Stdio::null()).status();
+        }
     }
     assert!(
         output.status.success(),
