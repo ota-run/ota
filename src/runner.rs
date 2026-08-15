@@ -24142,7 +24142,7 @@ fn preflight_host_port_override(
             | ResolvedExecutionBackend::Container { .. } => unreachable!(),
             ResolvedExecutionBackend::Remote { .. } => "remote",
             ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
-            };
+        };
         return Err(RunError::HostPortOverrideUnsupportedBackend {
             task: task_name.to_string(),
             backend,
