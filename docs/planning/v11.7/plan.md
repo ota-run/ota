@@ -1708,10 +1708,18 @@ following symlinks and must be a root-owned, non-writable directory. The public 
 envelope binds the pre-mutation observation, its exact checked
 path set, principal IDs, and prepared runner file identities; prose ordering or a point-in-time
 stop check alone is not evidence.
-This is design and local validation only until an administrator-prepared Linux/x64 PID 1 runner
-produces immutable positive evidence. Reboot and fault recovery still require the separate
-administrator-owned controller described above, and provider attestation remains a stronger open
-profile.
+The independently administered positive path is green in immutable Linux/x64 PID 1
+[run 31939777636](https://github.com/ota-run/authority-launcher/actions/runs/31939777636)
+against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+`634a2c169e083da4e02abd72a7bf29ae388ddf3d`, and Launcher
+`ea7480e8d8b8aa214c5602628fb6dfa6382e2088`. The administrator prepared the exact stopped runner,
+distinct principals, fresh 32-path managed authority namespace, installed binaries, services,
+keys, repository mapping, and root-owned public evidence before enabling the runner. The
+consumer-only workflow then completed one exact work unit, removed its scope and cgroup, reaped
+the child, removed the active slot, and independently re-verified one valid protected archive with
+zero invalid archives. This closes the independently administered positive hardened-launcher
+separation branch only. Reboot and fault recovery still require the separate administrator-owned
+controller described above, and provider attestation remains a stronger open profile.
 
 ###### Protected V3 attestation producer protocol
 

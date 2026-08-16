@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "d9d424168b1c1dad48351651c610789e54f74dcf"
-consumer_commit: "970a478347ff338b950fe55c41c7fbf21e73bd63"
+reviewed_ota_commit: "634a2c169e083da4e02abd72a7bf29ae388ddf3d"
+consumer_commit: "b4819684862b2c349b0ff645b86bf3bafad9ee2d"
 waiver_reason: ""
 notes: >
-  Synced immutable production-client and protected-history pressure evidence while preserving the
-  independently administered launcher and provider-attestation boundaries.
+  Synced immutable independently administered positive pressure evidence while preserving the
+  administrator-driven reboot-recovery and provider-attestation boundaries.

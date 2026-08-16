@@ -53,6 +53,15 @@
   cleanup, one-use/refusal/recovery evidence, unchanged refusal worktrees, and no private signing
   material. The workflow controller provisioned the authority stack, so independently administered
   launcher separation and provider attestation remain open.
+  Independently administered Linux/x64 PID 1
+  [run 31939777636](https://github.com/ota-run/authority-launcher/actions/runs/31939777636)
+  separately proves the consumer-only positive path against Protocol
+  `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `634a2c169e083da4e02abd72a7bf29ae388ddf3d`, and Launcher
+  `ea7480e8d8b8aa214c5602628fb6dfa6382e2088`. It retains the stopped/process-free provisioning
+  precondition, exact installed runner and authority identities, one completed consumed work unit,
+  exact cleanup, one valid protected archive, zero invalid archives, and no private authority
+  material. Administrator-driven reboot recovery and provider attestation remain open.
 
 - Preserve honest launcher crash-recovery evidence. Live systemd finalization keeps its directly
   observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with

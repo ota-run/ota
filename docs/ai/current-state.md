@@ -1063,11 +1063,11 @@ finalization verification without
   recovery with exact cleanup and unchanged refusal worktrees. Retained artifacts contain public
   verifier and semantic identities but no private signing material. This closes the production
   invocation and protected-history pressure gates. The workflow controller provisioned the root
-  authority stack, so independently administered launcher separation and provider-attested
-  authority remain open; V11.7 remains active and partial. Examples remain unaffected because no
-  contract-authoring shape changed.
-  Launcher `ea7480e8d8b8aa214c5602628fb6dfa6382e2088` now carries the reviewed candidate for
-  the next gate: a consumer-only self-hosted workflow and administrator runbook. Provisioning
+  authority stack, so that run did not prove independently administered launcher separation or
+  provider-attested authority. Examples remain unaffected because no contract-authoring shape
+  changed.
+  Launcher `ea7480e8d8b8aa214c5602628fb6dfa6382e2088` carries the reviewed consumer-only
+  self-hosted workflow and administrator runbook used for the separate gate. Provisioning
   binds admission to the exact administrator-installed
   GitHub runner unit, derives Core plus the provisioning Launcher's own and linked Protocol
   revisions from installed build artifacts,
@@ -1079,10 +1079,18 @@ finalization verification without
   canonical runner, an empty job/execution process inventory, and fresh managed authority state;
   every existing managed-path ancestor must also be root-owned, non-writable, and alias-free;
   the exact runner unit is gated on the final protected installation-evidence publication, and
-  public installation evidence carries that observation. No immutable independently administered
-  run exists yet. Administrator-owned
-  reboot/fault control and provider attestation remain separate open evidence gates; do not count
-  this candidate as V11.7 completion.
+  public installation evidence carries that observation. Immutable Linux/x64 PID 1
+  [run 31939777636](https://github.com/ota-run/authority-launcher/actions/runs/31939777636)
+  is now green against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built
+  Core `634a2c169e083da4e02abd72a7bf29ae388ddf3d`, and Launcher
+  `ea7480e8d8b8aa214c5602628fb6dfa6382e2088`. The retained public evidence binds the inactive,
+  process-free prepared runner; distinct job/execution principals; fresh 32-path authority
+  namespace; exact installed binaries and units; one consumed work unit; completed selected
+  execution; child reap; scope, cgroup, and active-slot removal; and one valid protected archive
+  with zero invalid archives. No private key or reusable credential material is retained. This
+  closes the independently administered positive hardened-launcher branch only.
+  Administrator-owned reboot/fault recovery and provider attestation remain separate open evidence
+  gates; do not count this run as V11.7 completion.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and

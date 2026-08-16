@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "d9d424168b1c1dad48351651c610789e54f74dcf"
-consumer_commit: "c5d1072d43e9a61aad5340bd57c6c115572bc3ea"
+reviewed_ota_commit: "634a2c169e083da4e02abd72a7bf29ae388ddf3d"
+consumer_commit: "d05ddad304f8698df73b00a188be232076d00a97"
 waiver_reason: ""
 notes: >
-  Synced immutable production-client and protected-history pressure evidence while preserving the
-  independently administered launcher and provider-attestation boundaries.
+  Synced immutable independently administered positive pressure evidence while preserving the
+  administrator-driven reboot-recovery and provider-attestation boundaries.
