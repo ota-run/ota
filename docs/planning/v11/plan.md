@@ -128,17 +128,18 @@ The implemented OSS governance slices after that are:
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 
-The following governance continuation is active but remains incomplete until its production
-operator and independently administered separation bars close:
+The following governance continuation is complete for its bounded OSS slice:
 
-- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - active continuation:
+- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - completed continuation:
   canonical semantic scope, the fixed-trust `prebound_file` signed carrier, and the Unix
   launcher-session broker carrier are implemented. The systemd carrier now provides one-use
   work-unit authority, selected execution, terminal cleanup, crossing receipt/archive evidence,
   portable finalization, and immutable Linux/x64 PID 1 pressure for governed `run`/`up` and
-  proof-wide transactions. A production invocation client, least-privilege protected-history
-  source, independently administered launcher installation, and provider-attested separation
-  remain open. No later slice may treat a crossing record as reusable approval authority.
+  proof-wide transactions. Its production invocation client, least-privilege protected-history
+  source, independently administered launcher installation, and administrator-driven reboot/fault
+  recovery are pressure-proven. Provider attestation remains optional stronger hardening, and
+  contract-authored crossing declarations are deferred follow-on authoring work. No later slice may
+  treat a crossing record as reusable approval authority.
 
 The completed trust/product follow-ons are:
 

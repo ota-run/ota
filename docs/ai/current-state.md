@@ -102,8 +102,9 @@ durable agent workflow belongs in the canonical Ota skill.
   `runtime_listener`, and name every remaining typed reason that must be resolved before retrying.
   Suggested reruns preserve agent mode. The compact summary keeps its established ordering and adds
   only `Reason`/`Reasons` and `Host port` when that conflict evidence exists.
-- V11.7 audited-crossing authority is active and partially implemented after independent design
-  review. Core now derives one canonical content-addressed crossing scope from the selected
+- V11.7 audited-crossing authority is complete for its bounded OSS slice after independent review
+  and immutable hardened-launcher pressure. Core derives one canonical content-addressed crossing
+  scope from the selected
   task/workflow execution graph, refuses unresolved task-input identity, and supports an opt-in
   `governance.crossing_authority.authority_id` plus `ota run|up|proof runtime|proof lifecycle
   --grant <id>` admission path. Proof commands refuse before artifacts, child execution, lifecycle
@@ -349,10 +350,11 @@ durable agent workflow belongs in the canonical Ota skill.
   post-consumption crash recovery. Its retained artifact has byte-identical repository manifests,
   one deliberate pending recovery slot only at each injected crash boundary, and zero terminal
   slots/scopes or selected-work, `.ota`, receipt, and archive residue. This proves one-use lease
-  consumption only for the execution-disabled systemd carrier and pressure broker. Selected
-  execution, crossing receipts and archive re-verification for launcher-owned evidence, and
-  independently administered provider/launcher separation remain open; V11.7 remains active and
-  partial. Site, Skills, and Examples remain unaffected because this slice adds no public command,
+  consumption only for the execution-disabled systemd carrier and pressure broker. At that
+  revision, selected execution, crossing receipts and archive re-verification for launcher-owned
+  evidence, and independently administered provider/launcher separation remained open; the later
+  immutable gates recorded below close those V11.7 requirements. Site, Skills, and Examples remain
+  unaffected because this slice adds no public command,
   contract-authoring, receipt, archive, or usable operator surface.
   The exact replay reopens root-owned durable state but does not restart the pressure broker
   process; restart persistence is not separately pressure-proven.
@@ -438,10 +440,12 @@ durable agent workflow belongs in the canonical Ota skill.
   [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), proves
   terminal cancellation before an undeliverable late approval, insufficient pre-wait attestation
   freshness refusing before authorization, and two executions of one broad three-task semantic
-  scope consuming distinct work units with two valid archives. V11.7 remains open for stronger
-  provider/launcher-attested separation. V11.22 remains planning-only and inactive; it does not
+  scope consuming distinct work units with two valid archives. At that revision, V11.7 still
+  required the hardened-launcher separation later proved by runs `31939777636` and `31953535665`.
+  Provider attestation is optional stronger follow-on hardening. V11.22 remains planning-only and
+  inactive; it does not
   consume crossing records as approval authority. V12 effect-bound refusal assurance is also
-  planning-only and inactive until both V11.7 and V11.22 complete; it does not widen the active
+  planning-only and inactive until V11.22 completes; it does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
   [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
   inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).
@@ -939,9 +943,9 @@ Start by reading `AGENTS.md`, this file, the canonical Ota skill, and
 `docs/planning/v11.7/plan.md`. Then inspect the actual worktree state in Core, `ota-site`,
 `ota-run/examples`, and `/Users/bobai/Workspace/Ota.run/skills` before editing.
 
-V11.21 is complete. V11.7 authority-source and semantic-crossing implementation is active and
-partially pressure-proven: GitHub-hosted missing-authority refusal plus the pre-provisioned
-Linux/x64 VPS live, expired, revoked, and out-of-scope carrier matrix are green. The Unix
+V11.21 and the bounded V11.7 OSS audited-crossing slice are complete. V11.7 pressure includes the
+green GitHub-hosted missing-authority refusal and pre-provisioned Linux/x64 VPS live, expired,
+revoked, and out-of-scope carrier matrix. The Unix
 launcher-session broker carrier is implemented for governed `run`/`up`. Its initial hosted
 live/refusal/proof-wide pressure set is green in authority-launcher run
 [31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) against exact
@@ -1097,8 +1101,9 @@ finalization verification without
   the execution-completion, finalization-intent, and terminal-recorded reboot cases with exact boot
   transitions, three expected and valid protected archive identities, zero invalid or legacy
   archives, unchanged repository manifests, complete terminal cleanup, and no private authority
-  material. Provider attestation remains the open stronger evidence gate; do not count the systemd
-  carrier alone as V11.7 completion.
+  material. These runs satisfy V11.7 through the independently administered hardened-launcher
+  alternative. Provider attestation remains optional stronger evidence rather than a completion
+  gate.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
@@ -1118,10 +1123,10 @@ or raw-shell governance.
 
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
-example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until its stronger provider/launcher-attested separation gate closes or is formally deferred
-across the V11.7 plan, V11 parent plan, and this handoff. Keep V11.22
-planned and inactive until that prerequisite is recorded and V11.22 is explicitly activated.
+example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Provider
+attestation remains optional stronger follow-on hardening, and contract-authored
+`governance.crossing_requirements` remains explicit follow-on authoring work; neither is part of the
+completed V11.7 claim. V11.22 remains planned and inactive until it is explicitly activated.
 
 ## Working Rules
 

@@ -253,9 +253,9 @@ this V11.6 harness export. It must preserve these rules:
   governance compliance, policy refusal, execution failure, and capability regression cannot
   collapse into one result.
 
-This follow-on remains inactive while V11.7 authority work is active. It should become a dedicated
-implementation slice only after V11.7 closes and real evaluation pressure confirms that a portable
-profile is needed. Audited crossing and authority semantics remain owned by V11.7.
+This follow-on remains inactive after the bounded V11.7 OSS slice completed. It should become a
+dedicated implementation slice only when real evaluation pressure confirms that a portable profile
+is needed. Audited crossing and authority semantics remain owned by V11.7.
 
 ## Acceptance bar
 

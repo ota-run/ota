@@ -24,26 +24,24 @@
 
 # V11.22: Contract Creation and Quality UX
 
-Status: planned and inactive. This is the next OSS planning slice after completed V11.21. It does
-not authorize implementation until this plan receives review and is explicitly activated.
+Status: planned and inactive. This is the next OSS planning slice after completed V11.21 and
+V11.7. It does not authorize implementation until this plan receives review and is explicitly
+activated.
 
 ## Sequencing
 
-V11.7 remains active and partially implemented, but its authority foundation is no longer deferred.
-Core implements signed semantic grant scope, crossing-time liveness and revocation, authorizer
-binding, one-use broker authority, selected execution, terminal cleanup, and receipt/archive
-re-verification. The genuinely open boundaries are the installed production invocation client,
+V11.7 is complete for its bounded OSS audited-crossing slice. Core implements signed semantic grant
+scope, crossing-time liveness and revocation, authorizer binding, one-use broker authority, selected
+execution, terminal cleanup, and receipt/archive re-verification. The production invocation client,
 least-privilege protected-history source, independently administered launcher installation, and
-provider/launcher-attested separation described by the active V11.7 plan.
+administrator-driven reboot/fault recovery are pressure-proven. Provider attestation is optional
+stronger hardening, while contract-authored crossing declarations are explicitly deferred
+follow-on authoring work.
 
 V11.22 neither authorizes execution nor consumes a crossing record as candidate authority, so its
-candidate model does not depend on a crossing record. Version discipline still permits only one
-active slice: V11.22 must not activate while V11.7 remains active unless V11.7 is either completed
-or formally deferred. A formal deferral must be recorded consistently in the V11.7 plan, the V11
-parent plan, and `docs/ai/current-state.md`; it must name the unmet acceptance gates and preserve
-them as explicit future work. Silence, an implementation pause, or a bounded green pressure run is
-not a deferral. Under either path, V11.22 must not imply that a crossing record is approval or grant
-authority.
+candidate model does not depend on a crossing record. V11.7 completion satisfies this sequencing
+prerequisite, but V11.22 remains inactive until explicit activation. It must not imply that a
+crossing record is approval or grant authority.
 
 ## Problem
 

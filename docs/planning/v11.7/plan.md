@@ -24,7 +24,14 @@
 
 # V11.7 Plan
 
-Status: active, partially implemented. Boundary crossing records and provenance are shipped. The
+Status: complete for the bounded OSS audited-crossing slice. The independently administered
+hardened-launcher alternative in the acceptance bar is satisfied by immutable Linux/x64 PID 1 runs
+[31939777636](https://github.com/ota-run/authority-launcher/actions/runs/31939777636) and
+[31953535665](https://github.com/ota-run/authority-launcher/actions/runs/31953535665). Provider
+attestation remains optional stronger hardening, not a V11.7 completion requirement. The planned
+contract-authored `governance.crossing_requirements` surface is explicitly deferred to follow-on
+authoring work; this completed slice derives crossing-required truth from the shipped `unsafe_task`
+and `heavier_workflow` families. Boundary crossing records and provenance are shipped. The
 canonical semantic crossing evaluator and first `prebound_file` signed-authority carrier are
 implemented in Core. GitHub-hosted pressure proves that absent fixed authority refuses before the
 selected lane starts through create-chrome-extension run
@@ -77,8 +84,8 @@ an attestation with 31 seconds remaining refuses before authorization because th
 plus post-approval margin requires 32 seconds; and two executions of the same broad three-task
 closure retain one three-node/two-edge semantic breadth with network and repository-write effects
 while consuming distinct work-unit authority and producing two valid archives. Refusal checkout
-manifests remain byte-identical and no receipt state is created. Stronger
-provider/launcher-attested separation remains open.
+manifests remain byte-identical and no receipt state is created. At that pressure stage, stronger
+provider/launcher-attested separation remained open.
 Runtime-boundary attestation v2 pressure is green in authority-launcher run
 [31269597378](https://github.com/ota-run/authority-launcher/actions/runs/31269597378) against exact
 Core `787ac35f7d0195d2adae85e1113e26ce4a30acc2`, protocol
@@ -89,7 +96,8 @@ profile, atomic one-use consumption, adversarial refusal and recovery, distinct 
 units, and terminal runtime/lifecycle proof archives. The root-only pressure peer and fixed public
 test keys make this bounded launcher conformance evidence; the workflow controller still
 provisions the test authority, so this is not provider-attested production-host separation and
-does not complete V11.7.
+did not complete V11.7 at that stage. The later independently administered gates below close the
+adopted hardened-launcher alternative.
 
 The public `ota-run/authority-protocol` crate now owns the exact v1 wire structs, fixed domains,
 bounded framing, and canonical nonce/message/work-unit identities; Core pins its immutable revision
@@ -134,7 +142,9 @@ Release target:
   `run`/`up` plus proof-wide transaction retention; the initial hosted live/refusal/proof-wide set
   plus broker-unavailable, approval-timeout, cancellation, late-approval, insufficient-freshness,
   ambiguous-response, recovery, repeated broad-closure work-unit, and strict v2 protected-launcher
-  profile pressure are green, while stronger provider-attested separation remains open
+  profile pressure are green. Independently administered positive and reboot/fault-recovery pressure
+  closes the hardened-launcher acceptance branch; provider-attested separation remains optional
+  stronger follow-on hardening
 
 Source direction:
 
@@ -387,6 +397,11 @@ declarations add other supported families, its only derived outputs are the exis
 proof, or another family that Ota cannot itself derive for the selected semantic closure.
 
 #### Contract-owned requirements
+
+Status: deferred follow-on authoring work. It is not part of the completed V11.7 implementation or
+acceptance claim. Current Core derives crossing-required truth only from the shipped `unsafe_task`
+and `heavier_workflow` families. A future authoring slice must deliver the schema, validation, JSON,
+and archive-rederivation surface together before contracts may use the declaration below.
 
 The contract-owned form must be additive and monotonic. Direction:
 
@@ -1275,9 +1290,10 @@ negative control remains pre-authorization, and retain the injected `scope_attac
 before successful recovery. Every terminal case has zero slots/scopes, repository manifests are
 byte-identical, no selected-work or `.ota` state exists, and the artifact contains public verifier
 identity rather than private credential material or path. This closes only the immutable hosted
-Linux/x64 execution-disabled V3 admission gate. Broker authorization, one-use lease consumption,
-selected execution, crossing receipt/archive evidence, independently administered
-provider/launcher separation, and provider attestation remain open.
+Linux/x64 execution-disabled V3 admission gate. At that stage, broker authorization, one-use lease
+consumption, selected execution, crossing receipt/archive evidence, and independently administered
+provider/launcher separation remained open; provider attestation remained optional stronger
+hardening.
 
 The execution-disabled authorization-decision slice advances exactly one protocol boundary beyond
 that hosted gate. Protocol defines a Core-authored
@@ -1329,9 +1345,10 @@ response, while Core accepts only the first consumption. Pressure also covers ty
 refusals, timeout and ambiguity, unavailable broker, installation/runtime/credential drift, and
 intent/acknowledgement plus post-consumption crash recovery. Repository manifests remain
 byte-identical and no selected-work, `.ota`, receipt, or archive residue is produced. This closes
-only execution-disabled one-use consumption for this systemd carrier and pressure broker. Selected
-execution, launcher-owned crossing receipt/archive evidence, independently administered
-provider/launcher separation, and provider attestation remain required before V11.7 can complete.
+  only execution-disabled one-use consumption for this systemd carrier and pressure broker. At that
+  stage, selected execution, launcher-owned crossing receipt/archive evidence, and independently
+  administered hardened-launcher separation remained required before V11.7 could complete;
+  provider attestation remained an optional stronger alternative.
 The replay reopens the durable state but does not restart the pressure broker process, so restart
 persistence remains a separate pressure requirement before any broader broker durability claim.
 
@@ -2319,8 +2336,9 @@ receipt assertions stay pressure-specific.
 
 The `prebound_file` adapter intentionally supports bounded calendar TTL only. It is the first grant
 carrier, not evidence that the work-unit acceptance bar is complete. The broker-backed one-use
-lifetime is implemented for `run`/`up`; V11.7 remains open until that carrier is pressure-proven,
-proof commands bind complete transactions, and the stronger attested-separation bar is met.
+lifetime, proof-wide terminal transactions, and independently administered hardened-launcher
+separation are implemented and pressure-proven. Provider attestation remains an optional stronger
+profile outside the completed V11.7 slice.
 
 #### `--grant` admission semantics
 
@@ -2540,6 +2558,11 @@ What can later build on top of it in enterprise is:
 - centralized audit, retention, and fleet-level reporting
 
 What should tighten the OSS trust model after this is:
+
+- contract-authored additive `governance.crossing_requirements`, delivered as one reviewed schema,
+  validation, JSON, and archive-rederivation surface rather than inferred from this completed slice
+- provider-attested carrier profiles where operators require stronger provider-owned isolation or
+  image/runtime provenance than the independently administered hardened launcher establishes
 
 - [V11.9](../v11.9/plan.md): governance truth reconciliation and evidence classes, so
   boundary-authored crossing records and attached reason/evidence fields stay emitted from the

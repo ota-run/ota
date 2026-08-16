@@ -167,10 +167,10 @@ principal profiles. V3 authority requires instance schema 3 with exactly
 remain readable only through their original evidence branch. It proves only that signed systemd
 profile instance; it is not provider-attested separation. Core archive history re-verifies the
 original v1, v2, or v3 branch in local regressions; it never upgrades legacy evidence by defaulting
-newer fields. The systemd carrier currently archives the
+newer fields. The systemd carrier archives the
 verified V3 admission, atomic consumption, exact semantic scope, and terminal crossing transaction,
-while the outer launcher emits post-process child/scope/cgroup/active-slot finalization. The current
-candidate durably retains post-cleanup finalization until the root launcher verifies the exact
+while the outer launcher emits post-process child/scope/cgroup/active-slot finalization. The
+launcher durably retains post-cleanup finalization until it verifies the exact
 execution-principal-owned private archive, atomically publishes a root-owned producer-signed
 sidecar, and receives the client's exact acknowledgement. The job principal does not read the
 private archive directory: `.ota` and `.ota/receipts` are execution-principal-owned and mode
@@ -180,12 +180,12 @@ acknowledges its identity. One signature binds cleanup; a separate signature bin
 finalization to the receipt-archive identity and crossing transaction. New launcher-owned crossing transaction schema
 v3 is bound into the signed consume exchange and requires broker-archive schema v2 plus portable
 finalization verification. Historical transaction v2 and broker-archive v1 evidence remain
-readable under their original schema rather than being silently upgraded. This carrier remains unshipped until immutable PID 1 crash
-pressure and a production operator client prove the complete attachment path.
-Current pressure inspects private history from an administrative context. A production
-least-privilege operator history/attachment client remains separate work; local archive storage is
-not tamper-proof against later deletion by the execution principal, although deletion cannot forge
-valid producer-signed evidence.
+readable under their original schema rather than being silently upgraded. Immutable Linux/x64 PID 1
+pressure proves the production client, least-privilege protected-history source, independently
+administered hardened-launcher path, and administrator-driven reboot/fault recovery. Provider
+attestation remains optional stronger hardening; it is not implied by this receipt posture. Local
+archive storage is not tamper-proof against later deletion by the execution principal, although
+deletion cannot forge valid producer-signed evidence.
 `authority.transaction.authentication_posture` is an explicit persistence boundary. Signed-file
 and legacy broker transactions use `runner_local_content_addressed`: the journal is runner-authored,
 locked, and content-addressed, but is not independently authenticated against another same-user
@@ -196,7 +196,8 @@ itself is provider-attested separation. Archive verification proves signed autho
 internal transaction, crossing-record, and receipt reconciliation. Broker-backed `run`, `up`,
 runtime-proof, and lifecycle-proof archives add independently signed per-use protocol evidence.
 Proof archives own one transaction across their complete invocation set and embed the terminal
-carrier admission directly; hosted broker proof pressure remains open V11.7 work.
+carrier admission directly; immutable hosted broker pressure covers runtime and lifecycle proof
+transactions.
 Authority `actor_mode` is runner-observed as `agent` or `non_agent`; it does not claim a verified
 human identity merely because agent mode was absent.
 When grant admission refuses, the receipt carries no `crossing`. Its typed `refusal` instead names

@@ -4544,8 +4544,8 @@ Ota reads and verifies them but does not run as root or mutate authority state.
 For version-matched operator specifications, see
 [Prebound crossing authority operations](crossing-authority-operations.md) and
 [Broker crossing authority operations](broker-crossing-authority-operations.md). Public operator
-references are [Prebound Crossing Authority (Preview)](https://ota.run/docs/reference/prebound-crossing-authority)
-and [Broker Crossing Authority (Preview)](https://ota.run/docs/reference/broker-crossing-authority).
+references are [Prebound Crossing Authority](https://ota.run/docs/reference/prebound-crossing-authority)
+and [Broker Crossing Authority](https://ota.run/docs/reference/broker-crossing-authority).
 
 When configured:
 

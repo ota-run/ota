@@ -24,7 +24,7 @@
 
 # Broker Crossing Authority Operations
 
-Use this guide for the V11.7 Unix launcher-session `authority_broker` preview carrier. It gives
+Use this guide for the bounded V11.7 Unix launcher-session `authority_broker` carrier. It gives
 governed `ota run` and `ota up` one independently authorized, atomically consumed lease for one
 exact semantic work unit. The repository declares only:
 
@@ -35,7 +35,7 @@ governance:
 ```
 
 The stable public reference is
-[Broker Crossing Authority (Preview)](https://ota.run/docs/reference/broker-crossing-authority).
+[Broker Crossing Authority](https://ota.run/docs/reference/broker-crossing-authority).
 
 ## Ownership and fixed source
 
@@ -263,8 +263,11 @@ defaults.
   helper/service/assertion and cleanup set.
 - The first adapter uses a launcher-supplied Unix stream; direct Ota-to-broker credentials are not
   supported.
-- Hosted v2 protected-launcher pressure and stronger provider-attested boundary claims remain
-  V11.7 completion gates. Core regression proof covers the exact v2 profile, downgrade and profile
-  mutation refusal, consume-intent durability, exact re-query, consumed/not-consumed/unknown
-  outcomes, and restart after a durably recorded status.
+- Immutable Linux/x64 PID 1 pressure proves the protected-launcher profiles, production client and
+  history source, independently administered positive execution, and administrator-driven
+  reboot/fault recovery. Those runs satisfy V11.7 through the hardened-launcher alternative.
+  Provider-attested boundary claims remain optional stronger hardening rather than a completion
+  gate. Core regression proof covers profile downgrade and mutation refusal, consume-intent
+  durability, exact re-query, consumed/not-consumed/unknown outcomes, and restart after a durably
+  recorded status.
 - Ota does not ship or operate the approval broker, provisioner, signing keys, or launcher.

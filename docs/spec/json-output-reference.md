@@ -200,8 +200,10 @@ human text output:
   archive publication and file/directory sync; the launcher requires execution-principal-owned
   `0700` archive directories and retains the exact terminal until its separate identity-bound
   acknowledgement. Historical transaction v2 and
-  broker-archive v1 evidence are not upgraded. Immutable PID 1 crash pressure and a production
-  operator client remain open.
+  broker-archive v1 evidence are not upgraded. Immutable Linux/x64 PID 1 pressure proves the
+  production client, protected-history source, independently administered hardened-launcher path,
+  and administrator-driven reboot/fault recovery. Provider attestation remains optional stronger
+  hardening rather than a V11.7 completion gate.
   Neither posture implies provider-attested separation.
 - `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
   fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker

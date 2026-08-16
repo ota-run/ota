@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Close the bounded V11.7 OSS audited-crossing slice through the independently administered
+  hardened-launcher acceptance branch. Immutable Linux/x64 PID 1 runs `31939777636` and
+  `31953535665` prove the production client, protected history, one-use selected execution,
+  terminal cleanup, archive reconciliation, and administrator-driven reboot/fault recovery.
+  Provider attestation remains optional stronger hardening, while contract-authored
+  `governance.crossing_requirements` is explicitly deferred to follow-on authoring work.
+
 - Emit the full 40-character source commit from `ota --version --json` so protected deployment
   evidence can bind the installed Core binary to one exact source revision rather than a prefix.
 
