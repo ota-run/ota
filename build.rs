@@ -33,7 +33,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", git_ref_path.display());
     }
 
-    if let Some(commit) = git_output(["rev-parse", "--short=9", "HEAD"]) {
+    if let Some(commit) = git_output(["rev-parse", "HEAD"]) {
         println!("cargo:rustc-env=OTA_BUILD_SOURCE=1");
         println!("cargo:rustc-env=OTA_BUILD_COMMIT={}", commit.trim());
     }

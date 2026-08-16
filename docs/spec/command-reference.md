@@ -1784,9 +1784,9 @@ ota doctor --member api --member web --json [PATH]
 
 - when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `Repo Signals` across mainstream and long-tail detector-supported stacks, including repo type, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
-- `ota --version` now exposes build identity when available, including the git commit and dirty
-  marker for source builds, so released and unreleased binaries do not masquerade as the same
-  version string
+- `ota --version` now exposes build identity when available, including the full 40-character git
+  commit and dirty marker for source builds, so released and unreleased binaries do not masquerade
+  as the same version string and protected deployment evidence can require exact equality
 - `ota --version --json` exposes the same identity in machine-readable form (`semver`,
   `source_build`, `commit`, `dirty`) plus `schema_version` and additive
   `contract_capabilities[]` entries (`id`, `introduced_in`) for CI and contract-compatibility

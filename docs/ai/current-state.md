@@ -1066,6 +1066,23 @@ finalization verification without
   authority stack, so independently administered launcher separation and provider-attested
   authority remain open; V11.7 remains active and partial. Examples remain unaffected because no
   contract-authoring shape changed.
+  Launcher `ea7480e8d8b8aa214c5602628fb6dfa6382e2088` now carries the reviewed candidate for
+  the next gate: a consumer-only self-hosted workflow and administrator runbook. Provisioning
+  binds admission to the exact administrator-installed
+  GitHub runner unit, derives Core plus the provisioning Launcher's own and linked Protocol
+  revisions from installed build artifacts,
+  recursively rejects repository truth writable by the job principal, and emits a non-secret
+  installation-evidence copy beneath a root-protected parent chain. A static substring regression
+  is only drift detection for the committed workflow; it is not enforcement against equivalent
+  job code. Protected systemd identities and filesystem authority provide that boundary. No
+  prepared-runner authority write occurs until Launcher has identity-bound an inactive/dead
+  canonical runner, an empty job/execution process inventory, and fresh managed authority state;
+  every existing managed-path ancestor must also be root-owned, non-writable, and alias-free;
+  the exact runner unit is gated on the final protected installation-evidence publication, and
+  public installation evidence carries that observation. No immutable independently administered
+  run exists yet. Administrator-owned
+  reboot/fault control and provider attestation remain separate open evidence gates; do not count
+  this candidate as V11.7 completion.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and

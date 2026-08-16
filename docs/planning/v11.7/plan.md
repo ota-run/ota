@@ -1686,6 +1686,33 @@ launcher separation branch; it still does not establish provider-attested author
 administrative recovery controls are driven by a separate administrator-owned pressure controller,
 not repository workflow commands.
 
+The first reviewed candidate for that split is committed in Launcher
+`ea7480e8d8b8aa214c5602628fb6dfa6382e2088` as the
+`systemd-v3-independently-administered.yml` consumer workflow and its administrator runbook. The
+administrator-side provisioner publishes a root-owned, non-secret installation-evidence copy for
+the job to retain, while the protected-history operator is the hardened job principal rather than
+a root-created execution-principal surrogate. The actual GitHub runner must execute as the exact
+protected runner service bound by the closed profile; a sibling runner service cannot satisfy
+admission. Core and the provisioning Launcher's own and linked Protocol source revisions are
+derived from clean installed build artifacts; repository truth is
+recursively non-writable by the job principal, and the public evidence path has a root-protected
+ownership chain. A static workflow substring regression is review-oriented drift detection only;
+it does not forbid semantically equivalent job code or replace runtime separation.
+Before any protected authority mutation, prepared-runner provisioning must observe the canonical
+runner as loaded but inactive/dead with no main PID or control group, find no live job- or
+execution-principal process, and require the complete managed authority/state/runtime namespace to
+be fresh. The exact runner unit must use the final protected installation-evidence file as a
+systemd start condition, and Launcher publishes that file only after protected provisioning is
+durable. Before mutation, every existing ancestor of every managed path must be inspected without
+following symlinks and must be a root-owned, non-writable directory. The public installation
+envelope binds the pre-mutation observation, its exact checked
+path set, principal IDs, and prepared runner file identities; prose ordering or a point-in-time
+stop check alone is not evidence.
+This is design and local validation only until an administrator-prepared Linux/x64 PID 1 runner
+produces immutable positive evidence. Reboot and fault recovery still require the separate
+administrator-owned controller described above, and provider attestation remains a stronger open
+profile.
+
 ###### Protected V3 attestation producer protocol
 
 Immutable pressure for that bridge requires a real protected producer; a deterministic fixture

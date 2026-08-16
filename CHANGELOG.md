@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- Emit the full 40-character source commit from `ota --version --json` so protected deployment
+  evidence can bind the installed Core binary to one exact source revision rather than a prefix.
+
 - Treat wildcard (`*`) task tool and runtime requirements as executable-availability requirements
   when a present command does not expose parseable version output. Pinned requirements still fail
   closed when Ota cannot establish the installed version. This keeps POSIX `sh` tasks portable to
