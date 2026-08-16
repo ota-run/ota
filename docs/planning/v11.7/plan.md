@@ -1718,8 +1718,16 @@ keys, repository mapping, and root-owned public evidence before enabling the run
 consumer-only workflow then completed one exact work unit, removed its scope and cgroup, reaped
 the child, removed the active slot, and independently re-verified one valid protected archive with
 zero invalid archives. This closes the independently administered positive hardened-launcher
-separation branch only. Reboot and fault recovery still require the separate administrator-owned
-controller described above, and provider attestation remains a stronger open profile.
+separation branch. The separate administrator-owned reboot/fault-recovery matrix is green in
+immutable Linux/x64 PID 1
+[run 31953535665](https://github.com/ota-run/authority-launcher/actions/runs/31953535665)
+against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+`e49f21ee77e522a614a776bcf17c9f9be16c8a90`, and Launcher
+`a348a13fd60b067266013cf8a0f047bbe274fd81`. Its three no-checkout trigger runs cover retained
+execution-completion, finalization-intent, and terminal-recorded checkpoints; the final consumer
+independently requires the exact three archive identities, zero invalid or legacy archives,
+unchanged repository manifests, exact boot transitions, and complete child/scope/cgroup/slot and
+finalization cleanup. Provider attestation remains a stronger open profile.
 
 ###### Protected V3 attestation producer protocol
 

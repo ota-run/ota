@@ -61,7 +61,14 @@
   `ea7480e8d8b8aa214c5602628fb6dfa6382e2088`. It retains the stopped/process-free provisioning
   precondition, exact installed runner and authority identities, one completed consumed work unit,
   exact cleanup, one valid protected archive, zero invalid archives, and no private authority
-  material. Administrator-driven reboot recovery and provider attestation remain open.
+  material. The separate administrator-driven reboot/fault-recovery matrix is green in immutable
+  Linux/x64 PID 1
+  [run 31953535665](https://github.com/ota-run/authority-launcher/actions/runs/31953535665)
+  against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `e49f21ee77e522a614a776bcf17c9f9be16c8a90`, and Launcher
+  `a348a13fd60b067266013cf8a0f047bbe274fd81`. Its consumer artifact independently re-verifies the
+  three expected protected archives with zero invalid or legacy entries, exact boot transitions,
+  unchanged repository state, and complete cleanup. Provider attestation remains open.
 
 - Preserve honest launcher crash-recovery evidence. Live systemd finalization keeps its directly
   observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with

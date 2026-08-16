@@ -1088,9 +1088,17 @@ finalization verification without
   namespace; exact installed binaries and units; one consumed work unit; completed selected
   execution; child reap; scope, cgroup, and active-slot removal; and one valid protected archive
   with zero invalid archives. No private key or reusable credential material is retained. This
-  closes the independently administered positive hardened-launcher branch only.
-  Administrator-owned reboot/fault recovery and provider attestation remain separate open evidence
-  gates; do not count this run as V11.7 completion.
+  closes the independently administered positive hardened-launcher branch.
+  The separate administrator-owned reboot/fault-recovery matrix is green in immutable Linux/x64
+  PID 1 [run 31953535665](https://github.com/ota-run/authority-launcher/actions/runs/31953535665)
+  against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `e49f21ee77e522a614a776bcf17c9f9be16c8a90`, and Launcher
+  `a348a13fd60b067266013cf8a0f047bbe274fd81`. Its consumer-only artifact independently reconciles
+  the execution-completion, finalization-intent, and terminal-recorded reboot cases with exact boot
+  transitions, three expected and valid protected archive identities, zero invalid or legacy
+  archives, unchanged repository manifests, complete terminal cleanup, and no private authority
+  material. Provider attestation remains the open stronger evidence gate; do not count the systemd
+  carrier alone as V11.7 completion.
 Provider-specific attestation remains a separate stronger profile rather than an implied property
 of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
@@ -1111,8 +1119,8 @@ or raw-shell governance.
 The V11.7 public example, canonical skill, global skill mirrors, and site references are carried.
 Core broker-session, crossing, archive, schema, and JSON conformance tests plus first-party
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Keep V11.7
-open until its independently administered installation and stronger attested-separation gates close
-or are formally deferred across the V11.7 plan, V11 parent plan, and this handoff. Keep V11.22
+open until its stronger provider/launcher-attested separation gate closes or is formally deferred
+across the V11.7 plan, V11 parent plan, and this handoff. Keep V11.22
 planned and inactive until that prerequisite is recorded and V11.22 is explicitly activated.
 
 ## Working Rules
