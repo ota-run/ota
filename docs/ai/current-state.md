@@ -165,6 +165,11 @@ durable agent workflow belongs in the canonical Ota skill.
   [30863121110](https://github.com/bobaikato/create-chrome-extension/actions/runs/30863121110).
   The live artifact retains the exact transaction-bound receipt archive; every refusal preserves
   typed admission evidence and an unchanged checkout before and after dry-run and real refusal.
+  The immutable native Linux/systemd proof [31986767770](https://github.com/ota-run/ota/actions/runs/31986767770)
+  now passes on the OrbStack-backed `self-hosted/linux/orbstack/systemd` runner at this Core
+  revision. Its retained artifact proves native validation, `ota doctor`, `ota up`, and runtime
+  proof execution; the proof remains explicitly bounded to its selected runtime path and records
+  dependency exercise and broader-repository behavior as unproved.
   The carrier-neutral transaction/archive foundation uses transaction schema v2 to bind authority
   carrier, admission identity, authorization identity, and terminal state. V1 archives remain
   legacy `prebound_file` evidence without a carrier envelope; receipt history rejects
