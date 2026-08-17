@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.26
+
 - Close the bounded V11.7 OSS audited-crossing slice through the independently administered
   hardened-launcher acceptance branch. Immutable Linux/x64 PID 1 runs `31939777636` and
   `31953535665` prove the production client, protected history, one-use selected execution,

@@ -736,7 +736,8 @@ durable agent workflow belongs in the canonical Ota skill.
   closure refuses before selected work begins. A policy-only denial is the failing
   `wrong_refusal_boundary` outcome. The contract never supplies an expected reason; Ota emits the
   runner-derived refusal and blocked receipt for later comparison. First-party docs/site/skill are
-  aligned; do not add it to released examples until `v1.6.25` is available.
+  aligned, and the released safe-agent-execution example carries the canonical refusal-canary
+  pattern.
 - completed `V11.10` replay trust refinement: `ota up
   --replay-baseline ... --json` now carries replay-authored baseline posture directly through
   `replay.baseline.last_known_good`, while declared static replay inputs remain receipt
