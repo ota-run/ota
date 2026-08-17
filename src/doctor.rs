@@ -75,7 +75,9 @@ use crate::runner::{
     resolve_declared_env_source_value, resolve_named_readiness_probe,
     resolve_named_readiness_probe_contract, resolve_task_target_binding_url_with_contract_path,
     run_backend_argv_command_captured, run_backend_command_captured,
-    task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
+    run_backend_precondition_probe_argv_captured, run_backend_precondition_probe_captured,
+    target_os_for_declared_backend, task_runtime_host_readiness_probe_for_backend,
+    task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
@@ -442,8 +444,9 @@ fn merge_effective_launch_command_tool_requirement(
     surface: &mut RequirementSurface,
     task: &crate::schema::TaskSpec,
     backend: Backend,
+    target_os: &str,
 ) {
-    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, current_os()) {
+    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, target_os) {
         surface.presence_only_tools.insert(exe);
     }
 }
@@ -452,6 +455,7 @@ fn merge_effective_launch_command_tool_requirement(
 struct BackendPreconditionSelection {
     backend: Backend,
     context_name: Option<String>,
+    segment_id: Option<String>,
     requirement_surface: RequirementSurface,
     toolchain_names: BTreeSet<String>,
     native_names: BTreeSet<String>,
@@ -507,12 +511,35 @@ fn prepare_sequence_step_owns_dependency_hydration(
 }
 
 fn task_execution_owns_dependency_hydration(
+    contract: &Contract,
+    task_name: &str,
     task: &crate::schema::TaskSpec,
     backend: Backend,
 ) -> bool {
-    task.resolved_execution_for_backend(backend, current_os())
+    let effective = effective_task_execution(
+        contract,
+        task_name,
+        ExecutionOverrides {
+            backend: Some(backend),
+            ..ExecutionOverrides::default()
+        },
+    );
+    let target_os = target_os_for_declared_backend(backend, effective.container, current_os());
+    task.resolved_execution_for_backend(backend, target_os)
         .and_then(|execution| execution.prepare())
         .is_some_and(prepare_spec_owns_dependency_hydration)
+}
+
+fn task_target_os(contract: &Contract, task_name: &str, backend: Backend) -> String {
+    let effective = effective_task_execution(
+        contract,
+        task_name,
+        ExecutionOverrides {
+            backend: Some(backend),
+            ..ExecutionOverrides::default()
+        },
+    );
+    target_os_for_declared_backend(backend, effective.container, current_os()).to_string()
 }
 
 fn task_closure_is_available_on_host(
@@ -530,7 +557,13 @@ fn task_closure_is_available_on_host(
                 .is_some_and(|task| {
                     let effective =
                         effective_task_execution(contract, closure_task_name.as_str(), overrides);
-                    contract.task_active_for_backend_on_os(task, effective.backend, current_os())
+                    let target_os =
+                        task_target_os(contract, closure_task_name.as_str(), effective.backend);
+                    contract.task_active_for_backend_on_os(
+                        task,
+                        effective.backend,
+                        target_os.as_str(),
+                    )
                 })
         })
 }
@@ -567,8 +600,14 @@ fn selected_backend_precondition_selections(
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            let target_os = task_target_os(contract, task_name.as_str(), backend);
             !contract
-                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
+                .resolved_task_requirement_surface_for_execution_for_os(
+                    task,
+                    backend,
+                    context_name,
+                    target_os.as_str(),
+                )
                 .runtimes
                 .is_empty()
         })
@@ -577,15 +616,20 @@ fn selected_backend_precondition_selections(
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            let target_os = task_target_os(contract, task_name.as_str(), backend);
             !task
-                .scoped_env_requirements_for_execution(backend, context_name)
+                .scoped_env_requirements_for_execution_for_os(
+                    backend,
+                    context_name,
+                    target_os.as_str(),
+                )
                 .is_empty()
         })
     });
 
     let mut selections = Vec::<BackendPreconditionSelection>::new();
     let mut selected_tool_names_by_backend =
-        BTreeMap::<(String, Option<String>), BTreeSet<String>>::new();
+        BTreeMap::<(String, Option<String>, Option<String>), BTreeSet<String>>::new();
 
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
@@ -593,18 +637,22 @@ fn selected_backend_precondition_selections(
         };
         let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
         let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let target_os = task_target_os(contract, task_name.as_str(), backend);
         let selection_context_name = matches!(backend, Backend::Container)
             .then(|| context_name.map(str::to_string))
             .flatten();
-        let selection = if let Some(existing) = selections
-            .iter_mut()
-            .find(|item| item.backend == backend && item.context_name == selection_context_name)
-        {
+        let segment_id = (backend == Backend::Container).then(|| format!("task:{task_name}"));
+        let selection = if let Some(existing) = selections.iter_mut().find(|item| {
+            item.backend == backend
+                && item.context_name == selection_context_name
+                && item.segment_id == segment_id
+        }) {
             existing
         } else {
             selections.push(BackendPreconditionSelection {
                 backend,
                 context_name: selection_context_name.clone(),
+                segment_id: segment_id.clone(),
                 requirement_surface: RequirementSurface::default(),
                 toolchain_names: BTreeSet::new(),
                 native_names: BTreeSet::new(),
@@ -618,13 +666,18 @@ fn selected_backend_precondition_selections(
             .entry((
                 backend_key(backend).to_string(),
                 selection_context_name.clone(),
+                segment_id.clone(),
             ))
             .or_default();
 
         selection.dependency_hydration_owned |=
-            task_execution_owns_dependency_hydration(task, backend);
-        let scoped_surface =
-            contract.resolved_task_requirement_surface_for_execution(task, backend, context_name);
+            task_execution_owns_dependency_hydration(contract, task_name.as_str(), task, backend);
+        let scoped_surface = contract.resolved_task_requirement_surface_for_execution_for_os(
+            task,
+            backend,
+            context_name,
+            target_os.as_str(),
+        );
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
                 name.clone(),
@@ -640,13 +693,25 @@ fn selected_backend_precondition_selections(
         }
         selection
             .toolchain_names
-            .extend(contract.task_toolchain_names_for_execution(task, backend, context_name));
+            .extend(contract.task_toolchain_names_for_execution_for_os(
+                task,
+                backend,
+                context_name,
+                target_os.as_str(),
+            ));
         selection
             .env_names
-            .extend(task.scoped_env_requirements_for_execution(backend, context_name));
+            .extend(task.scoped_env_requirements_for_execution_for_os(
+                backend,
+                context_name,
+                target_os.as_str(),
+            ));
         if matches!(backend, Backend::Native) {
-            let scoped_native =
-                task.scoped_native_requirements_for_execution(backend, context_name);
+            let scoped_native = task.scoped_native_requirements_for_execution_for_os(
+                backend,
+                context_name,
+                target_os.as_str(),
+            );
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
                 scoped_native.clone(),
                 current_os(),
@@ -668,9 +733,10 @@ fn selected_backend_precondition_selections(
             &mut selection.requirement_surface,
             task,
             backend,
+            target_os.as_str(),
         );
         if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(backend, current_os())
+            task.effective_command_launch_executable_for_backend(backend, target_os.as_str())
         {
             selected_tool_names.insert(exe);
         }
@@ -699,6 +765,7 @@ fn selected_backend_precondition_selections(
         if let Some(selected_tool_names) = selected_tool_names_by_backend.get(&(
             backend_key(selection.backend).to_string(),
             selection.context_name.clone(),
+            selection.segment_id.clone(),
         )) {
             for tool_name in selected_tool_names {
                 if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
@@ -728,11 +795,13 @@ fn selected_task_backend_precondition_selections(
     let scoped_runtimes = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            let target_os = task_target_os(contract, task_name.as_str(), effective.backend);
             !contract
-                .resolved_task_requirement_surface_for_execution(
+                .resolved_task_requirement_surface_for_execution_for_os(
                     task,
                     effective.backend,
                     effective.context_name,
+                    target_os.as_str(),
                 )
                 .runtimes
                 .is_empty()
@@ -741,32 +810,43 @@ fn selected_task_backend_precondition_selections(
     let scoped_env = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            let target_os = task_target_os(contract, task_name.as_str(), effective.backend);
             !task
-                .scoped_env_requirements_for_execution(effective.backend, effective.context_name)
+                .scoped_env_requirements_for_execution_for_os(
+                    effective.backend,
+                    effective.context_name,
+                    target_os.as_str(),
+                )
                 .is_empty()
         })
     });
 
     let mut selections = Vec::<BackendPreconditionSelection>::new();
     let mut selected_tool_names_by_backend =
-        BTreeMap::<(String, Option<String>), BTreeSet<String>>::new();
+        BTreeMap::<(String, Option<String>, Option<String>), BTreeSet<String>>::new();
 
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let target_os = task_target_os(contract, task_name.as_str(), effective.backend);
         let selection_context_name = matches!(effective.backend, Backend::Container)
             .then(|| effective.context_name.map(str::to_string))
             .flatten();
+        let segment_id =
+            (effective.backend == Backend::Container).then(|| format!("task:{task_name}"));
         let selection = if let Some(existing) = selections.iter_mut().find(|item| {
-            item.backend == effective.backend && item.context_name == selection_context_name
+            item.backend == effective.backend
+                && item.context_name == selection_context_name
+                && item.segment_id == segment_id
         }) {
             existing
         } else {
             selections.push(BackendPreconditionSelection {
                 backend: effective.backend,
                 context_name: selection_context_name.clone(),
+                segment_id: segment_id.clone(),
                 requirement_surface: RequirementSurface::default(),
                 toolchain_names: BTreeSet::new(),
                 native_names: BTreeSet::new(),
@@ -780,15 +860,21 @@ fn selected_task_backend_precondition_selections(
             .entry((
                 backend_key(effective.backend).to_string(),
                 selection_context_name.clone(),
+                segment_id.clone(),
             ))
             .or_default();
 
-        selection.dependency_hydration_owned |=
-            task_execution_owns_dependency_hydration(task, effective.backend);
-        let scoped_surface = contract.resolved_task_requirement_surface_for_execution(
+        selection.dependency_hydration_owned |= task_execution_owns_dependency_hydration(
+            contract,
+            task_name.as_str(),
+            task,
+            effective.backend,
+        );
+        let scoped_surface = contract.resolved_task_requirement_surface_for_execution_for_os(
             task,
             effective.backend,
             effective.context_name,
+            target_os.as_str(),
         );
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
@@ -805,18 +891,24 @@ fn selected_task_backend_precondition_selections(
         }
         selection
             .toolchain_names
-            .extend(contract.task_toolchain_names_for_execution(
+            .extend(contract.task_toolchain_names_for_execution_for_os(
                 task,
                 effective.backend,
                 effective.context_name,
+                target_os.as_str(),
             ));
-        selection.env_names.extend(
-            task.scoped_env_requirements_for_execution(effective.backend, effective.context_name),
-        );
-        if matches!(effective.backend, Backend::Native) {
-            let scoped_native = task.scoped_native_requirements_for_execution(
+        selection
+            .env_names
+            .extend(task.scoped_env_requirements_for_execution_for_os(
                 effective.backend,
                 effective.context_name,
+                target_os.as_str(),
+            ));
+        if matches!(effective.backend, Backend::Native) {
+            let scoped_native = task.scoped_native_requirements_for_execution_for_os(
+                effective.backend,
+                effective.context_name,
+                target_os.as_str(),
             );
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
                 scoped_native.clone(),
@@ -839,9 +931,10 @@ fn selected_task_backend_precondition_selections(
             &mut selection.requirement_surface,
             task,
             effective.backend,
+            target_os.as_str(),
         );
-        if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+        if let Some(exe) = task
+            .effective_command_launch_executable_for_backend(effective.backend, target_os.as_str())
         {
             selected_tool_names.insert(exe);
         }
@@ -870,6 +963,7 @@ fn selected_task_backend_precondition_selections(
         if let Some(selected_tool_names) = selected_tool_names_by_backend.get(&(
             backend_key(selection.backend).to_string(),
             selection.context_name.clone(),
+            selection.segment_id.clone(),
         )) {
             for tool_name in selected_tool_names {
                 if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
@@ -900,8 +994,14 @@ fn scoped_precondition_selection(
     let scoped_runtimes = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            let target_os = task_target_os(contract, task_name.as_str(), backend);
             !contract
-                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
+                .resolved_task_requirement_surface_for_execution_for_os(
+                    task,
+                    backend,
+                    context_name,
+                    target_os.as_str(),
+                )
                 .runtimes
                 .is_empty()
         })
@@ -909,8 +1009,14 @@ fn scoped_precondition_selection(
     let scoped_tools = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            let target_os = task_target_os(contract, task_name.as_str(), backend);
             !contract
-                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
+                .resolved_task_requirement_surface_for_execution_for_os(
+                    task,
+                    backend,
+                    context_name,
+                    target_os.as_str(),
+                )
                 .tools
                 .is_empty()
         })
@@ -928,28 +1034,52 @@ fn scoped_precondition_selection(
             continue;
         };
         let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let target_os = task_target_os(contract, task_name.as_str(), backend);
         selection.dependency_hydration_owned |=
-            task_execution_owns_dependency_hydration(task, backend);
+            task_execution_owns_dependency_hydration(contract, task_name.as_str(), task, backend);
         selection.requirement_surface.merge(
-            &contract.resolved_task_requirement_surface_for_execution(task, backend, context_name),
+            &contract.resolved_task_requirement_surface_for_execution_for_os(
+                task,
+                backend,
+                context_name,
+                target_os.as_str(),
+            ),
         );
         selected_tool_names.extend(
             contract
-                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
+                .resolved_task_requirement_surface_for_execution_for_os(
+                    task,
+                    backend,
+                    context_name,
+                    target_os.as_str(),
+                )
                 .tools
                 .keys()
                 .cloned(),
         );
-        let scoped_env = task.scoped_env_requirements_for_execution(backend, context_name);
+        let scoped_env = task.scoped_env_requirements_for_execution_for_os(
+            backend,
+            context_name,
+            target_os.as_str(),
+        );
         if !scoped_env.is_empty() {
             selection.env_scoped = true;
             selection.env_names.extend(scoped_env);
         }
-        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
+        let scoped_native = task.scoped_native_requirements_for_execution_for_os(
+            backend,
+            context_name,
+            target_os.as_str(),
+        );
         selection.native_names.extend(scoped_native.iter().cloned());
         selection
             .toolchain_names
-            .extend(contract.task_toolchain_names_for_execution(task, backend, context_name));
+            .extend(contract.task_toolchain_names_for_execution_for_os(
+                task,
+                backend,
+                context_name,
+                target_os.as_str(),
+            ));
         if matches!(backend, Backend::Native) {
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
                 scoped_native.clone(),
@@ -971,9 +1101,10 @@ fn scoped_precondition_selection(
             &mut selection.requirement_surface,
             task,
             backend,
+            target_os.as_str(),
         );
         if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(backend, current_os())
+            task.effective_command_launch_executable_for_backend(backend, target_os.as_str())
         {
             selected_tool_names.insert(exe);
         }
@@ -1089,7 +1220,12 @@ fn selected_remote_task_requirement_selection(
                 contract.resolve_scoped_tool_requirement(name, requirement),
             );
         }
-        merge_effective_launch_command_tool_requirement(&mut target.surface, task, Backend::Remote);
+        merge_effective_launch_command_tool_requirement(
+            &mut target.surface,
+            task,
+            Backend::Remote,
+            current_os(),
+        );
     }
 
     if !saw_task {
@@ -2907,7 +3043,10 @@ pub struct AdapterBootstrapDiagnostics {
 #[derive(Debug, Clone)]
 struct ContainerProbeContext {
     image: String,
+    platform: Option<String>,
     engine: String,
+    segment_id: Option<String>,
+    execution_allowed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -4076,6 +4215,18 @@ pub(crate) struct DoctorPolicySnapshot<'a> {
     pub load_error: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderProbePosture {
+    Enabled,
+    NonMutating,
+}
+
+impl ProviderProbePosture {
+    fn allows_execution(self) -> bool {
+        self == Self::Enabled
+    }
+}
+
 pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
@@ -4310,6 +4461,30 @@ pub(crate) fn diagnose_preconditions_with_mode_for_workflow_with_overrides_and_r
     )
 }
 
+pub(crate) fn diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> DoctorReport {
+    diagnose_contract_with_scope_and_provider_probe_posture(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+        workflow_name,
+        overrides,
+        None,
+        replay_input_policy,
+        Some(policy_snapshot),
+        ProviderProbePosture::NonMutating,
+    )
+}
+
 pub fn diagnose_preconditions_with_mode_for_task_with_overrides(
     contract: &Contract,
     contract_path: &Path,
@@ -4351,6 +4526,30 @@ pub(crate) fn diagnose_preconditions_with_mode_for_task_with_overrides_and_repla
         Some(task_name),
         replay_input_policy,
         Some(policy_snapshot),
+    )
+}
+
+pub(crate) fn diagnose_preconditions_non_mutating_with_mode_for_task_with_overrides_and_replay_input_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> DoctorReport {
+    diagnose_contract_with_scope_and_provider_probe_posture(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+        None,
+        overrides,
+        Some(task_name),
+        replay_input_policy,
+        Some(policy_snapshot),
+        ProviderProbePosture::NonMutating,
     )
 }
 
@@ -4448,6 +4647,35 @@ fn diagnose_contract_with_scope(
     task_name: Option<&str>,
     replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
     policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
+) -> DoctorReport {
+    diagnose_contract_with_scope_and_provider_probe_posture(
+        contract,
+        contract_path,
+        scope,
+        mode,
+        lifecycle_override,
+        workflow_name,
+        overrides,
+        task_name,
+        replay_input_policy,
+        policy_snapshot,
+        ProviderProbePosture::Enabled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn diagnose_contract_with_scope_and_provider_probe_posture(
+    contract: &Contract,
+    contract_path: &Path,
+    scope: DoctorScope,
+    mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_name: Option<&str>,
+    replay_input_policy: Option<&ReplayInputPolicyEvaluation>,
+    policy_snapshot: Option<DoctorPolicySnapshot<'_>>,
+    provider_probe_posture: ProviderProbePosture,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
@@ -4580,6 +4808,8 @@ fn diagnose_contract_with_scope(
             selected_lifecycle,
             overrides,
             None,
+            None,
+            provider_probe_posture,
         );
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
@@ -4689,6 +4919,7 @@ fn diagnose_contract_with_scope(
                 vec![BackendPreconditionSelection {
                     backend: Backend::Container,
                     context_name: None,
+                    segment_id: None,
                     requirement_surface: requirement_surface.clone(),
                     toolchain_names: precondition_selection.toolchain_names.clone(),
                     native_names: precondition_selection.native_names.clone(),
@@ -4711,6 +4942,8 @@ fn diagnose_contract_with_scope(
                         ..overrides
                     },
                     selection.context_name.as_deref(),
+                    selection.segment_id.as_deref(),
+                    provider_probe_posture,
                 );
                 let required_tools = selection
                     .requirement_surface
@@ -4897,6 +5130,8 @@ fn diagnose_contract_with_scope(
                             ..overrides
                         },
                         additional_selection.context_name.as_deref(),
+                        additional_selection.segment_id.as_deref(),
+                        provider_probe_posture,
                     )
                 } else {
                     None
@@ -5079,6 +5314,15 @@ fn diagnose_contract_with_scope(
             overrides,
             workflow_name,
         );
+        diagnose_sandbox_enforcement_posture(
+            contract,
+            contract_path,
+            loaded_policy,
+            workflow_name,
+            task_name,
+            overrides,
+            &mut findings,
+        );
         diagnose_selected_task_effects(contract, workflow_name, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
@@ -5141,6 +5385,181 @@ fn diagnose_contract_with_scope(
         execution_target,
         findings,
     }
+}
+
+fn diagnose_sandbox_enforcement_posture(
+    contract: &Contract,
+    contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    findings: &mut Vec<Finding>,
+) {
+    if task_name.is_none() && contract.selected_workflow(workflow_name).is_none() {
+        return;
+    }
+    let policy = if let Some(task_name) = task_name {
+        crate::sandbox_policy::sandbox_policy_for_task(contract, task_name, overrides)
+    } else {
+        crate::sandbox_policy::sandbox_policy_for_workflow(contract, workflow_name, overrides)
+    };
+    let policy = match policy {
+        Ok(policy) => policy,
+        Err(error) => {
+            let selected_has_boundary = selected_sandbox_boundary_is_declared(
+                contract,
+                workflow_name,
+                task_name,
+                loaded_policy,
+            );
+            if selected_has_boundary {
+                findings.push(Finding::identified(
+                    "OTA_SANDBOX_POLICY_UNAVAILABLE",
+                    "sandbox",
+                    "sandbox_policy",
+                    FindingSeverity::Warn,
+                    "Selected runtime boundary cannot be compiled",
+                    error,
+                    "model every selected execution phase as a declared task before requiring provider enforcement",
+                ));
+            }
+            return;
+        }
+    };
+    let restriction_authority =
+        match crate::sandbox_policy::restriction_authority_from_loaded_policy(loaded_policy) {
+            Ok(authority) => authority,
+            Err(error) => {
+                findings.push(Finding::identified(
+                    "OTA_SANDBOX_POLICY_AUTHORITY_UNAVAILABLE",
+                    "sandbox",
+                    "sandbox_policy",
+                    FindingSeverity::Error,
+                    "Sandbox restriction authority is invalid",
+                    error,
+                    "repair the loaded policy pack before relying on sandbox enforcement",
+                ));
+                return;
+            }
+        };
+    let overlays =
+        match crate::sandbox_policy::restriction_overlays_from_loaded_policy(loaded_policy) {
+            Ok(overlays) => overlays,
+            Err(error) => {
+                findings.push(Finding::identified(
+                    "OTA_SANDBOX_POLICY_AUTHORITY_UNAVAILABLE",
+                    "sandbox",
+                    "sandbox_policy",
+                    FindingSeverity::Error,
+                    "Sandbox restriction authority is invalid",
+                    error,
+                    "repair the loaded policy pack before relying on sandbox enforcement",
+                ));
+                return;
+            }
+        };
+    let effective = match crate::sandbox_policy::effective_sandbox_policy(&policy, &overlays) {
+        Ok(effective) => effective,
+        Err(error) => {
+            findings.push(Finding::identified(
+                "OTA_SANDBOX_POLICY_CONFLICT",
+                "sandbox",
+                "sandbox_policy",
+                FindingSeverity::Error,
+                "Sandbox restrictions cannot be reconciled",
+                error,
+                "make the policy-pack sandbox restrictions a monotonic narrowing of repo truth",
+            ));
+            return;
+        }
+    };
+    if !crate::sandbox_policy::policy_has_authoritative_runtime_controls(&policy)
+        && !crate::sandbox_policy::effective_policy_has_authoritative_runtime_controls(&effective)
+    {
+        return;
+    }
+    let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    match crate::sandbox_policy::evaluate_oci_local_application(
+        &policy,
+        &effective,
+        restriction_authority.as_ref(),
+        repo_root,
+        overrides,
+    ) {
+        Ok((evaluation, _)) if !evaluation.admitted => {
+            let why = evaluation
+                .refusals
+                .iter()
+                .map(|refusal| {
+                    format!(
+                        "{} requires {}; {}",
+                        refusal.control, refusal.required, refusal.reason
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            findings.push(Finding::identified(
+                "OTA_SANDBOX_ENFORCING_TARGET_UNAVAILABLE",
+                "sandbox",
+                "sandbox_policy",
+                FindingSeverity::Warn,
+                "No compatible enforcing sandbox target for selected lane",
+                why,
+                "inspect the selected lane with `ota run <task> --dry-run --json` or `ota up --dry-run --json`, then declare a container-compatible ephemeral boundary or choose a supported provider",
+            ));
+        }
+        Err(error) => findings.push(Finding::identified(
+            "OTA_SANDBOX_PROVIDER_CAPABILITY_UNKNOWN",
+            "sandbox",
+            "sandbox_policy",
+            FindingSeverity::Warn,
+            "Sandbox provider capability could not be established",
+            error,
+            "repair the provider environment and rerun `ota doctor` before relying on sandbox enforcement",
+        )),
+        Ok(_) => {}
+    }
+}
+
+fn selected_sandbox_boundary_is_declared(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> bool {
+    let selected_tasks = if let Some(task_name) = task_name {
+        contract.task_execution_closure_names([task_name.to_string()])
+    } else {
+        let mut tasks = contract.task_execution_closure_names(
+            contract.selected_workflow_task_closure_names(workflow_name),
+        );
+        if let Some(attach_task) = contract.selected_attach_task_name_for(workflow_name) {
+            tasks.extend(contract.task_execution_closure_names([attach_task.to_string()]));
+            tasks.sort();
+            tasks.dedup();
+        }
+        tasks
+    };
+    contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.runtime_boundary.as_ref())
+        .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.runtime_boundary.as_ref())
+            .is_some_and(|boundary| !boundary.is_empty())
+        || selected_tasks.iter().any(|task_name| {
+            contract
+                .tasks
+                .get(task_name)
+                .and_then(|task| task.runtime_boundary.as_ref())
+                .is_some_and(|boundary| !boundary.is_empty())
+        })
+        || loaded_policy
+            .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
+            .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some())
 }
 
 fn selected_replay_input_policy_evaluation(
@@ -5965,6 +6384,8 @@ fn diagnose_execution_backend(
     lifecycle: Option<Lifecycle>,
     overrides: ExecutionOverrides,
     context_name_override: Option<&str>,
+    segment_id: Option<&str>,
+    provider_probe_posture: ProviderProbePosture,
 ) -> Option<ContainerProbeContext> {
     let Some(execution) = contract.execution.as_ref() else {
         if mode == DoctorMode::Container {
@@ -5997,7 +6418,10 @@ fn diagnose_execution_backend(
 
             return Some(ContainerProbeContext {
                 image: container.image.clone(),
+                platform: container.platform.clone(),
                 engine,
+                segment_id: segment_id.map(str::to_string),
+                execution_allowed: provider_probe_posture.allows_execution(),
             });
         }
 
@@ -6026,7 +6450,10 @@ fn diagnose_execution_backend(
 
             return Some(ContainerProbeContext {
                 image: container.image.clone(),
+                platform: container.platform.clone(),
                 engine,
+                segment_id: segment_id.map(str::to_string),
+                execution_allowed: provider_probe_posture.allows_execution(),
             });
         }
 
@@ -8006,17 +8433,20 @@ fn doctor_probe_backend(
         DoctorMode::Native => Some(ResolvedExecutionBackend::Native {
             shared_local_backend: None,
         }),
-        DoctorMode::Container => container_probe.map(|probe| ResolvedExecutionBackend::Container {
-            context_name: None,
-            shared_local_backend: None,
-            image: probe.image.clone(),
-            engine: probe.engine.clone(),
-            lifecycle: Lifecycle::Ephemeral,
-            memory_bytes: None,
-            compose_networks: Vec::new(),
-            publications: Vec::new(),
-            dependency_isolation_paths: Vec::new(),
-        }),
+        DoctorMode::Container => container_probe
+            .map(|probe| ResolvedExecutionBackend::Container {
+                context_name: None,
+                shared_local_backend: None,
+                image: probe.image.clone(),
+                platform: probe.platform.clone(),
+                engine: probe.engine.clone(),
+                lifecycle: Lifecycle::Ephemeral,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+            })
+            .filter(|_| container_probe.is_some_and(|probe| probe.execution_allowed)),
         DoctorMode::Remote => remote_probe.cloned(),
     }
 }
@@ -8038,13 +8468,24 @@ fn provider_installed_entries(
     let mut parts = command.split_whitespace();
     let exe = parts.next().unwrap_or_default();
     let args: Vec<String> = parts.map(str::to_string).collect();
-    let output = run_backend_argv_command_captured(
-        probe_name,
-        exe,
-        &args,
-        contract_working_dir(contract_path),
-        &backend,
-    )
+    let output = if mode == DoctorMode::Container {
+        run_backend_precondition_probe_argv_captured(
+            container_probe.and_then(|probe| probe.segment_id.as_deref()),
+            probe_name,
+            exe,
+            &args,
+            contract_working_dir(contract_path),
+            &backend,
+        )
+    } else {
+        run_backend_argv_command_captured(
+            probe_name,
+            exe,
+            &args,
+            contract_working_dir(contract_path),
+            &backend,
+        )
+    }
     .map_err(|error| error.to_string())?;
     if output.exit_code == 127 {
         return Ok(None);
@@ -9595,6 +10036,9 @@ fn diagnose_command_version(
         let Some(container_probe) = container_probe else {
             return false;
         };
+        if !container_probe.execution_allowed {
+            return false;
+        }
         let backend = doctor_probe_backend(DoctorMode::Container, Some(container_probe), None)
             .expect("container mode should produce a probe backend when container probe exists");
         Some(command_version_probe_candidates(
@@ -9603,6 +10047,7 @@ fn diagnose_command_version(
             |candidate| {
                 command_version_probe_in_container(
                     &backend,
+                    container_probe.segment_id.as_deref(),
                     candidate,
                     contract_working_dir(contract_path),
                 )
@@ -9804,6 +10249,10 @@ fn diagnose_command_version(
                     image: container_probe
                         .expect("container probe is present in container mode")
                         .image
+                        .clone(),
+                    platform: container_probe
+                        .expect("container probe is present in container mode")
+                        .platform
                         .clone(),
                     engine: container_probe
                         .expect("container probe is present in container mode")
@@ -10248,6 +10697,10 @@ fn diagnose_command_version(
                     .expect("container probe is present in container mode")
                     .image
                     .clone(),
+                platform: container_probe
+                    .expect("container probe is present in container mode")
+                    .platform
+                    .clone(),
                 engine: container_probe
                     .expect("container probe is present in container mode")
                     .engine
@@ -10430,6 +10883,7 @@ fn container_installability_failure(
         selected_provisioning_action(target_kind, display_name, requirement, provisioning_actions)?;
     let target = ProvisioningExecutionTarget::Container {
         image: container_probe.image.clone(),
+        platform: container_probe.platform.clone(),
         engine: container_probe.engine.clone(),
         lifecycle: Lifecycle::Ephemeral,
         container_name: None,
@@ -10488,6 +10942,7 @@ fn provisionable_missing_command_is_covered(
             };
             ProvisioningExecutionTarget::Container {
                 image: container_probe.image.clone(),
+                platform: container_probe.platform.clone(),
                 engine: container_probe.engine.clone(),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -10711,11 +11166,13 @@ fn version_probe_command_string(name: &str) -> String {
 
 fn command_version_probe_in_container(
     backend: &ResolvedExecutionBackend,
+    segment_id: Option<&str>,
     name: &str,
     working_dir: &Path,
 ) -> CommandVersionProbe {
     let command = version_command_string(name);
-    let output = run_backend_command_captured(
+    let output = run_backend_precondition_probe_captured(
+        segment_id,
         &format!("doctor-probe:{name}"),
         version_probe_command_string(name).as_str(),
         working_dir,
@@ -14200,7 +14657,7 @@ mod tests {
         diagnose_contract_in_mode,
         diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
         diagnose_preconditions, diagnose_preconditions_with_mode, provider_hint_remediation,
-        tool_executable_name, version_matches,
+        selected_sandbox_boundary_is_declared, tool_executable_name, version_matches,
     };
 
     #[cfg(unix)]
@@ -14214,6 +14671,59 @@ mod tests {
             dir.join("ota.yaml")
         })
         .as_path()
+    }
+
+    #[test]
+    fn task_precondition_selection_uses_declared_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  preferred: container
+  backends:
+    container:
+      image: nanoserver
+      platform: windows/amd64
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "exit 1"]
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: powershell
+          args: ["-Command", "exit 0"]
+"#,
+        )
+        .unwrap();
+
+        let selections = super::selected_task_backend_precondition_selections(
+            &contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        );
+
+        assert_eq!(selections.len(), 1);
+        assert!(
+            selections[0]
+                .requirement_surface
+                .presence_only_tools
+                .contains("powershell")
+        );
+        assert!(
+            !selections[0]
+                .requirement_surface
+                .presence_only_tools
+                .contains("sh")
+        );
     }
 
     fn finding_contract_projection(lane: &str, finding: &Finding) -> serde_json::Value {
@@ -14252,6 +14762,35 @@ mod tests {
         assert_eq!(finding.code(), "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE");
         assert_eq!(finding.category(), "contract");
         assert_eq!(finding.owner(), "repo_contract");
+    }
+
+    #[test]
+    fn sandbox_boundary_detection_includes_conditional_hooks() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: sandbox-hook
+tasks:
+  verify:
+    run: printf verified
+    after_success: [record]
+  record:
+    run: printf recorded
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+"#,
+        )
+        .unwrap();
+
+        assert!(selected_sandbox_boundary_is_declared(
+            &contract,
+            None,
+            Some("verify"),
+            None,
+        ));
     }
 
     fn current_native_package_test_case() -> (&'static str, &'static str, &'static str, &'static str)

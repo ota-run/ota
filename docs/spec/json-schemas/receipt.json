@@ -2,6 +2,1533 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dist.ota.run/spec/json-schemas/latest/receipt.json",
   "title": "ota receipt --json",
+  "$defs": {
+    "sha256Identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "publicEvidenceLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]*$"
+    },
+    "crossingSemanticScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "identity", "contract_identity", "lane", "boundary_family", "classification", "target_platform", "execution_graph_identity", "breadth", "segment_identities", "edge_identities", "execution_selection", "input_identity_posture"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "lane": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "enum": ["task", "workflow"] },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        "boundary_family": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["routine", "escalated"] },
+        "target_platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "architecture"],
+          "properties": {
+            "os": { "type": "string", "minLength": 1 },
+            "architecture": { "type": "string", "minLength": 1 },
+            "platform": { "type": "string", "minLength": 1 }
+          }
+        },
+        "execution_graph_identity": { "$ref": "#/$defs/sha256Identity" },
+        "breadth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema_version", "identity", "closure_node_count", "closure_edge_count", "effect_categories", "resource_count", "resource_identities"],
+          "properties": {
+            "schema_version": { "const": 1 },
+            "identity": { "$ref": "#/$defs/sha256Identity" },
+            "closure_node_count": { "type": "integer", "minimum": 0 },
+            "closure_edge_count": { "type": "integer", "minimum": 0 },
+            "effect_categories": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "resource_count": { "type": "integer", "minimum": 0 },
+            "resource_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } }
+          }
+        },
+        "segment_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } },
+        "edge_identities": { "type": "array", "items": { "$ref": "#/$defs/sha256Identity" } },
+        "execution_selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skip_dependencies"],
+          "properties": {
+            "backend": { "enum": ["native", "container", "remote"] },
+            "lifecycle": { "enum": ["ephemeral", "persistent"] },
+            "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "memory": { "type": "integer", "minimum": 1 },
+            "skip_dependencies": { "type": "boolean" },
+            "run_behavior": { "enum": ["auto", "attach", "detach"] },
+            "ready_timeout_seconds": { "type": "integer", "minimum": 1 },
+            "sandbox_target": { "type": "string", "minLength": 1 },
+            "effect_overrides": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "workflow_instance": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["selector", "instance_identity"],
+              "properties": {
+                "selector": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" },
+                "instance_identity": { "$ref": "#/$defs/sha256Identity" },
+                "prerequisite_instances": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["selector", "instance_identity"],
+                    "properties": {
+                      "selector": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" },
+                      "instance_identity": { "$ref": "#/$defs/sha256Identity" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "input_identity_posture": { "enum": ["not_applicable", "unknown_secret_posture"] },
+        "unknown_dimensions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "brokerVerifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "public_key"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "public_key": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerAttestationBindingV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuer", "audience", "trust_bundle_identity", "verifiers",
+        "maximum_age_seconds", "maximum_clock_skew_seconds",
+        "key_rotation_overlap_seconds", "mandatory_protocol_claims",
+        "required_administrator_claims"
+      ],
+      "properties": {
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+        "verifiers": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/brokerVerifier" }
+        },
+        "maximum_age_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+        "mandatory_protocol_claims": {
+          "const": [
+            "authenticated_origin", "authority_mounts", "binding_identity",
+            "challenge_nonce_commitment", "channel_delivery", "invocation_id",
+            "runner_principal", "semantic_scope_identity", "work_unit_identity"
+          ]
+        },
+        "required_administrator_claims": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "brokerAttestationBindingV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version", "profile_id", "profile_identity", "attestor_kind", "adapter",
+        "launcher_session_binding_identity", "issuer", "audience", "trust_bundle_identity",
+        "verifiers", "maximum_age_seconds", "maximum_clock_skew_seconds",
+        "key_rotation_overlap_seconds"
+      ],
+      "properties": {
+        "protocol_version": { "const": "ota-runtime-boundary-attestation/v2" },
+        "profile_id": {
+          "enum": [
+            "ota.runtime-boundary.protected-launcher/v1",
+            "ota.runtime-boundary.protected-launcher-image/v1"
+          ]
+        },
+        "profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attestor_kind": { "const": "protected_launcher" },
+        "adapter": { "const": "launcher_session_peer/v1" },
+        "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+        "verifiers": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/brokerVerifier" }
+        },
+        "maximum_age_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "profile_id": { "const": "ota.runtime-boundary.protected-launcher/v1" }
+            },
+            "required": ["profile_id"]
+          },
+          "then": {
+            "properties": {
+              "profile_identity": {
+                "const": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "profile_id": { "const": "ota.runtime-boundary.protected-launcher-image/v1" }
+            },
+            "required": ["profile_id"]
+          },
+          "then": {
+            "properties": {
+              "profile_identity": {
+                "const": "sha256:8e59ecce1e92370ad682d9a73c4e710f86f302122f9bd1dc7c829f0b11aa5f7b"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "brokerAttestationBindingV3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version", "adapter", "systemd_launcher_profile_id",
+        "systemd_launcher_profile_identity", "systemd_job_principal_profile_id",
+        "systemd_job_principal_profile_identity", "launcher_session_binding_identity",
+        "issuer", "audience", "trust_bundle_identity", "verifiers",
+        "maximum_age_seconds", "maximum_clock_skew_seconds", "key_rotation_overlap_seconds"
+      ],
+      "properties": {
+        "protocol_version": { "const": "ota-systemd-protected-launcher-attestation/v3" },
+        "adapter": { "const": "systemd_protected_launcher/v1" },
+        "systemd_launcher_profile_id": { "const": "ota.authority-launcher.systemd/v3" },
+        "systemd_launcher_profile_identity": { "const": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf" },
+        "systemd_job_principal_profile_id": { "const": "ota.authority-job-principal.systemd/v2" },
+        "systemd_job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" },
+        "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+        "verifiers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/brokerVerifier" } },
+        "maximum_age_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_clock_skew_seconds": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "key_rotation_overlap_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      }
+    },
+    "brokerPublicAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity", "authority_id", "broker_id", "origin", "server_name",
+        "protocol_version", "transport_authentication", "credential_delivery",
+        "broker_verifiers", "attestation", "message_domains",
+        "maximum_approval_wait_seconds", "minimum_post_approval_freshness_seconds",
+        "maximum_lease_seconds"
+      ],
+      "properties": {
+        "schema_version": { "enum": [1, 2, 3] },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "broker_id": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "minLength": 1 },
+        "server_name": { "type": "string", "minLength": 1 },
+        "protocol_version": { "const": "ota-crossing-broker/v1" },
+        "transport_authentication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "trust_bundle_identity", "credential_source_identity"],
+          "properties": {
+            "kind": { "enum": ["mtls", "provider_workload_identity"] },
+            "trust_bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+            "credential_source_identity": { "type": "string", "minLength": 1 }
+          }
+        },
+        "credential_delivery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "session_audience"],
+          "properties": {
+            "kind": { "const": "launcher_session_fd" },
+            "session_audience": { "type": "string", "minLength": 1 }
+          }
+        },
+        "broker_verifiers": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/brokerVerifier" }
+        },
+        "attestation": {
+          "oneOf": [
+            { "$ref": "#/$defs/brokerAttestationBindingV1" },
+            { "$ref": "#/$defs/brokerAttestationBindingV2" },
+            { "$ref": "#/$defs/brokerAttestationBindingV3" }
+          ]
+        },
+        "message_domains": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "challenge_request", "attestation_response", "authorization_request",
+            "authorization_decision", "lease_issuance", "lease_consume",
+            "lease_consume_response"
+          ],
+          "oneOf": [
+            {
+              "required": ["lease_consumption_query", "lease_consumption_status"]
+            },
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["lease_consumption_query"] },
+                  { "required": ["lease_consumption_status"] }
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "challenge_request": { "const": "ota-crossing-broker/challenge-request/v1" },
+            "attestation_response": {
+              "enum": [
+                "ota-crossing-broker/attestation-response/v1",
+                "ota-crossing-broker/attestation-response/v2",
+                "ota-crossing-broker/attestation-response/v3"
+              ]
+            },
+            "authorization_request": { "const": "ota-crossing-broker/authorization-request/v1" },
+            "authorization_decision": { "const": "ota-crossing-broker/authorization-decision/v1" },
+            "lease_issuance": { "const": "ota-crossing-broker/lease-issuance/v1" },
+            "lease_consume": { "const": "ota-crossing-broker/lease-consume/v1" },
+            "lease_consume_response": { "const": "ota-crossing-broker/lease-consume-response/v1" },
+            "lease_consumption_query": { "const": "ota-crossing-broker/lease-consumption-query/v1" },
+            "lease_consumption_status": { "const": "ota-crossing-broker/lease-consumption-status/v1" }
+          }
+        },
+        "maximum_approval_wait_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "minimum_post_approval_freshness_seconds": { "type": "integer", "minimum": 1 },
+        "maximum_lease_seconds": { "type": "integer", "minimum": 1, "maximum": 600 }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "schema_version": { "const": 1 },
+            "attestation": { "$ref": "#/$defs/brokerAttestationBindingV1" },
+            "message_domains": {
+              "properties": {
+                "attestation_response": {
+                  "const": "ota-crossing-broker/attestation-response/v1"
+                }
+              }
+            }
+          },
+          "not": {
+            "properties": {
+              "schema_version": { "const": 2 }
+            },
+            "required": ["schema_version"]
+          }
+        },
+        {
+          "required": ["schema_version"],
+          "properties": {
+            "schema_version": { "const": 2 },
+            "attestation": { "$ref": "#/$defs/brokerAttestationBindingV2" },
+            "message_domains": {
+              "properties": {
+                "attestation_response": {
+                  "const": "ota-crossing-broker/attestation-response/v2"
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": ["schema_version"],
+          "properties": {
+            "schema_version": { "const": 3 },
+            "attestation": { "$ref": "#/$defs/brokerAttestationBindingV3" },
+            "message_domains": {
+              "properties": {
+                "attestation_response": {
+                  "const": "ota-crossing-broker/attestation-response/v3"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "brokerChallenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_kind", "protocol_version", "binding_identity", "nonce_commitment",
+        "work_unit_identity", "semantic_scope_identity", "contract_identity"
+      ],
+      "properties": {
+        "message_kind": { "const": "challenge_request" },
+        "protocol_version": { "type": "string", "minLength": 1 },
+        "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "signedLauncherAttestationV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "binding_identity", "challenge_nonce_commitment",
+            "invocation_id", "work_unit_identity", "semantic_scope_identity",
+            "runner_principal", "channel_delivery", "authenticated_origin",
+            "authority_mounts", "issuer", "audience", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "attestation_response" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "invocation_id": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "channel_delivery": { "type": "string", "minLength": 1 },
+            "authenticated_origin": { "type": "string", "minLength": 1 },
+            "authority_mounts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/publicEvidenceLabel" } },
+            "issuer": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtimeBoundaryObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "state", "evidence_method", "reason_code"],
+      "properties": {
+        "name": {
+          "enum": [
+            "job_principal_non_root", "authority_binding_write_denied",
+            "attestor_state_write_denied", "broker_credentials_absent_from_job",
+            "broker_credentials_absent_from_task", "broker_session_non_inheritable",
+            "broker_session_not_reacquirable", "host_control_socket_unavailable",
+            "privilege_escalation_unavailable", "launcher_binary_identity_bound",
+            "launcher_config_identity_bound", "runner_image_identity_bound",
+            "hardening_profile_identity_bound"
+          ]
+        },
+        "state": { "const": "verified" },
+        "evidence_method": {
+          "enum": [
+            "launcher_principal_binding", "target_principal_access_check",
+            "launcher_environment_exclusion", "child_environment_exclusion",
+            "descriptor_cloexec_verification", "protected_session_lifetime",
+            "launcher_privilege_policy", "protected_binary_measurement",
+            "protected_config_measurement", "protected_image_measurement",
+            "protected_profile_measurement"
+          ]
+        },
+        "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "semantic_identity": { "$ref": "#/$defs/sha256Identity" }
+      },
+      "oneOf": [
+        { "properties": { "name": { "const": "job_principal_non_root" }, "evidence_method": { "const": "launcher_principal_binding" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "authority_binding_write_denied" }, "evidence_method": { "const": "target_principal_access_check" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "attestor_state_write_denied" }, "evidence_method": { "const": "target_principal_access_check" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_credentials_absent_from_job" }, "evidence_method": { "const": "launcher_environment_exclusion" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_credentials_absent_from_task" }, "evidence_method": { "const": "child_environment_exclusion" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_session_non_inheritable" }, "evidence_method": { "const": "descriptor_cloexec_verification" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "broker_session_not_reacquirable" }, "evidence_method": { "const": "protected_session_lifetime" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "host_control_socket_unavailable" }, "evidence_method": { "const": "target_principal_access_check" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "privilege_escalation_unavailable" }, "evidence_method": { "const": "launcher_privilege_policy" } }, "not": { "required": ["semantic_identity"] } },
+        { "properties": { "name": { "const": "launcher_binary_identity_bound" }, "evidence_method": { "const": "protected_binary_measurement" } }, "required": ["semantic_identity"] },
+        { "properties": { "name": { "const": "launcher_config_identity_bound" }, "evidence_method": { "const": "protected_config_measurement" } }, "required": ["semantic_identity"] },
+        { "properties": { "name": { "const": "runner_image_identity_bound" }, "evidence_method": { "const": "protected_image_measurement" } }, "required": ["semantic_identity"] },
+        { "properties": { "name": { "const": "hardening_profile_identity_bound" }, "evidence_method": { "const": "protected_profile_measurement" } }, "required": ["semantic_identity"] }
+      ]
+    },
+    "runtimeBoundaryAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "profile_id", "profile_identity", "attestor_kind",
+        "attestor_instance_identity", "launcher_session_binding_identity", "observations"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "profile_id": {
+          "enum": [
+            "ota.runtime-boundary.protected-launcher/v1",
+            "ota.runtime-boundary.protected-launcher-image/v1"
+          ]
+        },
+        "profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attestor_kind": { "const": "protected_launcher" },
+        "attestor_instance_identity": { "$ref": "#/$defs/sha256Identity" },
+        "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "observations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runtimeBoundaryObservation" }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "profile_id": { "const": "ota.runtime-boundary.protected-launcher/v1" },
+            "profile_identity": { "const": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8" },
+            "observations": {
+              "minItems": 11, "maxItems": 11,
+              "prefixItems": [
+                { "properties": { "name": { "const": "job_principal_non_root" } } },
+                { "properties": { "name": { "const": "authority_binding_write_denied" } } },
+                { "properties": { "name": { "const": "attestor_state_write_denied" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_job" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_task" } } },
+                { "properties": { "name": { "const": "broker_session_non_inheritable" } } },
+                { "properties": { "name": { "const": "broker_session_not_reacquirable" } } },
+                { "properties": { "name": { "const": "host_control_socket_unavailable" } } },
+                { "properties": { "name": { "const": "privilege_escalation_unavailable" } } },
+                { "properties": { "name": { "const": "launcher_binary_identity_bound" } } },
+                { "properties": { "name": { "const": "launcher_config_identity_bound" } } }
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "profile_id": { "const": "ota.runtime-boundary.protected-launcher-image/v1" },
+            "profile_identity": { "const": "sha256:8e59ecce1e92370ad682d9a73c4e710f86f302122f9bd1dc7c829f0b11aa5f7b" },
+            "observations": {
+              "minItems": 13, "maxItems": 13,
+              "prefixItems": [
+                { "properties": { "name": { "const": "job_principal_non_root" } } },
+                { "properties": { "name": { "const": "authority_binding_write_denied" } } },
+                { "properties": { "name": { "const": "attestor_state_write_denied" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_job" } } },
+                { "properties": { "name": { "const": "broker_credentials_absent_from_task" } } },
+                { "properties": { "name": { "const": "broker_session_non_inheritable" } } },
+                { "properties": { "name": { "const": "broker_session_not_reacquirable" } } },
+                { "properties": { "name": { "const": "host_control_socket_unavailable" } } },
+                { "properties": { "name": { "const": "privilege_escalation_unavailable" } } },
+                { "properties": { "name": { "const": "launcher_binary_identity_bound" } } },
+                { "properties": { "name": { "const": "launcher_config_identity_bound" } } },
+                { "properties": { "name": { "const": "runner_image_identity_bound" } } },
+                { "properties": { "name": { "const": "hardening_profile_identity_bound" } } }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "signedLauncherAttestationV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "attestation_protocol_version", "binding_identity",
+            "challenge_nonce_commitment", "invocation_id", "work_unit_identity",
+            "semantic_scope_identity", "runner_principal", "channel_delivery",
+            "authenticated_origin", "authority_mounts", "runtime_boundary", "issuer",
+            "audience", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "attestation_response" },
+            "attestation_protocol_version": { "const": "ota-runtime-boundary-attestation/v2" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "invocation_id": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "channel_delivery": { "const": "launcher_session_fd" },
+            "authenticated_origin": { "type": "string", "minLength": 1 },
+            "authority_mounts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/publicEvidenceLabel" } },
+            "runtime_boundary": { "$ref": "#/$defs/runtimeBoundaryAttestation" },
+            "issuer": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "systemdProtectedLauncherInstanceV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "identity", "instance_v1", "launcher_observations", "job_principal_observations"],
+      "properties": {
+        "schema_version": { "enum": [2, 3] },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "instance_v1": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version", "identity", "adapter", "principal_mapping", "process_posture",
+            "systemd_launcher_profile_identity", "systemd_job_principal_profile_identity",
+            "launcher_session_binding_identity", "systemd_invocation_identity",
+            "working_directory_identity", "child_process_identity"
+          ],
+          "properties": {
+            "schema_version": { "const": 1 },
+            "identity": { "$ref": "#/$defs/sha256Identity" },
+            "adapter": { "const": "systemd_protected_launcher/v1" },
+            "principal_mapping": {
+              "type": "object", "additionalProperties": false,
+              "required": ["schema_version", "identity", "job_peer", "execution", "job_principal_profile_identity", "launcher_session_binding_identity"],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "identity": { "$ref": "#/$defs/sha256Identity" },
+                "job_peer": { "$ref": "#/$defs/systemdUnixPrincipal" },
+                "execution": { "$ref": "#/$defs/systemdUnixPrincipal" },
+                "job_principal_profile_identity": { "enum": ["sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d", "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659"] },
+                "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" }
+              }
+            },
+            "process_posture": {
+              "type": "object", "additionalProperties": false,
+              "required": ["schema_version", "identity", "message_kind", "pid", "process_start_time_identity", "ota_binary_identity", "no_new_privs", "dumpable", "ptracer_clear_applied", "principal_mapping_identity"],
+              "properties": {
+                "schema_version": { "const": 1 }, "identity": { "$ref": "#/$defs/sha256Identity" },
+                "message_kind": { "const": "ota_process_posture" }, "pid": { "type": "integer", "minimum": 1 },
+                "process_start_time_identity": { "$ref": "#/$defs/sha256Identity" },
+                "ota_binary_identity": { "$ref": "#/$defs/sha256Identity" },
+                "no_new_privs": { "const": true }, "dumpable": { "const": 0 },
+                "ptracer_clear_applied": { "const": true }, "principal_mapping_identity": { "$ref": "#/$defs/sha256Identity" }
+              }
+            },
+            "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42", "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf"] },
+            "systemd_job_principal_profile_identity": { "enum": ["sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d", "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659"] },
+            "launcher_session_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "systemd_invocation_identity": { "$ref": "#/$defs/sha256Identity" },
+            "working_directory_identity": { "$ref": "#/$defs/sha256Identity" },
+            "child_process_identity": { "$ref": "#/$defs/sha256Identity" }
+          }
+        },
+        "launcher_observations": {
+          "type": "array", "minItems": 8, "maxItems": 8,
+          "prefixItems": [
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "protected_file_identity" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "systemd_manager_property" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "socket_peer_credentials" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "proc_process_status" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "proc_descriptor_inspection" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "enum": ["proc_unix_socket_inspection", "protected_socket_identity"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "target_principal_access_probe" } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdLauncherObservation" }], "properties": { "source": { "const": "ota_process_posture" } } }
+          ],
+          "items": false
+        },
+        "job_principal_observations": {
+          "type": "array", "minItems": 18, "maxItems": 18,
+          "prefixItems": [
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "distinct_one_to_one_principals" }, "evidence_methods": { "const": ["protected_mapping_configuration", "proc_peer_status", "account_database_inspection"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_identity_matches_protected_mapping" }, "evidence_methods": { "const": ["protected_mapping_configuration", "proc_peer_status"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_no_new_privileges" }, "evidence_methods": { "const": ["proc_peer_status"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "peer_capabilities_empty" }, "evidence_methods": { "const": ["proc_peer_status"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "enum": ["peer_supplementary_groups_empty", "peer_supplementary_groups_limited_to_primary"] }, "evidence_methods": { "const": ["proc_peer_status"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "runner_service_identity_bound" }, "evidence_methods": { "const": ["protected_runner_service_identity"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "all_principal_processes_contained" }, "evidence_methods": { "const": ["proc_principal_cgroup_enumeration"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "accounts_locked" }, "evidence_methods": { "const": ["account_database_inspection"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "non_login_shells" }, "evidence_methods": { "const": ["account_database_inspection"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "sudo_policy_denied" }, "evidence_methods": { "const": ["sudo_policy_query"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "systemd_policy_denied" }, "evidence_methods": { "const": ["systemd_manager_authorization_query"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "polkit_policy_denied" }, "evidence_methods": { "const": ["polkit_authorization_query"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "protected_paths_write_denied" }, "evidence_methods": { "const": ["target_principal_access_probe"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "host_control_sockets_denied" }, "evidence_methods": { "const": ["target_principal_access_probe"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "execution_launcher_socket_denied" }, "evidence_methods": { "const": ["target_principal_access_probe"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "ota_process_non_dumpable" }, "evidence_methods": { "const": ["ota_process_posture", "process_access_probe"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "ota_ptracer_cleared" }, "evidence_methods": { "const": ["ota_process_posture", "process_access_probe"] } } },
+            { "allOf": [{ "$ref": "#/$defs/systemdJobPrincipalObservation" }], "properties": { "requirement": { "const": "ota_process_inspection_denied" }, "evidence_methods": { "const": ["process_access_probe"] } } }
+          ],
+          "items": false
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "schema_version": { "const": 2 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "instance_v1": {
+                "properties": {
+                  "principal_mapping": { "properties": { "job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" } } },
+                  "systemd_launcher_profile_identity": { "enum": ["sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930", "sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42"] },
+                  "systemd_job_principal_profile_identity": { "const": "sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d" }
+                }
+              },
+              "launcher_observations": { "prefixItems": [{}, {}, {}, {}, {}, { "properties": { "source": { "const": "proc_unix_socket_inspection" } } }] },
+              "job_principal_observations": { "prefixItems": [{}, {}, {}, {}, { "properties": { "requirement": { "const": "peer_supplementary_groups_empty" } } }] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "schema_version": { "const": 3 } }, "required": ["schema_version"] },
+          "then": {
+            "properties": {
+              "instance_v1": {
+                "properties": {
+                  "principal_mapping": { "properties": { "job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" } } },
+                  "systemd_launcher_profile_identity": { "const": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf" },
+                  "systemd_job_principal_profile_identity": { "const": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659" }
+                }
+              },
+              "launcher_observations": {
+                "prefixItems": [{}, {}, {}, {}, {}, { "properties": { "source": { "const": "protected_socket_identity" } } }],
+                "contains": { "required": ["evidence_identity"] },
+                "minContains": 8
+              },
+              "job_principal_observations": {
+                "prefixItems": [{}, {}, {}, {}, { "properties": { "requirement": { "const": "peer_supplementary_groups_limited_to_primary" } } }],
+                "contains": { "required": ["evidence_identity"] },
+                "minContains": 18
+              }
+            }
+          }
+        }
+      ]
+    },
+    "systemdUnixPrincipal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["real_uid", "effective_uid", "saved_uid", "filesystem_uid", "real_gid", "effective_gid", "saved_gid", "filesystem_gid"],
+      "properties": {
+        "real_uid": { "type": "integer", "minimum": 1 }, "effective_uid": { "type": "integer", "minimum": 1 },
+        "saved_uid": { "type": "integer", "minimum": 1 }, "filesystem_uid": { "type": "integer", "minimum": 1 },
+        "real_gid": { "type": "integer", "minimum": 1 }, "effective_gid": { "type": "integer", "minimum": 1 },
+        "saved_gid": { "type": "integer", "minimum": 1 }, "filesystem_gid": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "systemdLauncherObservation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "state", "reason_code"],
+      "properties": {
+        "source": { "enum": ["protected_file_identity", "systemd_manager_property", "socket_peer_credentials", "proc_process_status", "proc_descriptor_inspection", "proc_unix_socket_inspection", "protected_socket_identity", "target_principal_access_probe", "ota_process_posture"] },
+        "state": { "const": "verified" }, "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "evidence_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "systemdJobPrincipalObservation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requirement", "evidence_methods", "state", "reason_code"],
+      "properties": {
+        "requirement": { "enum": ["distinct_one_to_one_principals", "peer_identity_matches_protected_mapping", "peer_no_new_privileges", "peer_capabilities_empty", "peer_supplementary_groups_empty", "peer_supplementary_groups_limited_to_primary", "runner_service_identity_bound", "all_principal_processes_contained", "accounts_locked", "non_login_shells", "sudo_policy_denied", "systemd_policy_denied", "polkit_policy_denied", "protected_paths_write_denied", "host_control_sockets_denied", "execution_launcher_socket_denied", "ota_process_non_dumpable", "ota_ptracer_cleared", "ota_process_inspection_denied"] },
+        "evidence_methods": { "type": "array", "minItems": 1, "items": { "enum": ["protected_mapping_configuration", "proc_peer_status", "protected_runner_service_identity", "proc_principal_cgroup_enumeration", "account_database_inspection", "sudo_policy_query", "systemd_manager_authorization_query", "polkit_authorization_query", "target_principal_access_probe", "ota_process_posture", "process_access_probe"] } },
+        "state": { "const": "verified" }, "reason_code": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "evidence_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "signedLauncherAttestationV3": {
+      "type": "object", "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object", "additionalProperties": false,
+          "required": ["message_kind", "attestation_protocol_version", "binding_identity", "challenge_nonce_commitment", "invocation_id", "work_unit_identity", "semantic_scope_identity", "runner_principal", "channel_delivery", "authenticated_origin", "authority_mounts", "systemd_protected_launcher", "issuer", "audience", "issued_at", "expires_at"],
+          "properties": {
+            "message_kind": { "const": "attestation_response" }, "attestation_protocol_version": { "const": "ota-systemd-protected-launcher-attestation/v3" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" }, "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "invocation_id": { "$ref": "#/$defs/publicEvidenceLabel" }, "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" }, "runner_principal": { "$ref": "#/$defs/sha256Identity" },
+            "channel_delivery": { "const": "launcher_session_fd" }, "authenticated_origin": { "type": "string", "minLength": 1 },
+            "authority_mounts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/publicEvidenceLabel" } },
+            "systemd_protected_launcher": {
+              "allOf": [
+                { "$ref": "#/$defs/systemdProtectedLauncherInstanceV2" },
+                { "properties": { "schema_version": { "const": 3 } } }
+              ]
+            },
+            "issuer": { "type": "string", "minLength": 1 }, "audience": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" }, "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 }, "algorithm": { "const": "ed25519" }, "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signedLauncherAttestation": {
+      "oneOf": [
+        { "$ref": "#/$defs/signedLauncherAttestationV1" },
+        { "$ref": "#/$defs/signedLauncherAttestationV2" },
+        { "$ref": "#/$defs/signedLauncherAttestationV3" }
+      ]
+    },
+    "brokerAuthorizationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_kind", "binding_identity", "authority_id", "attestation_identity",
+        "challenge_nonce_commitment", "work_unit_identity", "contract_identity",
+        "semantic_scope_identity", "runner_principal", "actor_mode",
+        "requested_lifetime_seconds"
+      ],
+      "properties": {
+        "message_kind": { "const": "authorization_request" },
+        "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "requested_lifetime_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "signedAuthorizationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "request_identity", "binding_identity", "authority_id",
+            "attestation_identity", "challenge_nonce_commitment", "work_unit_identity",
+            "contract_identity", "semantic_scope_identity", "decision",
+            "broker_revision", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "authorization_decision" },
+            "request_identity": { "$ref": "#/$defs/sha256Identity" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "authority_id": { "type": "string", "minLength": 1 },
+            "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "decision": { "const": "allowed" },
+            "approval_reference": { "type": "string", "minLength": 1 },
+            "broker_revision": { "type": "integer", "minimum": 0 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signedPreparedLease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "authorization_decision_identity", "binding_identity",
+            "authority_id", "attestation_identity", "challenge_nonce_commitment",
+            "work_unit_identity", "contract_identity", "semantic_scope_identity",
+            "runner_principal", "broker_revision", "lease_sequence", "issued_at", "expires_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "lease_issuance" },
+            "authorization_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "authority_id": { "type": "string", "minLength": 1 },
+            "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+            "semantic_scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+            "broker_revision": { "type": "integer", "minimum": 0 },
+            "lease_sequence": { "type": "integer", "minimum": 0 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerLeaseConsumeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_kind", "binding_identity", "lease_identity",
+        "challenge_nonce_commitment", "work_unit_identity",
+        "crossing_transaction_id", "crossing_transaction_identity"
+      ],
+      "properties": {
+        "message_kind": { "const": "lease_consume" },
+        "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "crossing_transaction_id": { "type": "string", "minLength": 1 },
+        "crossing_transaction_identity": { "$ref": "#/$defs/sha256Identity" }
+      }
+    },
+    "signedBrokerConsumeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "algorithm", "signature"],
+      "properties": {
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_kind", "consume_request_identity", "binding_identity",
+            "lease_identity", "challenge_nonce_commitment", "work_unit_identity",
+            "crossing_transaction_id", "crossing_transaction_identity", "state",
+            "broker_revision", "consumed_at"
+          ],
+          "properties": {
+            "message_kind": { "const": "lease_consume_response" },
+            "consume_request_identity": { "$ref": "#/$defs/sha256Identity" },
+            "binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "lease_identity": { "$ref": "#/$defs/sha256Identity" },
+            "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+            "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+            "crossing_transaction_id": { "type": "string", "minLength": 1 },
+            "crossing_transaction_identity": { "$ref": "#/$defs/sha256Identity" },
+            "state": { "const": "consumed" },
+            "broker_revision": { "type": "integer", "minimum": 0 },
+            "consumed_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "ed25519" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brokerConsumptionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity", "lease_identity", "consume_request_identity",
+        "consume_response_identity", "broker_revision", "consumed_at",
+        "pending_transaction_identity", "consume_request", "consume_response"
+      ],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "consume_request_identity": { "$ref": "#/$defs/sha256Identity" },
+        "consume_response_identity": { "$ref": "#/$defs/sha256Identity" },
+        "broker_revision": { "type": "integer", "minimum": 0 },
+        "consumed_at": { "type": "string", "format": "date-time" },
+        "pending_transaction_identity": { "$ref": "#/$defs/sha256Identity" },
+        "consume_request": { "$ref": "#/$defs/brokerLeaseConsumeRequest" },
+        "consume_response": { "$ref": "#/$defs/signedBrokerConsumeResponse" }
+      }
+    },
+    "crossingTransaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "identity",
+        "authentication_posture",
+        "transaction_id",
+        "authority_id",
+        "admission_identity",
+        "scope_identity",
+        "contract_identity",
+        "state",
+        "created_at"
+      ],
+      "properties": {
+        "schema_version": { "enum": [1, 2, 3] },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "authentication_posture": {
+          "enum": [
+            "runner_local_content_addressed",
+            "launcher_active_slot_content_addressed"
+          ]
+        },
+        "transaction_id": {
+          "type": "string",
+          "pattern": "^crossing-[0-9]+-[0-9a-f]{64}$"
+        },
+        "authority_carrier": { "enum": ["prebound_file", "authority_broker"] },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "admission_identity": { "$ref": "#/$defs/sha256Identity" },
+        "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_identity": { "$ref": "#/$defs/sha256Identity" },
+        "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "broker_consumption": { "$ref": "#/$defs/brokerConsumptionEvidence" },
+        "state": {
+          "enum": ["pending", "completed", "failed", "interrupted", "incomplete"]
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "finalized_at": { "type": "string", "format": "date-time" },
+        "receipt_status": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "schema_version": { "const": 1 } } },
+          "then": {
+            "required": ["grant_identity"],
+            "not": { "anyOf": [
+              { "required": ["authority_carrier"] },
+              { "required": ["authorization_identity"] },
+              { "required": ["broker_consumption"] }
+            ] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "schema_version": { "enum": [2, 3] } },
+            "required": ["schema_version"]
+          },
+          "then": {
+            "required": ["authority_carrier", "authorization_identity"],
+            "not": { "required": ["grant_identity"] }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": { "const": 2 },
+              "authority_carrier": { "const": "prebound_file" }
+            },
+            "required": ["schema_version", "authority_carrier"]
+          },
+          "then": { "not": { "required": ["broker_consumption"] } }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": { "const": 2 },
+              "authority_carrier": { "const": "authority_broker" }
+            },
+            "required": ["schema_version", "authority_carrier"]
+          },
+          "then": { "required": ["broker_consumption"] }
+        },
+        {
+          "if": {
+            "properties": { "schema_version": { "const": 3 } },
+            "required": ["schema_version"]
+          },
+          "then": {
+            "properties": {
+              "authority_carrier": { "const": "authority_broker" },
+              "authentication_posture": {
+                "const": "launcher_active_slot_content_addressed"
+              }
+            },
+            "required": [
+              "authority_carrier",
+              "authorization_identity",
+              "broker_consumption"
+            ],
+            "not": { "required": ["grant_identity"] }
+          }
+        }
+      ]
+    },
+    "crossingAuthorityAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "carrier", "authority_id", "admission_identity", "authorization_identity",
+        "scope_identity", "contract_identity", "boundary_family", "classification",
+        "actor_mode", "decision", "admitted_at"
+      ],
+      "properties": {
+        "carrier": { "enum": ["prebound_file", "authority_broker"] },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "admission_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_identity": { "$ref": "#/$defs/sha256Identity" },
+        "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "boundary_family": { "type": "string", "minLength": 1 },
+        "classification": { "type": "string", "minLength": 1 },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "decision": { "const": "allowed" },
+        "admitted_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "crossingGrantArchiveEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admission", "transaction"],
+      "properties": {
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authority_id", "authority_binding_identity", "issuer_id", "key_id",
+            "key_fingerprint", "bundle_id", "bundle_identity", "bundle_sequence",
+            "grant_id", "grant_identity", "scope_identity", "contract_identity",
+            "boundary_family", "classification", "actor_mode", "environment_posture",
+            "expiry_kind", "issued_at", "not_before", "next_update", "expires_at",
+            "clock_evidence", "sequence_evidence", "revocation_evidence", "decision",
+            "admitted_at", "semantic_scope", "authority_binding_snapshot",
+            "signed_bundle_snapshot", "sequence_state_snapshot"
+          ],
+          "properties": {
+            "authority_id": { "type": "string", "minLength": 1 },
+            "authority_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+            "issuer_id": { "type": "string", "minLength": 1 },
+            "key_id": { "type": "string", "minLength": 1 },
+            "key_fingerprint": { "$ref": "#/$defs/sha256Identity" },
+            "bundle_id": { "type": "string", "minLength": 1 },
+            "bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+            "bundle_sequence": { "type": "integer", "minimum": 0 },
+            "grant_id": { "type": "string", "minLength": 1 },
+            "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+            "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+            "boundary_family": { "type": "string", "minLength": 1 },
+            "classification": { "type": "string", "minLength": 1 },
+            "actor_mode": { "enum": ["agent", "non_agent"] },
+            "environment_posture": { "type": "string", "minLength": 1 },
+            "expiry_kind": { "type": "string", "minLength": 1 },
+            "issued_at": { "type": "string", "format": "date-time" },
+            "not_before": { "type": "string", "format": "date-time" },
+            "next_update": { "type": "string", "format": "date-time" },
+            "expires_at": { "type": "string", "format": "date-time" },
+            "clock_evidence": { "type": "string", "minLength": 1 },
+            "sequence_evidence": { "type": "string", "minLength": 1 },
+            "revocation_evidence": { "type": "string", "minLength": 1 },
+            "decision": { "const": "allowed" },
+            "admitted_at": { "type": "string", "format": "date-time" },
+            "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" },
+            "authority_binding_snapshot": { "type": "object" },
+            "signed_bundle_snapshot": { "type": "object" },
+            "sequence_state_snapshot": { "type": "object" }
+          }
+        },
+        "carrier_admission": { "$ref": "#/$defs/crossingAuthorityAdmission" },
+        "transaction": { "$ref": "#/$defs/crossingTransaction" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "transaction": {
+                "properties": { "schema_version": { "const": 1 } }
+              }
+            }
+          },
+          "then": {
+            "not": { "required": ["carrier_admission"] },
+            "properties": {
+              "transaction": {
+                "properties": {
+                  "authentication_posture": { "const": "runner_local_content_addressed" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "transaction": {
+                "properties": { "schema_version": { "const": 2 } }
+              }
+            }
+          },
+          "then": {
+            "required": ["carrier_admission"],
+            "properties": {
+              "carrier_admission": {
+                "properties": { "carrier": { "const": "prebound_file" } }
+              },
+              "transaction": {
+                "properties": {
+                  "authority_carrier": { "const": "prebound_file" },
+                  "authentication_posture": { "const": "runner_local_content_addressed" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "brokerAdmissionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "identity", "binding_snapshot", "challenge", "attestation",
+        "attestation_identity", "authorization_request", "authorization_request_identity",
+        "authorization_decision", "authorization_decision_identity", "prepared_lease",
+        "prepared_lease_identity", "broker_revision", "actor_mode", "admitted_at",
+        "semantic_scope"
+      ],
+      "properties": {
+        "schema_version": { "enum": [1, 2] },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "binding_snapshot": { "$ref": "#/$defs/brokerPublicAuthorityBinding" },
+        "challenge": { "$ref": "#/$defs/brokerChallenge" },
+        "attestation": { "$ref": "#/$defs/signedLauncherAttestation" },
+        "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_request": { "$ref": "#/$defs/brokerAuthorizationRequest" },
+        "authorization_request_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_decision": { "$ref": "#/$defs/signedAuthorizationDecision" },
+        "authorization_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+        "prepared_lease": { "$ref": "#/$defs/signedPreparedLease" },
+        "prepared_lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "broker_revision": { "type": "integer", "minimum": 0 },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "admitted_at": { "type": "string", "format": "date-time" },
+        "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "binding_snapshot": {
+              "properties": {
+                "schema_version": { "const": 1 },
+                "attestation": { "$ref": "#/$defs/brokerAttestationBindingV1" }
+              },
+              "not": {
+                "properties": { "schema_version": { "const": 2 } },
+                "required": ["schema_version"]
+              }
+            },
+            "attestation": { "$ref": "#/$defs/signedLauncherAttestationV1" }
+          }
+        },
+        {
+          "properties": {
+            "binding_snapshot": {
+              "required": ["schema_version"],
+              "properties": {
+                "schema_version": { "const": 2 },
+                "attestation": { "$ref": "#/$defs/brokerAttestationBindingV2" }
+              }
+            },
+            "attestation": { "$ref": "#/$defs/signedLauncherAttestationV2" }
+          }
+        },
+        {
+          "properties": {
+            "binding_snapshot": {
+              "required": ["schema_version"],
+              "properties": {
+                "schema_version": { "const": 3 },
+                "attestation": { "$ref": "#/$defs/brokerAttestationBindingV3" }
+              }
+            },
+            "attestation": { "$ref": "#/$defs/signedLauncherAttestationV3" }
+          }
+        }
+      ]
+    },
+    "brokerArchiveEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "identity", "admission", "transaction"],
+      "properties": {
+        "schema_version": { "enum": [1, 2] },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "admission": { "$ref": "#/$defs/brokerAdmissionEvidence" },
+        "transaction": {
+          "allOf": [
+            { "$ref": "#/$defs/crossingTransaction" },
+            {
+              "properties": {
+                "authority_carrier": { "const": "authority_broker" }
+              },
+              "required": ["broker_consumption"]
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "schema_version": { "const": 1 } },
+            "required": ["schema_version"]
+          },
+          "then": {
+            "properties": {
+              "transaction": {
+                "properties": { "schema_version": { "const": 2 } },
+                "required": ["schema_version"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "schema_version": { "const": 2 } },
+            "required": ["schema_version"]
+          },
+          "then": {
+            "properties": {
+              "admission": {
+                "properties": {
+                  "binding_snapshot": {
+                    "properties": { "schema_version": { "const": 3 } },
+                    "required": ["schema_version"]
+                  }
+                },
+                "required": ["binding_snapshot"]
+              },
+              "transaction": {
+                "properties": {
+                  "schema_version": { "const": 3 },
+                  "authentication_posture": {
+                    "const": "launcher_active_slot_content_addressed"
+                  }
+                },
+                "required": ["schema_version"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "admission": {
+                "properties": {
+                  "binding_snapshot": {
+                    "properties": { "schema_version": { "const": 3 } },
+                    "required": ["schema_version"]
+                  }
+                },
+                "required": ["binding_snapshot"]
+              }
+            },
+            "required": ["admission"]
+          },
+          "then": {
+            "properties": {
+              "transaction": {
+                "properties": {
+                  "authentication_posture": {
+                    "const": "launcher_active_slot_content_addressed"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "transaction": {
+                "properties": {
+                  "authentication_posture": {
+                    "const": "runner_local_content_addressed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "executionBoundaryBrokerAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "admission_identity", "attestation_identity", "authorization_decision_identity",
+        "prepared_lease_identity", "work_unit_identity", "challenge_nonce_commitment",
+        "broker_revision", "runner_principal"
+      ],
+      "properties": {
+        "admission_identity": { "$ref": "#/$defs/sha256Identity" },
+        "attestation_identity": { "$ref": "#/$defs/sha256Identity" },
+        "authorization_decision_identity": { "$ref": "#/$defs/sha256Identity" },
+        "prepared_lease_identity": { "$ref": "#/$defs/sha256Identity" },
+        "work_unit_identity": { "$ref": "#/$defs/sha256Identity" },
+        "challenge_nonce_commitment": { "$ref": "#/$defs/sha256Identity" },
+        "broker_revision": { "type": "integer", "minimum": 0 },
+        "runner_principal": { "$ref": "#/$defs/publicEvidenceLabel" },
+        "approval_reference": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sandboxControlApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "application"],
+      "properties": {
+        "required": { "type": "string", "minLength": 1 },
+        "application": {
+          "enum": ["pending", "enforced", "not_required", "not_proved", "contradicted"]
+        },
+        "evidence_identity": { "$ref": "#/$defs/sha256Identity" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "application": { "const": "enforced" } },
+            "required": ["application"]
+          },
+          "then": { "required": ["evidence_identity"] }
+        }
+      ]
+    },
+    "sandboxRestrictionOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": { "type": "string", "minLength": 1 },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo_root_mode": { "enum": ["read_only", "read_write"] },
+            "writable_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "protected_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": { "enum": ["allow", "deny"] },
+            "outbound_targets": {
+              "type": "array",
+              "items": {
+                "$ref": "contract.json#/$defs/runtimeBoundaryOutboundTarget"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sandboxRestrictionAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source", "source_identity", "rules"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": {
+          "enum": ["OTA_POLICY", "repo policy", "workspace policy"]
+        },
+        "source_identity": { "$ref": "#/$defs/sha256Identity" },
+        "rules": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "filesystem": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repo_root_mode": { "enum": ["read_only", "read_write"] },
+                "writable_paths": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "protected_paths": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            },
+            "network": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "default": { "enum": ["allow", "deny"] },
+                "outbound_targets": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "contract.json#/$defs/runtimeBoundaryOutboundTarget"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ociLocalSegmentPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segment_id",
+        "segment_policy_identity",
+        "task",
+        "declared_image",
+        "read_only_repo_root",
+        "writable_paths",
+        "protected_paths",
+        "isolated_paths",
+        "execution_kind",
+        "deny_external_network"
+      ],
+      "properties": {
+        "segment_id": { "type": "string", "minLength": 1 },
+        "segment_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+        "task": { "type": "string", "minLength": 1 },
+        "declared_image": { "type": "string", "minLength": 1 },
+        "read_only_repo_root": { "type": "boolean" },
+        "writable_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "isolated_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pre_boundary_actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_kind": { "type": "string", "minLength": 1 },
+        "deny_external_network": { "type": "boolean" },
+        "platform": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sandboxPolicyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source", "destination", "condition", "order"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "minLength": 1 },
+        "condition": {
+          "enum": ["unconditional", "on_success", "on_failure", "always"]
+        },
+        "order": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
   "oneOf": [
     {
       "type": "object",
@@ -12,6 +1539,42 @@
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
         "archive_path": { "type": "string" },
+        "archive_context": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema_version", "kind"],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "kind": { "const": "readiness" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema_version", "kind", "lane_kind", "lane_name"],
+              "properties": {
+                "schema_version": { "const": 1 },
+                "kind": { "const": "execution" },
+                "lane_kind": { "enum": ["task", "workflow"] },
+                "lane_name": { "type": "string", "minLength": 1 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema_version", "kind", "lane_kind", "lane_name", "semantic_scope"],
+              "properties": {
+                "schema_version": { "const": 2 },
+                "kind": { "const": "execution" },
+                "lane_kind": { "enum": ["task", "workflow"] },
+                "lane_name": { "type": "string", "minLength": 1 },
+                "semantic_scope": { "$ref": "#/$defs/crossingSemanticScope" }
+              }
+            }
+          ]
+        },
         "artifact_routing": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
@@ -190,6 +1753,416 @@
                       "evidence_class": { "const": "attested" }
                     }
                   }
+                },
+                "sandbox_application": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schema_version",
+                    "lane",
+                    "execution_selection",
+                    "canonical_policy_identity",
+                    "restriction_overlays",
+                    "restriction_overlay_identities",
+                    "effective_policy_identity",
+                    "target_platform",
+                    "provider_target",
+                    "provider_adapter_version",
+                    "capability_identity",
+                    "application_plan_identity",
+                    "runner_transaction_identity",
+                    "started_at",
+                    "attestation",
+                    "status",
+                    "admitted_edge_identities",
+                    "admitted_segments",
+                    "admitted_edges",
+                    "selected_edges",
+                    "segments"
+                  ],
+                  "properties": {
+                    "schema_version": { "const": 1 },
+                    "lane": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "name"],
+                      "properties": {
+                        "kind": { "enum": ["task", "workflow"] },
+                        "name": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "execution_selection": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["skip_dependencies"],
+                      "properties": {
+                        "backend": { "enum": ["native", "container", "remote"] },
+                        "lifecycle": { "enum": ["ephemeral", "persistent"] },
+                        "skip_dependencies": { "type": "boolean" }
+                      }
+                    },
+                    "canonical_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "restriction_authority": {
+                      "$ref": "#/$defs/sandboxRestrictionAuthority"
+                    },
+                    "restriction_overlays": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/sandboxRestrictionOverlay" }
+                    },
+                    "restriction_overlay_identities": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/sha256Identity" }
+                    },
+                    "effective_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "target_platform": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["os", "architecture"],
+                      "properties": {
+                        "os": { "type": "string", "minLength": 1 },
+                        "architecture": { "type": "string", "minLength": 1 },
+                        "platform": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "provider_target": { "const": "oci_local" },
+                    "provider_adapter_version": { "type": "string", "minLength": 1 },
+                    "capability_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "application_plan_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "runner_transaction_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "started_at": { "type": "string", "format": "date-time" },
+                    "attestation": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["issuer", "trust", "challenge_identity", "verifier"],
+                      "properties": {
+                        "issuer": { "const": "ota_runner" },
+                        "trust": { "const": "runner_owned_runtime_inspection" },
+                        "challenge_identity": { "$ref": "#/$defs/sha256Identity" },
+                        "verifier": { "type": "string", "minLength": 1 }
+                      }
+                    },
+                    "status": {
+                      "enum": [
+                        "not_started",
+                        "enforced_through_completion",
+                        "enforcement_lost",
+                        "enforcement_unknown_after_interruption"
+                      ]
+                    },
+                    "admitted_edge_identities": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": { "$ref": "#/$defs/sha256Identity" }
+                    },
+                    "admitted_segments": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/ociLocalSegmentPlan" }
+                    },
+                    "admitted_edges": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/sandboxPolicyEdge" }
+                    },
+                    "selected_edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "identity",
+                          "edge_identity",
+                          "source",
+                          "destination",
+                          "executed_segment",
+                          "condition",
+                          "edge_order",
+                          "generation",
+                          "state"
+                        ],
+                        "properties": {
+                          "identity": { "$ref": "#/$defs/sha256Identity" },
+                          "edge_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "source": { "type": "string", "minLength": 1 },
+                          "destination": { "type": "string", "minLength": 1 },
+                          "executed_segment": { "type": "string", "minLength": 1 },
+                          "condition": {
+                            "enum": ["unconditional", "on_success", "on_failure", "always"]
+                          },
+                          "edge_order": { "type": "integer", "minimum": 0 },
+                          "generation": { "type": "integer", "minimum": 0 },
+                          "state": { "enum": ["entered", "skipped", "reused"] },
+                          "source_exit_code": { "type": "integer" },
+                          "source_generation": { "type": "integer", "minimum": 0 }
+                        },
+                        "allOf": [
+                          {
+                            "if": {
+                              "properties": {
+                                "condition": {
+                                  "enum": ["on_success", "on_failure", "always"]
+                                }
+                              },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "required": ["source_exit_code", "source_generation"]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": { "condition": { "const": "unconditional" } },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "allOf": [
+                                { "not": { "required": ["source_exit_code"] } },
+                                { "not": { "required": ["source_generation"] } }
+                              ]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": { "condition": { "const": "on_success" } },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "properties": { "source_exit_code": { "const": 0 } }
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": { "condition": { "const": "on_failure" } },
+                              "required": ["condition"]
+                            },
+                            "then": {
+                              "properties": {
+                                "source_exit_code": {
+                                  "not": { "const": 0 }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "segments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "segment_id",
+                          "segment_policy_identity",
+                          "purpose",
+                          "invocation_generation",
+                          "cleanup_lease_identity",
+                          "boundary_identity",
+                          "declared_image",
+                          "rendered_policy_identity",
+                          "writable_mounts",
+                          "filesystem",
+                          "network",
+                          "cleanup",
+                          "status"
+                        ],
+                        "properties": {
+                          "segment_id": { "type": "string", "minLength": 1 },
+                          "segment_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "purpose": {
+                            "type": "string",
+                            "enum": ["task_execution", "precondition_probe"]
+                          },
+                          "invocation_generation": { "type": "integer", "minimum": 0 },
+                          "cleanup_lease_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "boundary_identity": {
+                            "type": "string",
+                            "pattern": "^container:(docker|podman):.+$"
+                          },
+                          "declared_image": { "type": "string", "minLength": 1 },
+                          "resolved_image_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "resolved_platform": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$"
+                          },
+                          "rendered_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "applied_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "terminal_application_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "terminal_observation_identity": { "$ref": "#/$defs/sha256Identity" },
+                          "writable_mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": ["path", "source_identity"],
+                              "properties": {
+                                "path": { "type": "string", "minLength": 1 },
+                                "source_identity": { "$ref": "#/$defs/sha256Identity" }
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "restriction_overlays": { "minItems": 1 }
+                        },
+                        "required": ["restriction_overlays"]
+                      },
+                      "then": { "required": ["restriction_authority"] }
+                    },
+                    {
+                      "if": { "required": ["restriction_authority"] },
+                      "then": {
+                        "properties": {
+                          "restriction_overlays": { "minItems": 1 },
+                          "restriction_overlay_identities": { "minItems": 1 }
+                        }
+                      }
+                    }
+                  ]
+                },
+                          "filesystem": { "$ref": "#/$defs/sandboxControlApplication" },
+                          "network": { "$ref": "#/$defs/sandboxControlApplication" },
+                          "cleanup": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["authority", "state"],
+                            "properties": {
+                              "authority": { "const": "ota_runner" },
+                              "state": {
+                                "enum": ["registered", "confirmed", "incomplete", "unknown"]
+                              },
+                              "terminal_identity": { "$ref": "#/$defs/sha256Identity" }
+                            }
+                          },
+                          "status": {
+                            "enum": [
+                              "lease_registered",
+                              "applied",
+                              "enforcement_lost",
+                              "enforcement_unknown_after_interruption",
+                              "enforced_through_completion"
+                            ]
+                          }
+                        },
+                        "allOf": [
+                          {
+                            "if": {
+                              "properties": {
+                                "status": {
+                                  "enum": ["applied", "enforced_through_completion"]
+                                }
+                              },
+                              "required": ["status"]
+                            },
+                            "then": {
+                              "required": [
+                                "resolved_image_identity",
+                                "resolved_platform",
+                                "applied_policy_identity"
+                              ]
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": {
+                                "status": { "const": "enforced_through_completion" }
+                              },
+                              "required": ["status"]
+                            },
+                            "then": {
+                              "required": [
+                                "terminal_application_identity",
+                                "terminal_observation_identity"
+                              ],
+                              "properties": {
+                                "filesystem": {
+                                  "properties": {
+                                    "required": {
+                                      "const": "repo_root_read_only_with_declared_writable_carveouts"
+                                    },
+                                    "application": { "const": "enforced" }
+                                  }
+                                },
+                                "network": {
+                                  "properties": {
+                                    "required": {
+                                      "enum": [
+                                        "external_ip_connectivity_denied",
+                                        "no_authoritative_network_control"
+                                      ]
+                                    },
+                                    "application": {
+                                      "enum": ["enforced", "not_required"]
+                                    }
+                                  },
+                                  "allOf": [
+                                    {
+                                      "if": {
+                                        "properties": {
+                                          "required": {
+                                            "const": "external_ip_connectivity_denied"
+                                          }
+                                        },
+                                        "required": ["required"]
+                                      },
+                                      "then": {
+                                        "properties": {
+                                          "application": { "const": "enforced" }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "if": {
+                                        "properties": {
+                                          "required": {
+                                            "const": "no_authoritative_network_control"
+                                          }
+                                        },
+                                        "required": ["required"]
+                                      },
+                                      "then": {
+                                        "properties": {
+                                          "application": { "const": "not_required" }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                "cleanup": {
+                                  "properties": {
+                                    "state": { "const": "confirmed" }
+                                  },
+                                  "required": ["terminal_identity"]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "status": { "const": "enforced_through_completion" }
+                        },
+                        "required": ["status"]
+                      },
+                      "then": {
+                        "properties": {
+                          "segments": {
+                            "minItems": 1,
+                            "items": {
+                              "properties": {
+                                "status": { "const": "enforced_through_completion" }
+                              },
+                              "required": ["status"]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -358,6 +2331,136 @@
                     "reason": { "type": "string" },
                     "evidence_attachment_state": { "type": "string" }
                   }
+                },
+                "authority": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "decision",
+                    "authority_id",
+                    "authority_separation_posture",
+                    "authority_binding_identity",
+                    "scope_identity",
+                    "contract_identity",
+                    "boundary_family",
+                    "classification",
+                    "actor_mode",
+                    "admitted_at",
+                    "transaction",
+                    "archive_evidence"
+                  ],
+                  "properties": {
+                    "decision": { "const": "allowed" },
+                    "authority_carrier": { "const": "authority_broker" },
+                    "authority_id": { "type": "string", "minLength": 1 },
+                    "authority_separation_posture": {
+                      "enum": [
+                        "current_process_filesystem_guarded",
+                        "launcher_attested_one_use",
+                        "protected_launcher_attested_one_use",
+                        "systemd_protected_launcher_attested_one_use"
+                      ]
+                    },
+                    "authority_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "broker": { "$ref": "#/$defs/executionBoundaryBrokerAuthority" },
+                    "issuer_id": { "type": "string", "minLength": 1 },
+                    "key_id": { "type": "string", "minLength": 1 },
+                    "key_fingerprint": { "$ref": "#/$defs/sha256Identity" },
+                    "bundle_id": { "type": "string", "minLength": 1 },
+                    "bundle_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "bundle_sequence": { "type": "integer", "minimum": 0 },
+                    "grant_id": { "type": "string", "minLength": 1 },
+                    "grant_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "scope_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+                    "boundary_family": { "type": "string", "minLength": 1 },
+                    "classification": { "type": "string", "minLength": 1 },
+                    "actor_mode": { "enum": ["agent", "non_agent"] },
+                    "environment_posture": { "type": "string", "minLength": 1 },
+                    "expiry_kind": { "type": "string", "minLength": 1 },
+                    "issued_at": { "type": "string", "format": "date-time" },
+                    "not_before": { "type": "string", "format": "date-time" },
+                    "next_update": { "type": "string", "format": "date-time" },
+                    "expires_at": { "type": "string", "format": "date-time" },
+                    "clock_evidence": { "type": "string", "minLength": 1 },
+                    "sequence_evidence": { "type": "string", "minLength": 1 },
+                    "revocation_evidence": { "type": "string", "minLength": 1 },
+                    "admitted_at": { "type": "string", "format": "date-time" },
+                    "transaction": { "$ref": "#/$defs/crossingTransaction" },
+                    "archive_evidence": {
+                      "oneOf": [
+                        { "$ref": "#/$defs/crossingGrantArchiveEvidence" },
+                        { "$ref": "#/$defs/brokerArchiveEvidence" }
+                      ]
+                    }
+                  },
+                  "oneOf": [
+                    {
+                      "required": [
+                        "issuer_id", "key_id", "key_fingerprint", "bundle_id",
+                        "bundle_identity", "bundle_sequence", "grant_id", "grant_identity",
+                        "environment_posture", "expiry_kind", "issued_at", "not_before",
+                        "next_update", "expires_at", "clock_evidence", "sequence_evidence",
+                        "revocation_evidence"
+                      ],
+                      "properties": {
+                        "authority_separation_posture": { "const": "current_process_filesystem_guarded" },
+                        "transaction": {
+                          "properties": {
+                            "authority_carrier": { "const": "prebound_file" }
+                          }
+                        },
+                        "archive_evidence": { "$ref": "#/$defs/crossingGrantArchiveEvidence" }
+                      },
+                      "not": {
+                        "anyOf": [
+                          { "required": ["authority_carrier"] },
+                          { "required": ["broker"] }
+                        ]
+                      }
+                    },
+                    {
+                      "required": ["authority_carrier", "broker"],
+                      "properties": {
+                        "authority_carrier": { "const": "authority_broker" },
+                        "authority_separation_posture": {
+                          "enum": [
+                            "launcher_attested_one_use",
+                            "protected_launcher_attested_one_use",
+                            "systemd_protected_launcher_attested_one_use"
+                          ]
+                        },
+                        "transaction": {
+                          "properties": {
+                            "schema_version": { "const": 2 },
+                            "authority_carrier": { "const": "authority_broker" }
+                          },
+                          "required": ["broker_consumption"]
+                        },
+                        "archive_evidence": { "$ref": "#/$defs/brokerArchiveEvidence" }
+                      },
+                      "not": {
+                        "anyOf": [
+                          { "required": ["issuer_id"] },
+                          { "required": ["key_id"] },
+                          { "required": ["key_fingerprint"] },
+                          { "required": ["bundle_id"] },
+                          { "required": ["bundle_identity"] },
+                          { "required": ["bundle_sequence"] },
+                          { "required": ["grant_id"] },
+                          { "required": ["grant_identity"] },
+                          { "required": ["environment_posture"] },
+                          { "required": ["expiry_kind"] },
+                          { "required": ["issued_at"] },
+                          { "required": ["not_before"] },
+                          { "required": ["next_update"] },
+                          { "required": ["clock_evidence"] },
+                          { "required": ["sequence_evidence"] },
+                          { "required": ["revocation_evidence"] }
+                        ]
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -563,6 +2666,19 @@
                     "enum": ["prepare", "setup", "verify", "proof", "receipt"]
                   },
                   "status": { "type": "string" },
+                  "task": { "type": "string" },
+                  "execution_relation": {
+                    "enum": [
+                      "requested",
+                      "depends_on",
+                      "aggregate_member",
+                      "after_success",
+                      "after_failure",
+                      "after_always"
+                    ]
+                  },
+                  "execution_parent": { "type": "string" },
+                  "generation": { "type": "integer", "minimum": 0 },
                   "detail": { "type": "string" },
                   "exit_code": { "type": "integer" }
                 }
@@ -915,11 +3031,34 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "mode", "summary", "archives"],
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "history_source",
+        "completeness_posture",
+        "summary",
+        "archives"
+      ],
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },
         "mode": { "const": "history" },
+        "history_source": { "enum": ["local", "systemd_protected_launcher"] },
+        "completeness_posture": {
+          "enum": [
+            "local_archive_directory_observed",
+            "complete_selected_catalog_snapshot"
+          ]
+        },
+        "operator_profile_posture": {
+          "const": "least_privilege_operator_peer_verified"
+        },
+        "operator_profile_identity": { "$ref": "#/$defs/sha256Identity" },
+        "operator_peer_identity": { "$ref": "#/$defs/sha256Identity" },
+        "repository_binding_identity": { "$ref": "#/$defs/sha256Identity" },
+        "catalog_namespace_identity": { "$ref": "#/$defs/sha256Identity" },
+        "catalog_snapshot_identity": { "$ref": "#/$defs/sha256Identity" },
         "summary": {
           "type": "object",
           "additionalProperties": false,
@@ -937,6 +3076,8 @@
             "required": ["archive_path", "archived_at", "ok", "contract", "summary"],
             "properties": {
               "archive_path": { "type": "string" },
+              "archive_identity": { "$ref": "#/$defs/sha256Identity" },
+              "catalog_identity": { "$ref": "#/$defs/sha256Identity" },
               "archived_at": { "type": "string" },
               "ok": { "type": "boolean" },
               "contract": { "type": "string" },
@@ -969,14 +3110,73 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["archive_path", "error"],
+            "required": ["archive_path", "posture", "error"],
             "properties": {
               "archive_path": { "type": "string" },
+              "posture": { "enum": ["legacy_unverified", "invalid"] },
               "error": { "type": "string" }
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "history_source": { "const": "systemd_protected_launcher" }
+            }
+          },
+          "then": {
+            "required": [
+              "operator_profile_posture",
+              "operator_profile_identity",
+              "operator_peer_identity",
+              "repository_binding_identity",
+              "catalog_namespace_identity",
+              "catalog_snapshot_identity"
+            ],
+            "properties": {
+              "completeness_posture": {
+                "const": "complete_selected_catalog_snapshot"
+              },
+              "archives": {
+                "items": {
+                  "required": ["archive_identity", "catalog_identity"]
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "completeness_posture": {
+                "const": "local_archive_directory_observed"
+              }
+            },
+            "not": {
+              "anyOf": [
+                { "required": ["operator_profile_posture"] },
+                { "required": ["operator_profile_identity"] },
+                { "required": ["operator_peer_identity"] },
+                { "required": ["repository_binding_identity"] },
+                { "required": ["catalog_namespace_identity"] },
+                { "required": ["catalog_snapshot_identity"] }
+              ]
+            },
+            "properties": {
+              "archives": {
+                "items": {
+                  "not": {
+                    "anyOf": [
+                      { "required": ["archive_identity"] },
+                      { "required": ["catalog_identity"] }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",

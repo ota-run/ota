@@ -28,11 +28,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use include_dir::{Dir, include_dir};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -42,11 +44,13 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 use toml::Value as TomlValue;
 
+static PUBLISHED_JSON_SCHEMAS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/docs/spec/json-schemas");
+
 use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistHostScopeArg,
     AssistNormalizeIntoArg, AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
     AssistTaskListenerProtocolArg, AssistTaskTargetActivationModeArg,
-    AssistTaskTargetAddressViewArg,
+    AssistTaskTargetAddressViewArg, ReceiptHistorySource,
 };
 use crate::adapter_inputs::bind_workflow_adapter_overlays;
 use crate::ci_projection::{
@@ -70,6 +74,8 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides_and_replay_input_policy,
     diagnose_policy_review, diagnose_preconditions,
+    diagnose_preconditions_non_mutating_with_mode_for_task_with_overrides_and_replay_input_policy,
+    diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy,
     diagnose_preconditions_with_mode_for_task_with_overrides_and_replay_input_policy,
     diagnose_preconditions_with_mode_for_workflow_with_overrides,
     diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy,
@@ -121,10 +127,11 @@ use crate::output::{
     InitSuccess, LifecycleProofAssertion, LifecycleProofServiceRecord, LifecycleProofStatus,
     ListedWorkflowSummary, MemberServicesSuccess, MemberTasksSuccess, MemberWorkflowsSuccess,
     OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeDependencyEvidence,
-    ProofRuntimeDependencyObservation, ProofRuntimeLikelyCauseEvidence,
-    ProofRuntimeNegativeControl, ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved,
-    ProofRuntimeScope, ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
+    ProofRuntimeArchive, ProofRuntimeArtifacts, ProofRuntimeCrossingEvidence,
+    ProofRuntimeDependencyEvidence, ProofRuntimeDependencyObservation,
+    ProofRuntimeLikelyCauseEvidence, ProofRuntimeNegativeControl,
+    ProofRuntimeNegativeControlOutcome, ProofRuntimeNotProved, ProofRuntimeScope,
+    ProofRuntimeStatus, ReceiptDiffArtifactComparison, ReceiptDiffArtifactTrust,
     ReceiptDiffArtifactTrustRole, ReceiptDiffBaseline, ReceiptDiffComparison,
     ReceiptDiffCorrelation, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
     ReceiptDiffReplayHermeticity, ReceiptDiffReplayPosture, ReceiptDiffReplayPostureKind,
@@ -180,8 +187,8 @@ use crate::runner::{
     CleanExecutionResourceKind, DeclaredEnvSourceStatus, EXECUTION_BOUNDARY_TRACE_PATH_ENV,
     EXECUTION_BOUNDARY_TRACE_TOKEN_ENV, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
     HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, RepoExecutionConflictReason,
-    RepoExecutionLockOwner, ResolvedEnvValue, ResolvedExecutionBackend,
-    ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
+    RepoExecutionLockOwner, RepoExecutionRuntimeConflict, ResolvedEnvValue,
+    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
@@ -255,7 +262,8 @@ mod workspace_output;
 use self::execution_summary::{
     append_runtime_listener_lines, execution_receipt_next_steps, primary_runtime_endpoint,
     render_execution_receipt_status, render_execution_receipt_summary_block,
-    render_execution_summary_status_value, summary_detail_line, summary_has_status,
+    render_execution_receipt_summary_block_with_conflict, render_execution_summary_status_value,
+    summary_detail_line, summary_has_status,
 };
 use self::explain_output::{
     explain_action_count, explain_actions, explain_steps, explain_summary,
@@ -2198,6 +2206,52 @@ fn apply_ci_projection_governance(
     Ok(projection)
 }
 
+pub fn authority_inspect(format: OutputFormat) -> CommandOutput {
+    let report = crate::crossing_authority::inspect_prebound_authority(Path::new("."));
+    let exit_code = if report.ok { 0 } else { 1 };
+    let stdout = match format {
+        OutputFormat::Json => to_json(&report),
+        OutputFormat::Text => {
+            let required_failures = report
+                .observations
+                .iter()
+                .filter(|observation| {
+                    observation.required
+                        && observation.status
+                            != crate::crossing_authority::AuthorityInspectObservationStatus::Passed
+                })
+                .map(|observation| format!("{} ({})", observation.id, observation.reason))
+                .collect::<Vec<_>>();
+            let next = if report.ok {
+                "use this diagnostic together with provider/launcher evidence; it is not crossing authority"
+            } else {
+                "have the runner administrator repair the fixed prebound-file boundary, then inspect again"
+            };
+            format!(
+                "Profile: {} v{}\nVerdict: {}\nAuthority source: {}\nSeparation posture: {}\nPlatform: {}/{}\nRequired gaps: {}\nNext: {}",
+                report.profile.id,
+                report.profile.version,
+                report.profile.verdict,
+                report.authority_source,
+                report.authority_separation_posture,
+                report.platform.os,
+                report.platform.architecture,
+                if required_failures.is_empty() {
+                    String::from("none")
+                } else {
+                    required_failures.join(", ")
+                },
+                next,
+            )
+        }
+    };
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code,
+    }
+}
+
 pub fn ci_projection(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -3187,6 +3241,7 @@ fn lifecycle_assertion_evidence(
     }
 }
 
+#[cfg(test)]
 pub fn proof_lifecycle(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -3194,6 +3249,35 @@ pub fn proof_lifecycle(
     workflow_name: Option<&str>,
     service_name: Option<&str>,
     agent: bool,
+    overrides: crate::runner::ExecutionOverrides,
+    archive: bool,
+    format: OutputFormat,
+    _debug: bool,
+) -> CommandOutput {
+    proof_lifecycle_with_grant(
+        path,
+        file_override,
+        member,
+        workflow_name,
+        service_name,
+        agent,
+        None,
+        overrides,
+        archive,
+        format,
+        _debug,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn proof_lifecycle_with_grant(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    workflow_name: Option<&str>,
+    service_name: Option<&str>,
+    agent: bool,
+    grant: Option<&str>,
     overrides: crate::runner::ExecutionOverrides,
     archive: bool,
     format: OutputFormat,
@@ -3275,11 +3359,39 @@ pub fn proof_lifecycle(
             2,
         );
     }
+    if agent {
+        match resolve_workflow_sandbox_admission(
+            &contract,
+            &target.contract_path,
+            Some(workflow_key),
+            overrides,
+            true,
+            None,
+            replay_input_preflight.loaded_policy.as_ref(),
+        ) {
+            Ok(Some(_)) => {
+                return CommandOutput::failure_with_code(
+                    format!(
+                        "lifecycle proof agent admission refused workflow `{workflow_key}` before prerequisite or service execution: the selected closure requires provider-enforced runtime controls, but `ota proof lifecycle` does not yet carry sandbox application evidence"
+                    ),
+                    2,
+                );
+            }
+            Err(error) => {
+                return CommandOutput::failure_with_code(
+                    format!(
+                        "lifecycle proof sandbox admission refused workflow `{workflow_key}` before prerequisite or service execution: {}",
+                        error.message
+                    ),
+                    2,
+                );
+            }
+            Ok(None) => {}
+        }
+    }
 
-    let transaction_id = match proof_runtime_seam_marker() {
-        Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
-        Err(error) => return CommandOutput::failure(error),
-    };
+    // Resolve the exact lifecycle transaction before any authority work. A service selector
+    // changes the manager lifecycle, so an invalid selector must not produce grant evidence.
     let selected_services = match service_name {
         Some(service_name)
             if !lifecycle
@@ -3302,6 +3414,70 @@ pub fn proof_lifecycle(
         collect_service_dependencies(&contract, service_name.as_str(), &mut services);
     }
     let order = service_start_order_for(&contract, &services);
+    let proof_transaction_selection = CrossingProofTransactionSelection {
+        selected_services: selected_services.clone(),
+        service_closure: order.clone(),
+        ready_timeout_seconds: None,
+    };
+    let proof_authority_invocations = lifecycle
+        .assertion
+        .as_ref()
+        .map(|assertion| {
+            vec![CrossingProofInvocation {
+                id: format!("lifecycle_assertion:{}", assertion.task),
+                kind: String::from("lifecycle_assertion"),
+                task: assertion.task.clone(),
+                order: 0,
+            }]
+        })
+        .unwrap_or_default();
+    let grant_admission = match evaluate_proof_workflow_crossing_grant(
+        &contract,
+        &target.contract_path,
+        Some(workflow_key),
+        overrides,
+        &proof_authority_invocations,
+        proof_transaction_selection,
+        "lifecycle_proof",
+        agent,
+        grant,
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return proof_crossing_grant_admission_failure_output(
+                format,
+                "ota proof lifecycle",
+                &contract,
+                &target.contract_path,
+                grant,
+                &error,
+            );
+        }
+    };
+    let transaction_id = match proof_runtime_seam_marker() {
+        Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
+        Err(error) => return CommandOutput::failure(error),
+    };
+    let (_proof_authority_guard, _proof_transaction_guard) = match grant_admission {
+        Some(plan) => match activate_crossing_authority_plan(
+            contract_working_dir(&target.contract_path),
+            plan,
+        ) {
+            Ok((authority, transaction)) => (Some(authority), Some(transaction)),
+            Err(error) => {
+                return proof_crossing_grant_admission_failure_output(
+                    format,
+                    "ota proof lifecycle",
+                    &contract,
+                    &target.contract_path,
+                    grant,
+                    &error,
+                );
+            }
+        },
+        None => (None, None),
+    };
+
     let working_dir = contract_working_dir(&target.contract_path);
     let mut error = None::<String>;
 
@@ -3478,6 +3654,22 @@ pub fn proof_lifecycle(
     let error = transaction.error;
 
     let ok = error.is_none();
+    let interrupted = finalization.after_interruption;
+    let crossing_evidence = match finalize_active_proof_crossing_transaction(
+        ok,
+        interrupted,
+        if ok {
+            "passed_with_unproven_boundaries"
+        } else {
+            "failed"
+        },
+        transaction_id.as_str(),
+    ) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            return fail_active_proof_crossing_transaction(error, transaction_id.as_str());
+        }
+    };
     let status = LifecycleProofStatus {
         ok,
         proof_verdict: String::from(if ok {
@@ -3501,6 +3693,7 @@ pub fn proof_lifecycle(
             intent: Some(String::from("manager_owned_service_lifecycle")),
         },
         transaction_id: transaction_id.clone(),
+        crossing_evidence,
         services: records.clone(),
         finalization,
         assertion,
@@ -3579,7 +3772,7 @@ pub fn proof_lifecycle(
                 },
             ),
             stderr: None,
-            exit_code: if ok { 0 } else { 1 },
+            exit_code: proof_command_exit_code(ok, interrupted),
         },
         OutputFormat::Text => {
             let mut text = format!(
@@ -3602,21 +3795,61 @@ pub fn proof_lifecycle(
             if let Some(error) = status.error.as_deref() {
                 text.push_str(&format!("\nError: {error}\n"));
             }
+            if let Some(crossing) = status.crossing_evidence.as_ref() {
+                text.push_str(&format!(
+                    "\nAuthority transaction: {}\nProof execution: {}\n",
+                    crossing.transaction_id,
+                    crossing
+                        .proof_execution_id
+                        .as_deref()
+                        .unwrap_or(transaction_id.as_str())
+                ));
+            }
             CommandOutput {
                 stdout: text,
                 stderr: None,
-                exit_code: if ok { 0 } else { 1 },
+                exit_code: proof_command_exit_code(ok, interrupted),
             }
         }
     }
 }
 
+#[cfg(test)]
 pub fn proof_runtime(
     path: Option<&Path>,
     file_override: Option<&Path>,
     member: Option<&str>,
     workflow_name: Option<&str>,
     negative_control: Option<&str>,
+    archive: bool,
+    ready_timeout: Option<&str>,
+    overrides: ExecutionOverrides,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    proof_runtime_with_grant(
+        path,
+        file_override,
+        member,
+        workflow_name,
+        negative_control,
+        None,
+        archive,
+        ready_timeout,
+        overrides,
+        format,
+        debug,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn proof_runtime_with_grant(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    workflow_name: Option<&str>,
+    negative_control: Option<&str>,
+    grant: Option<&str>,
     archive: bool,
     ready_timeout: Option<&str>,
     overrides: ExecutionOverrides,
@@ -3784,6 +4017,74 @@ pub fn proof_runtime(
                         failure,
                     );
                 }
+                let mut proof_authority_invocations = selected_seam_observations
+                    .iter()
+                    .enumerate()
+                    .map(|(order, observation)| CrossingProofInvocation {
+                        id: format!("seam_observation:{}", observation.id),
+                        kind: String::from("seam_observation"),
+                        task: observation.task.clone(),
+                        order,
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(control) = selected_negative_control.as_ref() {
+                    proof_authority_invocations.push(CrossingProofInvocation {
+                        id: format!("negative_control:{}", control.id),
+                        kind: String::from("negative_control"),
+                        task: control.task.clone(),
+                        order: proof_authority_invocations.len(),
+                    });
+                }
+                let grant_admission = match evaluate_proof_workflow_crossing_grant(
+                    contract,
+                    &target.contract_path,
+                    effective_workflow_selector.as_deref(),
+                    overrides,
+                    &proof_authority_invocations,
+                    CrossingProofTransactionSelection {
+                        selected_services: Vec::new(),
+                        service_closure: Vec::new(),
+                        ready_timeout_seconds: ready_timeout.map(|duration| duration.as_secs()),
+                    },
+                    "runtime_proof",
+                    false,
+                    grant,
+                ) {
+                    Ok(admission) => admission,
+                    Err(error) => {
+                        return proof_crossing_grant_admission_failure_output(
+                            format,
+                            "ota proof runtime",
+                            contract,
+                            &target.contract_path,
+                            grant,
+                            &error,
+                        );
+                    }
+                };
+                let proof_execution_id = match proof_runtime_seam_marker() {
+                    Ok(marker) => proof_runtime_seam_transaction_id(marker.as_str()),
+                    Err(error) => return CommandOutput::failure(error),
+                };
+                let (_proof_authority_guard, _proof_transaction_guard) = match grant_admission {
+                    Some(plan) => match activate_crossing_authority_plan(
+                        contract_working_dir(&target.contract_path),
+                        plan,
+                    ) {
+                        Ok((authority, transaction)) => (Some(authority), Some(transaction)),
+                        Err(error) => {
+                            return proof_crossing_grant_admission_failure_output(
+                                format,
+                                "ota proof runtime",
+                                contract,
+                                &target.contract_path,
+                                grant,
+                                &error,
+                            );
+                        }
+                    },
+                    None => (None, None),
+                };
                 let proof_archive_context = if archive {
                     let root = contract_working_dir(&target.contract_path);
                     match build_proof_runtime_archive_context(
@@ -3792,9 +4093,16 @@ pub fn proof_runtime(
                         &target.contract_path,
                         effective_workflow_selector.as_deref(),
                         overrides,
+                        proof_authority_invocations.clone(),
+                        ready_timeout,
                     ) {
                         Ok(context) => Some(context),
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return fail_active_proof_crossing_transaction(
+                                error,
+                                proof_execution_id.as_str(),
+                            );
+                        }
                     }
                 } else {
                     None
@@ -3804,7 +4112,12 @@ pub fn proof_runtime(
                 } else {
                     match proof_runtime_seam_marker() {
                         Ok(marker) => Some(marker),
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return fail_active_proof_crossing_transaction(
+                                error,
+                                proof_execution_id.as_str(),
+                            );
+                        }
                     }
                 };
                 let seam_markers = selected_seam_observations
@@ -3829,32 +4142,50 @@ pub fn proof_runtime(
                     effective_workflow_selector.as_deref(),
                 );
                 if let Err(error) = fs::create_dir_all(&artifact_dir) {
-                    return CommandOutput::failure(command_message_failure_text(
-                        "PROOF",
-                        &text_path_display,
-                        "Artifact directory could not be created",
-                        &format!(
-                            "failed to create `{}`: {error}",
-                            compact_path(&artifact_dir, ".")
+                    return fail_active_proof_crossing_transaction(
+                        command_message_failure_text(
+                            "PROOF",
+                            &text_path_display,
+                            "Artifact directory could not be created",
+                            &format!(
+                                "failed to create `{}`: {error}",
+                                compact_path(&artifact_dir, ".")
+                            ),
+                            &[],
                         ),
-                        &[],
-                    ));
+                        proof_execution_id.as_str(),
+                    );
                 }
 
                 let topology_artifact_path = artifact_dir.join("topology.json");
                 let doctor_artifact_path = artifact_dir.join("doctor.json");
                 let up_log_artifact_path = artifact_dir.join("up.log");
                 let execution_boundary_trace_path = artifact_dir.join("execution-boundary.json");
+                let crossing_handoff_path = artifact_dir.join("crossing-handoff.json");
                 let execution_boundary_trace_token = match proof_runtime_seam_marker() {
                     Ok(token) => token,
-                    Err(error) => return CommandOutput::failure(error),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 if execution_boundary_trace_path.exists()
                     && let Err(error) = fs::remove_file(&execution_boundary_trace_path)
                 {
-                    return CommandOutput::failure(format!(
-                        "could not clear stale runner execution-boundary trace: {error}"
-                    ));
+                    return fail_active_proof_crossing_transaction(
+                        format!("could not clear stale runner execution-boundary trace: {error}"),
+                        proof_execution_id.as_str(),
+                    );
+                }
+                if crossing_handoff_path.exists()
+                    && let Err(error) = fs::remove_file(&crossing_handoff_path)
+                {
+                    return fail_active_proof_crossing_transaction(
+                        format!("could not clear stale runtime-proof crossing handoff: {error}"),
+                        proof_execution_id.as_str(),
+                    );
                 }
                 let topology_artifact_display = compact_path(&topology_artifact_path, ".");
                 let doctor_artifact_display = compact_path(&doctor_artifact_path, ".");
@@ -3871,7 +4202,10 @@ pub fn proof_runtime(
                 if let Err(error) =
                     write_proof_artifact(&topology_artifact_path, &topology_output.stdout)
                 {
-                    return CommandOutput::failure(error);
+                    return fail_active_proof_crossing_transaction(
+                        error,
+                        proof_execution_id.as_str(),
+                    );
                 }
 
                 let compose_services_started_by_proof =
@@ -3881,18 +4215,28 @@ pub fn proof_runtime(
                         effective_workflow_selector.as_deref(),
                     ) {
                         Ok(services) => services,
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return fail_active_proof_crossing_transaction(
+                                error,
+                                proof_execution_id.as_str(),
+                            );
+                        }
                     };
                 let policy_snapshot_file = match materialize_proof_runtime_policy_snapshot(
                     proof_replay_input_preflight.loaded_policy.as_ref(),
                     &execution_boundary_trace_token,
                 ) {
                     Ok(snapshot) => snapshot,
-                    Err(error) => return CommandOutput::failure(error),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 let mut up_process = match spawn_proof_runtime_up_process(
                     &target.contract_path,
-                    workflow_name,
+                    effective_workflow_selector.as_deref(),
                     member,
                     file_override,
                     overrides,
@@ -3900,12 +4244,18 @@ pub fn proof_runtime(
                     &up_log_artifact_path,
                     &execution_boundary_trace_path,
                     &execution_boundary_trace_token,
+                    &crossing_handoff_path,
                     policy_snapshot_file
                         .as_ref()
                         .map(|snapshot| snapshot.path.as_path()),
                 ) {
                     Ok(child) => child,
-                    Err(error) => return CommandOutput::failure(error.to_string()),
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error.to_string(),
+                            proof_execution_id.as_str(),
+                        );
+                    }
                 };
                 let (proof_report, proof_phase, _proof_ok, up_process_failure) =
                     match wait_for_proof_runtime_readiness(
@@ -3929,12 +4279,15 @@ pub fn proof_runtime(
                                 &compose_services_started_by_proof,
                             )
                             .err();
-                            return CommandOutput::failure(match cleanup_error {
-                                Some(cleanup) => {
-                                    format!("{error}; proof service cleanup failed: {cleanup}")
-                                }
-                                None => error,
-                            });
+                            return fail_active_proof_crossing_transaction(
+                                match cleanup_error {
+                                    Some(cleanup) => {
+                                        format!("{error}; proof service cleanup failed: {cleanup}")
+                                    }
+                                    None => error,
+                                },
+                                proof_execution_id.as_str(),
+                            );
                         }
                     };
                 let proof_summary = doctor_summary(
@@ -4193,14 +4546,20 @@ pub fn proof_runtime(
                     Ok(body) => body,
                     Err(error) => {
                         let _ = stop_proof_runtime_up_process(&mut up_process);
-                        return CommandOutput::failure(error);
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
                     }
                 };
                 if let Err(error) =
                     write_proof_artifact(&doctor_artifact_path, &doctor_artifact_json)
                 {
                     let _ = stop_proof_runtime_up_process(&mut up_process);
-                    return CommandOutput::failure(error);
+                    return fail_active_proof_crossing_transaction(
+                        error,
+                        proof_execution_id.as_str(),
+                    );
                 }
                 let workflow_env_artifacts =
                     selected_workflow_env_profile_rendered_artifact_entries(
@@ -4259,10 +4618,24 @@ pub fn proof_runtime(
                     effective_workflow_selector.as_deref(),
                 );
                 let proof_verdict = proof_runtime_verdict(ok, &not_proved);
+                let crossing_evidence = match finalize_active_proof_crossing_transaction(
+                    ok,
+                    status == "interrupted",
+                    proof_verdict,
+                    proof_execution_id.as_str(),
+                ) {
+                    Ok(evidence) => evidence,
+                    Err(error) => {
+                        return fail_active_proof_crossing_transaction(
+                            error,
+                            proof_execution_id.as_str(),
+                        );
+                    }
+                };
 
                 match format {
-                    OutputFormat::Text => CommandOutput {
-                        stdout: render_proof_runtime_text(
+                    OutputFormat::Text => {
+                        let mut stdout = render_proof_runtime_text(
                             &text_path_display,
                             effective_workflow_selector.as_deref(),
                             &target.contract_path,
@@ -4282,13 +4655,23 @@ pub fn proof_runtime(
                             proof_likely_cause_text.as_deref(),
                             cleanup_error.as_deref(),
                             cleanup_next.as_deref(),
-                        ),
-                        stderr: None,
-                        exit_code: if ok { 0 } else { 1 },
-                    },
+                        );
+                        if let Some(crossing) = crossing_evidence.as_ref() {
+                            stdout.push_str(&format!(
+                                "\nAuthority transaction: {}\nProof execution: {}\n",
+                                crossing.transaction_id, proof_execution_id
+                            ));
+                        }
+                        CommandOutput {
+                            stdout,
+                            stderr: None,
+                            exit_code: proof_command_exit_code(ok, status == "interrupted"),
+                        }
+                    }
                     OutputFormat::Json => {
                         let proof_status = ProofRuntimeStatus {
                             ok,
+                            execution_id: proof_execution_id.as_str(),
                             proof_verdict,
                             path: &path_display,
                             mode: "runtime-proof",
@@ -4296,6 +4679,7 @@ pub fn proof_runtime(
                             phase: json_phase,
                             stage_family: "proof",
                             proof_scope,
+                            crossing_evidence,
                             dependency_evidence,
                             seam_observations,
                             negative_control,
@@ -4327,12 +4711,17 @@ pub fn proof_runtime(
                             runner_execution_boundary,
                         ) {
                             Ok(boundary) => boundary,
-                            Err(error) => return CommandOutput::failure(error),
+                            Err(error) => {
+                                return fail_active_proof_crossing_transaction(
+                                    error,
+                                    proof_execution_id.as_str(),
+                                );
+                            }
                         };
                         let archive = if let Some(context) = proof_archive_context.as_ref() {
                             let record = ProofRuntimeArchiveRecord {
                                 kind: "runtime_proof",
-                                version: 1,
+                                version: 6,
                                 contract_identity: &context.contract_identity,
                                 contract_snapshot_hash: &context.contract_snapshot_hash,
                                 contract_snapshot_ref: &context.contract_snapshot_ref,
@@ -4347,7 +4736,12 @@ pub fn proof_runtime(
                                 &record,
                             ) {
                                 Ok(archive) => Some(archive),
-                                Err(error) => return CommandOutput::failure(error),
+                                Err(error) => {
+                                    return fail_active_proof_crossing_transaction(
+                                        error,
+                                        proof_execution_id.as_str(),
+                                    );
+                                }
                             }
                         } else {
                             None
@@ -4364,7 +4758,7 @@ pub fn proof_runtime(
                                 },
                             ),
                             stderr: None,
-                            exit_code: if ok { 0 } else { 1 },
+                            exit_code: proof_command_exit_code(ok, status == "interrupted"),
                         }
                     }
                 }
@@ -14369,13 +14763,20 @@ fn build_env_report_with_overrides(
                 }
                 .to_string());
             };
-            let backend = effective_task_execution(contract, task_name, overrides).backend;
+            let effective = effective_task_execution(contract, task_name, overrides);
+            let backend = effective.backend;
+            let target_os = crate::runner::target_os_for_declared_backend(
+                backend,
+                effective.container,
+                current_os(),
+            );
             let planned_env_files =
                 planned_env_file_outputs_for_task_closure(contract, task_name, backend);
             ensure_task_env_files_ready_with_planned_outputs(
                 task_name,
                 task,
                 backend,
+                target_os,
                 contract_working_dir(contract_path),
                 &planned_env_files,
             )
@@ -15457,7 +15858,7 @@ fn harness_preflight_for_task(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             Some(task.effective_safe_for_agent),
-            refusal,
+            refusal.is_some(),
             &task.unsafe_closure_tasks,
             "task",
         );
@@ -15480,6 +15881,7 @@ fn harness_preflight_for_task(
         } else {
             String::from("allowed")
         },
+        sandbox_admission: None,
         review_required,
         declared_safe_for_agent: Some(task.safe_for_agent),
         effective_safe_for_agent: Some(task.effective_safe_for_agent),
@@ -15525,31 +15927,35 @@ fn harness_preflight_for_task(
     evaluation
 }
 
-fn crossing_preflight_posture(
-    effective_safe_for_agent: Option<bool>,
-    refusal: Option<&AgentExecutionRefusal>,
-    unsafe_closure_tasks: &[String],
-    lane_kind: &str,
-) -> (Option<bool>, Option<String>, Option<String>) {
-    if refusal.is_some() {
-        return (None, None, None);
-    }
-    match effective_safe_for_agent {
-        Some(true) => (Some(false), Some(String::from("routine")), None),
-        Some(false) => {
-            let boundary_family = if lane_kind == "task" || !unsafe_closure_tasks.is_empty() {
-                String::from("unsafe_task")
-            } else {
-                String::from("heavier_workflow")
-            };
-            (
-                Some(true),
-                Some(String::from("escalated")),
-                Some(boundary_family),
-            )
-        }
-        None => (None, None, None),
-    }
+use crate::crossing::{
+    CrossingProofInvocation, CrossingProofTransactionSelection, crossing_preflight_posture,
+    crossing_scope_for_task, crossing_scope_for_workflow, crossing_scope_from_policy,
+    crossing_scope_with_proof_invocations, crossing_scope_with_proof_transaction_selection,
+    crossing_scope_with_workflow_instance_selection, evaluate_crossing_requirement,
+};
+use crate::crossing_authority::{
+    GrantAdmissionError, GrantAdmissionEvidence, admit_prebound_file_grant,
+};
+
+#[derive(Debug, Clone)]
+enum VerifiedCrossingAuthorityAdmission {
+    PreboundFile(GrantAdmissionEvidence),
+    AuthorityBrokerPreview {
+        binding: crate::crossing_authority::BrokerAuthorityBinding,
+        semantic_scope: crate::crossing::CrossingSemanticScope,
+        actor_mode: String,
+    },
+    AuthorityBroker(crate::broker_session::BrokerAdmissionEvidence),
+}
+
+#[derive(Debug, Clone)]
+enum CrossingAuthorityPlan {
+    PreboundFile(GrantAdmissionEvidence),
+    AuthorityBroker {
+        binding: crate::crossing_authority::BrokerAuthorityBinding,
+        semantic_scope: crate::crossing::CrossingSemanticScope,
+        actor_mode: String,
+    },
 }
 
 fn governance_preflight_decision_basis(
@@ -15787,10 +16193,17 @@ fn parse_doctor_verdict_label(value: &str) -> Option<DoctorVerdict> {
 }
 
 fn actor_mode_label(agent: bool) -> &'static str {
-    if agent { "agent" } else { "human" }
+    if agent { "agent" } else { "non_agent" }
+}
+
+fn grant_actor_mode_label(agent: bool) -> &'static str {
+    if agent { "agent" } else { "non_agent" }
 }
 
 fn new_crossing_id() -> String {
+    if let Some(transaction) = active_crossing_transaction_evidence() {
+        return transaction.transaction_id;
+    }
     format!(
         "crossing-{}",
         OffsetDateTime::now_utc().unix_timestamp_nanos()
@@ -15822,6 +16235,1854 @@ fn crossing_evidence_classes(
     }
 }
 
+thread_local! {
+    static ACTIVE_CROSSING_GRANT_ADMISSION: RefCell<Option<VerifiedCrossingAuthorityAdmission>> =
+        const { RefCell::new(None) };
+    static ACTIVE_CROSSING_TRANSACTION:
+        RefCell<Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>> =
+        const { RefCell::new(None) };
+    static ACTIVE_PROOF_PARENT_AUTHORITY: RefCell<Option<ProofParentAuthorityCapability>> =
+        const { RefCell::new(None) };
+    #[cfg(unix)]
+    static ACTIVE_SYSTEMD_EXECUTION_COMPLETION:
+        RefCell<Option<Rc<RefCell<crate::broker_session::SystemdExecutionCompletion>>>> =
+        const { RefCell::new(None) };
+    #[cfg(test)]
+    static EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE: RefCell<Option<PathBuf>> =
+        const { RefCell::new(None) };
+}
+
+const PROOF_PARENT_AUTHORITY_FD_ENV: &str = "OTA_PROOF_PARENT_AUTHORITY_FD";
+const PROOF_PARENT_AUTHORITY_MAX_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProofParentInvocation {
+    kind: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proof_invocation: Option<CrossingProofInvocation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "carrier", rename_all = "snake_case")]
+enum ProofParentAuthorityEvidence {
+    PreboundFile {
+        admission: GrantAdmissionEvidence,
+        carrier_admission: crate::crossing_authority::CrossingAuthorityAdmission,
+        transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+    },
+    AuthorityBroker {
+        admission: crate::broker_session::BrokerAdmissionEvidence,
+        transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+    },
+}
+
+impl ProofParentAuthorityEvidence {
+    fn semantic_scope(&self) -> &crate::crossing::CrossingSemanticScope {
+        match self {
+            Self::PreboundFile { admission, .. } => &admission.semantic_scope,
+            Self::AuthorityBroker { admission, .. } => &admission.semantic_scope,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ProofParentAuthorityCapability {
+    schema_version: u32,
+    identity: String,
+    challenge_identity: String,
+    parent_pid: u32,
+    invocation: ProofParentInvocation,
+    authority: ProofParentAuthorityEvidence,
+}
+
+fn proof_parent_authority_capability_identity(
+    capability: &ProofParentAuthorityCapability,
+) -> Result<String, String> {
+    let mut unsigned = capability.clone();
+    unsigned.identity.clear();
+    crate::semantic_identity::semantic_contract_identity(&unsigned)
+}
+
+fn active_proof_parent_authority_capability(
+    invocation: ProofParentInvocation,
+) -> Result<Option<ProofParentAuthorityCapability>, String> {
+    let admission = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.borrow().clone());
+    let Some(admission) = admission else {
+        return Ok(None);
+    };
+    let transaction = active_crossing_transaction_evidence()
+        .ok_or_else(|| String::from("proof authority has no active crossing transaction"))?;
+    if transaction.state != "pending" {
+        return Err(String::from(
+            "proof authority transaction is no longer pending",
+        ));
+    }
+    let authority = match admission {
+        VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => {
+            let carrier_admission = admission.crossing_admission()?;
+            crate::crossing_transaction::verify_pending_crossing_transaction_evidence(
+                &transaction,
+                &carrier_admission,
+            )?;
+            ProofParentAuthorityEvidence::PreboundFile {
+                admission,
+                carrier_admission,
+                transaction,
+            }
+        }
+        VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission) => {
+            crate::broker_session::verify_pending_broker_consumption_evidence(
+                &admission,
+                &transaction,
+            )?;
+            ProofParentAuthorityEvidence::AuthorityBroker {
+                admission,
+                transaction,
+            }
+        }
+        VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview { .. } => {
+            return Err(String::from(
+                "proof authority preview cannot authorize a child invocation",
+            ));
+        }
+    };
+    let mut capability = ProofParentAuthorityCapability {
+        schema_version: 1,
+        identity: String::new(),
+        challenge_identity: String::new(),
+        parent_pid: std::process::id(),
+        invocation,
+        authority,
+    };
+    capability.identity = proof_parent_authority_capability_identity(&capability)?;
+    Ok(Some(capability))
+}
+
+fn proof_parent_task_invocation(
+    invocation_id: &str,
+    invocation_kind: &str,
+    task: &str,
+) -> Result<ProofParentInvocation, String> {
+    let admission = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.borrow().clone());
+    let Some(admission) = admission else {
+        return Ok(ProofParentInvocation {
+            kind: String::from("proof_task"),
+            name: task.to_string(),
+            proof_invocation: None,
+        });
+    };
+    let scope = match &admission {
+        VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => &admission.semantic_scope,
+        VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission) => &admission.semantic_scope,
+        VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview { semantic_scope, .. } => {
+            semantic_scope
+        }
+    };
+    let matches = scope
+        .proof_invocations
+        .iter()
+        .filter(|invocation| {
+            invocation.id == invocation_id
+                && invocation.kind == invocation_kind
+                && invocation.task == task
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let [proof_invocation] = matches.as_slice() else {
+        return Err(String::from(
+            "proof helper does not have one exact authorized invocation identity",
+        ));
+    };
+    Ok(ProofParentInvocation {
+        kind: String::from("proof_task"),
+        name: task.to_string(),
+        proof_invocation: Some(proof_invocation.clone()),
+    })
+}
+
+fn proof_scope_overrides(scope: &crate::crossing::CrossingSemanticScope) -> ExecutionOverrides {
+    ExecutionOverrides {
+        backend: scope.execution_selection.backend,
+        lifecycle: scope.execution_selection.lifecycle,
+        host_port: scope.execution_selection.host_port,
+        memory: scope.execution_selection.memory,
+        skip_deps: scope.execution_selection.skip_dependencies,
+        ..ExecutionOverrides::default()
+    }
+}
+
+fn rederive_proof_parent_scope(
+    contract: &Contract,
+    expected: &crate::crossing::CrossingSemanticScope,
+) -> Result<crate::crossing::CrossingSemanticScope, String> {
+    let workflow_name = (expected.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow)
+        .then(|| {
+            expected
+                .execution_selection
+                .workflow_instance
+                .as_ref()
+                .map(|selection| selection.selector.as_str())
+                .unwrap_or(expected.lane.name.as_str())
+        });
+    let overrides = proof_scope_overrides(expected);
+    let proof_roots = expected
+        .proof_invocations
+        .iter()
+        .map(|invocation| invocation.task.clone())
+        .collect::<Vec<_>>();
+    let policy = crate::sandbox_policy::sandbox_policy_for_workflow_with_proof_roots(
+        contract,
+        workflow_name,
+        overrides,
+        &proof_roots,
+    )?;
+    crossing_scope_from_policy(
+        policy,
+        overrides,
+        &[],
+        &expected.execution_selection.effect_overrides,
+        expected.execution_selection.sandbox_target.as_deref(),
+        expected.execution_selection.run_behavior.as_deref(),
+        expected.execution_selection.ready_timeout_seconds,
+        expected.boundary_family.as_str(),
+        expected.classification.as_str(),
+    )
+    .and_then(|scope| match workflow_name {
+        Some(workflow_name) => {
+            crossing_scope_with_workflow_instance_selection(scope, contract, Some(workflow_name))
+        }
+        None => Ok(scope),
+    })
+    .and_then(|scope| {
+        crossing_scope_with_proof_invocations(scope, expected.proof_invocations.clone())
+    })
+    .and_then(|scope| match expected.proof_transaction_selection.clone() {
+        Some(selection) => crossing_scope_with_proof_transaction_selection(scope, selection),
+        None => Ok(scope),
+    })
+}
+
+fn verify_proof_parent_authority_capability(
+    contract: &Contract,
+    contract_path: &Path,
+    capability: &ProofParentAuthorityCapability,
+    expected_kind: &str,
+    expected_name: &str,
+) -> Result<(), String> {
+    if capability.schema_version != 1
+        || capability.identity != proof_parent_authority_capability_identity(capability)?
+        || capability.challenge_identity.is_empty()
+        || capability.parent_pid != current_parent_process_id()?
+        || capability.invocation.kind != expected_kind
+        || capability.invocation.name != expected_name
+    {
+        return Err(String::from(
+            "proof parent authority capability does not match this child invocation",
+        ));
+    }
+    let root = contract_working_dir(contract_path);
+    match &capability.authority {
+        ProofParentAuthorityEvidence::PreboundFile {
+            admission,
+            carrier_admission,
+            transaction,
+        } => {
+            crate::crossing_authority::verify_archived_grant_admission(contract, root, admission)
+                .map_err(|error| error.public_details())?;
+            if admission.crossing_admission()? != *carrier_admission {
+                return Err(String::from(
+                    "proof parent prebound carrier admission does not reconcile",
+                ));
+            }
+            crate::crossing_transaction::verify_pending_crossing_transaction_evidence(
+                transaction,
+                carrier_admission,
+            )?;
+            crate::crossing_transaction::verify_pending_crossing_transaction_journal(
+                root,
+                transaction,
+            )?;
+        }
+        ProofParentAuthorityEvidence::AuthorityBroker {
+            admission,
+            transaction,
+        } => {
+            crate::broker_session::verify_pending_broker_archive_evidence(
+                root,
+                admission,
+                transaction,
+            )?;
+            crate::crossing_transaction::verify_pending_crossing_transaction_journal(
+                root,
+                transaction,
+            )?;
+        }
+    }
+    let rederived = rederive_proof_parent_scope(contract, capability.authority.semantic_scope())?;
+    if rederived != *capability.authority.semantic_scope() {
+        return Err(String::from(
+            "proof parent authority scope no longer matches the selected contract",
+        ));
+    }
+    match expected_kind {
+        "workflow"
+            if rederived.lane.name == expected_name
+                || (rederived.lane.kind == crate::sandbox_policy::SandboxLaneKind::Task
+                    && expected_name == "default") =>
+        {
+            Ok(())
+        }
+        "workflow_task" => {
+            let selected = match rederived.lane.kind {
+                crate::sandbox_policy::SandboxLaneKind::Workflow => contract
+                    .selected_workflow_task_closure_names(Some(rederived.lane.name.as_str())),
+                crate::sandbox_policy::SandboxLaneKind::Task => {
+                    contract.task_dependency_closure_names([rederived.lane.name.clone()])
+                }
+            };
+            selected
+                .into_iter()
+                .any(|task| task == expected_name)
+                .then_some(())
+                .ok_or_else(|| {
+                    String::from("proof child task is outside the authorized workflow closure")
+                })
+        }
+        "proof_task" => capability
+            .invocation
+            .proof_invocation
+            .as_ref()
+            .filter(|invocation| invocation.task == expected_name)
+            .filter(|invocation| {
+                rederived
+                    .proof_invocations
+                    .iter()
+                    .any(|expected| expected == *invocation)
+            })
+            .map(|_| ())
+            .ok_or_else(|| {
+                String::from("proof helper invocation does not match its authorized role and order")
+            }),
+        _ => Err(String::from(
+            "proof parent authority capability uses an unsupported invocation kind",
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn current_parent_process_id() -> Result<u32, String> {
+    // SAFETY: `getppid` has no preconditions and does not dereference memory.
+    Ok(unsafe { libc::getppid() as u32 })
+}
+
+#[cfg(target_os = "linux")]
+fn proof_parent_peer_pid(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd as _;
+    let mut credentials = std::mem::MaybeUninit::<libc::ucred>::uninit();
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the output buffer and length describe a valid `ucred` allocation.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            credentials.as_mut_ptr().cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(String::from(
+            "proof parent authority peer credentials are unavailable",
+        ));
+    }
+    // SAFETY: successful `getsockopt` initialized the complete `ucred` value.
+    let credentials = unsafe { credentials.assume_init() };
+    u32::try_from(credentials.pid)
+        .map_err(|_| String::from("proof parent authority peer PID is invalid"))
+}
+
+#[cfg(target_os = "macos")]
+fn proof_parent_peer_pid(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd as _;
+    let mut pid = 0_i32;
+    let mut length = std::mem::size_of::<i32>() as libc::socklen_t;
+    // SAFETY: the output buffer and length describe a valid PID allocation.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut i32).cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || length as usize != std::mem::size_of::<i32>() {
+        return Err(String::from(
+            "proof parent authority peer credentials are unavailable",
+        ));
+    }
+    u32::try_from(pid).map_err(|_| String::from("proof parent authority peer PID is invalid"))
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn proof_parent_peer_pid(_stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    Err(String::from(
+        "proof parent authority peer verification is unsupported on this Unix platform",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn proof_parent_executable(pid: u32) -> Result<PathBuf, String> {
+    fs::read_link(format!("/proc/{pid}/exe"))
+        .map_err(|_| String::from("proof parent executable identity is unavailable"))
+}
+
+#[cfg(target_os = "macos")]
+fn proof_parent_executable(pid: u32) -> Result<PathBuf, String> {
+    use std::os::unix::ffi::OsStringExt as _;
+    let mut buffer = vec![0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: the buffer is valid for the supplied length and `proc_pidpath` writes at most it.
+    let written =
+        unsafe { libc::proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if written <= 0 {
+        return Err(String::from(
+            "proof parent executable identity is unavailable",
+        ));
+    }
+    buffer.truncate(written as usize);
+    Ok(PathBuf::from(OsString::from_vec(buffer)))
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn proof_parent_executable(_pid: u32) -> Result<PathBuf, String> {
+    Err(String::from(
+        "proof parent executable verification is unsupported on this Unix platform",
+    ))
+}
+
+#[cfg(unix)]
+fn verify_proof_parent_stream(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd as _;
+    let mut peer_address = std::mem::MaybeUninit::<libc::sockaddr_storage>::zeroed();
+    let mut peer_address_length = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // SAFETY: the address buffer and length describe valid writable storage.
+    let peer_result = unsafe {
+        libc::getpeername(
+            stream.as_raw_fd(),
+            peer_address.as_mut_ptr().cast(),
+            &mut peer_address_length,
+        )
+    };
+    if peer_result != 0 {
+        return Err(String::from(
+            "proof parent authority descriptor is not a connected socket",
+        ));
+    }
+    // SAFETY: successful `getpeername` initialized at least the address family.
+    let peer_address = unsafe { peer_address.assume_init() };
+    if peer_address.ss_family != libc::AF_UNIX as libc::sa_family_t {
+        return Err(String::from(
+            "proof parent authority descriptor is not a Unix stream",
+        ));
+    }
+    let mut socket_type = 0_i32;
+    let mut length = std::mem::size_of::<i32>() as libc::socklen_t;
+    // SAFETY: the output buffer and length describe a valid integer allocation.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut socket_type as *mut i32).cast(),
+            &mut length,
+        )
+    };
+    if result != 0 || socket_type != libc::SOCK_STREAM {
+        return Err(String::from(
+            "proof parent authority descriptor is not a Unix stream",
+        ));
+    }
+    let peer_pid = proof_parent_peer_pid(stream)?;
+    if peer_pid != current_parent_process_id()? {
+        return Err(String::from(
+            "proof parent authority stream is not connected to the immediate parent",
+        ));
+    }
+    let parent_executable = fs::canonicalize(proof_parent_executable(peer_pid)?)
+        .map_err(|_| String::from("proof parent executable identity is unavailable"))?;
+    let current_executable = fs::canonicalize(
+        env::current_exe()
+            .map_err(|_| String::from("current Ota executable identity is unavailable"))?,
+    )
+    .map_err(|_| String::from("current Ota executable identity is unavailable"))?;
+    if parent_executable != current_executable {
+        return Err(String::from(
+            "proof parent authority peer is not the matching Ota executable",
+        ));
+    }
+    Ok(peer_pid)
+}
+
+#[cfg(not(unix))]
+fn current_parent_process_id() -> Result<u32, String> {
+    Err(String::from(
+        "proof parent authority capabilities are supported only on Unix platforms",
+    ))
+}
+
+#[cfg(unix)]
+fn load_proof_parent_authority_capability() -> Result<Option<ProofParentAuthorityCapability>, String>
+{
+    if let Some(capability) = ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| active.borrow().clone()) {
+        return Ok(Some(capability));
+    }
+    let Some(raw_fd) = env::var_os(PROOF_PARENT_AUTHORITY_FD_ENV) else {
+        return Ok(None);
+    };
+    // SAFETY: command admission is single-threaded at this boundary; remove the descriptor
+    // carrier before any selected execution or child spawn can observe it.
+    unsafe { env::remove_var(PROOF_PARENT_AUTHORITY_FD_ENV) };
+    let raw_fd = raw_fd
+        .to_string_lossy()
+        .parse::<std::os::fd::RawFd>()
+        .map_err(|_| String::from("proof parent authority descriptor is invalid"))?;
+    // SAFETY: `fcntl` only inspects and updates the supplied descriptor flags.
+    let flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(String::from(
+            "proof parent authority descriptor is not open",
+        ));
+    }
+    // SAFETY: the descriptor was proven open above. Set close-on-exec before reading any
+    // authority data so no later child can inherit it accidentally.
+    if unsafe { libc::fcntl(raw_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(String::from(
+            "proof parent authority descriptor could not be made non-inheritable",
+        ));
+    }
+    use std::os::fd::{FromRawFd as _, OwnedFd};
+    use std::os::unix::net::UnixStream;
+    // SAFETY: ownership is transferred exactly once after the descriptor was proven open.
+    let owned = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    let mut stream = UnixStream::from(owned);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|_| String::from("proof parent authority timeout could not be applied"))?;
+    let peer_pid = verify_proof_parent_stream(&stream)?;
+    let mut challenge = [0_u8; 32];
+    getrandom::getrandom(&mut challenge)
+        .map_err(|_| String::from("proof parent authority challenge is unavailable"))?;
+    stream
+        .write_all(&challenge)
+        .map_err(|_| String::from("proof parent authority challenge could not be delivered"))?;
+    let challenge_identity = format!("sha256:{:x}", Sha256::digest(challenge));
+    let mut length = [0_u8; 4];
+    stream
+        .read_exact(&mut length)
+        .map_err(|_| String::from("proof parent authority frame is incomplete"))?;
+    let length = u32::from_be_bytes(length) as usize;
+    if length == 0 || length > PROOF_PARENT_AUTHORITY_MAX_BYTES {
+        return Err(String::from(
+            "proof parent authority frame exceeds its bounded carrier",
+        ));
+    }
+    let mut payload = vec![0_u8; length];
+    stream
+        .read_exact(&mut payload)
+        .map_err(|_| String::from("proof parent authority payload is incomplete"))?;
+    let capability = serde_json::from_slice::<ProofParentAuthorityCapability>(&payload)
+        .map_err(|_| String::from("proof parent authority payload is invalid"))?;
+    if capability.parent_pid != peer_pid || capability.challenge_identity != challenge_identity {
+        return Err(String::from(
+            "proof parent authority payload does not match its connected challenge",
+        ));
+    }
+    ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| {
+        active.replace(Some(capability.clone()));
+    });
+    Ok(Some(capability))
+}
+
+#[cfg(not(unix))]
+fn load_proof_parent_authority_capability() -> Result<Option<ProofParentAuthorityCapability>, String>
+{
+    if env::var_os(PROOF_PARENT_AUTHORITY_FD_ENV).is_some() {
+        return Err(String::from(
+            "proof parent authority capabilities are supported only on Unix platforms",
+        ));
+    }
+    Ok(None)
+}
+
+fn proof_parent_authorizes_invocation(
+    contract: &Contract,
+    contract_path: &Path,
+    kinds: &[&str],
+    name: &str,
+) -> Result<bool, GrantAdmissionError> {
+    let Some(capability) = load_proof_parent_authority_capability()
+        .map_err(|details| GrantAdmissionError::new("proof_parent_authority_invalid", details))?
+    else {
+        return Ok(false);
+    };
+    if !kinds.iter().any(|kind| capability.invocation.kind == *kind) {
+        return Err(GrantAdmissionError::new(
+            "proof_parent_authority_invalid",
+            "proof parent authority capability does not select this command surface",
+        )
+        .with_scope(capability.authority.semantic_scope().clone()));
+    }
+    verify_proof_parent_authority_capability(
+        contract,
+        contract_path,
+        &capability,
+        capability.invocation.kind.as_str(),
+        name,
+    )
+    .map_err(|details| {
+        GrantAdmissionError::new("proof_parent_authority_invalid", details)
+            .with_scope(capability.authority.semantic_scope().clone())
+    })?;
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn spawn_with_proof_parent_authority(
+    command: &mut Command,
+    capability: Option<ProofParentAuthorityCapability>,
+) -> Result<std::process::Child, String> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::net::UnixStream;
+    let Some(capability) = capability else {
+        return command.spawn().map_err(|error| error.to_string());
+    };
+    let payload = serde_json::to_vec(&capability)
+        .map_err(|error| format!("could not serialize proof parent authority: {error}"))?;
+    if payload.is_empty() || payload.len() > PROOF_PARENT_AUTHORITY_MAX_BYTES {
+        return Err(String::from(
+            "proof parent authority payload exceeds its bounded carrier",
+        ));
+    }
+    let (mut parent_stream, child_stream) = UnixStream::pair()
+        .map_err(|error| format!("could not create proof authority channel: {error}"))?;
+    let child_fd = child_stream.as_raw_fd();
+    // SAFETY: the descriptor belongs to `child_stream`; clearing close-on-exec is required only
+    // for the immediate Ota child and the child sets it again before parsing the frame.
+    let flags = unsafe { libc::fcntl(child_fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(child_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(String::from(
+            "could not make the proof authority channel available to the Ota child",
+        ));
+    }
+    command.env(PROOF_PARENT_AUTHORITY_FD_ENV, child_fd.to_string());
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    drop(child_stream);
+    parent_stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| format!("could not bound proof authority challenge wait: {error}"))?;
+    let mut challenge = [0_u8; 32];
+    if let Err(error) = parent_stream.read_exact(&mut challenge) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "could not receive proof authority challenge from the Ota child: {error}"
+        ));
+    }
+    let mut capability = capability;
+    capability.challenge_identity = format!("sha256:{:x}", Sha256::digest(challenge));
+    capability.identity = proof_parent_authority_capability_identity(&capability)?;
+    let payload = serde_json::to_vec(&capability)
+        .map_err(|error| format!("could not serialize proof parent authority: {error}"))?;
+    if payload.is_empty() || payload.len() > PROOF_PARENT_AUTHORITY_MAX_BYTES {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(String::from(
+            "proof parent authority payload exceeds its bounded carrier",
+        ));
+    }
+    if let Err(error) = parent_stream
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .and_then(|_| parent_stream.write_all(&payload))
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "could not deliver proof authority to the Ota child: {error}"
+        ));
+    }
+    Ok(child)
+}
+
+fn output_with_proof_parent_authority(
+    command: &mut Command,
+    capability: Option<ProofParentAuthorityCapability>,
+) -> Result<std::process::Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    spawn_with_proof_parent_authority(command, capability)?
+        .wait_with_output()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
+fn spawn_with_proof_parent_authority(
+    command: &mut Command,
+    capability: Option<ProofParentAuthorityCapability>,
+) -> Result<std::process::Child, String> {
+    if capability.is_some() {
+        return Err(String::from(
+            "proof parent authority capabilities are supported only on Unix platforms",
+        ));
+    }
+    command.spawn().map_err(|error| error.to_string())
+}
+
+struct ActiveCrossingGrantGuard {
+    previous: Option<VerifiedCrossingAuthorityAdmission>,
+}
+
+impl ActiveCrossingGrantGuard {
+    fn activate(admission: Option<VerifiedCrossingAuthorityAdmission>) -> Self {
+        let previous = ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.replace(admission));
+        Self { previous }
+    }
+
+    fn activate_preview(plan: Option<CrossingAuthorityPlan>) -> Self {
+        Self::activate(plan.map(|plan| match plan {
+            CrossingAuthorityPlan::PreboundFile(admission) => {
+                VerifiedCrossingAuthorityAdmission::PreboundFile(admission)
+            }
+            CrossingAuthorityPlan::AuthorityBroker {
+                binding,
+                semantic_scope,
+                actor_mode,
+            } => VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview {
+                binding,
+                semantic_scope,
+                actor_mode,
+            },
+        }))
+    }
+}
+
+impl Drop for ActiveCrossingGrantGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| {
+            active.replace(previous);
+        });
+    }
+}
+
+fn active_crossing_grant_authority() -> Option<crate::output::ExecutionBoundaryCrossingAuthority> {
+    ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| {
+        let admission = active.borrow();
+        let admission = admission.as_ref()?;
+        let transaction = active_crossing_transaction_evidence()?;
+        crossing_authority_output_with_transaction(admission, Some(transaction), true).ok()
+    })
+}
+
+fn active_crossing_authority_is_configured() -> bool {
+    ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| active.borrow().is_some())
+}
+
+fn active_crossing_grant_preview() -> Option<crate::output::CrossingGrantAdmissionPreview> {
+    ACTIVE_CROSSING_GRANT_ADMISSION.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .and_then(|admission| match admission {
+                VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => {
+                    Some(crossing_authority_plan_preview(
+                        &CrossingAuthorityPlan::PreboundFile(admission.clone()),
+                    ))
+                }
+                VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview {
+                    binding,
+                    semantic_scope,
+                    actor_mode,
+                } => Some(crossing_authority_plan_preview(
+                    &CrossingAuthorityPlan::AuthorityBroker {
+                        binding: binding.clone(),
+                        semantic_scope: semantic_scope.clone(),
+                        actor_mode: actor_mode.clone(),
+                    },
+                )),
+                VerifiedCrossingAuthorityAdmission::AuthorityBroker(_) => None,
+            })
+    })
+}
+
+struct ActiveCrossingTransactionGuard {
+    previous: Option<Rc<RefCell<crate::crossing_transaction::CrossingTransactionGuard>>>,
+    #[cfg(unix)]
+    previous_systemd_completion:
+        Option<Rc<RefCell<crate::broker_session::SystemdExecutionCompletion>>>,
+}
+
+impl ActiveCrossingTransactionGuard {
+    fn activate_prebound(
+        repo_root: &Path,
+        admission: Option<&GrantAdmissionEvidence>,
+    ) -> Result<Option<Self>, String> {
+        let Some(admission) = admission else {
+            return Ok(None);
+        };
+        let transaction_admission = admission.crossing_admission()?;
+        let transaction = Rc::new(RefCell::new(
+            crate::crossing_transaction::CrossingTransactionGuard::begin(
+                repo_root,
+                &transaction_admission,
+            )?,
+        ));
+        let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
+        Ok(Some(Self {
+            previous,
+            #[cfg(unix)]
+            previous_systemd_completion: None,
+        }))
+    }
+
+    fn activate_existing(
+        transaction: crate::crossing_transaction::CrossingTransactionGuard,
+        #[cfg(unix)] systemd_completion: Option<crate::broker_session::SystemdExecutionCompletion>,
+    ) -> Self {
+        let transaction = Rc::new(RefCell::new(transaction));
+        let previous = ACTIVE_CROSSING_TRANSACTION.with(|active| active.replace(Some(transaction)));
+        #[cfg(unix)]
+        let previous_systemd_completion = ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|active| {
+            active.replace(systemd_completion.map(|completion| Rc::new(RefCell::new(completion))))
+        });
+        Self {
+            previous,
+            #[cfg(unix)]
+            previous_systemd_completion,
+        }
+    }
+}
+
+fn crossing_authority_plan_preview(
+    plan: &CrossingAuthorityPlan,
+) -> crate::output::CrossingGrantAdmissionPreview {
+    match plan {
+        CrossingAuthorityPlan::PreboundFile(admission) => {
+            crate::output::CrossingGrantAdmissionPreview {
+                decision: String::from("admissible_not_consumed"),
+                authority_carrier: None,
+                authority_id: admission.authority_id.clone(),
+                authority_binding_identity: admission.authority_binding_identity.clone(),
+                issuer_id: Some(admission.issuer_id.clone()),
+                key_id: Some(admission.key_id.clone()),
+                key_fingerprint: Some(admission.key_fingerprint.clone()),
+                bundle_id: Some(admission.bundle_id.clone()),
+                bundle_identity: Some(admission.bundle_identity.clone()),
+                bundle_sequence: Some(admission.bundle_sequence),
+                grant_id: Some(admission.grant_id.clone()),
+                grant_identity: Some(admission.grant_identity.clone()),
+                scope_identity: admission.scope_identity.clone(),
+                contract_identity: admission.contract_identity.clone(),
+                boundary_family: admission.boundary_family.clone(),
+                classification: admission.classification.clone(),
+                actor_mode: admission.actor_mode.clone(),
+                environment_posture: Some(admission.environment_posture.clone()),
+                expiry_kind: Some(admission.expiry_kind.clone()),
+                issued_at: Some(admission.issued_at.clone()),
+                not_before: Some(admission.not_before.clone()),
+                next_update: Some(admission.next_update.clone()),
+                expires_at: Some(admission.expires_at.clone()),
+                clock_evidence: Some(admission.clock_evidence.clone()),
+                sequence_evidence: Some(admission.sequence_evidence.clone()),
+                revocation_evidence: Some(admission.revocation_evidence.clone()),
+                admitted_at: Some(admission.admitted_at.clone()),
+            }
+        }
+        CrossingAuthorityPlan::AuthorityBroker {
+            binding,
+            semantic_scope,
+            actor_mode,
+        } => crate::output::CrossingGrantAdmissionPreview {
+            decision: String::from("requires_live_authorization"),
+            authority_carrier: Some(String::from("authority_broker")),
+            authority_id: binding.authority_id.clone(),
+            authority_binding_identity: binding.identity.clone(),
+            issuer_id: None,
+            key_id: None,
+            key_fingerprint: None,
+            bundle_id: None,
+            bundle_identity: None,
+            bundle_sequence: None,
+            grant_id: None,
+            grant_identity: None,
+            scope_identity: semantic_scope.identity.clone(),
+            contract_identity: semantic_scope.contract_identity.clone(),
+            boundary_family: semantic_scope.boundary_family.clone(),
+            classification: semantic_scope.classification.clone(),
+            actor_mode: actor_mode.clone(),
+            environment_posture: None,
+            expiry_kind: None,
+            issued_at: None,
+            not_before: None,
+            next_update: None,
+            expires_at: None,
+            clock_evidence: None,
+            sequence_evidence: None,
+            revocation_evidence: None,
+            admitted_at: None,
+        },
+    }
+}
+
+fn activate_crossing_authority_plan(
+    repo_root: &Path,
+    plan: CrossingAuthorityPlan,
+) -> Result<(ActiveCrossingGrantGuard, ActiveCrossingTransactionGuard), GrantAdmissionError> {
+    match plan {
+        CrossingAuthorityPlan::PreboundFile(admission) => {
+            let transaction =
+                ActiveCrossingTransactionGuard::activate_prebound(repo_root, Some(&admission))
+                    .map_err(|details| {
+                        GrantAdmissionError::new("crossing_transaction_unavailable", details)
+                            .with_scope(admission.semantic_scope.clone())
+                    })?
+                    .expect("a verified prebound admission should create one transaction");
+            let authority = ActiveCrossingGrantGuard::activate(Some(
+                VerifiedCrossingAuthorityAdmission::PreboundFile(admission),
+            ));
+            Ok((authority, transaction))
+        }
+        CrossingAuthorityPlan::AuthorityBroker {
+            binding,
+            semantic_scope,
+            actor_mode,
+        } => {
+            #[cfg(unix)]
+            {
+                let interrupt_epoch = crate::runner::begin_command_interrupt_observation();
+                let prepared = crate::broker_session::PreparedBrokerCrossing::prepare(
+                    repo_root,
+                    binding.clone(),
+                    &semantic_scope,
+                    actor_mode.as_str(),
+                    binding.maximum_lease_seconds,
+                    || crate::runner::command_interrupted_since(interrupt_epoch),
+                )
+                .map_err(|details| {
+                    GrantAdmissionError::new("crossing_broker_admission_refused", details)
+                        .with_authority_source("authority_broker")
+                        .with_scope(semantic_scope.clone())
+                })?;
+                let consumed = prepared
+                    .consume(repo_root, || {
+                        crate::runner::command_interrupted_since(interrupt_epoch)
+                    })
+                    .map_err(|details| {
+                        GrantAdmissionError::new("crossing_broker_consumption_refused", details)
+                            .with_authority_source("authority_broker")
+                            .with_scope(semantic_scope.clone())
+                    })?;
+                let (admission, transaction, systemd_completion) = consumed.into_parts();
+                let transaction = ActiveCrossingTransactionGuard::activate_existing(
+                    transaction,
+                    systemd_completion,
+                );
+                let authority = ActiveCrossingGrantGuard::activate(Some(
+                    VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission),
+                ));
+                Ok((authority, transaction))
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (binding, actor_mode, repo_root);
+                Err(GrantAdmissionError::new(
+                    "crossing_broker_platform_unsupported",
+                    "the launcher-session broker carrier is supported only on Unix platforms",
+                )
+                .with_authority_source("authority_broker")
+                .with_scope(semantic_scope))
+            }
+        }
+    }
+}
+
+impl Drop for ActiveCrossingTransactionGuard {
+    fn drop(&mut self) {
+        ACTIVE_CROSSING_TRANSACTION.with(|active| {
+            active.replace(self.previous.take());
+        });
+        #[cfg(unix)]
+        ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|active| {
+            active.replace(self.previous_systemd_completion.take());
+        });
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct ArchivedCrossingGrantEvidence {
+    admission: GrantAdmissionEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    carrier_admission: Option<crate::crossing_authority::CrossingAuthorityAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+enum ArchivedCrossingAuthorityEvidence {
+    PreboundFile(ArchivedCrossingGrantEvidence),
+    AuthorityBroker(crate::broker_session::BrokerArchiveEvidence),
+}
+
+impl ArchivedCrossingAuthorityEvidence {
+    fn semantic_scope(&self) -> &crate::crossing::CrossingSemanticScope {
+        match self {
+            Self::PreboundFile(evidence) => &evidence.admission.semantic_scope,
+            Self::AuthorityBroker(evidence) => &evidence.admission.semantic_scope,
+        }
+    }
+}
+
+fn verify_terminal_proof_crossing_evidence(
+    contract: &Contract,
+    root: &Path,
+    crossing: &ProofRuntimeCrossingEvidence,
+    expected_scope: &crate::crossing::CrossingSemanticScope,
+    proof_execution_id: &str,
+    proof_status: &str,
+    proof_ok: bool,
+) -> Result<(), String> {
+    if crossing.scope_identity != expected_scope.identity
+        || crossing.proof_execution_id.as_deref() != Some(proof_execution_id)
+        || crossing.receipt_archive_identity.is_some()
+        || crossing.receipt_archive_path.is_some()
+    {
+        return Err(String::from(
+            "proof crossing linkage does not match its canonical semantic scope",
+        ));
+    }
+    let authority = crossing
+        .authority
+        .as_ref()
+        .ok_or_else(|| String::from("proof crossing linkage omits terminal authority evidence"))?;
+    if authority.scope_identity != expected_scope.identity
+        || authority.contract_identity != expected_scope.contract_identity
+    {
+        return Err(String::from(
+            "proof crossing authority does not match its canonical semantic scope",
+        ));
+    }
+    let archived = serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
+        authority.archive_evidence.clone(),
+    )
+    .map_err(|error| format!("proof crossing archive evidence is invalid: {error}"))?;
+    if archived.semantic_scope() != expected_scope {
+        return Err(String::from(
+            "proof crossing archive authority does not re-derive from contract truth",
+        ));
+    }
+    let (transaction, expected_authority) = match &archived {
+        ArchivedCrossingAuthorityEvidence::PreboundFile(evidence) => {
+            crate::crossing_authority::verify_archived_grant_admission(
+                contract,
+                root,
+                &evidence.admission,
+            )
+            .map_err(|error| error.public_details())?;
+            let carrier = evidence.carrier_admission.as_ref().ok_or_else(|| {
+                String::from("proof crossing prebound archive omits its carrier admission")
+            })?;
+            if evidence.admission.crossing_admission()? != *carrier {
+                return Err(String::from(
+                    "proof crossing prebound carrier admission does not reconcile",
+                ));
+            }
+            let transaction = evidence.transaction.as_ref().ok_or_else(|| {
+                String::from("proof crossing prebound archive omits its transaction")
+            })?;
+            crate::crossing_transaction::verify_crossing_transaction_evidence(
+                transaction,
+                carrier,
+            )?;
+            let expected = crossing_authority_output_with_transaction(
+                &VerifiedCrossingAuthorityAdmission::PreboundFile(evidence.admission.clone()),
+                Some(transaction.clone()),
+                true,
+            )?;
+            (transaction, expected)
+        }
+        ArchivedCrossingAuthorityEvidence::AuthorityBroker(evidence) => {
+            crate::broker_session::verify_broker_archive_evidence(root, evidence)?;
+            let expected = crossing_authority_output_with_transaction(
+                &VerifiedCrossingAuthorityAdmission::AuthorityBroker(evidence.admission.clone()),
+                Some(evidence.transaction.clone()),
+                true,
+            )?;
+            (&evidence.transaction, expected)
+        }
+    };
+    verify_exact_proof_authority_projection(authority, &expected_authority)?;
+    verify_terminal_proof_transaction_binding(
+        transaction,
+        crossing,
+        proof_execution_id,
+        proof_status,
+        proof_ok,
+    )
+}
+
+fn verify_exact_proof_authority_projection(
+    actual: &crate::output::ExecutionBoundaryCrossingAuthority,
+    expected: &crate::output::ExecutionBoundaryCrossingAuthority,
+) -> Result<(), String> {
+    if actual != expected {
+        return Err(String::from(
+            "proof crossing public authority projection does not reconcile with verified archive evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_terminal_proof_transaction_binding(
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+    crossing: &ProofRuntimeCrossingEvidence,
+    proof_execution_id: &str,
+    proof_status: &str,
+    proof_ok: bool,
+) -> Result<(), String> {
+    let expected_receipt_status = format!("proof:{proof_execution_id}:{proof_status}");
+    if crossing.proof_execution_id.as_deref() != Some(proof_execution_id)
+        || transaction.transaction_id != crossing.transaction_id
+        || transaction.scope_identity != crossing.scope_identity
+        || transaction.receipt_status.as_deref() != Some(expected_receipt_status.as_str())
+        || proof_ok != (transaction.state == "completed")
+    {
+        return Err(String::from(
+            "proof crossing terminal transaction does not match the proof outcome",
+        ));
+    }
+    Ok(())
+}
+
+fn active_crossing_transaction_evidence()
+-> Option<crate::crossing_transaction::CrossingTransactionEvidence> {
+    ACTIVE_CROSSING_TRANSACTION.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .map(|transaction| transaction.borrow().evidence())
+    })
+}
+
+fn active_crossing_transaction_is_pending() -> bool {
+    active_crossing_transaction_evidence().is_some_and(|evidence| evidence.state == "pending")
+}
+
+#[cfg(unix)]
+fn persist_active_systemd_execution_completion(
+    transaction: &crate::crossing_transaction::CrossingTransactionEvidence,
+    receipt_archive_identity: Option<&str>,
+    ok: bool,
+    interrupted: bool,
+    exit_code: Option<i32>,
+    receipt_status: &str,
+) -> Result<(), String> {
+    #[cfg(test)]
+    EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE.with(|expected| {
+        if let Some(root) = expected.borrow_mut().take() {
+            let archive_dir = receipt_archive_dir(&root);
+            let archive_exists = fs::read_dir(archive_dir).is_ok_and(|entries| {
+                entries.filter_map(Result::ok).any(|entry| {
+                    entry.file_name().to_str().is_some_and(|name| {
+                        name.starts_with("repo-receipt-") && name.ends_with(".json")
+                    })
+                })
+            });
+            assert!(
+                archive_exists,
+                "systemd completion must follow durable receipt archive publication"
+            );
+        }
+    });
+    ACTIVE_SYSTEMD_EXECUTION_COMPLETION.with(|completion| {
+        let Some(completion) = completion.borrow().as_ref().cloned() else {
+            return Ok::<(), String>(());
+        };
+        completion.borrow_mut().persist_terminal_completion(
+            transaction,
+            receipt_archive_identity,
+            ok,
+            interrupted,
+            exit_code,
+            receipt_status,
+        )?;
+        Ok(())
+    })
+}
+
+fn finalize_active_crossing_transaction(
+    receipt: &ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
+) -> Result<(), String> {
+    ACTIVE_CROSSING_TRANSACTION.with(|active| {
+        let Some(transaction) = active.borrow().as_ref().cloned() else {
+            return Ok(());
+        };
+        let state = if receipt.ok {
+            "completed"
+        } else if receipt.status.as_deref() == Some("interrupted") {
+            "interrupted"
+        } else {
+            "failed"
+        };
+        transaction
+            .borrow_mut()
+            .finalize(state, receipt.status.as_deref())?;
+        let _ = terminal_exit_code;
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+fn persist_active_crossing_systemd_completion(
+    receipt: &ExecutionReceipt,
+    receipt_archive_identity: &str,
+    terminal_exit_code: Option<i32>,
+) -> Result<(), String> {
+    let Some(transaction) = active_crossing_transaction_evidence() else {
+        return Ok(());
+    };
+    let receipt_status = transaction
+        .receipt_status
+        .as_deref()
+        .unwrap_or(if receipt.ok { "completed" } else { "failed" });
+    persist_active_systemd_execution_completion(
+        &transaction,
+        Some(receipt_archive_identity),
+        receipt.ok,
+        receipt.status.as_deref() == Some("interrupted"),
+        terminal_exit_code,
+        receipt_status,
+    )
+}
+
+fn finalize_and_attach_active_crossing_transaction(
+    receipt: &mut ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
+) -> Result<(), String> {
+    if active_crossing_transaction_evidence().is_none() {
+        return Ok(());
+    }
+    finalize_active_crossing_transaction(receipt, terminal_exit_code)?;
+    let authority = active_crossing_grant_authority().ok_or_else(|| {
+        String::from("active crossing transaction has no matching verified grant admission")
+    })?;
+    let crossing = receipt.crossing.as_mut().ok_or_else(|| {
+        String::from("active crossing transaction cannot be attached without a crossing record")
+    })?;
+    let transaction_id = authority
+        .transaction
+        .as_ref()
+        .and_then(|transaction| transaction.get("transaction_id"))
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| {
+            String::from("terminal crossing transaction is missing its transaction identity")
+        })?;
+    if crossing.id != transaction_id {
+        return Err(String::from(
+            "crossing record identity does not match the active crossing transaction",
+        ));
+    }
+    crossing.authority = Some(authority);
+    Ok(())
+}
+
+fn finalize_active_proof_crossing_transaction(
+    ok: bool,
+    interrupted: bool,
+    status: &str,
+    proof_execution_id: &str,
+) -> Result<Option<ProofRuntimeCrossingEvidence>, String> {
+    let Some(transaction) = ACTIVE_CROSSING_TRANSACTION.with(|active| active.borrow().clone())
+    else {
+        return Ok(None);
+    };
+    let state = if ok {
+        "completed"
+    } else if interrupted {
+        "interrupted"
+    } else {
+        "failed"
+    };
+    let receipt_status = format!("proof:{proof_execution_id}:{status}");
+    transaction
+        .borrow_mut()
+        .finalize(state, Some(receipt_status.as_str()))?;
+    #[cfg(unix)]
+    {
+        let terminal_transaction = transaction.borrow().evidence();
+        persist_active_systemd_execution_completion(
+            &terminal_transaction,
+            None,
+            ok,
+            interrupted,
+            Some(proof_command_exit_code(ok, interrupted)),
+            receipt_status.as_str(),
+        )?;
+    }
+    let authority = active_crossing_grant_authority().ok_or_else(|| {
+        String::from("proof crossing transaction has no matching verified authority admission")
+    })?;
+    let transaction = active_crossing_transaction_evidence().ok_or_else(|| {
+        String::from("proof crossing transaction disappeared before evidence emission")
+    })?;
+    Ok(Some(ProofRuntimeCrossingEvidence {
+        receipt_archive_identity: None,
+        receipt_archive_path: None,
+        transaction_id: transaction.transaction_id,
+        proof_execution_id: Some(proof_execution_id.to_string()),
+        scope_identity: authority.scope_identity.clone(),
+        authority: Some(authority),
+    }))
+}
+
+fn proof_command_exit_code(ok: bool, interrupted: bool) -> i32 {
+    if ok {
+        0
+    } else if interrupted {
+        130
+    } else {
+        1
+    }
+}
+
+fn fail_active_proof_crossing_transaction(
+    message: impl Into<String>,
+    proof_execution_id: &str,
+) -> CommandOutput {
+    let message = message.into();
+    if !active_crossing_transaction_is_pending() {
+        return CommandOutput::failure(message);
+    }
+    match finalize_active_proof_crossing_transaction(
+        false,
+        false,
+        "failed_before_terminal_output",
+        proof_execution_id,
+    ) {
+        Ok(_) => CommandOutput::failure(message),
+        Err(error) => CommandOutput::failure(format!(
+            "{message}; proof crossing finalization failed: {error}"
+        )),
+    }
+}
+
+fn crossing_grant_authority_output_with_transaction(
+    admission: &GrantAdmissionEvidence,
+    transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+    include_carrier_admission: bool,
+) -> crate::output::ExecutionBoundaryCrossingAuthority {
+    crate::output::ExecutionBoundaryCrossingAuthority {
+        decision: admission.decision.clone(),
+        authority_carrier: None,
+        authority_id: admission.authority_id.clone(),
+        authority_separation_posture: String::from("current_process_filesystem_guarded"),
+        authority_binding_identity: admission.authority_binding_identity.clone(),
+        broker: None,
+        issuer_id: Some(admission.issuer_id.clone()),
+        key_id: Some(admission.key_id.clone()),
+        key_fingerprint: Some(admission.key_fingerprint.clone()),
+        bundle_id: Some(admission.bundle_id.clone()),
+        bundle_identity: Some(admission.bundle_identity.clone()),
+        bundle_sequence: Some(admission.bundle_sequence),
+        grant_id: Some(admission.grant_id.clone()),
+        grant_identity: Some(admission.grant_identity.clone()),
+        scope_identity: admission.scope_identity.clone(),
+        contract_identity: admission.contract_identity.clone(),
+        boundary_family: admission.boundary_family.clone(),
+        classification: admission.classification.clone(),
+        actor_mode: admission.actor_mode.clone(),
+        environment_posture: Some(admission.environment_posture.clone()),
+        expiry_kind: Some(admission.expiry_kind.clone()),
+        issued_at: Some(admission.issued_at.clone()),
+        not_before: Some(admission.not_before.clone()),
+        next_update: Some(admission.next_update.clone()),
+        expires_at: Some(admission.expires_at.clone()),
+        clock_evidence: Some(admission.clock_evidence.clone()),
+        sequence_evidence: Some(admission.sequence_evidence.clone()),
+        revocation_evidence: Some(admission.revocation_evidence.clone()),
+        admitted_at: admission.admitted_at.clone(),
+        transaction: transaction
+            .as_ref()
+            .map(|evidence| serde_json::to_value(evidence).expect("transaction should serialize")),
+        archive_evidence: serde_json::to_value(ArchivedCrossingGrantEvidence {
+            admission: admission.clone(),
+            carrier_admission: include_carrier_admission.then(|| {
+                admission
+                    .crossing_admission()
+                    .expect("verified crossing grant admission should derive its carrier envelope")
+            }),
+            transaction,
+        })
+        .expect("verified crossing grant admission should serialize"),
+    }
+}
+
+fn crossing_authority_output_with_transaction(
+    admission: &VerifiedCrossingAuthorityAdmission,
+    transaction: Option<crate::crossing_transaction::CrossingTransactionEvidence>,
+    include_carrier_admission: bool,
+) -> Result<crate::output::ExecutionBoundaryCrossingAuthority, String> {
+    match admission {
+        VerifiedCrossingAuthorityAdmission::PreboundFile(admission) => {
+            Ok(crossing_grant_authority_output_with_transaction(
+                admission,
+                transaction,
+                include_carrier_admission,
+            ))
+        }
+        VerifiedCrossingAuthorityAdmission::AuthorityBrokerPreview { .. } => Err(String::from(
+            "broker preview evidence cannot be attached to an execution receipt",
+        )),
+        VerifiedCrossingAuthorityAdmission::AuthorityBroker(admission) => {
+            let transaction = transaction.ok_or_else(|| {
+                String::from("broker authority output requires a consumed crossing transaction")
+            })?;
+            let archive =
+                crate::broker_session::build_broker_archive_evidence(admission, &transaction)?;
+            Ok(crate::output::ExecutionBoundaryCrossingAuthority {
+                decision: String::from("allowed"),
+                authority_carrier: Some(String::from("authority_broker")),
+                authority_id: admission.binding_snapshot.authority_id.clone(),
+                authority_separation_posture: String::from(
+                    admission.authority_separation_posture(),
+                ),
+                authority_binding_identity: admission.binding_snapshot.identity.clone(),
+                broker: Some(crate::output::ExecutionBoundaryBrokerAuthority {
+                    admission_identity: admission.identity.clone(),
+                    attestation_identity: admission.attestation_identity.clone(),
+                    authorization_decision_identity: admission
+                        .authorization_decision_identity
+                        .clone(),
+                    prepared_lease_identity: admission.prepared_lease_identity.clone(),
+                    work_unit_identity: admission.challenge.work_unit_identity.clone(),
+                    challenge_nonce_commitment: admission.challenge.nonce_commitment.clone(),
+                    broker_revision: admission.broker_revision,
+                    runner_principal: admission.attestation.runner_principal().to_string(),
+                    approval_reference: admission
+                        .authorization_decision
+                        .payload
+                        .approval_reference
+                        .clone(),
+                }),
+                issuer_id: None,
+                key_id: None,
+                key_fingerprint: None,
+                bundle_id: None,
+                bundle_identity: None,
+                bundle_sequence: None,
+                grant_id: None,
+                grant_identity: None,
+                scope_identity: admission.semantic_scope.identity.clone(),
+                contract_identity: admission.semantic_scope.contract_identity.clone(),
+                boundary_family: admission.semantic_scope.boundary_family.clone(),
+                classification: admission.semantic_scope.classification.clone(),
+                actor_mode: admission.actor_mode.clone(),
+                environment_posture: None,
+                expiry_kind: None,
+                issued_at: None,
+                not_before: None,
+                next_update: None,
+                expires_at: Some(admission.prepared_lease.payload.expires_at.clone()),
+                clock_evidence: None,
+                sequence_evidence: None,
+                revocation_evidence: None,
+                admitted_at: admission.admitted_at.clone(),
+                transaction: Some(
+                    serde_json::to_value(&transaction).map_err(|error| {
+                        format!("failed to serialize broker transaction: {error}")
+                    })?,
+                ),
+                archive_evidence: serde_json::to_value(archive)
+                    .map_err(|error| format!("failed to serialize broker archive: {error}"))?,
+            })
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_task_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    effect_overrides: &[String],
+    agent: bool,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    if proof_parent_authorizes_invocation(
+        contract,
+        contract_path,
+        &["proof_task", "workflow_task"],
+        task_name.as_str(),
+    )? {
+        if grant.is_some() {
+            return Err(GrantAdmissionError::new(
+                "proof_parent_authority_conflict",
+                "a proof child invocation cannot also select independent crossing authority",
+            ));
+        }
+        return Ok(None);
+    }
+    let authority_configured = contract.governance.crossing_authority.is_some();
+    if !authority_configured {
+        return match grant {
+            Some(_) => Err(GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "`--grant` requires `governance.crossing_authority.authority_id` in the selected contract",
+            )),
+            None => Ok(None),
+        };
+    }
+
+    let safety = task_effective_safety_with_overrides(contract, task_name.as_str(), overrides);
+    let requirement = evaluate_crossing_requirement(
+        Some(safety.effective_safe),
+        false,
+        &safety.unsafe_closure_tasks,
+        "task",
+    );
+    evaluate_selected_crossing_grant(
+        contract,
+        contract_path,
+        crossing_scope_for_task(
+            contract,
+            task_name.as_str(),
+            overrides,
+            task_inputs,
+            effect_overrides,
+            sandbox_target,
+            requirement
+                .boundary_family
+                .map(|family| family.label())
+                .unwrap_or("unknown"),
+            requirement
+                .classification
+                .map(|classification| classification.label())
+                .unwrap_or("unknown"),
+        ),
+        requirement,
+        agent,
+        grant,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_workflow_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+    agent: bool,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
+    let selected_workflow = contract
+        .selected_workflow(workflow_name)
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| workflow_name.unwrap_or("default"));
+    if proof_parent_authorizes_invocation(
+        contract,
+        contract_path,
+        &["workflow"],
+        selected_workflow,
+    )? {
+        if grant.is_some() {
+            return Err(GrantAdmissionError::new(
+                "proof_parent_authority_conflict",
+                "a proof child workflow cannot also select independent crossing authority",
+            ));
+        }
+        return Ok(None);
+    }
+    let authority_configured = contract.governance.crossing_authority.is_some();
+    if !authority_configured {
+        return match grant {
+            Some(_) => Err(GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "`--grant` requires `governance.crossing_authority.authority_id` in the selected contract",
+            )),
+            None => Ok(None),
+        };
+    }
+
+    let safety =
+        selected_up_workflow_effective_safety(contract, workflow_name, run_behavior_preference);
+    let requirement = evaluate_crossing_requirement(
+        safety.effective_safe,
+        false,
+        &safety.unsafe_closure_tasks,
+        "workflow",
+    );
+    if agent && requirement.required == Some(true) {
+        // V11.3 agent safety is a harder boundary than a human crossing grant.
+        // The existing agent refusal path remains authoritative and a grant cannot bypass it.
+        return Ok(None);
+    }
+    evaluate_selected_crossing_grant(
+        contract,
+        contract_path,
+        crossing_scope_for_workflow(
+            contract,
+            workflow_name,
+            overrides,
+            effect_overrides,
+            sandbox_target,
+            up_run_behavior_preference_label(run_behavior_preference),
+            ready_timeout.map(|timeout| timeout.as_secs()),
+            requirement
+                .boundary_family
+                .map(|family| family.label())
+                .unwrap_or("unknown"),
+            requirement
+                .classification
+                .map(|classification| classification.label())
+                .unwrap_or("unknown"),
+        ),
+        requirement,
+        agent,
+        grant,
+    )
+}
+
+/// Evaluates one proof transaction, including declared proof-only tasks, before the proof can
+/// create artifacts or start its primary workflow. These roots are intentionally part of the
+/// signed scope rather than post-workflow helpers.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_proof_workflow_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    proof_invocations: &[CrossingProofInvocation],
+    proof_transaction_selection: CrossingProofTransactionSelection,
+    proof_kind: &str,
+    agent: bool,
+    grant: Option<&str>,
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
+    let authority_configured = contract.governance.crossing_authority.is_some();
+    if !authority_configured {
+        return match grant {
+            Some(_) => Err(GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "`--grant` requires `governance.crossing_authority.authority_id` in the selected contract",
+            )),
+            None => Ok(None),
+        };
+    }
+    let proof_roots = proof_invocations
+        .iter()
+        .map(|invocation| invocation.task.clone())
+        .collect::<Vec<_>>();
+    let policy = crate::sandbox_policy::sandbox_policy_for_workflow_with_proof_roots(
+        contract,
+        workflow_name,
+        overrides,
+        &proof_roots,
+    )
+    .map_err(|details| {
+        GrantAdmissionError::new(
+            "crossing_scope_unavailable",
+            format!("failed to derive the canonical proof crossing scope: {details}"),
+        )
+    })?;
+    let mut unsafe_closure_tasks = policy
+        .segments
+        .iter()
+        .filter_map(|segment| {
+            (!task_effective_safety_with_overrides(
+                contract,
+                segment.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(segment.backend),
+                    ..overrides
+                },
+            )
+            .effective_safe)
+                .then(|| segment.task.clone())
+        })
+        .collect::<Vec<_>>();
+    unsafe_closure_tasks.sort();
+    unsafe_closure_tasks.dedup();
+    let requirement = evaluate_crossing_requirement(
+        Some(unsafe_closure_tasks.is_empty()),
+        false,
+        &unsafe_closure_tasks,
+        "workflow",
+    );
+    if agent && requirement.required == Some(true) {
+        return Err(GrantAdmissionError::new(
+            "requested_workflow_not_safe",
+            "the proof transaction includes a task outside the agent-safe closure",
+        ));
+    }
+    evaluate_selected_crossing_grant(
+        contract,
+        contract_path,
+        crossing_scope_from_policy(
+            policy,
+            overrides,
+            &[],
+            &[],
+            None,
+            Some(proof_kind),
+            None,
+            requirement
+                .boundary_family
+                .map(|family| family.label())
+                .unwrap_or("unknown"),
+            requirement
+                .classification
+                .map(|classification| classification.label())
+                .unwrap_or("unknown"),
+        )
+        .and_then(|scope| {
+            crossing_scope_with_workflow_instance_selection(scope, contract, workflow_name)
+        })
+        .and_then(|scope| crossing_scope_with_proof_invocations(scope, proof_invocations.to_vec()))
+        .and_then(|scope| {
+            crossing_scope_with_proof_transaction_selection(scope, proof_transaction_selection)
+        }),
+        requirement,
+        agent,
+        grant,
+    )
+}
+
+fn evaluate_selected_crossing_grant(
+    contract: &Contract,
+    contract_path: &Path,
+    scope: Result<crate::crossing::CrossingSemanticScope, String>,
+    requirement: crate::crossing::CrossingRequirement,
+    agent: bool,
+    grant: Option<&str>,
+) -> Result<Option<CrossingAuthorityPlan>, GrantAdmissionError> {
+    match requirement.required {
+        Some(false) => {
+            return match grant {
+                Some(_) => Err(GrantAdmissionError::new(
+                    "crossing_grant_inapplicable",
+                    "the selected execution closure does not cross a governed boundary",
+                )),
+                None => Ok(None),
+            };
+        }
+        None => {
+            return Err(GrantAdmissionError::new(
+                "crossing_requirement_unknown",
+                "Ota cannot derive whether the selected closure requires an authority grant",
+            ));
+        }
+        Some(true) => {}
+    }
+    let scope = scope.map_err(|details| {
+        GrantAdmissionError::new(
+            "crossing_scope_unavailable",
+            format!("failed to derive the canonical crossing scope: {details}"),
+        )
+    })?;
+    let boundary_family = requirement
+        .boundary_family
+        .map(|family| family.label())
+        .ok_or_else(|| {
+            GrantAdmissionError::new(
+                "crossing_requirement_invalid",
+                "a required crossing is missing its derived boundary family",
+            )
+        })?;
+    let classification = requirement
+        .classification
+        .map(|classification| classification.label())
+        .ok_or_else(|| {
+            GrantAdmissionError::new(
+                "crossing_requirement_invalid",
+                "a required crossing is missing its derived classification",
+            )
+        })?;
+    let authority_id = contract
+        .governance
+        .crossing_authority
+        .as_ref()
+        .map(|authority| authority.authority_id.trim())
+        .filter(|authority| !authority.is_empty())
+        .ok_or_else(|| {
+            GrantAdmissionError::new(
+                "crossing_authority_missing",
+                "the selected contract does not name a crossing authority",
+            )
+        })?;
+    let selected = crate::crossing_authority::select_crossing_authority_binding(
+        contract_working_dir(contract_path),
+        authority_id,
+    )
+    .or_else(|error| {
+        if grant.is_none() && error.reason == "crossing_authority_unknown" {
+            Err(GrantAdmissionError::new(
+                "crossing_grant_required",
+                "the selected execution closure crosses a governed boundary and requires `--grant <id>` unless the contract authority resolves to a protected broker binding",
+            )
+            .with_scope(scope.clone()))
+        } else {
+            Err(error.with_scope(scope.clone()))
+        }
+    })?;
+    match selected {
+        crate::crossing_authority::SelectedCrossingAuthorityBinding::PreboundFile(_) => {
+            let grant = grant.ok_or_else(|| {
+                GrantAdmissionError::new(
+                    "crossing_grant_required",
+                    "the selected execution closure crosses a governed boundary and requires `--grant <id>`",
+                )
+                .with_scope(scope.clone())
+            })?;
+            admit_prebound_file_grant(
+                contract,
+                contract_working_dir(contract_path),
+                &scope,
+                grant,
+                boundary_family,
+                classification,
+                grant_actor_mode_label(agent),
+                OffsetDateTime::now_utc(),
+            )
+            .map(|admission| Some(CrossingAuthorityPlan::PreboundFile(admission)))
+            .map_err(|error| error.with_scope(scope))
+        }
+        crate::crossing_authority::SelectedCrossingAuthorityBinding::AuthorityBroker(binding) => {
+            if let Some(selected_authority) = grant
+                && selected_authority != authority_id
+            {
+                return Err(GrantAdmissionError::new(
+                    "crossing_authority_selection_mismatch",
+                    "`--grant` may only select the contract-bound broker authority label; broker lease identities are not caller inputs",
+                )
+                .with_authority_source("authority_broker")
+                .with_scope(scope));
+            }
+            Ok(Some(CrossingAuthorityPlan::AuthorityBroker {
+                binding,
+                semantic_scope: scope,
+                actor_mode: grant_actor_mode_label(agent).to_string(),
+            }))
+        }
+    }
+}
+
 fn build_task_crossing_record(
     contract: &Contract,
     task_name: &str,
@@ -15834,7 +18095,7 @@ fn build_task_crossing_record(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             Some(safety.effective_safe),
-            None,
+            false,
             &safety.unsafe_closure_tasks,
             "task",
         );
@@ -15862,6 +18123,7 @@ fn build_task_crossing_record(
         reason: reason.map(str::to_string),
         evidence_attachment_state: String::from("receipt_attached"),
         evidence_classes: crossing_evidence_classes(reason.is_some()),
+        authority: active_crossing_grant_authority(),
     })
 }
 
@@ -15878,7 +18140,7 @@ fn build_workflow_crossing_record(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             safety.effective_safe,
-            None,
+            false,
             &safety.unsafe_closure_tasks,
             "workflow",
         );
@@ -15906,6 +18168,7 @@ fn build_workflow_crossing_record(
         reason: reason.map(str::to_string),
         evidence_attachment_state: String::from("receipt_attached"),
         evidence_classes: crossing_evidence_classes(reason.is_some()),
+        authority: active_crossing_grant_authority(),
     })
 }
 
@@ -15917,7 +18180,8 @@ fn attach_task_crossing_to_receipt(
     agent: bool,
     reason: Option<&str>,
 ) {
-    receipt.crossing = build_task_crossing_record(contract, task_name, overrides, agent, reason);
+    receipt.crossing =
+        build_task_crossing_record(contract, task_name, overrides, agent, reason).map(Box::new);
 }
 
 fn attach_workflow_crossing_to_receipt(
@@ -15929,7 +18193,11 @@ fn attach_workflow_crossing_to_receipt(
     agent: bool,
     reason: Option<&str>,
 ) {
-    receipt.crossing = build_workflow_crossing_record(
+    let existing_authority = receipt
+        .crossing
+        .as_ref()
+        .and_then(|crossing| crossing.authority.clone());
+    let mut crossing = build_workflow_crossing_record(
         contract,
         workflow_name,
         overrides,
@@ -15937,6 +18205,12 @@ fn attach_workflow_crossing_to_receipt(
         agent,
         reason,
     );
+    if let Some(crossing) = crossing.as_mut()
+        && crossing.authority.is_none()
+    {
+        crossing.authority = existing_authority;
+    }
+    receipt.crossing = crossing.map(Box::new);
 }
 
 fn up_lane_proof_expected(
@@ -16075,7 +18349,7 @@ fn harness_preflight_for_workflow(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             workflow.effective_safe_for_agent,
-            refusal,
+            refusal.is_some(),
             &workflow.unsafe_closure_tasks,
             "workflow",
         );
@@ -16104,6 +18378,7 @@ fn harness_preflight_for_workflow(
         } else {
             String::from("allowed")
         },
+        sandbox_admission: None,
         review_required,
         declared_safe_for_agent: workflow.declared_safe_for_agent,
         effective_safe_for_agent: workflow.effective_safe_for_agent,
@@ -18044,6 +20319,7 @@ pub fn run_command(
         false,
         false,
         None,
+        None,
         dry_run,
         debug,
         show_receipt,
@@ -18081,6 +20357,7 @@ pub(crate) fn run_command_with_agent(
         agent,
         false,
         None,
+        None,
         dry_run,
         debug,
         show_receipt,
@@ -18101,6 +20378,49 @@ pub(crate) fn run_command_with_agent_reason(
     agent: bool,
     expect_refusal: bool,
     reason: Option<&str>,
+    sandbox_target: Option<&str>,
+    dry_run: bool,
+    debug: bool,
+    show_receipt: bool,
+    stream: bool,
+    persist_logs: bool,
+) -> CommandOutput {
+    run_command_with_agent_reason_and_grant(
+        task_name,
+        path,
+        file_override,
+        format,
+        overrides,
+        effect_overrides,
+        members,
+        task_inputs,
+        agent,
+        expect_refusal,
+        reason,
+        None,
+        sandbox_target,
+        dry_run,
+        debug,
+        show_receipt,
+        stream,
+        persist_logs,
+    )
+}
+
+pub(crate) fn run_command_with_agent_reason_and_grant(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    task_inputs: &[String],
+    agent: bool,
+    expect_refusal: bool,
+    reason: Option<&str>,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
     dry_run: bool,
     debug: bool,
     show_receipt: bool,
@@ -18200,6 +20520,12 @@ pub(crate) fn run_command_with_agent_reason(
     if let Some(reason) = reason {
         debug_lines.push(format!("DEBUG reason={reason}"));
     }
+    if let Some(grant) = grant {
+        debug_lines.push(format!("DEBUG grant={grant}"));
+    }
+    if let Some(target) = sandbox_target {
+        debug_lines.push(format!("DEBUG sandbox_target={target}"));
+    }
     if normalized_task_inputs != task_inputs {
         debug_lines.push(format!(
             "DEBUG task_inputs={}",
@@ -18248,6 +20574,10 @@ pub(crate) fn run_command_with_agent_reason(
                     overrides,
                     members,
                     agent,
+                    grant,
+                    &normalized_task_inputs,
+                    effect_overrides,
+                    sandbox_target,
                     format,
                     persist_logs,
                 )
@@ -18258,7 +20588,10 @@ pub(crate) fn run_command_with_agent_reason(
                     overrides,
                     members,
                     &normalized_task_inputs,
+                    effect_overrides,
                     agent,
+                    grant,
+                    sandbox_target,
                     reason,
                     show_receipt,
                     stream,
@@ -18373,6 +20706,10 @@ fn run_preview_command(
     overrides: ExecutionOverrides,
     members: &[String],
     agent: bool,
+    grant: Option<&str>,
+    task_inputs: &[String],
+    effect_overrides: &[String],
+    sandbox_target: Option<&str>,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
@@ -18385,6 +20722,10 @@ fn run_preview_command(
                 None,
                 target,
                 agent,
+                grant,
+                task_inputs,
+                effect_overrides,
+                sandbox_target,
                 format,
                 persist_logs,
             ),
@@ -18422,6 +20763,10 @@ fn run_preview_command(
             Some(member.as_str()),
             target,
             agent,
+            grant,
+            task_inputs,
+            effect_overrides,
+            sandbox_target,
             format,
             persist_logs,
         );
@@ -18573,6 +20918,37 @@ fn run_preview_preconditions_report(
     )))
     .unwrap_or(DoctorMode::Native);
     let mut report =
+        diagnose_preconditions_non_mutating_with_mode_for_task_with_overrides_and_replay_input_policy(
+            contract,
+            contract_path,
+            mode,
+            task_name,
+            overrides,
+            replay_input_preflight.policy.as_ref(),
+            replay_input_preflight.doctor_policy_snapshot(),
+        );
+    append_safe_task_effect_policy_findings(
+        contract,
+        task_name,
+        overrides,
+        replay_input_preflight.loaded_policy.as_ref(),
+        &mut report,
+    );
+    report
+}
+
+fn run_execution_preconditions_report(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    replay_input_preflight: &TaskReplayInputPreflight,
+) -> DoctorReport {
+    let mode = doctor_mode_from_backend(Some(format_backend(
+        effective_task_execution(contract, task_name, overrides).backend,
+    )))
+    .unwrap_or(DoctorMode::Native);
+    let mut report =
         diagnose_preconditions_with_mode_for_task_with_overrides_and_replay_input_policy(
             contract,
             contract_path,
@@ -18645,6 +21021,15 @@ impl AgentExecutionRefusal {
             blocked_task: self.blocked_task.clone(),
             closure_path: self.path.clone(),
             evidence_class: String::from("derived"),
+            authority_source: None,
+            authority_id: None,
+            requested_grant_id: None,
+            scope_identity: None,
+            contract_identity: None,
+            scope_boundary_family: None,
+            scope_classification: None,
+            evaluation_details: None,
+            execution_started: None,
         }
     }
 }
@@ -19151,6 +21536,51 @@ fn proof_replay_input_admission_failure_output(
     }
 }
 
+#[derive(Serialize)]
+struct ProofCrossingGrantAdmissionFailure {
+    ok: bool,
+    path: String,
+    code: String,
+    error: String,
+    execution_started: bool,
+    crossing_grant_admission: crate::output::GovernanceRefusalRecord,
+}
+
+fn proof_crossing_grant_admission_failure_output(
+    format: OutputFormat,
+    command: &str,
+    contract: &Contract,
+    contract_path: &Path,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> CommandOutput {
+    let lane = error
+        .semantic_scope
+        .as_ref()
+        .map(|scope| scope.lane.name.as_str())
+        .unwrap_or_else(|| command.strip_prefix("ota proof ").unwrap_or(command));
+    let refusal = crossing_grant_refusal_record(contract, lane, grant, error);
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            command,
+            &format!(
+                "Crossing grant admission refused: {}",
+                error.public_details()
+            ),
+        )),
+        OutputFormat::Json => {
+            CommandOutput::failure(to_json(&ProofCrossingGrantAdmissionFailure {
+                ok: false,
+                path: compact_contract_path(contract_path),
+                code: error.reason.to_string(),
+                error: error.public_details(),
+                execution_started: false,
+                crossing_grant_admission: refusal,
+            }))
+        }
+    }
+}
+
 fn evaluate_replay_input_admission(
     contract: &Contract,
     contract_path: &Path,
@@ -19332,6 +21762,8 @@ fn doctor_claim_assurance_with_overrides(
                 contract_path,
                 Some(workflow_name.as_str()),
                 overrides,
+                Vec::new(),
+                None,
             );
             let mut record = crate::claim_assurance::proof_breadth_claim(
                 workflow_name,
@@ -20204,6 +22636,10 @@ fn render_run_preview_target(
     member: Option<&str>,
     mut target: LoadedContractTarget,
     agent: bool,
+    grant: Option<&str>,
+    task_inputs: &[String],
+    effect_overrides: &[String],
+    sandbox_target: Option<&str>,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
@@ -20228,7 +22664,6 @@ fn render_run_preview_target(
             )),
         };
     };
-
     let replay_input_preflight =
         task_replay_input_preflight(&target.contract, &target.contract_path, task_name.as_str());
     if let Some(error) = replay_input_preflight.policy_load_error.as_ref() {
@@ -20256,6 +22691,67 @@ fn render_run_preview_target(
             replay_input_policy,
         );
     }
+    let refusal = if agent {
+        agent_execution_refusal_with_policy(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+            replay_input_preflight.doctor_policy_snapshot(),
+        )
+    } else {
+        None
+    };
+    let grant_admission = if refusal.is_none() {
+        match evaluate_task_crossing_grant(
+            &target.contract,
+            &target.contract_path,
+            task_name.as_str(),
+            overrides,
+            task_inputs,
+            effect_overrides,
+            agent,
+            grant,
+            sandbox_target,
+        ) {
+            Ok(admission) => admission,
+            Err(error) => {
+                return render_crossing_grant_preview_refusal(
+                    format,
+                    &target.contract,
+                    &target.contract_path,
+                    member,
+                    task_name.as_str(),
+                    grant,
+                    &error,
+                );
+            }
+        }
+    } else {
+        None
+    };
+    let sandbox_admission = match resolve_task_sandbox_admission(
+        &target.contract,
+        &target.contract_path,
+        task_name.as_str(),
+        overrides,
+        agent,
+        sandbox_target,
+        replay_input_preflight.loaded_policy.as_ref(),
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return render_sandbox_admission_command_output(
+                "run --dry-run",
+                format,
+                &target.contract_path,
+                member,
+                Some(task_name.as_str()),
+                true,
+                &error,
+            );
+        }
+    };
 
     let path_display = target.contract_path.display().to_string();
     let text_path_display =
@@ -20268,10 +22764,17 @@ fn render_run_preview_target(
         (!required_env_names.is_empty()).then_some(&required_env_names),
     );
     let applied_overrides = execution_plan_overrides(overrides);
+    let requested_effective =
+        effective_task_execution(&target.contract, task_name.as_str(), overrides);
+    let requested_target_os = crate::runner::target_os_for_declared_backend(
+        requested_effective.backend,
+        requested_effective.container,
+        current_os(),
+    );
     let requested_task = TaskSummary::from_spec_with_overrides(
         task_name.as_str(),
         task,
-        current_os(),
+        requested_target_os,
         &target.contract,
         overrides,
     );
@@ -20400,10 +22903,20 @@ fn render_run_preview_target(
                     } else {
                         overrides
                     };
+                    let governance_effective = effective_task_execution(
+                        &target.contract,
+                        task_name.as_str(),
+                        governance_overrides,
+                    );
+                    let governance_target_os = crate::runner::target_os_for_declared_backend(
+                        governance_effective.backend,
+                        governance_effective.container,
+                        current_os(),
+                    );
                     let governance_task = TaskSummary::from_spec_with_overrides(
                         task_name.as_str(),
                         task,
-                        current_os(),
+                        governance_target_os,
                         &target.contract,
                         governance_overrides,
                     );
@@ -20455,6 +22968,10 @@ fn render_run_preview_target(
                             provisioning: None,
                             provisioning_request: None,
                             governance,
+                            sandbox_admission: sandbox_admission
+                                .as_ref()
+                                .map(sandbox_admission_json),
+                            crossing_grant_admission: active_crossing_grant_preview(),
                             replay_input_policy: replay_input_policy.clone(),
                             artifact_routing,
                             plan,
@@ -20466,6 +22983,7 @@ fn render_run_preview_target(
             };
         }
     };
+    let _ = sandbox_admission;
 
     let toolchains =
         selected_task_toolchain_summaries(&target.contract, task_name.as_str(), overrides);
@@ -20501,17 +23019,7 @@ fn render_run_preview_target(
         &preconditions_report,
         overrides,
     );
-    let refusal = if agent {
-        agent_execution_refusal_with_policy(
-            &target.contract,
-            &target.contract_path,
-            task_name.as_str(),
-            overrides,
-            replay_input_preflight.doctor_policy_snapshot(),
-        )
-    } else {
-        None
-    };
+    let _crossing_grant_guard = ActiveCrossingGrantGuard::activate_preview(grant_admission);
     if let Some(refusal) = refusal.as_ref() {
         summary.verdict = DoctorVerdict::AgentBlocked;
         summary.agent_verdict = DoctorVerdict::AgentBlocked;
@@ -20539,7 +23047,7 @@ fn render_run_preview_target(
     } else {
         0
     };
-    let text = render_run_preview_text(
+    let mut text = render_run_preview_text(
         task_name.as_str(),
         &text_path_display,
         &summary,
@@ -20554,6 +23062,20 @@ fn render_run_preview_target(
         &plan,
         persist_logs,
     );
+    if let Some(admission) = sandbox_admission.as_ref() {
+        text.push_str(&render_sandbox_admission_preview(admission));
+    }
+    if let Some(authority) = active_crossing_grant_preview() {
+        text.push_str(&format!(
+            "\n\nCrossing Grant: admitted `{}` from authority `{}`\nScope: `{}`",
+            authority
+                .grant_id
+                .as_deref()
+                .unwrap_or("broker_authorization"),
+            authority.authority_id,
+            authority.scope_identity
+        ));
+    }
 
     match format {
         OutputFormat::Text => CommandOutput {
@@ -20607,6 +23129,8 @@ fn render_run_preview_target(
                     agent,
                     refusal.as_ref(),
                 ),
+                sandbox_admission: sandbox_admission.as_ref().map(sandbox_admission_json),
+                crossing_grant_admission: active_crossing_grant_preview(),
                 replay_input_policy,
                 artifact_routing,
                 plan,
@@ -20690,6 +23214,47 @@ fn render_replay_input_preflight_failure(
     }
 }
 
+fn render_crossing_grant_preview_refusal(
+    format: OutputFormat,
+    contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            "ota run",
+            &format!(
+                "Crossing grant admission refused: {error}\nWhere: {}\nNext: supply an exact live grant from the contract-bound authority, or select a closure that does not require a crossing",
+                display_contract_target(&compact_contract_path(contract_path), member)
+            ),
+        )),
+        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+            "ok": false,
+            "path": contract_path.display().to_string(),
+            "member": member,
+            "task": task_name,
+            "dry_run": true,
+            "execution_started": false,
+            "crossing_grant_admission": {
+                "decision": "refused",
+                "authority_source": error.authority_source.unwrap_or("prebound_file"),
+                "authority_id": contract.governance.crossing_authority.as_ref().map(|authority| authority.authority_id.as_str()),
+                "requested_grant_id": grant,
+                "reason_family": error.reason,
+                "details": error.public_details(),
+                "scope_identity": error.semantic_scope.as_ref().map(|scope| scope.identity.as_str()),
+                "contract_identity": error.semantic_scope.as_ref().map(|scope| scope.contract_identity.as_str()),
+                "boundary_family": error.semantic_scope.as_ref().map(|scope| scope.boundary_family.as_str()),
+                "classification": error.semantic_scope.as_ref().map(|scope| scope.classification.as_str()),
+                "execution_started": false,
+            },
+        }))),
+    }
+}
+
 #[derive(Serialize)]
 struct ReplayInputIdentityPreflightFailure {
     ok: bool,
@@ -20760,13 +23325,14 @@ fn run_preview_summary(
     let activation_surface =
         selected_task_closure_activation_requirement_surface(contract, task_name, overrides)
             .unwrap_or_default();
-    let activation_actions = requirement_surface_activation_actions(
-        &activation_surface,
-        requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        ),
-        effective_task_execution(contract, task_name, overrides).backend,
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
     );
+    let activation_actions =
+        requirement_surface_activation_actions(&activation_surface, target_os, effective.backend);
     let mut summary = doctor_preview_summary_for_resolution(
         preconditions_report,
         DoctorVerdict::Ready,
@@ -20865,6 +23431,47 @@ fn preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
                     .iter()
                     .any(|target| finding_targets_toolchain_run_fulfillment(finding, target))
         })
+}
+
+fn pre_authority_errors_are_fully_resolvable(
+    findings: &[Finding],
+    provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+    activation_actions: &[RequirementActivationAction],
+    toolchain_fulfillment_targets: &[ToolchainRunFulfillmentTarget],
+    workflow_preparation_available: bool,
+) -> bool {
+    let error_findings = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .collect::<Vec<_>>();
+    !error_findings.is_empty()
+        && error_findings.iter().all(|finding| {
+            provisioning_actions
+                .iter()
+                .any(|action| finding_targets_provisioning_action(finding, action))
+                || activation_actions
+                    .iter()
+                    .any(|action| finding_targets_activation_action(finding, action))
+                || toolchain_fulfillment_targets
+                    .iter()
+                    .any(|target| finding_targets_toolchain_run_fulfillment(finding, target))
+                || (workflow_preparation_available
+                    && workflow_preparation_may_resolve_finding(finding))
+        })
+}
+
+fn workflow_preparation_may_resolve_finding(finding: &Finding) -> bool {
+    is_workflow_surface_readiness_finding(finding)
+        || matches!(
+            finding.code(),
+            "OTA_CHECK_FAILED"
+                | "OTA_CHECK_TIMED_OUT"
+                | "OTA_FILE_CHECK_FAILED"
+                | "OTA_FILE_CHECK_TIMED_OUT"
+                | "OTA_SERVICE_READINESS_FAILED"
+                | "OTA_SERVICE_CHECK_FAILED"
+                | "OTA_SERVICE_CHECK_TIMED_OUT"
+        )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -21089,10 +23696,12 @@ fn build_run_preview_plan(
         .get(task_name)
         .map(|task| task.depends_on_for_backend(effective_execution.backend))
         .unwrap_or_default();
-    let target_os = requirement_target_os_for_backend(effective_execution.backend);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective_execution.backend,
+        effective_execution.container,
+        current_os(),
+    );
     let mut plan = RunPreviewPlan::default();
-    let closure_toolchain_names =
-        selected_task_closure_toolchain_names(contract, task_name, overrides);
     let requested_backend_source = contract
         .tasks
         .get(task_name)
@@ -21149,10 +23758,10 @@ fn build_run_preview_plan(
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    for toolchain_line in selected_task_toolchain_preview_actions(
+    for toolchain_line in selected_task_closure_toolchain_preview_actions(
         contract,
-        &closure_toolchain_names,
-        target_os,
+        task_name,
+        overrides,
         &required_tool_names,
     ) {
         plan.requirement_lines.push(toolchain_line);
@@ -21581,12 +24190,17 @@ fn run_preview_task_execution_action(
     };
     if let Some(task_spec) = contract.tasks.get(task_name) {
         let effective = effective_task_execution(contract, task_name, overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
         if let Some(preview) = crate::runner::orchestrator_execution_preview(
             contract,
             task_name,
             task_spec,
             effective.backend,
-            current_os(),
+            target_os,
         ) {
             if task.launch.is_some() {
                 return format!("would launch `{preview}`{backend_detail}");
@@ -21887,10 +24501,16 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let task = contract.tasks.get(task_name)?;
-    let scoped = contract.resolved_task_requirement_surface_for_execution(
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
+    let scoped = contract.resolved_task_requirement_surface_for_execution_for_os(
         task,
         effective.backend,
         effective.context_name,
+        target_os,
     );
     let mut selected_tool_names = scoped.tools.keys().cloned().collect::<BTreeSet<_>>();
     let mut surface = scoped;
@@ -21911,10 +24531,11 @@ fn selected_task_requirement_surface(
     }
     if !matches!(effective.backend, Backend::Native)
         && contract
-            .resolved_task_requirement_surface_for_execution(
+            .resolved_task_requirement_surface_for_execution_for_os(
                 task,
                 effective.backend,
                 effective.context_name,
+                target_os,
             )
             .tools
             .is_empty()
@@ -21924,7 +24545,7 @@ fn selected_task_requirement_surface(
         }
     }
     if let Some(exe) =
-        task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+        task.effective_command_launch_executable_for_backend(effective.backend, target_os)
     {
         selected_tool_names.insert(exe.clone());
         surface
@@ -21946,10 +24567,9 @@ fn selected_task_requirement_surface(
     if matches!(effective.backend, Backend::Native) {
         let scoped_native = task
             .scoped_native_requirements_for_execution(effective.backend, effective.context_name);
-        surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
-            scoped_native,
-            requirement_target_os_for_backend(effective.backend),
-        ));
+        surface.merge(
+            &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
+        );
     }
     for tool_name in &selected_tool_names {
         if let Some(requirement) = surface.tools.get_mut(tool_name) {
@@ -21957,21 +24577,12 @@ fn selected_task_requirement_surface(
         }
     }
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
-    let mut toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides)
-        .into_iter()
-        .collect::<Vec<_>>();
-    if toolchain_names.is_empty() {
-        toolchain_names = contract
-            .task_required_toolchain_names(task_name)
-            .into_iter()
-            .collect::<Vec<_>>();
-    }
-    let toolchain_names = toolchain_names.into_iter().collect();
+    let toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides);
     surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
         contract,
         &surface,
         &toolchain_names,
-        requirement_target_os_for_backend(effective.backend),
+        target_os,
         Some(&required_tool_names),
     );
     Some(surface)
@@ -22020,6 +24631,7 @@ fn selected_task_closure_requirement_surface(
             .map(|plan| plan.steps.as_slice())
             .unwrap_or(&[]),
         effective.backend,
+        overrides,
     )
     .or_else(|| selected_task_requirement_surface(contract, task_name, overrides))
 }
@@ -22036,32 +24648,41 @@ fn selected_task_closure_activation_requirement_surface(
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let effective_backend = effective_task_execution(contract, task_name, overrides).backend;
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
+    let targets = run_plan
+        .as_ref()
+        .map(|plan| toolchain_targets_for_run_plan_steps(contract, &plan.steps, overrides))
+        .unwrap_or_default();
+    if !targets.is_empty() {
+        let mut surface = requirement_surface;
+        for (toolchain_name, target_os) in targets {
+            surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                contract,
+                &surface,
+                &BTreeSet::from([toolchain_name]),
+                target_os.as_str(),
+                Some(&required_tool_names),
+            );
+        }
+        return Some(surface);
+    }
+
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
     Some(
         requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &requirement_surface,
-            &selected_task_closure_toolchain_names(contract, task_name, overrides),
-            requirement_target_os_for_backend(effective_backend),
+            &selected_task_scoped_toolchain_names(contract, task_name, overrides),
+            target_os,
             Some(&required_tool_names),
         ),
     )
-}
-
-fn selected_task_closure_toolchain_names(
-    contract: &Contract,
-    task_name: &str,
-    overrides: ExecutionOverrides,
-) -> BTreeSet<String> {
-    let run_plan =
-        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
-    if let Some(plan) = run_plan.as_ref() {
-        let names = toolchain_names_for_run_plan_steps(contract, &plan.steps);
-        if !names.is_empty() {
-            return names;
-        }
-    }
-    selected_task_scoped_toolchain_names(contract, task_name, overrides)
 }
 
 fn selected_task_native_activation_actions(
@@ -22120,6 +24741,7 @@ fn requirement_surface_for_run_plan_steps(
     contract: &Contract,
     steps: &[crate::runner::RunPlanStep],
     requested_backend: Backend,
+    overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
     if steps.is_empty() {
         return None;
@@ -22131,10 +24753,24 @@ fn requirement_surface_for_run_plan_steps(
         let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
-        let scoped = contract.resolved_task_requirement_surface_for_execution(
+        let effective = effective_task_execution(
+            contract,
+            step.task.as_str(),
+            ExecutionOverrides {
+                backend: Some(step.backend),
+                ..overrides
+            },
+        );
+        let target_os = crate::runner::target_os_for_declared_backend(
+            step.backend,
+            effective.container,
+            current_os(),
+        );
+        let scoped = contract.resolved_task_requirement_surface_for_execution_for_os(
             task,
             step.backend,
             step.context.as_deref(),
+            target_os,
         );
         if matches!(step.backend, Backend::Native) && scoped.tools.is_empty() {
             retains_global_tool_fallback = true;
@@ -22152,7 +24788,7 @@ fn requirement_surface_for_run_plan_steps(
             );
         }
         if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(step.backend, current_os())
+            task.effective_command_launch_executable_for_backend(step.backend, target_os)
         {
             let requirement = contract
                 .tools
@@ -22173,8 +24809,7 @@ fn requirement_surface_for_run_plan_steps(
             let scoped_native = task
                 .scoped_native_requirements_for_execution(step.backend, step.context.as_deref());
             surface.merge(
-                &contract
-                    .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
+                &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
             );
         }
     }
@@ -22264,22 +24899,91 @@ fn add_node_package_manager_requirement(surface: &mut RequirementSurface, manage
         .or_insert_with(|| crate::schema::ToolRequirement::Simple(String::from("*")));
 }
 
-fn toolchain_names_for_run_plan_steps(
+fn target_os_for_run_plan_step(
+    contract: &Contract,
+    step: &crate::runner::RunPlanStep,
+    overrides: ExecutionOverrides,
+) -> String {
+    let effective = effective_task_execution(
+        contract,
+        step.task.as_str(),
+        ExecutionOverrides {
+            backend: Some(step.backend),
+            ..overrides
+        },
+    );
+    crate::runner::target_os_for_declared_backend(step.backend, effective.container, current_os())
+        .to_string()
+}
+
+fn toolchain_targets_for_run_plan_steps(
     contract: &Contract,
     steps: &[crate::runner::RunPlanStep],
-) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
+    overrides: ExecutionOverrides,
+) -> BTreeSet<(String, String)> {
+    let mut targets = BTreeSet::new();
     for step in steps {
         let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
-        names.extend(contract.task_toolchain_names_for_execution(
-            task,
-            step.backend,
-            step.context.as_deref(),
-        ));
+        let target_os = target_os_for_run_plan_step(contract, step, overrides);
+        targets.extend(
+            contract
+                .task_toolchain_names_for_execution_for_os(
+                    task,
+                    step.backend,
+                    step.context.as_deref(),
+                    target_os.as_str(),
+                )
+                .into_iter()
+                .map(|name| (name, target_os.clone())),
+        );
     }
-    names
+    targets
+}
+
+fn selected_task_closure_toolchain_preview_actions(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    required_tool_names: &BTreeSet<String>,
+) -> Vec<String> {
+    let run_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
+    let targets = run_plan
+        .as_ref()
+        .map(|plan| toolchain_targets_for_run_plan_steps(contract, &plan.steps, overrides))
+        .unwrap_or_default();
+    if !targets.is_empty() {
+        let mut actions = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (toolchain_name, target_os) in targets {
+            for action in selected_task_toolchain_preview_actions(
+                contract,
+                &BTreeSet::from([toolchain_name]),
+                target_os.as_str(),
+                required_tool_names,
+            ) {
+                if seen.insert(action.clone()) {
+                    actions.push(action);
+                }
+            }
+        }
+        return actions;
+    }
+
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
+    selected_task_toolchain_preview_actions(
+        contract,
+        &selected_task_scoped_toolchain_names(contract, task_name, overrides),
+        target_os,
+        required_tool_names,
+    )
 }
 
 fn native_activation_actions_for_run_plan_steps(
@@ -22329,8 +25033,18 @@ fn selected_task_scoped_toolchain_names(
         return BTreeSet::new();
     };
     let effective = effective_task_execution(contract, task_name, overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
     contract
-        .task_toolchain_names_for_execution(task, effective.backend, effective.context_name)
+        .task_toolchain_names_for_execution_for_os(
+            task,
+            effective.backend,
+            effective.context_name,
+            target_os,
+        )
         .into_iter()
         .collect()
 }
@@ -28536,6 +31250,8 @@ pub fn receipt(
     baseline: Option<&str>,
     fail_on_new_blockers: bool,
     history: bool,
+    history_source: ReceiptHistorySource,
+    archive_identity: Option<&str>,
     archive: bool,
     promote_baseline: bool,
     debug: bool,
@@ -28544,6 +31260,30 @@ pub fn receipt(
     let mode = mode_override.unwrap_or(DoctorMode::Native);
     let doctor_lifecycle = overrides.lifecycle;
     if history {
+        let protected_source = history_source == ReceiptHistorySource::SystemdProtectedLauncher;
+        let history_selection_error = if protected_source
+            && (path.is_some() || file_override.is_some() || env::var_os("OTA_FILE").is_some())
+        {
+            Some(String::from(
+                "systemd protected receipt history derives the repository from its protected peer mapping; path and contract-file overrides are not allowed",
+            ))
+        } else if !protected_source && archive_identity.is_some() {
+            Some(String::from(
+                "`--archive-identity` is supported only with `--source systemd_protected_launcher`",
+            ))
+        } else {
+            None
+        };
+        if let Some(error) = history_selection_error {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Json => CommandOutput::failure(error),
+                },
+                debug,
+                vec![String::from("DEBUG command=receipt.history")],
+            );
+        }
         let history_root = match resolve_receipt_history_root(path, file_override) {
             Ok(root) => root,
             Err(error) => {
@@ -28577,7 +31317,11 @@ pub fn receipt(
             format!("DEBUG receipt_root={history_path}"),
         ];
         return finalize_debug(
-            match load_repo_receipt_history(&history_root) {
+            match if protected_source {
+                load_protected_repo_receipt_history(&history_root, archive_identity)
+            } else {
+                load_repo_receipt_history(&history_root)
+            } {
                 Ok(report) => render_repo_receipt_history(
                     &compact_repo_path(&history_root),
                     &history_path,
@@ -28801,6 +31545,13 @@ pub fn receipt(
                         summary: receipt.summary,
                         receipt: receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
+                        archive_context: Some(crate::output::ReceiptArchiveContext {
+                            schema_version: 1,
+                            kind: String::from("readiness"),
+                            lane_kind: None,
+                            lane_name: None,
+                            semantic_scope: None,
+                        }),
                         promoted_baseline: None,
                         artifact_routing: receipt_artifact_routing(
                             &target.contract_path,
@@ -30704,6 +33455,7 @@ pub fn up(
         false,
         false,
         None,
+        None,
         format,
         debug,
         dry_run,
@@ -30744,6 +33496,7 @@ pub(crate) fn up_with_agent(
         agent,
         false,
         None,
+        None,
         format,
         debug,
         dry_run,
@@ -30766,6 +33519,54 @@ pub(crate) fn up_with_agent_reason(
     agent: bool,
     expect_refusal: bool,
     reason: Option<&str>,
+    sandbox_target: Option<&str>,
+    format: OutputFormat,
+    debug: bool,
+    dry_run: bool,
+    stream: bool,
+    show_receipt: bool,
+    replay_baseline: Option<&str>,
+    attach: bool,
+    detach: bool,
+    ready_timeout: Option<&str>,
+) -> CommandOutput {
+    up_with_agent_reason_and_grant(
+        path,
+        file_override,
+        overrides,
+        effect_overrides,
+        members,
+        workflow_name,
+        agent,
+        expect_refusal,
+        reason,
+        None,
+        sandbox_target,
+        format,
+        debug,
+        dry_run,
+        stream,
+        show_receipt,
+        replay_baseline,
+        attach,
+        detach,
+        ready_timeout,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn up_with_agent_reason_and_grant(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
+    effect_overrides: &[String],
+    members: &[String],
+    workflow_name: Option<&str>,
+    agent: bool,
+    expect_refusal: bool,
+    reason: Option<&str>,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
     format: OutputFormat,
     debug: bool,
     dry_run: bool,
@@ -30927,6 +33728,9 @@ pub(crate) fn up_with_agent_reason(
     if let Some(reason) = reason {
         debug_lines.push(format!("DEBUG reason={reason}"));
     }
+    if let Some(grant) = grant {
+        debug_lines.push(format!("DEBUG grant={grant}"));
+    }
     if let Some(baseline) = replay_baseline {
         debug_lines.push(format!("DEBUG replay_baseline={baseline}"));
     }
@@ -30999,21 +33803,26 @@ pub(crate) fn up_with_agent_reason(
                                 2,
                             );
                         }
-                        let mut root_result = match execute_repo_up_with_behavior_with_agent(
-                            &target.contract,
-                            &target.contract_path,
-                            overrides,
-                            workflow_name,
-                            agent,
-                            None,
-                            dry_run,
-                            execution_mode,
-                            run_behavior_preference,
-                            ready_timeout,
-                        ) {
-                            Ok(result) => result,
-                            Err(error) => return CommandOutput::failure(error),
-                        };
+                        let mut root_result =
+                            match execute_repo_up_with_behavior_with_agent_and_grant(
+                                &target.contract,
+                                &target.contract_path,
+                                overrides,
+                                workflow_name,
+                                effect_overrides,
+                                agent,
+                                grant,
+                                reason,
+                                sandbox_target,
+                                None,
+                                dry_run,
+                                execution_mode,
+                                run_behavior_preference,
+                                ready_timeout,
+                            ) {
+                                Ok(result) => result,
+                                Err(error) => return CommandOutput::failure(error),
+                            };
                         attach_crossing_to_up_result(
                             &mut root_result,
                             &target.contract,
@@ -31078,12 +33887,16 @@ pub(crate) fn up_with_agent_reason(
                                         }
                                     };
                                 let mut member_result =
-                                    match execute_repo_up_with_behavior_with_agent(
+                                    match execute_repo_up_with_behavior_with_agent_and_grant(
                                         &member_target.contract,
                                         &member_target.contract_path,
                                         overrides,
                                         workflow_name,
+                                        effect_overrides,
                                         agent,
+                                        grant,
+                                        reason,
+                                        sandbox_target,
                                         None,
                                         dry_run,
                                         execution_mode,
@@ -31151,12 +33964,16 @@ pub(crate) fn up_with_agent_reason(
                             }
                             None => None,
                         };
-                        match execute_repo_up_with_behavior_with_agent(
+                        match execute_repo_up_with_behavior_with_agent_and_grant(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            effect_overrides,
                             agent,
+                            grant,
+                            reason,
+                            sandbox_target,
                             None,
                             dry_run,
                             execution_mode,
@@ -31267,12 +34084,16 @@ pub(crate) fn up_with_agent_reason(
                                     };
                                 }
                             };
-                        let mut result = match execute_repo_up_with_behavior_with_agent(
+                        let mut result = match execute_repo_up_with_behavior_with_agent_and_grant(
                             &target.contract,
                             &target.contract_path,
                             overrides,
                             workflow_name,
+                            effect_overrides,
                             agent,
+                            grant,
+                            reason,
+                            sandbox_target,
                             None,
                             dry_run,
                             execution_mode,
@@ -32473,6 +35294,7 @@ fn clean_execution_conflict_json_value(
             "env_materialization_paths": owner.env_materialization_paths,
             "write_paths": owner.write_paths,
             "write_owners": owner.write_owners,
+            "runtime_owners": owner.runtime_owners,
             "service_task": owner.service_task,
             "pid": owner.pid,
             "started_at": owner.started_at
@@ -37427,18 +40249,53 @@ fn format_receipt_metadata_timestamp(now: OffsetDateTime) -> Result<String, Stri
 
 fn next_receipt_archive_path(root: &Path, prefix: &str) -> Result<PathBuf, String> {
     let archive_dir = receipt_archive_dir(root);
-    fs::create_dir_all(&archive_dir).map_err(|error| {
-        format!(
-            "failed to create receipt archive directory `{}`: {error}",
-            compact_path(&archive_dir, ".")
-        )
-    })?;
+    ensure_private_receipt_archive_directory(root, &archive_dir)?;
     let stamp = OffsetDateTime::now_utc()
         .format(&format_description!(
             "[year][month][day]-[hour][minute][second]-[subsecond digits:3]Z"
         ))
         .map_err(|error| format!("failed to format receipt archive timestamp: {error}"))?;
     Ok(archive_dir.join(format!("{prefix}-{stamp}.json")))
+}
+
+fn ensure_private_receipt_archive_directory(root: &Path, archive_dir: &Path) -> Result<(), String> {
+    let ota_dir = root.join(".ota");
+    for directory in [&ota_dir, archive_dir] {
+        match fs::create_dir(directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to create receipt archive directory `{}`: {error}",
+                    compact_path(directory, ".")
+                ));
+            }
+        }
+        let metadata = fs::symlink_metadata(directory).map_err(|error| {
+            format!(
+                "failed to inspect receipt archive directory `{}`: {error}",
+                compact_path(directory, ".")
+            )
+        })?;
+        if !metadata.file_type().is_dir() {
+            return Err(format!(
+                "receipt archive directory `{}` is not a directory",
+                compact_path(directory, ".")
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).map_err(|error| {
+                format!(
+                    "failed to protect receipt archive directory `{}`: {error}",
+                    compact_path(directory, ".")
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn receipt_storage_path_display(path: &Path) -> String {
@@ -37537,6 +40394,139 @@ fn write_receipt_archive(path: &Path, payload: &impl Serialize) -> Result<(), St
     })
 }
 
+fn write_receipt_archive_create_new_durable(
+    path: &Path,
+    payload: &impl Serialize,
+) -> Result<(), String> {
+    let content = serde_json::to_vec_pretty(payload)
+        .map_err(|error| format!("failed to serialize receipt archive: {error}"))?;
+    let parent = path.parent().ok_or_else(|| {
+        format!(
+            "receipt archive `{}` has no parent directory",
+            compact_path(path, ".")
+        )
+    })?;
+    let mut suffix = [0_u8; 16];
+    getrandom::getrandom(&mut suffix)
+        .map_err(|_| String::from("failed to derive a receipt archive temporary name"))?;
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("receipt.json"),
+        suffix
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary).map_err(|error| {
+        format!(
+            "failed to create receipt archive temporary file `{}`: {error}",
+            compact_path(&temporary, ".")
+        )
+    })?;
+    let result = (|| {
+        file.write_all(&content)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to persist receipt archive temporary file `{}`: {error}",
+                    compact_path(&temporary, ".")
+                )
+            })?;
+        fs::hard_link(&temporary, path).map_err(|error| {
+            format!(
+                "failed to publish receipt archive `{}` with create-new semantics: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        fs::remove_file(&temporary).map_err(|error| {
+            format!(
+                "failed to remove receipt archive temporary link `{}`: {error}",
+                compact_path(&temporary, ".")
+            )
+        })?;
+        #[cfg(unix)]
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to sync receipt archive directory `{}`: {error}",
+                    compact_path(parent, ".")
+                )
+            })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn read_durable_receipt_archive(path: &Path) -> Result<Vec<u8>, String> {
+    #[cfg(target_os = "linux")]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        options.open(path)
+    }
+    .map_err(|error| {
+        format!(
+            "failed to reopen receipt archive `{}` for durable publication: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    #[cfg(not(target_os = "linux"))]
+    let mut file = File::open(path).map_err(|error| {
+        format!(
+            "failed to reopen receipt archive `{}`: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        format!(
+            "failed to read receipt archive `{}` after publication: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    #[cfg(target_os = "linux")]
+    {
+        file.sync_all().map_err(|error| {
+            format!(
+                "failed to sync receipt archive `{}`: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        let parent = path.parent().ok_or_else(|| {
+            format!(
+                "receipt archive `{}` has no parent directory",
+                compact_path(path, ".")
+            )
+        })?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!(
+                    "failed to sync receipt archive directory `{}`: {error}",
+                    compact_path(parent, ".")
+                )
+            })?;
+    }
+    Ok(bytes)
+}
+
 fn prune_receipt_archives(
     root: &Path,
     prefix: &str,
@@ -37573,11 +40563,31 @@ fn prune_receipt_archives(
         if preserved_path.as_deref() == Some(path.as_path()) {
             continue;
         }
+        let sidecar = path.with_extension("launcher-finalization");
+        if receipt_archive_requires_portable_finalization(&path) && !sidecar.is_file() {
+            continue;
+        }
         let _ = fs::remove_file(path);
+        let _ = fs::remove_file(sidecar);
         removed += 1;
     }
 
     Ok(())
+}
+
+fn receipt_archive_requires_portable_finalization(path: &Path) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| {
+            value
+                .pointer("/receipt/crossing/authority/archive_evidence/transaction/schema_version")
+                .and_then(serde_json::Value::as_u64)
+        })
+        == Some(
+            crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION
+                as u64,
+        )
 }
 
 fn resolve_receipt_history_root(
@@ -37621,9 +40631,11 @@ fn resolve_receipt_history_file_root(path: &Path, source: &str) -> Result<PathBu
             path.display()
         ));
     }
-    if path.file_name().and_then(|value| value.to_str()) != Some(DEFAULT_CONTRACT_FILE) {
+    if source == "PATH"
+        && path.file_name().and_then(|name| name.to_str()) != Some(DEFAULT_CONTRACT_FILE)
+    {
         return Err(format!(
-            "receipt history path must point to `ota.yaml` or a repo directory: `{}`",
+            "receipt history path must point to `{DEFAULT_CONTRACT_FILE}` or a repo directory: `{}`",
             path.display()
         ));
     }
@@ -37665,18 +40677,29 @@ fn repo_receipt_archive_timestamp(path: &Path) -> Option<String> {
 }
 
 fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRecord, String> {
-    let payload = fs::read_to_string(path).map_err(|error| {
+    let payload_bytes = fs::read(path).map_err(|error| {
         format!(
             "failed to read receipt archive `{}`: {error}",
             compact_path(path, ".")
         )
     })?;
-    let payload: ArchivedRepoReceiptEnvelope = serde_json::from_str(&payload).map_err(|error| {
-        format!(
-            "failed to parse receipt archive `{}`: {error}",
-            compact_path(path, ".")
-        )
-    })?;
+    read_repo_receipt_archive_record_from_bytes(path, &payload_bytes, None, None)
+}
+
+fn read_repo_receipt_archive_record_from_bytes(
+    path: &Path,
+    payload_bytes: &[u8],
+    contract_snapshot_bytes: Option<&[u8]>,
+    launcher_finalization_bytes: Option<&[u8]>,
+) -> Result<RepoReceiptArchiveRecord, String> {
+    let receipt_archive_identity = contract_snapshot_hash(&payload_bytes);
+    let payload: ArchivedRepoReceiptEnvelope =
+        serde_json::from_slice(&payload_bytes).map_err(|error| {
+            format!(
+                "failed to parse receipt archive `{}`: {error}",
+                compact_path(path, ".")
+            )
+        })?;
     if let Some(mode) = payload.mode.as_deref()
         && mode != "receipt"
     {
@@ -37697,11 +40720,651 @@ fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRec
             compact_path(path, ".")
         ));
     }
-    Ok(RepoReceiptArchiveRecord {
+    let archived_at = payload
+        .archive_path
+        .as_deref()
+        .and_then(|value| repo_receipt_archive_timestamp(Path::new(value)))
+        .or_else(|| repo_receipt_archive_timestamp(path));
+    let record = RepoReceiptArchiveRecord {
         archive_path: path.to_path_buf(),
-        archived_at: repo_receipt_archive_timestamp(path),
+        archived_at,
         payload,
+    };
+    // Receipt history is archive-only verification. Do not consult the mutable worktree contract:
+    // every archived repo receipt must carry the exact normalized snapshot it was issued from.
+    let (crossing_snapshot, _) = required_archived_repo_receipt_snapshot_with_path_and_bytes(
+        &record,
+        contract_snapshot_bytes,
+    )?;
+    let crossing_contract = serde_json::from_value::<Contract>(crossing_snapshot).map_err(|error| {
+        format!(
+            "receipt archive `{}` contains a contract snapshot that cannot re-derive crossing authority: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    if let Some(evidence) = record
+        .payload
+        .receipt
+        .witnessed_observations
+        .sandbox_application
+        .as_ref()
+    {
+        crate::sandbox_policy::validate_application_evidence_against_contract(
+            &crossing_contract,
+            evidence,
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains unreconciled sandbox application evidence: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        validate_sandbox_application_against_receipt_steps(evidence, &record.payload.receipt.steps)
+            .map_err(|error| {
+                format!(
+                    "receipt archive `{}` contains sandbox path evidence that does not match archived task outcomes: {error}",
+                    compact_path(path, ".")
+                )
+            })?;
+        if let Some(scope) = record
+            .payload
+            .archive_context
+            .as_ref()
+            .and_then(|context| context.semantic_scope.as_ref())
+        {
+            let scope_lane_kind = match scope.lane.kind {
+                crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+            };
+            if scope_lane_kind
+                != match evidence.lane.kind {
+                    crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                    crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                }
+                || scope.lane.name != evidence.lane.name
+                || scope.target_platform != evidence.target_platform
+                || scope.execution_selection.backend != evidence.execution_selection.backend
+                || scope.execution_selection.lifecycle != evidence.execution_selection.lifecycle
+                || scope.execution_selection.skip_dependencies
+                    != evidence.execution_selection.skip_dependencies
+                || scope.execution_graph_identity != evidence.canonical_policy_identity
+            {
+                return Err(format!(
+                    "receipt archive `{}` selected-invocation scope does not match its runner-attested sandbox application",
+                    compact_path(path, ".")
+                ));
+            }
+        }
+    }
+    let crossing = record.payload.receipt.crossing.as_ref();
+    let archived_authority_configured = crossing_contract.governance.crossing_authority.is_some();
+    let crossing_required = archived_receipt_crossing_required(
+        &crossing_contract,
+        record.payload.archive_context.as_ref(),
+        archived_authority_configured,
+        path,
+    )?;
+    match (crossing_required, crossing) {
+        (true, None) => {
+            return Err(format!(
+                "receipt archive `{}` omits required crossing evidence for its archived execution lane",
+                compact_path(path, ".")
+            ));
+        }
+        (true, Some(crossing)) if archived_authority_configured && crossing.authority.is_none() => {
+            return Err(format!(
+                "receipt archive `{}` omits required crossing authority and terminal transaction evidence",
+                compact_path(path, ".")
+            ));
+        }
+        (false, Some(_)) if record.payload.archive_context.is_some() => {
+            return Err(format!(
+                "receipt archive `{}` carries a crossing for an archived lane that does not require one",
+                compact_path(path, ".")
+            ));
+        }
+        (false, Some(crossing)) if crossing.authority.is_some() => {
+            return Err(format!(
+                "receipt archive `{}` carries crossing authority not declared by its archived contract",
+                compact_path(path, ".")
+            ));
+        }
+        _ => {}
+    }
+    if let Some(authority) = crossing.and_then(|crossing| crossing.authority.as_ref()) {
+        let archived = serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
+            authority.archive_evidence.clone(),
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains malformed crossing authority evidence: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        let archive_scope = record
+            .payload
+            .archive_context
+            .as_ref()
+            .and_then(|context| context.semantic_scope.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` carries crossing authority without a canonical selected-invocation scope",
+                    compact_path(path, ".")
+                )
+            })?;
+        if archive_scope != archived.semantic_scope() {
+            return Err(format!(
+                "receipt archive `{}` selected-invocation scope does not match its crossing authority admission",
+                compact_path(path, ".")
+            ));
+        }
+        let repo_root = repo_root_from_archive_path(path).ok_or_else(|| {
+            format!(
+                "receipt archive `{}` is not under the canonical repo archive root",
+                compact_path(path, ".")
+            )
+        })?;
+        let (transaction, transaction_admission, expected) = match &archived {
+            ArchivedCrossingAuthorityEvidence::PreboundFile(archived) => {
+                let transaction = archived.transaction.as_ref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` carries crossing authority without terminal transaction evidence",
+                        compact_path(path, ".")
+                    )
+                })?;
+                match transaction.schema_version {
+                    1 if archived.carrier_admission.is_some() => {
+                        return Err(format!(
+                            "receipt archive `{}` carries carrier admission evidence incompatible with a legacy v1 transaction",
+                            compact_path(path, ".")
+                        ));
+                    }
+                    crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION
+                        if archived.carrier_admission.is_none() =>
+                    {
+                        return Err(format!(
+                            "receipt archive `{}` omits carrier admission evidence required by its v2 transaction",
+                            compact_path(path, ".")
+                        ));
+                    }
+                    _ => {}
+                }
+                let transaction_admission = archived.admission.crossing_admission().map_err(|error| {
+                    format!(
+                        "receipt archive `{}` cannot derive its carrier-neutral crossing admission: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                if let Some(carrier_admission) = archived.carrier_admission.as_ref()
+                    && carrier_admission != &transaction_admission
+                {
+                    return Err(format!(
+                        "receipt archive `{}` carries carrier-neutral admission evidence that does not match its signed file-grant admission",
+                        compact_path(path, ".")
+                    ));
+                }
+                crate::crossing_authority::verify_archived_grant_admission(
+                    &crossing_contract,
+                    repo_root,
+                    &archived.admission,
+                )
+                .map_err(|error| {
+                    format!(
+                        "receipt archive `{}` contains unreconciled crossing authority evidence: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                crate::crossing_transaction::verify_crossing_transaction_evidence(
+                    transaction,
+                    &transaction_admission,
+                )
+                .map_err(|error| {
+                    format!(
+                        "receipt archive `{}` contains unreconciled crossing transaction evidence: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let expected = crossing_grant_authority_output_with_transaction(
+                    &archived.admission,
+                    Some(transaction.clone()),
+                    transaction.schema_version
+                        == crate::crossing_transaction::CROSSING_TRANSACTION_SCHEMA_VERSION,
+                );
+                (transaction, transaction_admission, expected)
+            }
+            ArchivedCrossingAuthorityEvidence::AuthorityBroker(archived) => {
+                let transaction_admission =
+                    crate::broker_session::verify_broker_archive_evidence(repo_root, archived)
+                        .map_err(|error| {
+                            format!(
+                                "receipt archive `{}` contains unreconciled broker authority evidence: {error}",
+                                compact_path(path, ".")
+                            )
+                })?;
+                if archived.requires_portable_launcher_finalization() {
+                    if let Some(bytes) = launcher_finalization_bytes {
+                        verify_receipt_launcher_finalization_sidecar_with_bytes(
+                            path,
+                            &receipt_archive_identity,
+                            archived,
+                            Some(bytes),
+                        )?;
+                    } else {
+                        verify_receipt_launcher_finalization_sidecar(
+                            path,
+                            &receipt_archive_identity,
+                            archived,
+                        )?;
+                    }
+                }
+                let expected = crossing_authority_output_with_transaction(
+                    &VerifiedCrossingAuthorityAdmission::AuthorityBroker(
+                        archived.admission.clone(),
+                    ),
+                    Some(archived.transaction.clone()),
+                    true,
+                )
+                .map_err(|error| {
+                    format!(
+                        "receipt archive `{}` cannot project broker authority evidence: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+                (&archived.transaction, transaction_admission, expected)
+            }
+        };
+        if &expected != authority {
+            return Err(format!(
+                "receipt archive `{}` contains crossing authority fields that do not match its carrier archive evidence",
+                compact_path(path, ".")
+            ));
+        }
+        let crossing = record.payload.receipt.crossing.as_ref().ok_or_else(|| {
+            format!(
+                "receipt archive `{}` carries crossing authority without a crossing record",
+                compact_path(path, ".")
+            )
+        })?;
+        verify_archived_crossing_record(
+            crossing,
+            archived.semantic_scope(),
+            transaction_admission.actor_mode.as_str(),
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains a crossing record that does not match its admitted semantic scope: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+        crate::crossing_transaction::verify_crossing_transaction_outcome(
+            transaction,
+            crossing.id.as_str(),
+            record.payload.ok,
+            record.payload.receipt.status.as_deref(),
+        )
+        .map_err(|error| {
+            format!(
+                "receipt archive `{}` contains crossing transaction evidence that does not match the archived outcome: {error}",
+                compact_path(path, ".")
+            )
+        })?;
+    }
+    Ok(record)
+}
+
+fn verify_receipt_launcher_finalization_sidecar(
+    archive_path: &Path,
+    receipt_archive_identity: &str,
+    broker_archive: &crate::broker_session::BrokerArchiveEvidence,
+) -> Result<(), String> {
+    let sidecar_path = archive_path.with_extension("launcher-finalization");
+    let bytes = fs::read(&sidecar_path).map_err(|_| {
+        format!(
+            "receipt archive `{}` omits required launcher finalization evidence",
+            compact_path(archive_path, ".")
+        )
+    })?;
+    verify_receipt_launcher_finalization_sidecar_with_bytes(
+        archive_path,
+        receipt_archive_identity,
+        broker_archive,
+        Some(&bytes),
+    )
+}
+
+fn verify_receipt_launcher_finalization_sidecar_with_bytes(
+    archive_path: &Path,
+    receipt_archive_identity: &str,
+    broker_archive: &crate::broker_session::BrokerArchiveEvidence,
+    bytes: Option<&[u8]>,
+) -> Result<(), String> {
+    let bytes = bytes.ok_or_else(|| {
+        format!(
+            "receipt archive `{}` omits required launcher finalization evidence",
+            compact_path(archive_path, ".")
+        )
+    })?;
+    let sidecar: ota_authority_protocol::LauncherFinalizationArchiveSidecarV1 =
+        serde_json::from_slice(bytes).map_err(|_| {
+            format!(
+                "receipt archive `{}` has malformed launcher finalization evidence",
+                compact_path(archive_path, ".")
+            )
+        })?;
+    if serde_jcs::to_vec(&sidecar).ok().as_deref() != Some(bytes) {
+        return Err(format!(
+            "receipt archive `{}` has non-canonical launcher finalization evidence",
+            compact_path(archive_path, ".")
+        ));
+    }
+    crate::broker_session::verify_launcher_finalization_sidecar(
+        broker_archive,
+        &sidecar,
+        receipt_archive_identity,
+    )
+    .map_err(|error| {
+        format!(
+            "receipt archive `{}` contains unreconciled launcher finalization evidence: {error}",
+            compact_path(archive_path, ".")
+        )
     })
+}
+
+fn archived_receipt_crossing_required(
+    contract: &Contract,
+    archive_context: Option<&crate::output::ReceiptArchiveContext>,
+    authority_configured: bool,
+    path: &Path,
+) -> Result<bool, String> {
+    let Some(context) = archive_context else {
+        if authority_configured {
+            return Err(format!(
+                "receipt archive `{}` cannot re-derive crossing authority because it omits immutable archive lane context",
+                compact_path(path, ".")
+            ));
+        }
+        // Context predates V11.7. It carries no authority claim, so retain ordinary archival
+        // inspection while excluding snapshot-less records as legacy below.
+        return Ok(false);
+    };
+    match context.kind.as_str() {
+        "readiness" => {
+            if context.lane_kind.is_some()
+                || context.lane_name.is_some()
+                || context.semantic_scope.is_some()
+            {
+                return Err(format!(
+                    "receipt archive `{}` has readiness context with an execution lane",
+                    compact_path(path, ".")
+                ));
+            }
+            if context.schema_version != 1 {
+                return Err(format!(
+                    "receipt archive `{}` has unsupported readiness archive context schema version `{}`",
+                    compact_path(path, "."),
+                    context.schema_version
+                ));
+            }
+            Ok(false)
+        }
+        "execution" => {
+            if context.schema_version == 2 {
+                let scope = context.semantic_scope.as_ref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits canonical selected-invocation scope",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits execution lane kind from archive context",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+                    format!(
+                        "receipt archive `{}` omits execution lane name from archive context",
+                        compact_path(path, ".")
+                    )
+                })?;
+                let scope_lane_kind = match scope.lane.kind {
+                    crate::sandbox_policy::SandboxLaneKind::Task => "task",
+                    crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+                };
+                if lane_kind != scope_lane_kind || lane_name != scope.lane.name {
+                    return Err(format!(
+                        "receipt archive `{}` has lane context that does not match its canonical selected-invocation scope",
+                        compact_path(path, ".")
+                    ));
+                }
+                return rederive_archived_crossing_scope(contract, scope, path);
+            }
+            if context.schema_version != 1 {
+                return Err(format!(
+                    "receipt archive `{}` has unsupported archive lane context schema version `{}`",
+                    compact_path(path, "."),
+                    context.schema_version
+                ));
+            }
+            if authority_configured {
+                return Err(format!(
+                    "receipt archive `{}` omits canonical selected-invocation scope required by its archived crossing authority",
+                    compact_path(path, ".")
+                ));
+            }
+            if context.semantic_scope.is_some() {
+                return Err(format!(
+                    "receipt archive `{}` has a V1 execution context with an unsupported semantic scope",
+                    compact_path(path, ".")
+                ));
+            }
+            let lane_kind = context.lane_kind.as_deref().ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` omits execution lane kind from archive context",
+                    compact_path(path, ".")
+                )
+            })?;
+            let lane_name = context.lane_name.as_deref().ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` omits execution lane name from archive context",
+                    compact_path(path, ".")
+                )
+            })?;
+            match lane_kind {
+                "task" => {
+                    let safety = task_effective_safety(contract, lane_name);
+                    Ok(!safety.effective_safe)
+                }
+                "workflow" => {
+                    let workflow_name = (lane_name != "default").then_some(lane_name);
+                    let safety = selected_up_workflow_effective_safety(
+                        contract,
+                        workflow_name,
+                        UpRunBehaviorPreference::Auto,
+                    );
+                    Ok(safety.effective_safe == Some(false))
+                }
+                _ => Err(format!(
+                    "receipt archive `{}` has unsupported execution lane kind `{lane_kind}`",
+                    compact_path(path, ".")
+                )),
+            }
+        }
+        _ => Err(format!(
+            "receipt archive `{}` has unsupported archive context kind `{}`",
+            compact_path(path, "."),
+            context.kind
+        )),
+    }
+}
+
+fn rederive_archived_crossing_scope(
+    contract: &Contract,
+    scope: &crate::crossing::CrossingSemanticScope,
+    path: &Path,
+) -> Result<bool, String> {
+    let mut unsigned_scope = scope.clone();
+    unsigned_scope.identity.clear();
+    let expected_identity = crate::semantic_identity::semantic_contract_identity(&unsigned_scope)
+        .map_err(|error| {
+        format!(
+            "receipt archive `{}` cannot verify selected-invocation scope identity: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    if scope.identity != expected_identity {
+        return Err(format!(
+            "receipt archive `{}` has a selected-invocation scope identity that does not match its content",
+            compact_path(path, ".")
+        ));
+    }
+
+    let selection = &scope.execution_selection;
+    let overrides = ExecutionOverrides {
+        backend: selection.backend,
+        lifecycle: selection.lifecycle,
+        host_port: selection.host_port,
+        memory: selection.memory,
+        skip_deps: selection.skip_dependencies,
+    };
+    let (requirement, rederived_scope) = match scope.lane.kind {
+        crate::sandbox_policy::SandboxLaneKind::Task => {
+            let safety =
+                task_effective_safety_with_overrides(contract, scope.lane.name.as_str(), overrides);
+            let requirement = evaluate_crossing_requirement(
+                Some(safety.effective_safe),
+                false,
+                &safety.unsafe_closure_tasks,
+                "task",
+            );
+            let task_inputs = if scope.input_identity_posture == "not_applicable" {
+                Vec::new()
+            } else {
+                vec![String::from("archived-input-presence")]
+            };
+            let rederived_scope = crossing_scope_for_task(
+                contract,
+                scope.lane.name.as_str(),
+                overrides,
+                &task_inputs,
+                &selection.effect_overrides,
+                selection.sandbox_target.as_deref(),
+                requirement
+                    .boundary_family
+                    .map(|family| family.label())
+                    .unwrap_or("none"),
+                requirement
+                    .classification
+                    .map(|classification| classification.label())
+                    .unwrap_or("unknown"),
+            );
+            (requirement, rederived_scope)
+        }
+        crate::sandbox_policy::SandboxLaneKind::Workflow => {
+            let run_behavior = selection.run_behavior.as_deref().ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` omits workflow run behavior from its selected-invocation scope",
+                    compact_path(path, ".")
+                )
+            })?;
+            let run_behavior =
+                archived_up_run_behavior_preference(run_behavior).map_err(|error| {
+                    format!(
+                        "receipt archive `{}` has invalid selected-invocation scope: {error}",
+                        compact_path(path, ".")
+                    )
+                })?;
+            let safety = selected_up_workflow_effective_safety(
+                contract,
+                Some(scope.lane.name.as_str()),
+                run_behavior,
+            );
+            let requirement = evaluate_crossing_requirement(
+                safety.effective_safe,
+                false,
+                &safety.unsafe_closure_tasks,
+                "workflow",
+            );
+            let rederived_scope = crossing_scope_for_workflow(
+                contract,
+                Some(scope.lane.name.as_str()),
+                overrides,
+                &selection.effect_overrides,
+                selection.sandbox_target.as_deref(),
+                up_run_behavior_preference_label(run_behavior),
+                selection.ready_timeout_seconds,
+                requirement
+                    .boundary_family
+                    .map(|family| family.label())
+                    .unwrap_or("none"),
+                requirement
+                    .classification
+                    .map(|classification| classification.label())
+                    .unwrap_or("unknown"),
+            );
+            (requirement, rederived_scope)
+        }
+    };
+    let rederived_scope = rederived_scope.map_err(|error| {
+        format!(
+            "receipt archive `{}` cannot re-derive selected-invocation scope: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    if &rederived_scope != scope {
+        return Err(format!(
+            "receipt archive `{}` selected-invocation scope does not match its archived contract",
+            compact_path(path, ".")
+        ));
+    }
+    requirement.required.ok_or_else(|| {
+        format!(
+            "receipt archive `{}` cannot derive whether its selected invocation crossed a governed boundary",
+            compact_path(path, ".")
+        )
+    })
+}
+
+fn verify_archived_crossing_record(
+    crossing: &crate::output::ExecutionBoundaryCrossing,
+    semantic_scope: &crate::crossing::CrossingSemanticScope,
+    admitted_actor_mode: &str,
+) -> Result<(), String> {
+    let lane_kind = match semantic_scope.lane.kind {
+        crate::sandbox_policy::SandboxLaneKind::Task => "task",
+        crate::sandbox_policy::SandboxLaneKind::Workflow => "workflow",
+    };
+    let lane_id = format!("{lane_kind}:{}", semantic_scope.lane.name);
+    let actor_mode = match crossing.actor_mode.as_str() {
+        "agent" | "non_agent" => crossing.actor_mode.as_str(),
+        _ => {
+            return Err(String::from(
+                "crossing record carries an unsupported actor mode",
+            ));
+        }
+    };
+    if crossing.lane_kind != lane_kind
+        || crossing.lane_id != lane_id
+        || crossing.boundary_family != semantic_scope.boundary_family
+        || crossing.classification != semantic_scope.classification
+        || actor_mode != admitted_actor_mode
+        || crossing.requirement_source != "derived"
+        || crossing.principal_attribution_state != "runner_mode_only"
+        || crossing.evidence_attachment_state != "receipt_attached"
+        || crossing.reason_present != crossing.reason.is_some()
+        || crossing.intent_source
+            != if crossing.reason_present {
+                "caller_supplied"
+            } else {
+                "runner_defaulted"
+            }
+        || crossing.evidence_classes != crossing_evidence_classes(crossing.reason_present)
+    {
+        return Err(String::from(
+            "crossing record lane, classification, actor, or reason posture does not reconcile",
+        ));
+    }
+    Ok(())
 }
 
 fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, String> {
@@ -37740,6 +41403,7 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
             Ok(record) => archives.push(record),
             Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
                 archive_path: receipt_storage_path_display(&path),
+                posture: receipt_history_invalid_archive_posture(&path),
                 error,
             }),
         }
@@ -37751,31 +41415,126 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
     })
 }
 
+fn receipt_history_invalid_archive_posture(path: &Path) -> String {
+    let Ok(contents) = fs::read(path) else {
+        return String::from("invalid");
+    };
+    receipt_history_invalid_archive_posture_from_bytes(&contents)
+}
+
+fn receipt_history_invalid_archive_posture_from_bytes(contents: &[u8]) -> String {
+    let Ok(payload) = serde_json::from_slice::<ArchivedRepoReceiptEnvelope>(contents) else {
+        return String::from("invalid");
+    };
+    if payload
+        .receipt
+        .contract_snapshot_ref
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+        && payload
+            .receipt
+            .contract_snapshot_hash
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        String::from("legacy_unverified")
+    } else {
+        String::from("invalid")
+    }
+}
+
 fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, String> {
     let scan = scan_repo_receipt_archives(root)?;
     Ok(RepoReceiptHistoryReport {
+        history_source: String::from("local"),
+        completeness_posture: String::from("local_archive_directory_observed"),
+        operator_profile_posture: None,
+        operator_profile_identity: None,
+        operator_peer_identity: None,
+        repository_binding_identity: None,
+        catalog_namespace_identity: None,
+        catalog_snapshot_identity: None,
         archives: scan
             .archives
             .into_iter()
-            .map(|archive| ReceiptHistoryEntry {
-                archive_path: receipt_storage_path_display(&archive.archive_path),
-                archived_at: archive
-                    .archived_at
-                    .unwrap_or_else(|| String::from("unknown")),
-                ok: archive.payload.ok,
-                contract: archive.payload.receipt.contract,
-                workflow: archive.payload.workflow,
-                status: archive.payload.receipt.status,
-                backend: archive.payload.receipt.backend,
-                target: archive.payload.receipt.target,
-                provider: archive.payload.receipt.provider,
-                context: archive.payload.receipt.context,
-                lifecycle: archive.payload.receipt.lifecycle,
-                cwd: archive.payload.receipt.cwd,
-                summary: archive.payload.summary.into(),
-            })
+            .map(repo_receipt_history_entry)
             .collect(),
         invalid_archives: scan.invalid_archives,
+    })
+}
+
+fn repo_receipt_history_entry(archive: RepoReceiptArchiveRecord) -> ReceiptHistoryEntry {
+    ReceiptHistoryEntry {
+        archive_path: receipt_storage_path_display(&archive.archive_path),
+        archive_identity: None,
+        catalog_identity: None,
+        archived_at: archive
+            .archived_at
+            .unwrap_or_else(|| String::from("unknown")),
+        ok: archive.payload.ok,
+        contract: archive.payload.receipt.contract,
+        workflow: archive.payload.workflow,
+        status: archive.payload.receipt.status,
+        backend: archive.payload.receipt.backend,
+        target: archive.payload.receipt.target,
+        provider: archive.payload.receipt.provider,
+        context: archive.payload.receipt.context,
+        lifecycle: archive.payload.receipt.lifecycle,
+        cwd: archive.payload.receipt.cwd,
+        summary: archive.payload.summary.into(),
+    }
+}
+
+fn load_protected_repo_receipt_history(
+    root: &Path,
+    archive_identity: Option<&str>,
+) -> Result<RepoReceiptHistoryReport, String> {
+    let protected = crate::protected_history::load_protected_history(archive_identity)?;
+    let mut archives = Vec::new();
+    let mut invalid_archives = Vec::new();
+    for entry in protected.entries {
+        let logical_name = format!(
+            "protected-{}.json",
+            entry.archive_identity.trim_start_matches("sha256:")
+        );
+        let logical_path = root.join(".ota").join("receipts").join(logical_name);
+        match read_repo_receipt_archive_record_from_bytes(
+            &logical_path,
+            &entry.archive,
+            Some(&entry.contract_snapshot),
+            Some(&entry.sidecar),
+        ) {
+            Ok(mut record) => {
+                record.archive_path = PathBuf::from(format!(
+                    "systemd_protected_launcher:{}",
+                    entry.archive_identity
+                ));
+                let mut history_entry = repo_receipt_history_entry(record);
+                history_entry.archive_identity = Some(entry.archive_identity);
+                history_entry.catalog_identity = Some(entry.catalog_identity);
+                archives.push(history_entry);
+            }
+            Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
+                archive_path: format!(
+                    "systemd_protected_launcher:{}:{}",
+                    entry.catalog_identity, entry.archive_identity
+                ),
+                posture: receipt_history_invalid_archive_posture_from_bytes(&entry.archive),
+                error,
+            }),
+        }
+    }
+    Ok(RepoReceiptHistoryReport {
+        history_source: String::from("systemd_protected_launcher"),
+        completeness_posture: String::from("complete_selected_catalog_snapshot"),
+        operator_profile_posture: Some(protected.operator_posture),
+        operator_profile_identity: Some(protected.operator_profile_identity),
+        operator_peer_identity: Some(protected.operator_peer_identity),
+        repository_binding_identity: Some(protected.repository_binding_identity),
+        catalog_namespace_identity: Some(protected.catalog_namespace_identity),
+        catalog_snapshot_identity: Some(protected.catalog_snapshot_identity),
+        archives,
+        invalid_archives,
     })
 }
 
@@ -38148,6 +41907,65 @@ fn archived_repo_receipt_snapshot_with_path(
         )
     })?;
     Ok(Some((snapshot, snapshot_path)))
+}
+
+fn required_archived_repo_receipt_snapshot_with_path_and_bytes(
+    record: &RepoReceiptArchiveRecord,
+    protected_snapshot_bytes: Option<&[u8]>,
+) -> Result<(JsonValue, PathBuf), String> {
+    let snapshot_ref = record
+        .payload
+        .receipt
+        .contract_snapshot_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "receipt archive `{}` is unverifiable because it omits immutable `receipt.contract_snapshot_ref`",
+                compact_path(&record.archive_path, ".")
+            )
+        })?;
+    let expected_hash = record
+        .payload
+        .receipt
+        .contract_snapshot_hash
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "receipt archive `{}` is unverifiable because it omits immutable `receipt.contract_snapshot_hash`",
+                compact_path(&record.archive_path, ".")
+            )
+    })?;
+    let snapshot_path = resolve_diff_snapshot_ref(&record.archive_path, snapshot_ref);
+    let contents = match protected_snapshot_bytes {
+        Some(contents) => contents.to_vec(),
+        None => fs::read(&snapshot_path).map_err(|error| {
+            format!(
+                "failed to load archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+                snapshot_path.display(),
+                record.archive_path.display()
+            )
+        })?,
+    };
+    let observed_hash = contract_snapshot_hash(&contents);
+    if observed_hash != expected_hash {
+        return Err(format!(
+            "receipt archive `{}` references contract snapshot `{}` with identity `{observed_hash}`, expected `{expected_hash}`",
+            compact_path(&record.archive_path, "."),
+            compact_path(&snapshot_path, ".")
+        ));
+    }
+    let snapshot = serde_json::from_slice(&contents).map_err(|error| {
+        format!(
+            "failed to parse archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+            snapshot_path.display(),
+            record.archive_path.display()
+        )
+    })?;
+    Ok((snapshot, snapshot_path))
 }
 
 fn archived_repo_receipt_snapshot(
@@ -41861,6 +45679,7 @@ tasks:
             ExecutionOverrides::default(),
             None,
             false,
+            None,
             None,
             true,
             super::RepoExecutionMode::Capture,
@@ -48253,7 +52072,7 @@ fn governance_evaluation_for_task_preview(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             Some(task.effective_safe_for_agent),
-            refusal,
+            refusal.is_some(),
             &task.unsafe_closure_tasks,
             "task",
         );
@@ -48279,6 +52098,7 @@ fn governance_evaluation_for_task_preview(
                 refusal,
             )
             .to_string(),
+            sandbox_admission: None,
             review_required,
             declared_safe_for_agent: Some(task.safe_for_agent),
             effective_safe_for_agent: Some(task.effective_safe_for_agent),
@@ -48381,7 +52201,7 @@ fn governance_evaluation_for_workflow_preview(
     let (crossing_required, crossing_classification, crossing_boundary_family) =
         crossing_preflight_posture(
             safety.effective_safe,
-            refusal,
+            refusal.is_some(),
             &safety.unsafe_closure_tasks,
             "workflow",
         );
@@ -48407,6 +52227,7 @@ fn governance_evaluation_for_workflow_preview(
         preflight: crate::output::GovernancePreflightEvaluation {
             state: governance_preflight_state(summary, safety.effective_safe, agent, refusal)
                 .to_string(),
+            sandbox_admission: None,
             review_required,
             declared_safe_for_agent: safety.declared_safe,
             effective_safe_for_agent: safety.effective_safe,
@@ -48835,7 +52656,7 @@ fn reconcile_preflight_replay(
     let (expected_crossing_required, expected_crossing_classification, expected_crossing_boundary) =
         crossing_preflight_posture(
             parsed.effective_safe_for_agent,
-            parsed.refusal.as_ref(),
+            parsed.refusal.is_some(),
             &parsed.unsafe_closure_tasks,
             lane_kind,
         );
@@ -48998,13 +52819,16 @@ fn reconcile_post_execution_replay(
     let proof_present = parsed.proof_present.unwrap_or(false);
     let refusal_reason_family = parsed.refusal_reason_family.as_deref();
     let expected_decision_owner = expected_post_execution_decision_owner(receipt_present);
-    let expected_state = if execution_attempted && proof_expected && !proof_present {
-        "evidence_missing"
-    } else if execution_attempted {
-        "evidence_satisfied"
-    } else {
-        "not_run"
-    };
+    let expected_state =
+        if !execution_attempted && receipt_present && refusal_reason_family.is_some() {
+            "refused"
+        } else if execution_attempted && proof_expected && !proof_present {
+            "evidence_missing"
+        } else if execution_attempted {
+            "evidence_satisfied"
+        } else {
+            "not_run"
+        };
     let expected_basis = governance_post_execution_decision_basis(
         refusal_reason_family,
         receipt_present,
@@ -49368,6 +53192,7 @@ fn governance_evaluation_for_up_result(
         .cloned()
         .unwrap_or(crate::output::GovernancePreflightEvaluation {
             state: preflight_state.to_string(),
+            sandbox_admission: None,
             review_required: None,
             declared_safe_for_agent: None,
             effective_safe_for_agent: None,
@@ -50872,22 +54697,17 @@ pub fn json_validate(
 }
 
 fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Result<(), String> {
-    let schema_dir = resolve_schema_dir()?;
-    let schema_path = schema_dir.join(schema_name);
-    if !schema_path.exists() {
-        return Err(format!("schema file not found: {}", schema_path.display()));
-    }
-
-    let raw_schema = load_json_value(&schema_path)?;
+    let schema_file = PUBLISHED_JSON_SCHEMAS
+        .get_file(schema_name)
+        .ok_or_else(|| format!("published schema not found: {schema_name}"))?;
+    let raw_schema = serde_json::from_slice(schema_file.contents())
+        .map_err(|error| format!("failed to parse published schema `{schema_name}`: {error}"))?;
     let mut options = JSONSchema::options();
     options.with_draft(Draft::Draft202012);
-    register_schema_documents(&mut options, &schema_dir)?;
-    let compiled = options.compile(&raw_schema).map_err(|error| {
-        format!(
-            "failed to compile schema `{}`: {error}",
-            schema_path.display()
-        )
-    })?;
+    register_schema_documents(&mut options)?;
+    let compiled = options
+        .compile(&raw_schema)
+        .map_err(|error| format!("failed to compile published schema `{schema_name}`: {error}"))?;
     if let Err(errors) = compiled.validate(payload) {
         let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
         return Err(format!(
@@ -50899,56 +54719,14 @@ fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Resul
     Ok(())
 }
 
-fn resolve_schema_dir() -> Result<PathBuf, String> {
-    let cwd =
-        env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
-    let cwd_schema_dir = cwd.join("docs").join("spec").join("json-schemas");
-    if cwd_schema_dir.is_dir() {
-        return Ok(cwd_schema_dir);
-    }
-
-    let fallback_schema_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("docs")
-        .join("spec")
-        .join("json-schemas");
-    if fallback_schema_dir.is_dir() {
-        return Ok(fallback_schema_dir);
-    }
-
-    Err(String::from(
-        "schema directory not found; expected docs/spec/json-schemas in the current repo",
-    ))
-}
-
-fn load_json_value(path: &Path) -> Result<JsonValue, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse {} as JSON: {error}", path.display()))
-}
-
-fn register_schema_documents(
-    options: &mut jsonschema::CompilationOptions,
-    schema_dir: &Path,
-) -> Result<(), String> {
-    let entries = fs::read_dir(schema_dir).map_err(|error| {
-        format!(
-            "failed to read schema directory {}: {error}",
-            schema_dir.display()
-        )
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|error| {
+fn register_schema_documents(options: &mut jsonschema::CompilationOptions) -> Result<(), String> {
+    for file in PUBLISHED_JSON_SCHEMAS.files() {
+        let document: JsonValue = serde_json::from_slice(file.contents()).map_err(|error| {
             format!(
-                "failed to read schema directory entry under {}: {error}",
-                schema_dir.display()
+                "failed to parse published schema `{}`: {error}",
+                file.path().display()
             )
         })?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let document = load_json_value(&path)?;
         let Some(id) = document.get("$id").and_then(JsonValue::as_str) else {
             continue;
         };
@@ -56522,8 +60300,11 @@ fn render_up_result(
             &preview.summary,
             &preview.contract_identity,
             &preview.execution,
+            preview.overrides.as_ref(),
             &preview.plan,
             &preview.governance,
+            preview.sandbox_admission.as_ref(),
+            preview.crossing_grant_admission.as_deref(),
             &preview.blockers,
             result.ok,
             format,
@@ -56567,9 +60348,14 @@ fn render_up_result(
             CommandOutput {
                 stdout,
                 stderr: None,
-                exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+                exit_code: repo_up_exit_code(&result),
             }
         }
+        OutputFormat::Json if result.preview.is_some() => CommandOutput {
+            stdout: to_json_value(up_result_json_value(path, &result)),
+            stderr: None,
+            exit_code: repo_up_exit_code(&result),
+        },
         OutputFormat::Json => render_up(
             path,
             Path::new(result.receipt.contract.as_str()),
@@ -56612,7 +60398,7 @@ fn render_up_replay_result(
             CommandOutput {
                 stdout: to_json_value(root),
                 stderr: None,
-                exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+                exit_code: repo_up_exit_code(&result),
             }
         }
     }
@@ -56775,18 +60561,39 @@ fn render_up_preview_result(
     summary: &DoctorSummary,
     contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
+    overrides: Option<&ExecutionPlanOverrides>,
     plan: &UpPreviewPlan,
     governance: &crate::output::GovernanceEvaluation,
+    sandbox_admission: Option<&JsonValue>,
+    crossing_grant_admission: Option<&crate::output::CrossingGrantAdmissionPreview>,
     blockers: &[Finding],
     ready: bool,
     format: OutputFormat,
 ) -> CommandOutput {
     match format {
-        OutputFormat::Text => CommandOutput {
-            stdout: render_up_preview_text(text_path, summary, contract_identity, execution, plan),
-            stderr: None,
-            exit_code: if ready { 0 } else { 1 },
-        },
+        OutputFormat::Text => {
+            let mut stdout =
+                render_up_preview_text(text_path, summary, contract_identity, execution, plan);
+            if let Some(admission) = sandbox_admission {
+                stdout.push_str(&render_sandbox_admission_json_preview(admission));
+            }
+            if let Some(authority) = crossing_grant_admission {
+                stdout.push_str(&format!(
+                    "\n\nCrossing Grant: admissible `{}` from authority `{}`\nScope: `{}`",
+                    authority
+                        .grant_id
+                        .as_deref()
+                        .unwrap_or("broker_authorization"),
+                    authority.authority_id,
+                    authority.scope_identity
+                ));
+            }
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if ready { 0 } else { 1 },
+            }
+        }
         OutputFormat::Json => CommandOutput {
             stdout: to_json(&UpPreviewStatus {
                 ok: ready,
@@ -56799,8 +60606,11 @@ fn render_up_preview_result(
                 summary: summary.clone(),
                 contract_identity: contract_identity.clone(),
                 execution: execution.clone(),
+                overrides: overrides.cloned(),
                 plan: plan.clone(),
                 governance: governance.clone(),
+                sandbox_admission,
+                crossing_grant_admission,
                 blockers,
             }),
             stderr: None,
@@ -56822,8 +60632,11 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "summary": preview.summary,
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
+            "overrides": preview.overrides,
             "plan": preview.plan,
             "governance": preview.governance,
+            "sandbox_admission": preview.sandbox_admission,
+            "crossing_grant_admission": preview.crossing_grant_admission,
             "blockers": preview.blockers,
         })
     } else {
@@ -56880,8 +60693,11 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "summary": preview.summary,
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
+            "overrides": preview.overrides,
             "plan": preview.plan,
             "governance": preview.governance,
+            "sandbox_admission": preview.sandbox_admission,
+            "crossing_grant_admission": preview.crossing_grant_admission,
             "blockers": preview.blockers,
         })
     } else {
@@ -57297,6 +61113,9 @@ impl Drop for PlainModeGuard {
 
 #[cfg(test)]
 mod tests {
+    use crate::crossing::{
+        CrossingProofInvocation, CrossingProofTransactionSelection, crossing_scope_for_workflow,
+    };
     use crate::doctor::DoctorPolicySnapshot;
     use crate::output::ExecutionEvidenceClass;
     use std::collections::{BTreeMap, BTreeSet};
@@ -57304,6 +61123,7 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
     #[test]
     fn lifecycle_assertion_diagnostics_redact_and_limit_utf8_bytes() {
         let secret = String::from("lifecycle-secret");
@@ -57317,13 +61137,95 @@ mod tests {
         assert!(!tail.contains("lifecycle-secret"));
     }
 
+    #[test]
+    fn selected_execution_archive_publication_is_durable_and_create_new() {
+        let root = tempfile::tempdir().expect("archive root");
+        let path = root.path().join("receipt.json");
+        let payload = serde_json::json!({"ok": true, "identity": "receipt-1"});
+        super::write_receipt_archive_create_new_durable(&path, &payload)
+            .expect("durable archive publication");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &super::read_durable_receipt_archive(&path).expect("durable archive bytes")
+            )
+            .expect("archive JSON"),
+            payload
+        );
+        assert!(super::write_receipt_archive_create_new_durable(&path, &payload).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_archive_path_protects_existing_runtime_directories() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().expect("archive root");
+        let ota_dir = root.path().join(".ota");
+        fs::create_dir(&ota_dir).expect("ota directory");
+        fs::set_permissions(&ota_dir, fs::Permissions::from_mode(0o755))
+            .expect("widen ota directory for the control");
+
+        let path = super::next_receipt_archive_path(root.path(), "repo-receipt")
+            .expect("private receipt archive path");
+
+        assert_eq!(
+            fs::symlink_metadata(&ota_dir)
+                .expect("ota metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::symlink_metadata(path.parent().expect("receipt parent"))
+                .expect("receipt metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn pruning_preserves_portable_archives_until_their_sidecar_exists() {
+        let root = tempfile::tempdir().expect("archive root");
+        let receipts = root.path().join(".ota/receipts");
+        fs::create_dir_all(&receipts).expect("receipt directory");
+        let pending = receipts.join("repo-receipt-00.json");
+        fs::write(
+            &pending,
+            serde_json::to_vec(&serde_json::json!({
+                "receipt": {"crossing": {"authority": {"archive_evidence": {
+                    "transaction": {"schema_version": crate::crossing_transaction::PORTABLE_LAUNCHER_CROSSING_TRANSACTION_SCHEMA_VERSION}
+                }}}}
+            }))
+            .expect("pending archive"),
+        )
+        .expect("pending archive write");
+        for index in 1..=10 {
+            fs::write(
+                receipts.join(format!("repo-receipt-{index:02}.json")),
+                b"{}",
+            )
+            .expect("ordinary archive");
+        }
+
+        super::prune_receipt_archives(root.path(), "repo-receipt", 10, None)
+            .expect("archive pruning");
+        assert!(pending.exists());
+        assert!(!receipts.join("repo-receipt-01.json").exists());
+    }
+
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::os::{fd::IntoRawFd, unix::net::UnixStream};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::thread;
     use std::time::{Duration, Instant};
 
+    use jsonschema::{Draft, JSONSchema};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -57352,6 +61254,20 @@ mod tests {
     };
     use crate::doctor::ProvisioningDiagnostics;
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
+
+    #[test]
+    fn receipt_history_accepts_an_explicit_nondefault_contract_filename() {
+        let fixture = tempdir().expect("receipt history fixture");
+        let contract = fixture.path().join("ota-pressure.yaml");
+        fs::write(&contract, "version: 1\nproject:\n  name: fixture\n")
+            .expect("write contract fixture");
+
+        assert_eq!(
+            super::resolve_receipt_history_file_root(&contract, "--file")
+                .expect("custom contract root"),
+            fixture.path()
+        );
+    }
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorPrimaryBlocker,
         DoctorSummary, DoctorVerdict, EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt,
@@ -57360,12 +61276,85 @@ mod tests {
         ServiceReadinessSummary, ServiceSummary, TaskSummary, ToolchainSelectionSummary,
         UpPreviewExecution, UpPreviewPlan, WorkflowSummary,
     };
+
+    fn governed_task_archive_context(contract: &Contract, task_name: &str) -> serde_json::Value {
+        let scope = crate::crossing::crossing_scope_for_task(
+            contract,
+            task_name,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            None,
+            "unsafe_task",
+            "escalated",
+        )
+        .expect("governed task scope");
+        serde_json::json!({
+            "schema_version": 2,
+            "kind": "execution",
+            "lane_kind": "task",
+            "lane_name": task_name,
+            "semantic_scope": scope,
+        })
+    }
+
+    fn write_governed_crossing_archive(
+        repo: &Path,
+        contract: &Contract,
+        admission: &crate::crossing_authority::GrantAdmissionEvidence,
+        transaction: crate::crossing_transaction::CrossingTransactionEvidence,
+        include_carrier_admission: bool,
+        archive_name: &str,
+    ) -> PathBuf {
+        let contracts = repo.join(".ota/contracts");
+        let receipts = repo.join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("governed-crossing.json"), snapshot).expect("snapshot");
+        let mut crossing = super::build_task_crossing_record(
+            contract,
+            "publish",
+            ExecutionOverrides::default(),
+            false,
+            None,
+        )
+        .expect("governed task crossing");
+        crossing.id = transaction.transaction_id.clone();
+        crossing.authority = Some(super::crossing_grant_authority_output_with_transaction(
+            admission,
+            Some(transaction),
+            include_carrier_admission,
+        ));
+        let archive_path = receipts.join(archive_name);
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": governed_task_archive_context(contract, "publish"),
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed-crossing.json",
+                    "status": "passed",
+                    "crossing": crossing
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+        archive_path
+    }
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningPlanEntry,
         ProvisioningTargetKind,
     };
+    use crate::schema::Contract;
     #[test]
     fn github_projection_sync_and_check_share_one_renderer() {
         let repo = tempdir().expect("repo tempdir");
@@ -62471,6 +66460,8 @@ workflows:
             None,
             false,
             false,
+            crate::cli::ReceiptHistorySource::Local,
+            None,
             true,
             false,
             false,
@@ -62490,6 +66481,8 @@ workflows:
             None,
             false,
             false,
+            crate::cli::ReceiptHistorySource::Local,
+            None,
             true,
             false,
             false,
@@ -62509,6 +66502,8 @@ workflows:
             Some("latest"),
             false,
             false,
+            crate::cli::ReceiptHistorySource::Local,
+            None,
             false,
             false,
             false,
@@ -62975,6 +66970,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: true,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "passed_with_unproven_boundaries",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -62988,6 +66984,7 @@ workflows:
                     task: Some(String::from("serve")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: vec![crate::output::ProofRuntimeDependencyEvidence {
                     dependency_id: String::from("service:postgres"),
                     proof_obligation_id: None,
@@ -63555,6 +67552,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: true,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "passed_with_unproven_boundaries",
                 path: contract_path.to_str().unwrap(),
                 mode: "runtime-proof",
@@ -63568,6 +67566,7 @@ workflows:
                     task: Some(String::from("build")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -63618,6 +67617,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -63631,6 +67631,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -63690,6 +67691,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -63703,6 +67705,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -63845,6 +67848,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -63858,6 +67862,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -63916,6 +67921,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -63929,6 +67935,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -63987,6 +67994,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -64000,6 +68008,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -64055,6 +68064,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -64068,6 +68078,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -64126,6 +68137,7 @@ workflows:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -64139,6 +68151,7 @@ workflows:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -64622,6 +68635,7 @@ policies:
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
                 ok: false,
+                execution_id: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 proof_verdict: "failed",
                 path: "./ota.yaml",
                 mode: "runtime-proof",
@@ -64635,6 +68649,7 @@ policies:
                     task: Some(String::from("run")),
                     intent: None,
                 },
+                crossing_evidence: None,
                 dependency_evidence: Vec::new(),
                 seam_observations: Vec::new(),
                 negative_control: None,
@@ -68995,6 +73010,7 @@ agent:
             true,
             true,
             None,
+            None,
             false,
             false,
             false,
@@ -69013,6 +73029,1404 @@ agent:
             "requested_task_not_safe"
         );
         assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn configured_crossing_authority_refuses_missing_grant_before_task_execution() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: governed-crossing
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("release requested"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("crossing_grant_required"), "{stderr}");
+        assert!(stderr.contains("OTA_CROSSING_GRANT_REFUSED"), "{stderr}");
+        assert!(stderr.contains("Refusal Evidence"), "{stderr}");
+        assert!(
+            stderr.contains("Authority Source: prebound_file"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Authority: release-authority"), "{stderr}");
+        assert!(stderr.contains("Execution Started: false"), "{stderr}");
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[test]
+    fn broker_authority_dry_run_selects_scope_without_contact_or_consumption() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-preview
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    safe_for_agent: false
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            None,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("broker preview JSON");
+        super::validate_payload_with_schema("run-preview.json", &json)
+            .expect("broker preview must match the published schema");
+        let admission = &json["crossing_grant_admission"];
+        assert_eq!(admission["decision"], "requires_live_authorization");
+        assert_eq!(admission["authority_carrier"], "authority_broker");
+        assert_eq!(admission["authority_id"], binding.authority_id);
+        assert!(admission.get("grant_id").is_none());
+        assert!(admission.get("admitted_at").is_none());
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_does_not_consume_before_run_interaction_refusal() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-run-interaction
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+      interaction: required
+    safe_for_agent: false
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("interactive release"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        // SAFETY: the test transferred ownership out of `ota` and no launcher session was opened.
+        unsafe { libc::close(descriptor) };
+
+        assert_eq!(output.exit_code, 1);
+        let rendered = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            rendered.contains("declares `interaction: required`"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("crossing_broker_admission_refused"));
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_does_not_consume_before_up_interaction_refusal() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-up-interaction
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  prepare:
+    run: touch should-not-exist
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "true"]
+      interaction: required
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: prepare
+    run:
+      task: publish
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release"),
+            &[],
+            false,
+            None,
+            Some("interactive release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow refusal result");
+        // SAFETY: the test transferred ownership out of `ota` and no launcher session was opened.
+        unsafe { libc::close(descriptor) };
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert!(result.report.findings.iter().any(|finding| {
+            finding
+                .identity
+                .as_ref()
+                .is_some_and(|identity| identity.code == "OTA_INTERACTION_REQUIRED")
+        }));
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_does_not_consume_for_unresolvable_up_preflight() {
+        let _env_guard = env_mutex_lock();
+        unsafe {
+            std::env::remove_var("OTA_TEST_BROKER_UP_REQUIRED");
+        }
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-up-preflight
+governance:
+  crossing_authority:
+    authority_id: {}
+env:
+  vars:
+    OTA_TEST_BROKER_UP_REQUIRED:
+      required: true
+tasks:
+  prepare:
+    run: touch preparation-should-not-exist
+  publish:
+    run: touch should-not-exist
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: prepare
+    run:
+      task: publish
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release"),
+            &[],
+            false,
+            None,
+            Some("governed release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow preflight result");
+        // SAFETY: no launcher session was opened, so the test still owns the transferred fd.
+        unsafe { libc::close(descriptor) };
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert!(
+            result
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.contains("OTA_TEST_BROKER_UP_REQUIRED"))
+        );
+        assert!(!repo.path().join("preparation-should-not-exist").exists());
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_preflights_prerequisite_instances_before_consumption() {
+        let _env_guard = env_mutex_lock();
+        unsafe {
+            std::env::remove_var("OTA_TEST_BROKER_INSTANCE_REQUIRED");
+        }
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, _) = crate::crossing_authority::tests::broker_binding_with_signing_key();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        drop(launcher);
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-instance-preflight
+governance:
+  crossing_authority:
+    authority_id: {}
+env:
+  vars:
+    OTA_TEST_BROKER_INSTANCE_REQUIRED:
+      required: true
+tasks:
+  publish:
+    run: touch should-not-exist
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+    instances:
+      default: west
+      base: {{}}
+      west:
+        topology:
+          requires_instances: [base]
+        env:
+          OTA_TEST_BROKER_INSTANCE_REQUIRED: selected-instance-value
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release@west"),
+            &[],
+            false,
+            None,
+            Some("governed instance release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow prerequisite preflight result");
+        // SAFETY: prerequisite refusal occurs before the launcher session takes ownership.
+        unsafe { libc::close(descriptor) };
+
+        assert!(!result.ok);
+        assert_eq!(result.phase, "preconditions");
+        assert!(result.report.findings.iter().any(|finding| {
+            finding
+                .summary
+                .contains("OTA_TEST_BROKER_INSTANCE_REQUIRED")
+        }));
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_consumes_once_before_run_and_keeps_launcher_fd_private() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        let descriptor = ota.into_raw_fd();
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            descriptor,
+        );
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-run
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: bash
+      args: ["-c", "( true <&{} ) 2>/dev/null && exit 42; touch broker-executed"]
+    safe_for_agent: false
+"#,
+                binding.authority_id, descriptor
+            ),
+        )
+        .expect("write contract");
+        let broker = crate::broker_session::tests::spawn_allowing_test_broker_with_attestor(
+            launcher,
+            binding,
+            broker_signing_key,
+            attestor_signing_key,
+            time::OffsetDateTime::now_utc(),
+        );
+        super::EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE.with(|expected| {
+            expected.replace(Some(repo.path().to_path_buf()));
+        });
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("approved release"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        broker.join().expect("broker thread");
+        super::EXPECT_SYSTEMD_COMPLETION_AFTER_RECEIPT_ARCHIVE.with(|expected| {
+            assert!(
+                expected.borrow().is_none(),
+                "crossing completion ordering assertion must be exercised"
+            );
+        });
+
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
+        assert!(repo.path().join("broker-executed").exists());
+        let rendered = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(rendered.contains("Status:      success"), "{rendered}");
+        fs::remove_file(repo.path().join("broker-executed")).expect("remove first-run sentinel");
+        let replay = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            Some("replay attempt"),
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        assert_eq!(replay.exit_code, 1);
+        assert!(
+            strip_ansi_codes(replay.stderr.as_deref().unwrap_or_default())
+                .contains("crossing_broker_admission_refused")
+        );
+        assert!(!repo.path().join("broker-executed").exists());
+        let archives = super::scan_repo_receipt_archives(repo.path()).expect("receipt history");
+        assert_eq!(archives.archives.len(), 1);
+        assert!(archives.invalid_archives.is_empty());
+        let authority = archives.archives[0]
+            .payload
+            .receipt
+            .crossing
+            .as_ref()
+            .and_then(|crossing| crossing.authority.as_ref())
+            .expect("broker authority receipt");
+        assert_eq!(
+            authority.authority_carrier.as_deref(),
+            Some("authority_broker")
+        );
+        assert_eq!(
+            authority.authority_separation_posture,
+            "protected_launcher_attested_one_use"
+        );
+        assert_eq!(
+            authority
+                .transaction
+                .as_ref()
+                .and_then(|transaction| transaction.get("state"))
+                .and_then(serde_json::Value::as_str),
+            Some("completed")
+        );
+        let archive_path = archives.archives[0].archive_path.clone();
+        let original_archive = fs::read(&archive_path).expect("broker archive bytes");
+
+        let mut stripped_consumption: serde_json::Value =
+            serde_json::from_slice(&original_archive).expect("broker archive JSON");
+        stripped_consumption["receipt"]["crossing"]["authority"]["archive_evidence"]["transaction"]
+            .as_object_mut()
+            .expect("archived broker transaction")
+            .remove("broker_consumption");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&stripped_consumption).expect("stripped archive JSON"),
+        )
+        .expect("write stripped broker archive");
+        let stripped_scan = super::scan_repo_receipt_archives(repo.path()).expect("stripped scan");
+        assert!(stripped_scan.archives.is_empty());
+        assert_eq!(stripped_scan.invalid_archives.len(), 1);
+
+        let mut substituted_carrier: serde_json::Value =
+            serde_json::from_slice(&original_archive).expect("broker archive JSON");
+        substituted_carrier["receipt"]["crossing"]["authority"]["archive_evidence"]["transaction"]
+            ["authority_carrier"] = serde_json::Value::String(String::from("prebound_file"));
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&substituted_carrier).expect("substituted archive JSON"),
+        )
+        .expect("write substituted broker archive");
+        let substituted_scan =
+            super::scan_repo_receipt_archives(repo.path()).expect("substituted scan");
+        assert!(substituted_scan.archives.is_empty());
+        assert_eq!(substituted_scan.invalid_archives.len(), 1);
+
+        fs::write(&archive_path, original_archive).expect("restore broker archive");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broker_authority_consumption_covers_real_workflow_execution() {
+        let authority_root = tempfile::tempdir().expect("authority tempdir");
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (mut binding, broker_signing_key, attestor_signing_key) =
+            crate::crossing_authority::tests::broker_binding_v2_with_signing_keys();
+        let (ota, launcher) = UnixStream::pair().expect("launcher pair");
+        crate::crossing_authority::tests::set_broker_binding_descriptor_for_tests(
+            &mut binding,
+            ota.into_raw_fd(),
+        );
+        let store_path = authority_root.path().join("crossing-brokers.json");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&crate::crossing_authority::BrokerAuthorityStore {
+                schema_version: crate::crossing_authority::CROSSING_BROKER_SCHEMA_VERSION,
+                bindings: vec![binding.clone()],
+            })
+            .expect("broker store JSON"),
+        )
+        .expect("write broker store");
+        let _authority_guard =
+            crate::crossing_authority::TestBrokerTrustStoreGuard::install(store_path);
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: governed-broker-up
+governance:
+  crossing_authority:
+    authority_id: {}
+tasks:
+  publish:
+    command:
+      exe: bash
+      args: ["-c", "touch broker-workflow-executed"]
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    setup:
+      task: publish
+"#,
+                binding.authority_id
+            ),
+        )
+        .expect("write contract");
+        let contract = crate::parser::load_contract(&contract_path).expect("parse contract");
+        let broker = crate::broker_session::tests::spawn_allowing_test_broker_with_attestor(
+            launcher,
+            binding,
+            broker_signing_key,
+            attestor_signing_key,
+            time::OffsetDateTime::now_utc(),
+        );
+
+        let result = super::execute_repo_up_with_behavior_with_agent_and_grant(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("release"),
+            &[],
+            false,
+            None,
+            Some("approved release"),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("workflow result");
+        broker.join().expect("broker thread");
+
+        assert!(
+            result.ok,
+            "status={} phase={} stderr={} findings={:?} receipt={:?}",
+            result.status, result.phase, result.stderr, result.report.findings, result.receipt
+        );
+        assert!(repo.path().join("broker-workflow-executed").exists());
+        let authority = result
+            .receipt
+            .crossing
+            .as_ref()
+            .and_then(|crossing| crossing.authority.as_ref())
+            .expect("workflow broker authority");
+        assert_eq!(
+            authority.authority_carrier.as_deref(),
+            Some("authority_broker")
+        );
+        assert_eq!(
+            authority.authority_separation_posture,
+            "protected_launcher_attested_one_use"
+        );
+
+        let receipt_schema: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/receipt.json"),
+            )
+            .expect("read receipt schema"),
+        )
+        .expect("receipt schema");
+        let mut authority_schema = receipt_schema["oneOf"][0]["properties"]["receipt"]
+            ["properties"]["crossing"]["properties"]["authority"]
+            .clone();
+        authority_schema["$defs"] = receipt_schema["$defs"].clone();
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft202012)
+            .compile(&authority_schema)
+            .expect("broker authority schema");
+        let authority_json = serde_json::to_value(authority).expect("broker authority JSON");
+        assert!(
+            authority_json
+                .pointer(
+                    "/archive_evidence/admission/binding_snapshot/credential_delivery/descriptor"
+                )
+                .is_none(),
+            "public broker evidence must not serialize the protected launcher descriptor"
+        );
+        if let Err(errors) = compiled.validate(&authority_json) {
+            panic!(
+                "broker authority must match the published receipt schema: {}",
+                errors
+                    .map(|error| error.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+
+        let mut missing_v2_binding_version = authority_json.clone();
+        missing_v2_binding_version["archive_evidence"]["admission"]["binding_snapshot"]
+            .as_object_mut()
+            .expect("v2 binding snapshot")
+            .remove("schema_version");
+        assert!(compiled.validate(&missing_v2_binding_version).is_err());
+
+        let mut v1_payload_under_v2_binding = authority_json.clone();
+        let archived_attestation =
+            &mut v1_payload_under_v2_binding["archive_evidence"]["admission"]["attestation"];
+        archived_attestation["payload"]
+            .as_object_mut()
+            .expect("attestation payload")
+            .remove("attestation_protocol_version");
+        archived_attestation["payload"]
+            .as_object_mut()
+            .expect("attestation payload")
+            .remove("runtime_boundary");
+        assert!(compiled.validate(&v1_payload_under_v2_binding).is_err());
+
+        let mut missing_consumption = authority_json.clone();
+        missing_consumption["transaction"]
+            .as_object_mut()
+            .expect("transaction object")
+            .remove("broker_consumption");
+        missing_consumption["archive_evidence"]["transaction"]
+            .as_object_mut()
+            .expect("archive transaction object")
+            .remove("broker_consumption");
+        assert!(compiled.validate(&missing_consumption).is_err());
+
+        let mut invalid_descriptor = authority_json.clone();
+        invalid_descriptor["archive_evidence"]["admission"]["binding_snapshot"]["credential_delivery"]
+            ["descriptor"] = serde_json::json!(0);
+        assert!(compiled.validate(&invalid_descriptor).is_err());
+
+        let mut unsupported_claim_extension = authority_json.clone();
+        unsupported_claim_extension["archive_evidence"]["admission"]["binding_snapshot"]["attestation"]
+            ["required_administrator_claims"] = serde_json::json!(["custom_claim"]);
+        assert!(compiled.validate(&unsupported_claim_extension).is_err());
+
+        let mut changed_mandatory_claims = authority_json.clone();
+        changed_mandatory_claims["archive_evidence"]["admission"]["binding_snapshot"]["attestation"]
+            ["mandatory_protocol_claims"] = serde_json::json!(["binding_identity"]);
+        assert!(compiled.validate(&changed_mandatory_claims).is_err());
+
+        let mut zero_freshness_margin = authority_json.clone();
+        zero_freshness_margin["archive_evidence"]["admission"]["binding_snapshot"]["minimum_post_approval_freshness_seconds"] =
+            serde_json::json!(0);
+        assert!(compiled.validate(&zero_freshness_margin).is_err());
+
+        let mut changed_message_domain = authority_json.clone();
+        changed_message_domain["archive_evidence"]["admission"]["binding_snapshot"]["message_domains"]
+            ["lease_consume"] = serde_json::json!("custom-domain");
+        assert!(compiled.validate(&changed_message_domain).is_err());
+
+        let mut path_like_principal = authority_json.clone();
+        path_like_principal["archive_evidence"]["admission"]["attestation"]["payload"]["runner_principal"] =
+            serde_json::json!("/etc/ota/operator");
+        assert!(compiled.validate(&path_like_principal).is_err());
+
+        let mut missing_breadth = authority_json.clone();
+        missing_breadth["archive_evidence"]["admission"]["semantic_scope"]
+            .as_object_mut()
+            .expect("semantic scope object")
+            .remove("breadth");
+        assert!(compiled.validate(&missing_breadth).is_err());
+
+        let mut substituted_carrier = authority_json;
+        substituted_carrier["transaction"]["authority_carrier"] =
+            serde_json::Value::String(String::from("prebound_file"));
+        substituted_carrier["archive_evidence"]["transaction"]["authority_carrier"] =
+            serde_json::Value::String(String::from("prebound_file"));
+        assert!(compiled.validate(&substituted_carrier).is_err());
+    }
+
+    #[test]
+    fn governed_receipt_archive_refuses_when_crossing_evidence_is_removed() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: governed-archive
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            serde_yaml::to_string(&contract).expect("contract yaml"),
+        )
+        .expect("current contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        let archive_context = governed_task_archive_context(&contract, "publish");
+        fs::write(contracts.join("governed.json"), snapshot).expect("snapshot");
+        let archive_path = receipts.join("repo-receipt-governed.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": archive_context,
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        let error = super::read_repo_receipt_archive_record(&archive_path)
+            .expect_err("governed archive cannot omit crossing evidence");
+        assert!(
+            error.contains("omits required crossing evidence"),
+            "{error}"
+        );
+
+        let stripped_snapshot_path = receipts.join("repo-receipt-governed-no-snapshot.json");
+        fs::write(
+            &stripped_snapshot_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": governed_task_archive_context(&contract, "publish"),
+                "receipt": { "scope": "repo", "contract": "ota.yaml" }
+            }))
+            .expect("stripped archive json"),
+        )
+        .expect("stripped archive");
+        fs::remove_file(repo.path().join("ota.yaml")).expect("remove current contract");
+        let error = super::read_repo_receipt_archive_record(&stripped_snapshot_path)
+            .expect_err("missing archived snapshot cannot be accepted from the current contract");
+        assert!(
+            error.contains("omits immutable `receipt.contract_snapshot_ref`"),
+            "{error}"
+        );
+
+        let mismatched_identity_path = receipts.join("repo-receipt-governed-bad-identity.json");
+        fs::write(
+            &mismatched_identity_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": governed_task_archive_context(&contract, "publish"),
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("mismatched archive json"),
+        )
+        .expect("mismatched archive");
+        let error = super::read_repo_receipt_archive_record(&mismatched_identity_path)
+            .expect_err("snapshot identity mismatch must refuse");
+        assert!(error.contains("expected `sha256:0000"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_history_reconciles_crossing_authority_transaction_versions_and_envelopes() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let authority = tempfile::tempdir().expect("authority tempdir");
+        let (_authority_guard, contract, admission) =
+            crate::crossing_authority::tests::install_test_prebound_authority(
+                authority.path(),
+                repo.path(),
+            );
+        let carrier_admission = admission
+            .crossing_admission()
+            .expect("carrier-neutral admission");
+        let mut transaction = crate::crossing_transaction::CrossingTransactionGuard::begin(
+            repo.path(),
+            &carrier_admission,
+        )
+        .expect("crossing transaction");
+        transaction
+            .finalize("completed", Some("passed"))
+            .expect("completed transaction");
+        let v2_transaction = transaction.evidence();
+
+        let legacy_transaction =
+            crate::crossing_transaction::legacy_prebound_file_evidence_for_tests(
+                &v2_transaction,
+                admission.grant_identity.clone(),
+            );
+        let legacy_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            legacy_transaction.clone(),
+            false,
+            "repo-receipt-crossing-v1.json",
+        );
+        super::read_repo_receipt_archive_record(&legacy_path)
+            .expect("legacy v1 archive without carrier admission remains readable");
+
+        let v1_envelope_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            legacy_transaction,
+            true,
+            "repo-receipt-crossing-v1-envelope.json",
+        );
+        let error = super::read_repo_receipt_archive_record(&v1_envelope_path)
+            .expect_err("v1 archive cannot carry a v2 carrier envelope");
+        assert!(
+            error.contains("incompatible with a legacy v1 transaction"),
+            "{error}"
+        );
+
+        let v2_missing_envelope_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            v2_transaction.clone(),
+            false,
+            "repo-receipt-crossing-v2-no-envelope.json",
+        );
+        let error = super::read_repo_receipt_archive_record(&v2_missing_envelope_path)
+            .expect_err("v2 archive requires carrier admission evidence");
+        assert!(
+            error.contains("omits carrier admission evidence"),
+            "{error}"
+        );
+
+        let substituted_envelope_path = write_governed_crossing_archive(
+            repo.path(),
+            &contract,
+            &admission,
+            v2_transaction,
+            true,
+            "repo-receipt-crossing-v2-substituted-envelope.json",
+        );
+        let mut substituted: serde_json::Value = serde_json::from_slice(
+            &fs::read(&substituted_envelope_path).expect("substituted archive"),
+        )
+        .expect("archive json");
+        substituted["receipt"]["crossing"]["authority"]["archive_evidence"]["carrier_admission"]
+            ["authorization_identity"] =
+            serde_json::Value::String(String::from("sha256:substituted"));
+        fs::write(
+            &substituted_envelope_path,
+            serde_json::to_vec(&substituted).expect("substituted archive json"),
+        )
+        .expect("write substituted archive");
+        let error = super::read_repo_receipt_archive_record(&substituted_envelope_path)
+            .expect_err("substituted carrier envelope must refuse");
+        assert!(
+            error.contains("carrier-neutral admission evidence that does not match"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn protected_receipt_history_uses_injected_snapshot_without_local_fallback() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let snapshot = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "project": {"name": "protected-history"}
+        }))
+        .expect("snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        let archive = serde_json::to_vec(&serde_json::json!({
+            "ok": true,
+            "mode": "receipt",
+            "receipt": {
+                "scope": "repo",
+                "contract": "ota.yaml",
+                "contract_snapshot_hash": snapshot_hash,
+                "contract_snapshot_ref": ".ota/contracts/protected-history.json"
+            }
+        }))
+        .expect("archive");
+        let logical_path = repo.path().join(".ota/receipts/protected-history.json");
+
+        super::read_repo_receipt_archive_record_from_bytes(
+            &logical_path,
+            &archive,
+            Some(&snapshot),
+            None,
+        )
+        .expect("protected snapshot bytes should satisfy semantic verification");
+        assert!(!repo.path().join(".ota/contracts").exists());
+
+        let error = super::read_repo_receipt_archive_record_from_bytes(
+            &logical_path,
+            &archive,
+            Some(b"{}"),
+            None,
+        )
+        .expect_err("substituted protected snapshot must refuse");
+        assert!(error.contains("expected"), "{error}");
+    }
+
+    #[test]
+    fn governed_archive_rejects_lane_context_downgrade() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: governed-archive-context
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "printf verify"]
+    safe_for_agent: true
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("governed.json"), snapshot).expect("snapshot");
+        let mut context = governed_task_archive_context(&contract, "publish");
+        context["lane_name"] = serde_json::Value::String(String::from("verify"));
+        let archive_path = receipts.join("repo-receipt-governed-context.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": context,
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        let error = super::read_repo_receipt_archive_record(&archive_path)
+            .expect_err("mutable lane label cannot downgrade governed crossing admission");
+        assert!(
+            error.contains("does not match its canonical selected-invocation scope"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn ordinary_crossing_archive_remains_valid_without_grant_authority() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ordinary-crossing-archive
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("ordinary.json"), snapshot).expect("snapshot");
+        let archive_path = receipts.join("repo-receipt-ordinary.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": {
+                    "schema_version": 1,
+                    "kind": "execution",
+                    "lane_kind": "task",
+                    "lane_name": "publish"
+                },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/ordinary.json",
+                    "crossing": {
+                        "id": "crossing-ordinary",
+                        "created_at": "2026-07-31T00:00:00Z",
+                        "lane_id": "publish",
+                        "lane_kind": "task",
+                        "boundary_family": "unsafe_task",
+                        "classification": "escalated",
+                        "requirement_source": "derived",
+                        "actor_mode": "non_agent",
+                        "principal_attribution_state": "runner_mode_observed",
+                        "intent_source": "operator_flag",
+                        "reason_present": false,
+                        "evidence_attachment_state": "attested",
+                        "evidence_classes": {
+                            "id": "derived",
+                            "created_at": "runner_observed",
+                            "lane_id": "derived",
+                            "lane_kind": "derived",
+                            "boundary_family": "derived",
+                            "classification": "derived",
+                            "requirement_source": "derived",
+                            "actor_mode": "runner_observed",
+                            "principal_attribution_state": "runner_observed",
+                            "intent_source": "derived",
+                            "reason_present": "derived",
+                            "evidence_attachment_state": "derived"
+                        }
+                    }
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        super::read_repo_receipt_archive_record(&archive_path)
+            .expect("ordinary crossing should not require grant authority");
+    }
+
+    #[test]
+    fn governed_readiness_archive_does_not_require_crossing_authority() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: governed-readiness-archive
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("contract");
+        let contracts = repo.path().join(".ota/contracts");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&contracts).expect("contracts directory");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        let snapshot = serde_json::to_vec(&contract).expect("contract snapshot");
+        let snapshot_hash = crate::semantic_identity::contract_snapshot_hash(&snapshot);
+        fs::write(contracts.join("governed.json"), snapshot).expect("snapshot");
+        let archive_path = receipts.join("repo-receipt-readiness.json");
+        fs::write(
+            &archive_path,
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "archive_context": { "schema_version": 1, "kind": "readiness" },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "ota.yaml",
+                    "contract_snapshot_hash": snapshot_hash,
+                    "contract_snapshot_ref": ".ota/contracts/governed.json"
+                }
+            }))
+            .expect("archive json"),
+        )
+        .expect("archive");
+
+        super::read_repo_receipt_archive_record(&archive_path)
+            .expect("readiness archive should not require a crossing");
+    }
+
+    #[test]
+    fn snapshotless_receipt_archive_is_reported_as_legacy_unverified() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let receipts = repo.path().join(".ota/receipts");
+        fs::create_dir_all(&receipts).expect("receipts directory");
+        fs::write(
+            receipts.join("repo-receipt-legacy.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "ok": true,
+                "mode": "receipt",
+                "receipt": { "scope": "repo", "contract": "ota.yaml" }
+            }))
+            .expect("legacy archive json"),
+        )
+        .expect("legacy archive");
+
+        let scan = super::scan_repo_receipt_archives(repo.path()).expect("scan history");
+        assert!(scan.archives.is_empty());
+        assert_eq!(scan.invalid_archives.len(), 1);
+        assert_eq!(scan.invalid_archives[0].posture, "legacy_unverified");
+    }
+
+    #[test]
+    fn crossing_grant_dry_run_and_execution_share_missing_grant_admission() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: governed-crossing-preview
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    safe_for_agent: false
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason_and_grant(
+            "publish",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            None,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value = serde_json::from_str(
+            output
+                .stderr
+                .as_deref()
+                .expect("preview refusal should emit machine output"),
+        )
+        .expect("preview refusal json");
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(
+            json["crossing_grant_admission"]["reason_family"],
+            "crossing_grant_required"
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/crossings").exists());
     }
 
     #[test]
@@ -69049,6 +74463,7 @@ agent:
             &[],
             true,
             true,
+            None,
             None,
             false,
             false,
@@ -69112,6 +74527,7 @@ policies:
             true,
             true,
             None,
+            None,
             false,
             false,
             false,
@@ -69154,7 +74570,6 @@ agent:
 "#,
         )
         .expect("write contract");
-
         let output = super::up_with_agent_reason(
             Some(repo.path()),
             None,
@@ -69164,6 +74579,7 @@ agent:
             Some("release"),
             true,
             true,
+            None,
             None,
             OutputFormat::Json,
             false,
@@ -69183,6 +74599,374 @@ agent:
         assert_eq!(json["canary"]["target"], "release");
         assert_eq!(json["canary"]["execution_started"], false);
         assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn agent_run_dry_run_refuses_native_sandbox_policy_without_starting_execution() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-native
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch should-not-exist"]
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default())
+                .expect("sandbox refusal json");
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(json["sandbox_admission"]["kind"], "sandbox_policy_refused");
+        assert!(
+            json["sandbox_admission"]["refusals"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| {
+                    entry["control"] == "execution.backend" && entry["capability"] == "unsupported"
+                }))
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn explicit_sandbox_target_refuses_when_contract_declares_no_runtime_policy() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-undeclared
+tasks:
+  verify:
+    command: { exe: sh, args: ["-c", "true"] }
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+            None,
+            Some("oci_local"),
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default())
+                .expect("sandbox refusal json");
+        assert_eq!(
+            json["sandbox_admission"]["kind"],
+            "sandbox_policy_not_declared"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_run_dry_run_auto_selects_oci_for_compatible_authoritative_policy() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
+        fs::create_dir(repo.path().join("coverage")).expect("writable carveout");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-container
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: node, args: ["-e", "process.exit(0)"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [coverage]
+      network:
+        default: deny
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("sandbox preview json");
+        assert_eq!(json["sandbox_admission"]["decision"], "admitted", "{json}");
+        assert_eq!(json["sandbox_admission"]["resolution"], "automatic");
+        assert_eq!(
+            json["sandbox_admission"]["provider_target"],
+            crate::sandbox_policy::OCI_LOCAL_TARGET
+        );
+        assert_eq!(
+            json["sandbox_admission"]["canonical_policy"]["target_platform"]["platform"],
+            "linux/amd64"
+        );
+    }
+
+    #[test]
+    fn agent_run_refuses_managed_isolated_paths_before_provider_mutation() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::create_dir(repo.path().join("node_modules")).expect("isolated path");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-isolated
+execution:
+  default_context: verify
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+      platform: linux/amd64
+  contexts:
+    verify:
+      backend: container
+      lifecycle: ephemeral
+      attachments:
+        isolated_paths: [node_modules]
+tasks:
+  verify:
+    context: verify
+    safe_for_agent: true
+    command: { exe: sh, args: ["-c", "touch should-not-exist"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [node_modules]
+      network:
+        default: deny
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command_with_agent_reason(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout: {}\nstderr: {}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        let normalized = strip_ansi_codes(&rendered)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            normalized.contains("pre-mutation cleanup transaction"),
+            "{rendered}"
+        );
+        assert!(!repo.path().join("should-not-exist").exists());
+        assert!(!repo.path().join(".ota/state/managed-engines").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_up_dry_run_carries_the_same_sandbox_admission_truth() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
+        fs::create_dir(repo.path().join("coverage")).expect("writable carveout");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: sandbox-workflow
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: node, args: ["-e", "process.exit(0)"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [coverage]
+      network:
+        default: deny
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+        )
+        .expect("write contract");
+        let output = super::up_with_agent_reason(
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            Some("verify"),
+            true,
+            false,
+            None,
+            None,
+            OutputFormat::Json,
+            false,
+            true,
+            false,
+            false,
+            None,
+            false,
+            false,
+            None,
+        );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("sandbox up preview json");
+        assert_eq!(json["sandbox_admission"]["decision"], "admitted", "{json}");
+        assert_eq!(json["sandbox_admission"]["resolution"], "automatic");
+        assert_eq!(
+            json["sandbox_admission"]["provider_target"],
+            crate::sandbox_policy::OCI_LOCAL_TARGET
+        );
     }
 
     #[test]
@@ -69642,9 +75426,11 @@ tasks:
             fs::read_to_string(run_dir.join("stdout.log")).expect("read stdout log"),
             "stdout line\n"
         );
+        let stderr_log = fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log");
         assert_eq!(
-            fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log"),
-            "stderr line\n"
+            stderr_log.lines().next(),
+            Some("stderr line"),
+            "{stderr_log}"
         );
     }
 
@@ -70194,6 +75980,20 @@ tasks:
     fn run_dry_run_json_returns_preview_shape() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "npm"),
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '11.0.0'; fi\nexit 0\n",
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .expect("fake PATH"),
+            );
+        }
         fs::write(
             repo.path().join("ota.yaml"),
             r#"
@@ -70222,6 +76022,10 @@ tasks:
             false,
             false,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
@@ -70261,6 +76065,28 @@ tasks:
     fn run_dry_run_json_includes_governance_modes_and_effects() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"version\" echo Docker version 27.0.0& exit /b 0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\ncase \"$1\" in\n  info) exit 0 ;;\n  version) echo 'Docker version 27.0.0'; exit 0 ;;\n  *) exit 0 ;;\nesac\n"
+        };
+        write_executable_script(&fake_command_path(&bin_dir, "docker"), docker_body);
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\necho 10.0.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho '10.0.0'\n"
+        };
+        write_executable_script(&fake_command_path(&bin_dir, "pnpm"), pnpm_body);
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).expect("fake PATH"));
+        }
         fs::write(
             repo.path().join("ota.yaml"),
             r#"
@@ -70324,6 +76150,10 @@ tasks:
             false,
             false,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
@@ -70355,7 +76185,7 @@ tasks:
         );
         assert_eq!(
             json["governance"]["evaluation"]["preflight"]["state"],
-            "blocked"
+            "warning_only"
         );
         assert_eq!(
             json["governance"]["evaluation"]["preflight"]["review_required"],
@@ -70718,6 +76548,7 @@ policies:
             super::finalize_governance_evaluation(crate::output::GovernanceEvaluation {
                 preflight: crate::output::GovernancePreflightEvaluation {
                     state: String::from("refused"),
+                    sandbox_admission: None,
                     review_required: Some(true),
                     declared_safe_for_agent: Some(false),
                     effective_safe_for_agent: Some(false),
@@ -70731,6 +76562,15 @@ policies:
                         blocked_task: String::from("publish"),
                         closure_path: vec![String::from("publish")],
                         evidence_class: String::from("attested"),
+                        authority_source: None,
+                        authority_id: None,
+                        requested_grant_id: None,
+                        scope_identity: None,
+                        contract_identity: None,
+                        scope_boundary_family: None,
+                        scope_classification: None,
+                        evaluation_details: None,
+                        execution_started: None,
                     }),
                     crossing_required: None,
                     crossing_classification: None,
@@ -71739,6 +77579,167 @@ tasks:
                 .expect("helm requirement")
                 .required_for_os(super::current_os())
         );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_uses_declared_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  preferred: container
+  backends:
+    container:
+      image: nanoserver
+      platform: windows/amd64
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "exit 1"]
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: powershell
+          args: ["-Command", "exit 0"]
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "verify",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("selected task surface");
+
+        assert!(surface.tools.contains_key("powershell"));
+        assert!(!surface.tools.contains_key("sh"));
+    }
+
+    #[test]
+    fn selected_workflow_requirement_surface_uses_declared_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  preferred: container
+  backends:
+    container:
+      image: nanoserver
+      platform: windows/amd64
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "exit 1"]
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: powershell
+          args: ["-Command", "exit 0"]
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_workflow_task_requirement_surface(
+            &contract,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            Some("verify"),
+        )
+        .expect("selected workflow surface");
+
+        assert!(surface.tools.contains_key("powershell"));
+        assert!(!surface.tools.contains_key("sh"));
+    }
+
+    #[test]
+    fn dry_run_toolchain_targets_preserve_each_container_steps_declared_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    linux:
+      backend: container
+      container:
+        image: node:24-bookworm
+        platform: linux/amd64
+    windows:
+      backend: container
+      container:
+        image: nanoserver
+        platform: windows/amd64
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    platforms:
+      windows:
+        version: "22"
+tasks:
+  prepare:
+    context: windows
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+  verify:
+    context: linux
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+"#,
+        )
+        .expect("contract should parse");
+        let steps = vec![
+            crate::runner::RunPlanStep {
+                task: String::from("prepare"),
+                parent: Some(String::from("verify")),
+                backend: Backend::Container,
+                context: Some(String::from("windows")),
+                backend_selection_source: String::from("task"),
+            },
+            crate::runner::RunPlanStep {
+                task: String::from("verify"),
+                parent: None,
+                backend: Backend::Container,
+                context: Some(String::from("linux")),
+                backend_selection_source: String::from("task"),
+            },
+        ];
+
+        let targets = super::toolchain_targets_for_run_plan_steps(
+            &contract,
+            &steps,
+            ExecutionOverrides::default(),
+        );
+
+        assert!(targets.contains(&(String::from("node"), String::from("windows"))));
+        assert!(targets.contains(&(String::from("node"), String::from("linux"))));
     }
 
     #[test]
@@ -72849,22 +78850,25 @@ tasks:
     }
 
     #[test]
-    fn run_dry_run_blocks_when_selected_container_toolchain_owned_tool_is_missing() {
+    fn run_dry_run_does_not_start_container_precondition_probes() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
         let bin_dir = repo.path().join("bin");
+        let provider_mutation_log = repo.path().join("provider-mutation.log");
         fs::create_dir_all(&bin_dir).expect("create fake bin");
         let docker_body = if cfg!(windows) {
             format!(
-                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'uv'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo run>>\"{mutation_log}\"\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'uv'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
                 started = "__OTA_CONTAINER_PROBE_STARTED__",
                 path = "__OTA_RESOLVED_PATH__",
+                mutation_log = provider_mutation_log.display(),
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n    *\"command -v 'uv'\"*) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'run\\n' >> '{mutation_log}'\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n    *\"command -v 'uv'\"*) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
                 started = "__OTA_CONTAINER_PROBE_STARTED__",
                 path = "__OTA_RESOLVED_PATH__",
+                mutation_log = provider_mutation_log.display(),
             )
         };
         write_executable_script(&fake_command_path(&bin_dir, "docker"), &docker_body);
@@ -72933,15 +78937,15 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.exit_code, 0);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["ok"], false);
-        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(json["resolved"]["backend"], "container");
-        assert_eq!(
-            json["summary"]["primary_blocker"]["summary"],
-            "Tool probe failed: uv"
+        assert!(
+            !provider_mutation_log.exists(),
+            "dry-run must not execute a provider-backed container probe"
         );
     }
 
@@ -74076,6 +80080,7 @@ tasks:
                     RepoExecutionConflictReason::HostService,
                     RepoExecutionConflictReason::ComposeProject,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("container")),
@@ -74087,6 +80092,7 @@ tasks:
                     env_materialization_paths: vec![],
                     write_paths: vec![],
                     write_owners: vec![],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -74134,6 +80140,7 @@ tasks:
                     RepoExecutionConflictReason::ActiveExecutionPresent,
                     RepoExecutionConflictReason::HostService,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("native")),
@@ -74145,6 +80152,7 @@ tasks:
                     env_materialization_paths: vec![],
                     write_paths: vec![],
                     write_owners: vec![],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -76990,6 +82998,7 @@ tasks:
             preview: None,
             governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
                 state: String::from("warning_only"),
+                sandbox_admission: None,
                 review_required: Some(true),
                 declared_safe_for_agent: Some(true),
                 effective_safe_for_agent: Some(false),
@@ -77022,7 +83031,7 @@ tasks:
                         detail: Some(String::from("kind=workflow")),
                     },
                     crate::output::GovernanceDecisionInputEntry {
-                        id: String::from("actor_mode:human"),
+                        id: String::from("actor_mode:non_agent"),
                         family: String::from("actor_mode"),
                         evidence_class: String::from("derived"),
                         replay_class: String::from("pinned"),
@@ -77169,7 +83178,7 @@ tasks:
         assert_eq!(crossing.boundary_family, "unsafe_task");
         assert_eq!(crossing.classification, "escalated");
         assert_eq!(crossing.requirement_source, "derived");
-        assert_eq!(crossing.actor_mode, "human");
+        assert_eq!(crossing.actor_mode, "non_agent");
         assert_eq!(crossing.intent_source, "caller_supplied");
         assert!(crossing.reason_present);
         assert_eq!(crossing.reason.as_deref(), Some("release requested"));
@@ -77192,7 +83201,7 @@ tasks:
             boundary_family: String::from("unsafe_task"),
             classification: String::from("escalated"),
             requirement_source: String::from("derived"),
-            actor_mode: String::from("human"),
+            actor_mode: String::from("non_agent"),
             principal_attribution_state: String::from("runner_mode_only"),
             intent_source: String::from("caller_supplied"),
             reason_present: true,
@@ -77213,6 +83222,7 @@ tasks:
                 reason: Some(String::from("asserted")),
                 evidence_attachment_state: String::from("attested"),
             },
+            authority: None,
         };
         let receipt = ExecutionReceipt {
             ok: false,
@@ -77225,7 +83235,7 @@ tasks:
             assumption_set_hash: None,
             evaluated_inputs: Vec::new(),
             witnessed_observations: crate::output::ExecutionReceiptWitnessedObservations::default(),
-            crossing: Some(crossing.clone()),
+            crossing: Some(Box::new(crossing.clone())),
             refusal: None,
             replay_input_policy: None,
             workspace: None,
@@ -77274,6 +83284,7 @@ tasks:
             preview: None,
             governance_preflight: Some(crate::output::GovernancePreflightEvaluation {
                 state: String::from("warning_only"),
+                sandbox_admission: None,
                 review_required: Some(true),
                 declared_safe_for_agent: Some(false),
                 effective_safe_for_agent: Some(false),
@@ -77438,6 +83449,7 @@ tasks:
                     target: None,
                     task: Some(String::from("setup")),
                 },
+                overrides: None,
                 plan: UpPreviewPlan {
                     actions: Vec::new(),
                     staged_actions: Vec::new(),
@@ -77449,6 +83461,7 @@ tasks:
                 governance: crate::output::GovernanceEvaluation {
                     preflight: crate::output::GovernancePreflightEvaluation {
                         state: String::from("blocked"),
+                        sandbox_admission: None,
                         review_required: None,
                         declared_safe_for_agent: None,
                         effective_safe_for_agent: None,
@@ -77537,6 +83550,8 @@ tasks:
                     sandbox_policy: None,
                     crossing: None,
                 },
+                sandbox_admission: None,
+                crossing_grant_admission: None,
                 blockers: Vec::new(),
             }),
             governance_preflight: None,
@@ -78472,11 +84487,15 @@ workflows:
 
     #[test]
     fn execute_repo_up_runs_prerequisite_workflow_instances_before_selected_instance() {
-        let fixture = tempdir().expect("tempdir");
-        let contract_path = fixture.path().join("ota.yaml");
-        let log_path = fixture.path().join("instances.log");
-        let contents = format!(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("up-prerequisite-workflow-instances"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let fixture = tempdir().expect("tempdir");
+                let contract_path = fixture.path().join("ota.yaml");
+                let log_path = fixture.path().join("instances.log");
+                let contents = format!(
+                    r#"
 version: 1
 project:
   name: workflow-instance-topology-up
@@ -78501,29 +84520,41 @@ workflows:
             - ws0
         env:
           INSTANCE: ws1
+      ws2:
+        topology:
+          requires_instances:
+            - ws1
+        env:
+          INSTANCE: ws2
 "#,
-        );
-        fs::write(&contract_path, &contents).expect("contract should write");
-        let contract =
-            parse_contract_str(&contract_path, &contents).expect("contract should parse");
+                );
+                fs::write(&contract_path, &contents).expect("contract should write");
+                let contract =
+                    parse_contract_str(&contract_path, &contents).expect("contract should parse");
 
-        let result = super::execute_repo_up_with_behavior(
-            &contract,
-            &contract_path,
-            ExecutionOverrides::default(),
-            Some("app@ws1"),
-            None,
-            false,
-            RepoExecutionMode::Capture,
-            super::UpRunBehaviorPreference::Auto,
-            None,
-        )
-        .expect("up should execute")
-        .ok;
-        assert!(result);
+                let result = super::execute_repo_up_with_behavior(
+                    &contract,
+                    &contract_path,
+                    ExecutionOverrides::default(),
+                    Some("app@ws2"),
+                    None,
+                    false,
+                    RepoExecutionMode::Capture,
+                    super::UpRunBehaviorPreference::Auto,
+                    None,
+                )
+                .expect("up should execute")
+                .ok;
+                assert!(result);
 
-        let rendered = fs::read_to_string(&log_path).expect("instance log should read");
-        assert_eq!(rendered, "ws0\nws1\n");
+                let rendered = fs::read_to_string(&log_path).expect("instance log should read");
+                assert_eq!(rendered, "ws0\nws1\nws2\n");
+            })
+            .expect("spawn prerequisite workflow instance worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
@@ -79647,6 +85678,48 @@ url = "http://localhost:${SERENA_MCP_PORT}/mcp"
     }
 
     #[test]
+    fn mixed_resolvable_and_unresolvable_preflight_findings_refuse_before_work() {
+        let provisionable = Finding {
+            identity: None,
+            severity: FindingSeverity::Error,
+            summary: String::from("Missing runtime: java"),
+            why: String::from("java is declared but unavailable"),
+            next: String::from("install java"),
+        };
+        let unresolved = Finding {
+            identity: None,
+            severity: FindingSeverity::Error,
+            summary: String::from("Missing required environment variable: RELEASE_TOKEN"),
+            why: String::from("RELEASE_TOKEN is required"),
+            next: String::from("provide RELEASE_TOKEN"),
+        };
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: String::from("java"),
+            requested_version: String::from("21"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("sdkman"),
+            source_config: None,
+            approved_version: Some(String::from("21")),
+            policy_match: None,
+        };
+
+        assert!(super::preview_errors_are_fully_resolvable(
+            std::slice::from_ref(&provisionable),
+            std::slice::from_ref(&action),
+            &[],
+        ));
+        assert!(!super::preview_errors_are_fully_resolvable(
+            &[provisionable, unresolved],
+            &[action],
+            &[],
+        ));
+    }
+
+    #[test]
     fn finding_targets_provisioning_action_for_unparseable_tool_version() {
         let finding = Finding {
             identity: None,
@@ -80681,6 +86754,118 @@ workflows:
 
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0].tool_name, "pnpm");
+    }
+
+    #[test]
+    fn selected_up_activation_actions_preserve_each_container_target_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    linux:
+      backend: container
+      container:
+        image: node:24-bookworm
+        platform: linux/amd64
+    windows:
+      backend: container
+      container:
+        image: nanoserver
+        platform: windows/amd64
+tools:
+  prepare-cli:
+    version: "*"
+    platforms:
+      linux:
+        acquisition:
+          provider: command
+          shell: sh
+          run: install-prepare-linux
+      windows:
+        acquisition:
+          provider: command
+          shell: pwsh
+          run: Install-PrepareWindows
+  verify-cli:
+    version: "*"
+    platforms:
+      linux:
+        acquisition:
+          provider: command
+          shell: sh
+          run: install-verify-linux
+      windows:
+        acquisition:
+          provider: command
+          shell: pwsh
+          run: Install-VerifyWindows
+tasks:
+  prepare:
+    context: windows
+    run: prepare-cli install
+    requirements:
+      tools:
+        prepare-cli: "*"
+  verify:
+    context: linux
+    run: verify-cli test
+    depends_on: [prepare]
+    requirements:
+      tools:
+        verify-cli: "*"
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("contract should parse");
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![
+                Finding {
+                    identity: None,
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing tool: prepare-cli"),
+                    why: String::from("prepare-cli is missing from the Windows container"),
+                    next: String::from("activate prepare-cli"),
+                },
+                Finding {
+                    identity: None,
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing tool: verify-cli"),
+                    why: String::from("verify-cli is missing from the Linux container"),
+                    next: String::from("activate verify-cli"),
+                },
+            ],
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 2, "{actions:?}");
+        assert!(actions.iter().any(|action| {
+            action.backend == Backend::Container
+                && action.tool_name == "prepare-cli"
+                && action.acquisition.run.as_deref() == Some("Install-PrepareWindows")
+        }));
+        assert!(actions.iter().any(|action| {
+            action.backend == Backend::Container
+                && action.tool_name == "verify-cli"
+                && action.acquisition.run.as_deref() == Some("install-verify-linux")
+        }));
     }
 
     #[test]
@@ -84884,6 +91069,7 @@ execution:
             Path::new("/tmp/ota.yaml"),
             &ProvisioningExecutionTarget::Container {
                 image: String::from("ghcr.io/ota/dev:latest"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
                 container_name: None,
@@ -87798,6 +93984,7 @@ tasks:
         let outcome = super::CommandRunResult {
             exit_code: 42,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -87815,6 +94002,7 @@ tasks:
         let outcome = super::CommandRunResult {
             exit_code: 0,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: Some(String::from("ota-persistent-app")),
@@ -88301,6 +94489,23 @@ workflows:
             super::UpRunBehaviorPreference::Attach,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedLeaveRunning);
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Native),
+            host_port: Some(4000),
+            ..ExecutionOverrides::default()
+        };
+        assert_eq!(
+            super::selected_up_host_port_task_name(&contract, None, overrides),
+            Some("dev")
+        );
+        assert_eq!(
+            super::up_execution_overrides_for_task(&contract, None, "dev", overrides).host_port,
+            Some(4000)
+        );
+        assert_eq!(
+            super::up_execution_overrides_for_task(&contract, None, "attach", overrides).host_port,
+            None
+        );
     }
 
     #[test]
@@ -89567,10 +95772,12 @@ tasks:
                 skip_deps: true,
             },
             &[],
+            true,
             &RunError::RepoExecutionConflict {
                 task: String::from("build"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+                runtime_conflicts: vec![],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -89578,7 +95785,7 @@ tasks:
         ));
 
         assert!(
-            rendered.contains("then rerun `ota run --member web build --mode container --lifecycle persistent --host-port 3002 --memory 4GiB --skip-deps`"),
+            rendered.contains("then rerun `ota run --member web build --mode container --lifecycle persistent --host-port 3002 --memory 4GiB --skip-deps --agent`"),
             "{rendered}"
         );
     }
@@ -89608,10 +95815,12 @@ tasks:
                 ..ExecutionOverrides::default()
             },
             &[],
+            false,
             &RunError::RepoExecutionConflict {
                 task: String::from("deploy:cloudflare"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+                runtime_conflicts: vec![],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -89621,6 +95830,325 @@ tasks:
         assert!(
             rendered.contains("then rerun `ota run deploy:cloudflare --mode native`"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_explains_container_port_conflict_with_native_owner() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-site
+execution:
+  default_context: development
+  contexts:
+    development:
+      backend: container
+      lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+tasks:
+  dev:
+    context: development
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+        let requested = crate::runner::RepoExecutionRuntimeOwner {
+            task: String::from("dev"),
+            listener: Some(String::from("site")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("0.0.0.0")),
+            port: Some(3001),
+            allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+        };
+        let active = requested.clone();
+        let owner = RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: vec![String::from("node_modules")],
+            write_owners: vec![],
+            runtime_owners: vec![active.clone()],
+            service_task: true,
+            parent_pid: None,
+            pid: 52386,
+            started_at: String::from("2026-08-11T15:55:28Z"),
+        };
+        let error = RunError::RepoExecutionConflict {
+            task: String::from("dev"),
+            path: String::from("./.ota/state/active-executions.json"),
+            reasons: vec![RepoExecutionConflictReason::RuntimeListener],
+            runtime_conflicts: vec![crate::runner::RepoExecutionRuntimeConflict {
+                requested,
+                active,
+            }],
+            owners: vec![owner],
+        };
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides {
+                lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            true,
+            &error,
+            "RUN SUMMARY\nStatus:      blocked\nReason:      runtime_listener\nHost port:   3001\nMode:        container\nTask:        dev",
+            None,
+        ));
+
+        assert!(rendered.contains("Host port already in use"), "{rendered}");
+        assert!(
+            rendered.contains("container task `dev` requested host port `3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("active native execution `dev` already owns `0.0.0.0:3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "rerun `ota run dev --lifecycle ephemeral --host-port <free port> --agent` to select a different host port"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Reason:      runtime_listener"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Host port:   3001"), "{rendered}");
+        assert!(rendered.contains("Mode:        container"), "{rendered}");
+
+        let receipt_note = super::run_error_receipt_note(
+            &contract,
+            Path::new("./ota.yaml"),
+            None,
+            "dev",
+            ExecutionOverrides {
+                lifecycle: Some(Lifecycle::Ephemeral),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            true,
+            &error,
+            "details",
+        );
+        assert!(
+            receipt_note.contains(
+                "rerun `ota run dev --lifecycle ephemeral --host-port <free port> --agent`"
+            ),
+            "{receipt_note}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_keeps_generic_title_for_mixed_conflicts() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+        let requested = crate::runner::RepoExecutionRuntimeOwner {
+            task: String::from("dev"),
+            listener: Some(String::from("site")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("127.0.0.1")),
+            port: Some(3001),
+            allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+        };
+        let active = requested.clone();
+        let owner = RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("container")),
+            execution_mode: String::from("container"),
+            lifecycle: Some(String::from("ephemeral")),
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: vec![String::from("node_modules")],
+            write_owners: vec![],
+            runtime_owners: vec![active.clone()],
+            service_task: true,
+            parent_pid: None,
+            pid: 52386,
+            started_at: String::from("2026-08-11T15:55:28Z"),
+        };
+        let mut write_owner = owner.clone();
+        write_owner.execution_mode = String::from("native");
+        write_owner.runtime_owners.clear();
+        write_owner.pid = 52387;
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            false,
+            &RunError::RepoExecutionConflict {
+                task: String::from("dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![
+                    RepoExecutionConflictReason::WritePath,
+                    RepoExecutionConflictReason::RuntimeListener,
+                ],
+                runtime_conflicts: vec![crate::runner::RepoExecutionRuntimeConflict {
+                    requested,
+                    active,
+                }],
+                owners: vec![owner, write_owner],
+            },
+            "RUN SUMMARY\nStatus:      blocked\nReasons:     write_path, runtime_listener\nHost port:   3001\nMode:        native\nTask:        dev",
+            None,
+        ));
+
+        assert!(rendered.contains("Active execution conflict"), "{rendered}");
+        assert!(
+            !rendered.contains("ERROR  Host port already in use"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "--host-port <free port>` on the next retry to resolve the `runtime_listener` conflict"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .contains("resolve the remaining conflict reasons before retrying: `write_path`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "wait for all conflicting executions to finish or stop them before retrying"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("then rerun `ota run dev --mode native --host-port 3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Reasons:     write_path, runtime_listener"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn runtime_conflict_text_does_not_offer_one_port_override_for_multiple_listeners() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+        let conflict = |listener: &str, port: u16| {
+            let owner = crate::runner::RepoExecutionRuntimeOwner {
+                task: String::from("dev"),
+                listener: Some(listener.to_string()),
+                namespace: String::from("host"),
+                protocol: Some(String::from("tcp")),
+                address: Some(String::from("127.0.0.1")),
+                port: Some(port),
+                allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+            };
+            crate::runner::RepoExecutionRuntimeConflict {
+                requested: owner.clone(),
+                active: owner,
+            }
+        };
+
+        let unsupported = super::repo_execution_runtime_conflict_text(
+            &contract,
+            None,
+            "dev",
+            ExecutionOverrides::default(),
+            &[],
+            &[conflict("site", 3001)],
+            String::from("ota run dev --host-port <free port>"),
+            true,
+        )
+        .expect("unsupported runtime conflict text");
+        assert!(
+            unsupported
+                .next_steps
+                .iter()
+                .any(|step| step.contains("listener in `ota.yaml`")),
+            "{:?}",
+            unsupported.next_steps
+        );
+        assert!(
+            unsupported
+                .next_steps
+                .iter()
+                .all(|step| !step.contains("ota run dev --host-port")),
+            "{:?}",
+            unsupported.next_steps
+        );
+
+        let rendered = super::repo_execution_runtime_conflict_text(
+            &contract,
+            None,
+            "dev",
+            ExecutionOverrides::default(),
+            &[],
+            &[conflict("site", 3001), conflict("metrics", 9090)],
+            String::from("ota run dev --host-port <free port>"),
+            true,
+        )
+        .expect("runtime conflict text");
+
+        assert!(
+            rendered
+                .next_steps
+                .iter()
+                .any(|step| step.contains("each conflicting listener")),
+            "{:?}",
+            rendered.next_steps
+        );
+        assert!(
+            rendered
+                .next_steps
+                .iter()
+                .all(|step| !step.contains("ota run dev --host-port")),
+            "{:?}",
+            rendered.next_steps
         );
     }
 
@@ -89649,6 +96177,7 @@ tasks:
                 ..ExecutionOverrides::default()
             },
             &[],
+            false,
             &RunError::RepoExecutionConflict {
                 task: String::from("build"),
                 path: String::from("./.ota/state/active-executions.json"),
@@ -89658,6 +96187,7 @@ tasks:
                     RepoExecutionConflictReason::PersistentBackendFamily,
                     RepoExecutionConflictReason::EnvMaterializationPath,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("container")),
@@ -89672,6 +96202,7 @@ tasks:
                         path: String::from("node_modules"),
                         namespace: String::from("shared:repo-worktree"),
                     }],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -89738,6 +96269,73 @@ tasks:
     }
 
     #[test]
+    fn run_structured_error_text_explains_legacy_service_owner_restart() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            false,
+            &RunError::RepoExecutionConflict {
+                task: String::from("dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::ServiceTask],
+                runtime_conflicts: vec![],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: None,
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("ephemeral")),
+                    host_services: vec![],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
+                    write_paths: vec![String::from("node_modules")],
+                    write_owners: vec![],
+                    runtime_owners: vec![],
+                    service_task: true,
+                    parent_pid: None,
+                    pid: 50216,
+                    started_at: String::from("2026-08-11T14:18:46Z"),
+                }],
+            },
+            "RUN SUMMARY\nStatus:      blocked\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("active service record predates runtime-listener ownership"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("runtime ownership: `legacy_or_unresolved`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("restart it once with the current ota binary"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_structured_error_text_preserves_task_inputs_for_lock_rerun() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -89759,10 +96357,12 @@ tasks:
             None,
             ExecutionOverrides::default(),
             &[String::from("--version"), String::from("patch")],
+            false,
             &RunError::RepoExecutionConflict {
                 task: String::from("version:bump"),
                 path: String::from("./.ota/state/active-executions.json"),
                 reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+                runtime_conflicts: vec![],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -89784,6 +96384,7 @@ tasks:
                 RepoExecutionConflictReason::HostService,
                 RepoExecutionConflictReason::ComposeProject,
             ],
+            runtime_conflicts: vec![],
             owners: vec![],
         });
         assert_eq!(
@@ -90001,6 +96602,7 @@ tasks:
             None,
             ExecutionOverrides::default(),
             &[],
+            false,
             &RunError::PersistentContainerListenerBindConflict {
                 task: String::from("dev"),
                 listener: String::from("http"),
@@ -90068,6 +96670,7 @@ tasks:
             None,
             ExecutionOverrides::default(),
             &[],
+            false,
             &RunError::NativeListenerBindConflict {
                 task: String::from("dev"),
                 listener: String::from("web:http"),
@@ -90129,6 +96732,7 @@ tasks:
             None,
             ExecutionOverrides::default(),
             &[],
+            false,
             &RunError::ToolchainFulfillmentFailed {
                 task: String::from("setup"),
                 toolchain: String::from("rust"),
@@ -90242,6 +96846,89 @@ workflows:
                 "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`)",
             )
         }));
+    }
+
+    #[test]
+    fn up_toolchain_targets_do_not_reassign_dependency_truth_to_the_parent_os() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    linux:
+      backend: container
+      container:
+        image: node:24-bookworm
+        platform: linux/amd64
+    windows:
+      backend: container
+      container:
+        image: nanoserver
+        platform: windows/amd64
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    platforms:
+      windows:
+        version: "22"
+tasks:
+  prepare:
+    context: windows
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+  verify:
+    context: linux
+    run: echo verify
+    depends_on:
+      - prepare
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .expect("contract should parse");
+
+        let targets = super::selected_workflow_toolchain_targets(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            Backend::Container,
+        );
+        assert_eq!(
+            targets,
+            BTreeSet::from([(String::from("node"), String::from("windows"))])
+        );
+        assert_eq!(
+            super::selected_toolchain_target_os_for_task(
+                &contract,
+                "prepare",
+                ExecutionOverrides::default(),
+            ),
+            "windows"
+        );
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+            Backend::Container,
+        );
+        assert!(
+            actions.iter().any(|action| action.contains("version `22`")),
+            "{actions:?}"
+        );
+        assert!(
+            !actions.iter().any(|action| action.contains("version `24`")),
+            "{actions:?}"
+        );
     }
 
     #[test]
@@ -90768,6 +97455,7 @@ tasks:
                 backend: Some(Backend::Container),
                 ..ExecutionOverrides::default()
             },
+            false,
             RunError::ToolchainFulfillmentFailed {
                 task: String::from("dev"),
                 toolchain: String::from("rust"),
@@ -90825,6 +97513,7 @@ tasks:
         let rendered = strip_ansi_codes(&super::render_up_run_error(
             &contract_path,
             ExecutionOverrides::default(),
+            false,
             RunError::NativeListenerBindConflict {
                 task: String::from("dev"),
                 listener: String::from("web:http"),
@@ -90857,6 +97546,7 @@ tasks:
         let rendered = strip_ansi_codes(&super::render_up_run_error(
             Path::new("./ota.yaml"),
             ExecutionOverrides::default(),
+            true,
             RunError::RepoExecutionConflict {
                 task: String::from("setup:dev"),
                 path: String::from("./.ota/state/active-executions.json"),
@@ -90865,6 +97555,7 @@ tasks:
                     RepoExecutionConflictReason::WritePath,
                     RepoExecutionConflictReason::ServiceTask,
                 ],
+                runtime_conflicts: vec![],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: None,
@@ -90885,6 +97576,7 @@ tasks:
                             namespace: String::from("shared:repo-worktree"),
                         },
                     ],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 86601,
@@ -90928,12 +97620,93 @@ tasks:
             "{rendered}"
         );
         assert!(
+            rendered.contains("run `ota up --dry-run --agent` to preview preparation"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("then rerun `ota up --agent`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn up_run_error_explains_runtime_listener_conflict_with_free_port_rerun() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let contract_path = temp_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota-site
+tasks:
+  setup:dev:
+    run: npm run dev
+"#,
+        )
+        .expect("write contract");
+        let requested = crate::runner::RepoExecutionRuntimeOwner {
+            task: String::from("setup:dev"),
+            listener: Some(String::from("site")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("127.0.0.1")),
+            port: Some(3001),
+            allocation: crate::runner::RepoExecutionRuntimeAllocation::Fixed,
+        };
+        let active = requested.clone();
+
+        let rendered = strip_ansi_codes(&super::render_up_run_error(
+            &contract_path,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                host_port: Some(3001),
+                ..ExecutionOverrides::default()
+            },
+            true,
+            RunError::RepoExecutionConflict {
+                task: String::from("setup:dev"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::RuntimeListener],
+                runtime_conflicts: vec![crate::runner::RepoExecutionRuntimeConflict {
+                    requested,
+                    active: active.clone(),
+                }],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: Some(String::from("container")),
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("ephemeral")),
+                    host_services: vec![],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
+                    write_paths: vec![],
+                    write_owners: vec![],
+                    runtime_owners: vec![active],
+                    service_task: true,
+                    parent_pid: None,
+                    pid: 52386,
+                    started_at: String::from("2026-08-11T15:55:28Z"),
+                }],
+            },
+        ));
+
+        assert!(rendered.contains("Host port already in use"), "{rendered}");
+        assert!(
+            rendered.contains("native task `setup:dev` listener `site` requested `127.0.0.1:3001`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("active container execution `dev` already owns `127.0.0.1:3001`"),
+            "{rendered}"
+        );
+        assert!(
             rendered.contains(
-                "run `ota up --dry-run` to preview preparation without starting anything"
+                "rerun `ota up --mode native --host-port <free port> --agent` to select a different host port"
             ),
             "{rendered}"
         );
-        assert!(rendered.contains("then rerun `ota up`"), "{rendered}");
     }
 
     #[test]
@@ -91097,6 +97870,9 @@ tasks:
 
     #[test]
     fn interrupted_non_service_receipt_summary_status_is_interrupted() {
+        assert_eq!(super::proof_command_exit_code(false, true), 130);
+        assert_eq!(super::proof_command_exit_code(false, false), 1);
+        assert_eq!(super::proof_command_exit_code(true, false), 0);
         let mut receipt = ExecutionReceipt {
             ok: false,
             path: String::from("./ota.yaml"),
@@ -91160,6 +97936,7 @@ tasks:
         super::apply_interrupted_run_classification(&mut receipt, None, false, 130);
 
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.status.as_deref(), Some("interrupted"));
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
             &receipt,
             Some("dev"),
@@ -91235,6 +98012,7 @@ tasks:
 
         assert!(!receipt.ok);
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.status.as_deref(), Some("interrupted"));
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
             &receipt,
             Some("dev"),
@@ -96315,6 +103093,264 @@ workflows:
 
     #[cfg(unix)]
     #[test]
+    fn proof_lifecycle_refuses_missing_crossing_grant_before_task_or_service_execution() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let task_marker = fixture.path().join("task-ran");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: lifecycle-grant-refusal
+governance:
+  crossing_authority:
+    authority_id: release-authority
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-grant-refusal
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch '{}'"]
+    safe_for_agent: false
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: publish
+    proof:
+      lifecycle:
+        services: [database]
+"#,
+                task_marker.display()
+            ),
+        )
+        .unwrap();
+
+        let output = super::proof_lifecycle_with_grant(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            None,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default()).unwrap();
+        assert_eq!(json["code"], "crossing_grant_required");
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(
+            json["crossing_grant_admission"]["reason_family"],
+            "crossing_grant_required"
+        );
+        assert!(!task_marker.exists());
+        assert!(!fixture.path().join(".ota/state/crossings").exists());
+
+        let invalid_service = super::proof_lifecycle_with_grant(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            Some("cache"),
+            false,
+            Some("irrelevant-grant"),
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        assert_eq!(invalid_service.exit_code, 2);
+        assert!(
+            invalid_service
+                .stderr
+                .as_deref()
+                .unwrap_or_default()
+                .contains("service `cache` is outside workflow `smoke` lifecycle proof scope")
+        );
+        assert!(!fixture.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_lifecycle_admits_unsafe_assertion_before_starting_safe_workflow() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let build_marker = fixture.path().join("build-ran");
+        let assertion_marker = fixture.path().join("assertion-ran");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: lifecycle-assertion-grant-refusal
+governance:
+  crossing_authority:
+    authority_id: release-authority
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-assertion-grant-refusal
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  build:
+    command:
+      exe: sh
+      args: ["-c", "touch '{}'"]
+    safe_for_agent: true
+  assert-database:
+    command:
+      exe: sh
+      args: ["-c", "touch '{}'"]
+    safe_for_agent: false
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: build
+    proof:
+      lifecycle:
+        services: [database]
+        assertion:
+          task: assert-database
+agent:
+  safe_tasks: [build]
+"#,
+                build_marker.display(),
+                assertion_marker.display(),
+            ),
+        )
+        .unwrap();
+
+        let output = super::proof_lifecycle_with_grant(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            false,
+            None,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default()).unwrap();
+        assert_eq!(json["code"], "crossing_grant_required");
+        assert_eq!(json["execution_started"], false);
+        assert_eq!(json["crossing_grant_admission"]["requested_task"], "smoke");
+        assert!(!build_marker.exists());
+        assert!(!assertion_marker.exists());
+        assert!(!fixture.path().join(".ota/state/crossings").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_lifecycle_agent_refuses_authoritative_sandbox_before_execution() {
+        let fixture = TempDir::new().unwrap();
+        let task_marker = fixture.path().join("task-ran");
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: lifecycle-sandbox
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: alpine:3.22
+      platform: linux/amd64
+      engines: [docker]
+services:
+  database:
+    manager:
+      kind: compose
+      name: lifecycle-sandbox
+      file: compose.yaml
+      service: database
+    lifecycle:
+      teardown_assertion: manager_inactive
+tasks:
+  verify:
+    safe_for_agent: true
+    command:
+      exe: sh
+      args: ["-c", "touch '{}'"]
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+      network:
+        default: deny
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: verify
+    proof:
+      lifecycle:
+        services: [database]
+agent:
+  safe_tasks: [verify]
+"#,
+                task_marker.display()
+            ),
+        )
+        .unwrap();
+
+        let output = super::proof_lifecycle(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("smoke"),
+            None,
+            true,
+            crate::runner::ExecutionOverrides::default(),
+            false,
+            OutputFormat::Text,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 2, "{}", output.stdout);
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        assert!(
+            rendered.contains("does not yet carry sandbox application evidence"),
+            "{rendered}"
+        );
+        assert!(!task_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proof_lifecycle_leases_inactive_compose_service_and_finalizes_it() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -96609,6 +103645,34 @@ workflows:
         )
         .unwrap_err();
         assert!(error.contains("invalid transaction binding"), "{error}");
+        let mut legacy_v2_archive = archive.clone();
+        legacy_v2_archive["version"] = serde_json::json!(2);
+        let legacy_scope = legacy_v2_archive["scope"]
+            .as_object_mut()
+            .expect("legacy lifecycle scope");
+        legacy_scope.remove("target_platform");
+        legacy_scope.remove("host_port");
+        legacy_scope.remove("memory");
+        legacy_scope.remove("skip_dependencies");
+        legacy_v2_archive["proof"]
+            .as_object_mut()
+            .expect("legacy lifecycle proof")
+            .remove("crossing_evidence");
+        let legacy_v2_content = serde_json::to_vec(&legacy_v2_archive).unwrap();
+        let legacy_v2_identity = super::contract_snapshot_hash(&legacy_v2_content);
+        let legacy_v2_path = archive_path.with_file_name(format!(
+            "lifecycle-proof-{}.json",
+            legacy_v2_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(legacy_v2_identity.as_str())
+        ));
+        fs::write(&legacy_v2_path, legacy_v2_content).unwrap();
+        super::verify_lifecycle_proof_archive(
+            &legacy_v2_path,
+            legacy_v2_identity.as_str(),
+            fixture.path(),
+        )
+        .expect("released lifecycle archive v2 should remain inspectable");
         let snapshot_path = fixture
             .path()
             .join(archive["contract_snapshot_ref"].as_str().unwrap());
@@ -96808,7 +103872,7 @@ workflows:
             None => unsafe { env::remove_var("PATH") },
         }
         assert_eq!(
-            assertion_interrupted.exit_code, 1,
+            assertion_interrupted.exit_code, 130,
             "{}",
             assertion_interrupted.stdout
         );
@@ -96864,7 +103928,7 @@ workflows:
             Some(path) => unsafe { env::set_var("PATH", path) },
             None => unsafe { env::remove_var("PATH") },
         }
-        assert_eq!(start_failure.exit_code, 1, "{}", start_failure.stdout);
+        assert_eq!(start_failure.exit_code, 130, "{}", start_failure.stdout);
         let start_failure_json: serde_json::Value =
             serde_json::from_str(&start_failure.stdout).unwrap();
         assert_eq!(
@@ -97128,7 +104192,7 @@ workflows:
             None => unsafe { env::remove_var("PATH") },
         }
 
-        assert_eq!(interrupted.exit_code, 1, "{}", interrupted.stdout);
+        assert_eq!(interrupted.exit_code, 130, "{}", interrupted.stdout);
         let json: serde_json::Value = serde_json::from_str(&interrupted.stdout).unwrap();
         assert_eq!(json["services"][1]["start"]["state"], "interrupted");
         assert_eq!(
@@ -97269,7 +104333,7 @@ workflows:
         let archive: serde_json::Value =
             serde_json::from_slice(&archive_bytes).expect("proof archive json");
         assert_eq!(archive["kind"], "runtime_proof");
-        assert_eq!(archive["version"], 1);
+        assert_eq!(archive["version"], 6);
         assert_eq!(archive["replay_posture"], "witness_only");
         assert_eq!(
             archive["execution_boundary"]["identity"],
@@ -97307,7 +104371,639 @@ workflows:
     }
 
     #[test]
+    fn proof_archive_v6_with_unsafe_seam_requires_direct_crossing_evidence() {
+        let repo = TempDir::new().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: governed-proof-archive
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  verify:
+    run: true
+    safe_for_agent: true
+  observe:
+    run: true
+    safe_for_agent: false
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+    proof:
+      claim: bounded
+      seam_observations:
+      - id: result
+        dependency: result
+        producer_task: verify
+        task: observe
+        marker_env: OTA_PROOF_RESULT_MARKER
+"#,
+        )
+        .expect("write contract");
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .expect("parse contract");
+        let snapshot = super::build_contract_snapshot_artifact(repo.path(), &contract, true)
+            .expect("snapshot");
+        let scope = super::proof_runtime_archive_scope(
+            &contract,
+            &contract_path,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            vec![CrossingProofInvocation {
+                id: String::from("seam_observation:result"),
+                kind: String::from("seam_observation"),
+                task: String::from("observe"),
+                order: 0,
+            }],
+            Some(Duration::from_secs(45)),
+        );
+        let derived = super::proof_runtime_archive_crossing_scope(&contract, &scope, 6)
+            .expect("scope is derived from contract");
+        assert!(derived.0);
+        let proof_scope = derived.1.expect("proof crossing scope");
+        assert_eq!(
+            proof_scope
+                .proof_transaction_selection
+                .as_ref()
+                .and_then(|selection| selection.ready_timeout_seconds),
+            Some(45)
+        );
+        let live_scope = super::evaluate_proof_workflow_crossing_grant(
+            &contract,
+            &contract_path,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &scope.proof_invocations,
+            CrossingProofTransactionSelection {
+                selected_services: Vec::new(),
+                service_closure: Vec::new(),
+                ready_timeout_seconds: Some(45),
+            },
+            "runtime_proof",
+            false,
+            None,
+        )
+        .expect_err("governed proof without a grant must refuse")
+        .semantic_scope
+        .expect("live proof admission scope");
+        assert_eq!(proof_scope, live_scope);
+        let mut explicit_native = scope.clone();
+        explicit_native.backend_override = Some(String::from("native"));
+        let explicit_native_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &explicit_native, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("explicit native override scope");
+        assert_ne!(proof_scope.identity, explicit_native_scope.identity);
+        let mut timeout_mismatch = scope.clone();
+        timeout_mismatch.ready_timeout_seconds = Some(90);
+        let timeout_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &timeout_mismatch, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("timeout mismatch scope");
+        assert_ne!(proof_scope.identity, timeout_scope.identity);
+        let mut memory_mismatch = scope.clone();
+        memory_mismatch.memory = Some(512);
+        let memory_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &memory_mismatch, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("memory mismatch scope");
+        assert_ne!(proof_scope.identity, memory_scope.identity);
+        let mut dependency_mismatch = scope.clone();
+        dependency_mismatch.skip_dependencies = true;
+        let dependency_scope =
+            super::proof_runtime_archive_crossing_scope(&contract, &dependency_mismatch, 6)
+                .and_then(|(_, scope)| scope)
+                .expect("dependency mismatch scope");
+        assert_ne!(proof_scope.identity, dependency_scope.identity);
+        let ordinary_workflow_scope = crossing_scope_for_workflow(
+            &contract,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &[],
+            None,
+            "auto",
+            None,
+            "heavier_workflow",
+            "escalated",
+        )
+        .expect("ordinary workflow scope");
+        assert_ne!(proof_scope.identity, ordinary_workflow_scope.identity);
+        let mut platform_mismatch = scope.clone();
+        platform_mismatch
+            .target_platform
+            .as_mut()
+            .expect("recorded platform")
+            .architecture = String::from("mismatch");
+        assert!(
+            super::proof_runtime_archive_crossing_scope(&contract, &platform_mismatch, 6).is_none()
+        );
+        let record = serde_json::json!({
+            "kind": "runtime_proof",
+            "version": 6,
+            "contract_snapshot_hash": snapshot.hash,
+            "contract_snapshot_ref": super::receipt_storage_path_display(
+                snapshot.archive_path.as_deref().expect("snapshot path")
+            ),
+            "replay_posture": "witness_only",
+            "scope": scope,
+            "proof": {
+                "ok": true,
+                "proof_verdict": "passed_with_unproven_boundaries"
+            }
+        });
+        let bytes = serde_json::to_vec_pretty(&record).expect("archive json");
+        let identity = super::contract_snapshot_hash(&bytes);
+        let path = repo.path().join(".ota/proof/archives").join(format!(
+            "runtime-proof-{}.json",
+            identity.strip_prefix("sha256:").expect("sha identity")
+        ));
+        fs::create_dir_all(path.parent().expect("archive parent")).expect("archive directory");
+        fs::write(path, bytes).expect("archive write");
+
+        assert!(super::load_proof_runtime_archive_candidates(repo.path()).is_empty());
+    }
+
+    #[test]
+    fn proof_archive_rejects_crossing_scope_from_a_different_invocation() {
+        let repo = TempDir::new().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: governed-proof-scope
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  verify:
+    run: true
+    safe_for_agent: true
+  observe:
+    run: true
+    safe_for_agent: false
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+    proof:
+      claim: bounded
+      seam_observations:
+      - id: result
+        dependency: result
+        producer_task: verify
+        task: observe
+        marker_env: OTA_PROOF_RESULT_MARKER
+"#,
+        )
+        .expect("write contract");
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .expect("parse contract");
+        let snapshot = super::build_contract_snapshot_artifact(repo.path(), &contract, true)
+            .expect("snapshot");
+        let scope = super::proof_runtime_archive_scope(
+            &contract,
+            &contract_path,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            vec![CrossingProofInvocation {
+                id: String::from("seam_observation:result"),
+                kind: String::from("seam_observation"),
+                task: String::from("observe"),
+                order: 0,
+            }],
+            None,
+        );
+        let wrong_scope = crossing_scope_for_workflow(
+            &contract,
+            Some("verify"),
+            ExecutionOverrides::default(),
+            &[],
+            None,
+            "auto",
+            None,
+            "heavier_workflow",
+            "escalated",
+        )
+        .expect("ordinary workflow scope");
+        assert_ne!(
+            super::proof_runtime_archive_crossing_scope(&contract, &scope, 5)
+                .and_then(|(_, scope)| scope)
+                .expect("proof scope")
+                .identity,
+            wrong_scope.identity
+        );
+
+        // This reference has a valid canonical crossing scope, but it belongs to ordinary
+        // workflow execution rather than this proof invocation. The loader must refuse before
+        // that receipt can contribute evidence to proof assurance.
+        let record = serde_json::json!({
+            "kind": "runtime_proof",
+            "version": 5,
+            "contract_snapshot_hash": snapshot.hash,
+            "contract_snapshot_ref": super::receipt_storage_path_display(
+                snapshot.archive_path.as_deref().expect("snapshot path")
+            ),
+            "replay_posture": "witness_only",
+            "scope": scope,
+            "proof": {
+                "ok": true,
+                "proof_verdict": "passed_with_unproven_boundaries",
+                "crossing_evidence": {
+                    "receipt_archive_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "receipt_archive_path": ".ota/receipts/repo-receipt-other-scope.json",
+                    "transaction_id": "crossing-other-scope",
+                    "scope_identity": wrong_scope.identity
+                }
+            }
+        });
+        let bytes = serde_json::to_vec_pretty(&record).expect("archive json");
+        let identity = super::contract_snapshot_hash(&bytes);
+        let path = repo.path().join(".ota/proof/archives").join(format!(
+            "runtime-proof-{}.json",
+            identity.strip_prefix("sha256:").expect("sha identity")
+        ));
+        fs::create_dir_all(path.parent().expect("archive parent")).expect("archive directory");
+        fs::write(path, bytes).expect("archive write");
+
+        assert!(super::load_proof_runtime_archive_candidates(repo.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_parent_authority_refuses_an_untrusted_same_process_socket() {
+        let (child, _peer) =
+            std::os::unix::net::UnixStream::pair().expect("Unix stream pair should be available");
+        let error = super::verify_proof_parent_stream(&child)
+            .expect_err("an arbitrary caller-owned socket cannot become parent authority");
+        assert!(
+            error.contains("immediate parent") || error.contains("peer credentials"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_post_admission_failure_finalizes_the_pending_transaction_explicitly() {
+        let root = TempDir::new().expect("repo tempdir");
+        let admission = crate::crossing_authority::CrossingAuthorityAdmission {
+            carrier: crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile,
+            authority_id: String::from("authority:test"),
+            admission_identity: format!("sha256:{}", "1".repeat(64)),
+            authorization_identity: format!("sha256:{}", "2".repeat(64)),
+            scope_identity: format!("sha256:{}", "3".repeat(64)),
+            contract_identity: format!("sha256:{}", "4".repeat(64)),
+            boundary_family: String::from("unsafe_task"),
+            classification: String::from("escalated"),
+            actor_mode: String::from("non_agent"),
+            decision: String::from("allowed"),
+            admitted_at: String::from("2026-01-01T00:00:00Z"),
+        };
+        let transaction =
+            crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
+                .expect("pending transaction");
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(
+            transaction,
+            #[cfg(unix)]
+            None,
+        );
+        let execution_id = format!("sha256:{}", "5".repeat(64));
+
+        let output = super::fail_active_proof_crossing_transaction(
+            "artifact creation failed",
+            execution_id.as_str(),
+        );
+        let terminal =
+            super::active_crossing_transaction_evidence().expect("terminal transaction evidence");
+
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(terminal.state, "failed");
+        assert_eq!(
+            terminal.receipt_status.as_deref(),
+            Some(format!("proof:{execution_id}:failed_before_terminal_output").as_str())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_crossing_terminal_status_uses_the_final_proof_verdict() {
+        let root = TempDir::new().expect("repo tempdir");
+        let admission = crate::crossing_authority::CrossingAuthorityAdmission {
+            carrier: crate::crossing_authority::CrossingAuthorityCarrier::PreboundFile,
+            authority_id: String::from("authority:test"),
+            admission_identity: format!("sha256:{}", "1".repeat(64)),
+            authorization_identity: format!("sha256:{}", "2".repeat(64)),
+            scope_identity: format!("sha256:{}", "3".repeat(64)),
+            contract_identity: format!("sha256:{}", "4".repeat(64)),
+            boundary_family: String::from("unsafe_task"),
+            classification: String::from("escalated"),
+            actor_mode: String::from("non_agent"),
+            decision: String::from("allowed"),
+            admitted_at: String::from("2026-01-01T00:00:00Z"),
+        };
+        let transaction =
+            crate::crossing_transaction::CrossingTransactionGuard::begin(root.path(), &admission)
+                .expect("pending transaction");
+        let _guard = super::ActiveCrossingTransactionGuard::activate_existing(
+            transaction,
+            #[cfg(unix)]
+            None,
+        );
+        let execution_id = format!("sha256:{}", "5".repeat(64));
+
+        let _ = super::finalize_active_proof_crossing_transaction(
+            true,
+            false,
+            "passed_with_unproven_boundaries",
+            execution_id.as_str(),
+        );
+        let terminal =
+            super::active_crossing_transaction_evidence().expect("terminal transaction evidence");
+
+        assert_eq!(terminal.state, "completed");
+        assert_eq!(
+            terminal.receipt_status.as_deref(),
+            Some(format!("proof:{execution_id}:passed_with_unproven_boundaries").as_str())
+        );
+    }
+
+    #[test]
+    fn proof_terminal_binding_rejects_another_same_scope_execution() {
+        let scope_identity = format!("sha256:{}", "6".repeat(64));
+        let expected_execution = format!("sha256:{}", "7".repeat(64));
+        let borrowed_execution = format!("sha256:{}", "8".repeat(64));
+        let transaction = crate::crossing_transaction::CrossingTransactionEvidence {
+            schema_version: 2,
+            identity: format!("sha256:{}", "9".repeat(64)),
+            authentication_posture: String::from("runner_local_content_addressed"),
+            transaction_id: String::from("crossing-borrowed"),
+            authority_carrier: Some(String::from("prebound_file")),
+            authority_id: String::from("authority:test"),
+            admission_identity: format!("sha256:{}", "a".repeat(64)),
+            grant_identity: None,
+            authorization_identity: Some(format!("sha256:{}", "b".repeat(64))),
+            scope_identity: scope_identity.clone(),
+            contract_identity: format!("sha256:{}", "c".repeat(64)),
+            broker_consumption_intent: None,
+            broker_consumption: None,
+            broker_consumption_recovery: None,
+            state: String::from("completed"),
+            created_at: String::from("2026-01-01T00:00:00Z"),
+            finalized_at: Some(String::from("2026-01-01T00:00:01Z")),
+            receipt_status: Some(format!(
+                "proof:{borrowed_execution}:passed_with_unproven_boundaries"
+            )),
+        };
+        let crossing = crate::output::ProofRuntimeCrossingEvidence {
+            receipt_archive_identity: None,
+            receipt_archive_path: None,
+            transaction_id: transaction.transaction_id.clone(),
+            proof_execution_id: Some(borrowed_execution),
+            scope_identity,
+            authority: None,
+        };
+
+        assert!(
+            super::verify_terminal_proof_transaction_binding(
+                &transaction,
+                &crossing,
+                expected_execution.as_str(),
+                "passed_with_unproven_boundaries",
+                true,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proof_authority_projection_refuses_a_stripped_public_transaction() {
+        let expected = serde_json::from_value::<crate::output::ExecutionBoundaryCrossingAuthority>(
+            serde_json::json!({
+                "decision": "allowed",
+                "authority_id": "authority:test",
+                "authority_separation_posture": "current_process_filesystem_guarded",
+                "authority_binding_identity": format!("sha256:{}", "1".repeat(64)),
+                "scope_identity": format!("sha256:{}", "2".repeat(64)),
+                "contract_identity": format!("sha256:{}", "3".repeat(64)),
+                "boundary_family": "unsafe_task",
+                "classification": "escalated",
+                "actor_mode": "non_agent",
+                "admitted_at": "2026-01-01T00:00:00Z",
+                "transaction": { "transaction_id": "crossing-test" },
+                "archive_evidence": { "kind": "test" }
+            }),
+        )
+        .expect("authority projection");
+        let mut stripped = expected.clone();
+        stripped.transaction = None;
+
+        assert!(super::verify_exact_proof_authority_projection(&stripped, &expected).is_err());
+    }
+
+    #[test]
+    fn runtime_proof_scope_remains_proof_specific_without_helper_invocations() {
+        let repo = TempDir::new().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: governed-runtime-proof
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    run: true
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+"#,
+        )
+        .expect("parse contract");
+        let error = super::evaluate_proof_workflow_crossing_grant(
+            &contract,
+            &contract_path,
+            Some("release"),
+            ExecutionOverrides::default(),
+            &[],
+            CrossingProofTransactionSelection {
+                selected_services: Vec::new(),
+                service_closure: Vec::new(),
+                ready_timeout_seconds: Some(30),
+            },
+            "runtime_proof",
+            false,
+            None,
+        )
+        .expect_err("governed proof without a grant must refuse");
+        let scope = error.semantic_scope.expect("proof refusal scope");
+
+        assert_eq!(
+            scope.execution_selection.run_behavior.as_deref(),
+            Some("runtime_proof")
+        );
+        assert!(scope.proof_invocations.is_empty());
+        assert_eq!(
+            scope
+                .proof_transaction_selection
+                .as_ref()
+                .and_then(|selection| selection.ready_timeout_seconds),
+            Some(30)
+        );
+    }
+
+    #[test]
+    fn task_only_runtime_proof_archive_rederives_task_policy() {
+        let contract_path = Path::new("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path,
+            r#"
+version: 1
+project:
+  name: task-only-runtime-proof
+agent:
+  default_task: verify
+tasks:
+  verify:
+    run: true
+    safe_for_agent: true
+"#,
+        )
+        .expect("parse contract");
+        let scope = super::proof_runtime_archive_scope(
+            &contract,
+            contract_path,
+            None,
+            ExecutionOverrides::default(),
+            Vec::new(),
+            None,
+        );
+
+        assert_eq!(scope.workflow, None);
+        assert_eq!(scope.task.as_deref(), Some("verify"));
+        assert_eq!(
+            super::proof_runtime_archive_crossing_scope(&contract, &scope, 5),
+            Some((false, None))
+        );
+    }
+
+    #[test]
+    fn runtime_proof_archive_reconstructs_host_port_selection() {
+        let scope = super::ProofRuntimeArchiveScope {
+            workflow: Some(String::from("verify")),
+            task: Some(String::from("verify")),
+            backend: String::from("container"),
+            backend_override: Some(String::from("container")),
+            provider: None,
+            lifecycle: Some(String::from("ephemeral")),
+            lifecycle_override: Some(String::from("ephemeral")),
+            target: None,
+            target_platform: None,
+            host_port: Some(3001),
+            memory: None,
+            skip_dependencies: false,
+            proof_invocations: Vec::new(),
+            ready_timeout_seconds: None,
+        };
+
+        assert_eq!(
+            super::proof_runtime_archive_overrides(&scope)
+                .expect("archive overrides")
+                .host_port,
+            Some(3001)
+        );
+    }
+
+    #[test]
+    fn lifecycle_archive_preserves_requested_overrides_separately_from_effective_values() {
+        let implicit =
+            serde_json::from_value::<super::LifecycleProofArchiveScope>(serde_json::json!({
+                "workflow": "smoke",
+                "member": null,
+                "selected_services": ["database"],
+                "service_closure": ["database"],
+                "transaction_id": "lifecycle-test",
+                "boundary_identity": null,
+                "backend": "native",
+                "mode": "native",
+                "provider": null,
+                "lifecycle": null,
+                "target": null,
+                "target_os": "linux",
+                "target_platform": null,
+                "host_port": null,
+                "memory": null,
+                "skip_dependencies": false
+            }))
+            .expect("implicit lifecycle archive scope");
+        let implicit_overrides = super::lifecycle_proof_archive_overrides(&implicit)
+            .expect("implicit lifecycle archive overrides");
+        assert_eq!(implicit_overrides.backend, None);
+        assert_eq!(implicit_overrides.lifecycle, None);
+
+        let mut explicit = implicit;
+        explicit.backend_override = Some(String::from("container"));
+        explicit.lifecycle_override = Some(String::from("ephemeral"));
+        let explicit_overrides = super::lifecycle_proof_archive_overrides(&explicit)
+            .expect("explicit lifecycle archive overrides");
+        assert_eq!(explicit_overrides.backend, Some(Backend::Container));
+        assert_eq!(explicit_overrides.lifecycle, Some(Lifecycle::Ephemeral));
+    }
+
+    #[test]
+    fn proof_archive_snapshot_reference_is_repo_relative_and_accepts_same_root_legacy_absolute() {
+        let repo = TempDir::new().expect("repo tempdir");
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let relative = super::proof_archive_contract_snapshot_ref(&hash);
+        let expected = repo
+            .path()
+            .join(".ota/contracts")
+            .join(super::contract_snapshot_archive_file_name(&hash));
+
+        assert_eq!(
+            relative,
+            format!(".ota/contracts/sha256-{}.json", "a".repeat(64))
+        );
+        assert_eq!(
+            super::resolve_proof_archive_contract_snapshot(repo.path(), &relative, &hash),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            super::resolve_proof_archive_contract_snapshot(
+                repo.path(),
+                expected.to_str().expect("absolute snapshot path"),
+                &hash,
+            ),
+            Some(expected)
+        );
+        assert!(
+            super::resolve_proof_archive_contract_snapshot(
+                repo.path(),
+                "/tmp/substituted-snapshot.json",
+                &hash,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn doctor_claim_assurance_requires_a_matching_immutable_runtime_proof_archive() {
+        let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
         fs::write(
@@ -97362,6 +105058,8 @@ workflows:
             &contract_path,
             Some("verify"),
             ExecutionOverrides::default(),
+            Vec::new(),
+            None,
         );
         let claims = super::doctor_claim_assurance(
             &contract,
@@ -99225,7 +106923,10 @@ fn run_contract_targets(
     overrides: ExecutionOverrides,
     members: &[String],
     task_inputs: &[String],
+    effect_overrides: &[String],
     agent: bool,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
     reason: Option<&str>,
     show_receipt: bool,
     force_stream: bool,
@@ -99242,7 +106943,10 @@ fn run_contract_targets(
             None,
             target,
             task_inputs,
+            effect_overrides,
             agent,
+            grant,
+            sandbox_target,
             reason,
             show_receipt,
             force_stream,
@@ -99268,7 +106972,10 @@ fn run_contract_targets(
             Some(member.as_str()),
             target,
             task_inputs,
+            effect_overrides,
             agent,
+            grant,
+            sandbox_target,
             reason,
             show_receipt,
             force_stream,
@@ -99286,7 +106993,10 @@ fn run_single_contract_target(
     member: Option<&str>,
     target: LoadedContractTarget,
     task_inputs: &[String],
+    effect_overrides: &[String],
     agent: bool,
+    grant: Option<&str>,
+    sandbox_target: Option<&str>,
     reason: Option<&str>,
     show_receipt: bool,
     force_stream: bool,
@@ -99322,7 +107032,53 @@ fn run_single_contract_target(
     {
         return Err(failure);
     }
-
+    let initial_grant_admission = evaluate_task_crossing_grant(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+        overrides,
+        task_inputs,
+        effect_overrides,
+        agent,
+        grant,
+        sandbox_target,
+    )
+    .map_err(|error| {
+        crossing_grant_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+            grant,
+            &error,
+        )
+    })?;
+    let sandbox_admission = resolve_task_sandbox_admission(
+        &target.contract,
+        &target.contract_path,
+        selected_task_name.as_str(),
+        overrides,
+        agent,
+        sandbox_target,
+        replay_input_preflight.loaded_policy.as_ref(),
+    )
+    .map_err(|error| {
+        sandbox_admission_run_failure(
+            &target.contract,
+            &target.contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+            &error,
+        )
+    })?;
     // Closure-wide interaction preflight: refuse before any dependency or task execution when
     // any task in the full dependency closure has `interaction: required` and no interactive
     // terminal is available. This check covers the entire planned execution set so that Ota
@@ -99340,7 +107096,10 @@ fn run_single_contract_target(
         let Some(posture) = task_command_interaction_posture_for_backend(
             &target.contract,
             closure_task,
-            step.backend,
+            ExecutionOverrides {
+                backend: Some(step.backend),
+                ..overrides
+            },
         ) else {
             continue;
         };
@@ -99379,14 +107138,6 @@ fn run_single_contract_target(
                 )),
             );
             receipt.blocked = blocked;
-            attach_task_crossing_to_receipt(
-                &mut receipt,
-                &target.contract,
-                task_name,
-                overrides,
-                agent,
-                reason,
-            );
             refresh_execution_receipt_status(&mut receipt);
             let summary =
                 render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
@@ -99405,55 +107156,955 @@ fn run_single_contract_target(
         }
     }
 
-    if let Some(failure) = run_selected_precondition_failure(
-        selected_task_name.as_str(),
-        overrides,
-        member,
-        &target.contract,
-        &target.contract_path,
-        show_receipt,
-        &replay_input_preflight,
-    ) {
-        return Err(failure);
-    }
-
     let use_terminal_passthrough =
         should_use_command_terminal_passthrough(closure_allows_terminal_passthrough);
 
-    if stream_output
-        || use_terminal_passthrough
-        || task_requires_interactive_stream(&target.contract, task_name, overrides)
-    {
-        return run_single_contract_target_streaming(
-            task_name,
+    let grant_admission = if initial_grant_admission.is_some() {
+        evaluate_task_crossing_grant(
+            &target.contract,
+            &target.contract_path,
+            selected_task_name.as_str(),
+            overrides,
+            task_inputs,
+            effect_overrides,
+            agent,
+            grant,
+            sandbox_target,
+        )
+        .map_err(|error| {
+            crossing_grant_run_failure(
+                &target.contract,
+                &target.contract_path,
+                task_name,
+                member,
+                overrides,
+                show_receipt,
+                agent,
+                reason,
+                grant,
+                &error,
+            )
+        })?
+    } else {
+        None
+    };
+    if grant_admission.is_some()
+        && let Some(failure) = run_selected_precondition_failure(
+            selected_task_name.as_str(),
             overrides,
             member,
-            target,
-            task_inputs,
+            &target.contract,
+            &target.contract_path,
+            show_receipt,
+            &replay_input_preflight,
             agent,
             reason,
-            show_receipt,
-            &details_footer,
-            persist_logs,
-            use_terminal_passthrough,
-            replay_input_preflight,
-        );
+            false,
+        )
+    {
+        return Err(failure);
     }
+    let (_crossing_grant_guard, _crossing_transaction_guard) = match grant_admission {
+        Some(plan) => {
+            let (authority, transaction) =
+                activate_crossing_authority_plan(contract_working_dir(&target.contract_path), plan)
+                    .map_err(|error| {
+                        crossing_grant_run_failure(
+                            &target.contract,
+                            &target.contract_path,
+                            task_name,
+                            member,
+                            overrides,
+                            show_receipt,
+                            agent,
+                            reason,
+                            grant,
+                            &error,
+                        )
+                    })?;
+            (Some(authority), Some(transaction))
+        }
+        None => (None, None),
+    };
+    let crossing_failure_contract = target.contract.clone();
+    let crossing_failure_contract_path = target.contract_path.clone();
+    let result = crate::runner::with_oci_local_application_plan(
+        sandbox_admission
+            .as_ref()
+            .and_then(|admission| admission.plan.as_ref()),
+        || {
+            if let Some(failure) = run_selected_precondition_failure(
+                selected_task_name.as_str(),
+                overrides,
+                member,
+                &target.contract,
+                &target.contract_path,
+                show_receipt,
+                &replay_input_preflight,
+                agent,
+                reason,
+                true,
+            ) {
+                return Err(failure);
+            }
+            if stream_output
+                || use_terminal_passthrough
+                || task_requires_interactive_stream(&target.contract, task_name, overrides)
+            {
+                run_single_contract_target_streaming(
+                    task_name,
+                    overrides,
+                    member,
+                    target,
+                    task_inputs,
+                    agent,
+                    reason,
+                    show_receipt,
+                    &details_footer,
+                    persist_logs,
+                    use_terminal_passthrough,
+                    replay_input_preflight,
+                )
+            } else {
+                run_single_contract_target_captured(
+                    task_name,
+                    overrides,
+                    member,
+                    target,
+                    task_inputs,
+                    agent,
+                    reason,
+                    show_receipt,
+                    &details_footer,
+                    persist_logs,
+                    replay_input_preflight,
+                )
+                .map(|result| result.output)
+            }
+        },
+    );
+    result.map_err(|failure| {
+        ensure_crossing_run_failure_evidence(
+            failure,
+            &crossing_failure_contract,
+            &crossing_failure_contract_path,
+            task_name,
+            member,
+            overrides,
+            show_receipt,
+            agent,
+            reason,
+        )
+    })
+}
 
-    run_single_contract_target_captured(
-        task_name,
-        overrides,
-        member,
-        target,
-        task_inputs,
-        agent,
-        reason,
-        show_receipt,
-        &details_footer,
-        persist_logs,
-        replay_input_preflight,
+#[derive(Debug, Clone)]
+struct ResolvedSandboxAdmission {
+    policy: crate::sandbox_policy::SandboxPolicy,
+    effective: crate::sandbox_policy::EffectiveSandboxPolicy,
+    evaluation: crate::sandbox_policy::ProviderApplicationEvaluation,
+    plan: Option<crate::sandbox_policy::OciLocalApplicationPlan>,
+    resolution: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxAdmissionError {
+    kind: &'static str,
+    requested_target: Option<String>,
+    resolved_target: Option<String>,
+    canonical_policy_identity: Option<String>,
+    restriction_overlay_identities: Vec<String>,
+    effective_policy_identity: Option<String>,
+    refusals: Vec<crate::sandbox_policy::SandboxAdmissionRefusal>,
+    supported_alternatives: Vec<String>,
+    message: String,
+}
+
+fn sandbox_admission_json(admission: &ResolvedSandboxAdmission) -> JsonValue {
+    json!({
+        "decision": "admitted",
+        "resolution": admission.resolution,
+        "provider_target": admission.evaluation.provider_target,
+        "canonical_policy": admission.policy,
+        "restriction_overlay_identities": admission.effective.restriction_overlay_identities,
+        "effective_policy": admission.effective,
+        "provider_evaluation": admission.evaluation,
+        "application_plan_identity": admission.plan.as_ref().map(|plan| plan.identity.as_str()),
+    })
+}
+
+fn render_sandbox_admission_preview(admission: &ResolvedSandboxAdmission) -> String {
+    format!(
+        "\n\n{}\n{}\n{}\n{}\n{}",
+        paint_section_title("Sandbox Admission"),
+        detail_list_row(&paint_key("Decision:"), "admitted"),
+        detail_list_row(
+            &paint_key("Target:"),
+            &paint_backticked_code(admission.evaluation.provider_target.as_str()),
+        ),
+        detail_list_row(&paint_key("Resolution:"), admission.resolution,),
+        detail_list_row(
+            &paint_key("Policy:"),
+            &paint_backticked_code(admission.effective.identity.as_str()),
+        ),
     )
-    .map(|result| result.output)
+}
+
+fn render_sandbox_admission_json_preview(admission: &JsonValue) -> String {
+    let decision = admission
+        .get("decision")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    let target = admission
+        .get("provider_target")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unresolved");
+    let resolution = admission
+        .get("resolution")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    let policy = admission
+        .pointer("/effective_policy/identity")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unavailable");
+    format!(
+        "\n\n{}\n{}\n{}\n{}\n{}",
+        paint_section_title("Sandbox Admission"),
+        detail_list_row(&paint_key("Decision:"), decision),
+        detail_list_row(&paint_key("Target:"), &paint_backticked_code(target)),
+        detail_list_row(&paint_key("Resolution:"), resolution),
+        detail_list_row(&paint_key("Policy:"), &paint_backticked_code(policy)),
+    )
+}
+
+fn resolve_task_sandbox_admission(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    requested_target: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
+    let requested_target = requested_target
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if requested_target.is_some_and(|target| target != crate::sandbox_policy::OCI_LOCAL_TARGET) {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_target_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: vec![crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()],
+            message: format!(
+                "sandbox target `{}` is not available; the first enforcing target is `{}`",
+                requested_target.unwrap_or_default(),
+                crate::sandbox_policy::OCI_LOCAL_TARGET
+            ),
+        });
+    }
+    if !agent && requested_target.is_none() {
+        return Ok(None);
+    }
+    let task_has_runtime_boundary = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.runtime_boundary.as_ref())
+        .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .task_execution_closure_names([task_name.to_string()])
+            .iter()
+            .any(|closure_task| {
+                contract
+                    .tasks
+                    .get(closure_task)
+                    .and_then(|task| task.runtime_boundary.as_ref())
+                    .is_some_and(|boundary| !boundary.is_empty())
+            });
+    let policy_has_runtime_boundary = loaded_policy
+        .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
+        .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some());
+    if !task_has_runtime_boundary && !policy_has_runtime_boundary {
+        if requested_target.is_some() {
+            return Err(SandboxAdmissionError {
+                kind: "sandbox_policy_not_declared",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: None,
+                canonical_policy_identity: None,
+                restriction_overlay_identities: Vec::new(),
+                effective_policy_identity: None,
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message: String::from(
+                    "the selected lane and loaded policy do not declare an authoritative runtime boundary; Ota will not convert provider defaults into policy",
+                ),
+            });
+        }
+        return Ok(None);
+    }
+    let policy = crate::sandbox_policy::sandbox_policy_for_task(contract, task_name, overrides)
+        .map_err(|message| SandboxAdmissionError {
+            kind: "sandbox_policy_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: Vec::new(),
+            message,
+        })?;
+    resolve_sandbox_policy_admission(
+        policy,
+        contract_path,
+        overrides,
+        agent,
+        requested_target,
+        loaded_policy,
+    )
+}
+
+fn resolve_workflow_sandbox_admission(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    requested_target: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
+    let requested_target = requested_target
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if requested_target.is_some_and(|target| target != crate::sandbox_policy::OCI_LOCAL_TARGET) {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_target_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: None,
+            canonical_policy_identity: None,
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: vec![crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()],
+            message: format!(
+                "sandbox target `{}` is not available; the first enforcing target is `{}`",
+                requested_target.unwrap_or_default(),
+                crate::sandbox_policy::OCI_LOCAL_TARGET
+            ),
+        });
+    }
+    let workflow_has_runtime_boundary = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.runtime_boundary.as_ref())
+        .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.runtime_boundary.as_ref())
+            .is_some_and(|boundary| !boundary.is_empty())
+        || contract
+            .task_execution_closure_names(
+                contract.selected_workflow_task_closure_names(workflow_name),
+            )
+            .iter()
+            .map(String::as_str)
+            .chain(contract.selected_attach_task_name_for(workflow_name))
+            .any(|task_name| {
+                contract
+                    .tasks
+                    .get(task_name)
+                    .and_then(|task| task.runtime_boundary.as_ref())
+                    .is_some_and(|boundary| !boundary.is_empty())
+            });
+    let policy_has_runtime_boundary = loaded_policy
+        .and_then(|loaded| loaded.pack.policies.sandbox.as_ref())
+        .is_some_and(|sandbox| sandbox.filesystem.is_some() || sandbox.network.is_some());
+    if requested_target.is_none() && !workflow_has_runtime_boundary && !policy_has_runtime_boundary
+    {
+        return Ok(None);
+    }
+    let policy =
+        crate::sandbox_policy::sandbox_policy_for_workflow(contract, workflow_name, overrides)
+            .map_err(|message| SandboxAdmissionError {
+                kind: "sandbox_policy_unavailable",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: None,
+                canonical_policy_identity: None,
+                restriction_overlay_identities: Vec::new(),
+                effective_policy_identity: None,
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message,
+            })?;
+    resolve_sandbox_policy_admission(
+        policy,
+        contract_path,
+        overrides,
+        agent,
+        requested_target,
+        loaded_policy,
+    )
+}
+
+fn resolve_sandbox_policy_admission(
+    policy: crate::sandbox_policy::SandboxPolicy,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    agent: bool,
+    requested_target: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+) -> Result<Option<ResolvedSandboxAdmission>, SandboxAdmissionError> {
+    let restriction_authority = crate::sandbox_policy::restriction_authority_from_loaded_policy(
+        loaded_policy,
+    )
+    .map_err(|message| SandboxAdmissionError {
+        kind: "sandbox_policy_authority_unavailable",
+        requested_target: requested_target.map(str::to_string),
+        resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+        canonical_policy_identity: Some(policy.identity.clone()),
+        restriction_overlay_identities: Vec::new(),
+        effective_policy_identity: None,
+        refusals: Vec::new(),
+        supported_alternatives: Vec::new(),
+        message,
+    })?;
+    let overlays = crate::sandbox_policy::restriction_overlays_from_loaded_policy(loaded_policy)
+        .map_err(|message| SandboxAdmissionError {
+            kind: "sandbox_policy_authority_unavailable",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+            canonical_policy_identity: Some(policy.identity.clone()),
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: None,
+            refusals: Vec::new(),
+            supported_alternatives: Vec::new(),
+            message,
+        })?;
+    let effective =
+        crate::sandbox_policy::effective_sandbox_policy(&policy, &overlays).map_err(|message| {
+            SandboxAdmissionError {
+                kind: "sandbox_policy_conflict",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+                canonical_policy_identity: Some(policy.identity.clone()),
+                restriction_overlay_identities: Vec::new(),
+                effective_policy_identity: None,
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message,
+            }
+        })?;
+    let has_authoritative_controls =
+        crate::sandbox_policy::policy_has_authoritative_runtime_controls(&policy)
+            || crate::sandbox_policy::effective_policy_has_authoritative_runtime_controls(
+                &effective,
+            );
+    if !has_authoritative_controls {
+        if requested_target.is_some() {
+            return Err(SandboxAdmissionError {
+                kind: "sandbox_policy_not_declared",
+                requested_target: requested_target.map(str::to_string),
+                resolved_target: None,
+                canonical_policy_identity: Some(policy.identity),
+                restriction_overlay_identities: effective.restriction_overlay_identities,
+                effective_policy_identity: Some(effective.identity),
+                refusals: Vec::new(),
+                supported_alternatives: Vec::new(),
+                message: String::from(
+                    "the selected lane and loaded policy do not declare an authoritative runtime boundary; Ota will not convert provider defaults into policy",
+                ),
+            });
+        }
+        return Ok(None);
+    }
+    if !agent && requested_target.is_none() {
+        return Ok(None);
+    }
+    let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let (evaluation, plan) = crate::sandbox_policy::evaluate_oci_local_application(
+        &policy,
+        &effective,
+        restriction_authority.as_ref(),
+        repo_root,
+        overrides,
+    )
+    .map_err(|message| SandboxAdmissionError {
+        kind: "sandbox_provider_evaluation_failed",
+        requested_target: requested_target.map(str::to_string),
+        resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+        canonical_policy_identity: Some(policy.identity.clone()),
+        restriction_overlay_identities: effective.restriction_overlay_identities.clone(),
+        effective_policy_identity: Some(effective.identity.clone()),
+        refusals: Vec::new(),
+        supported_alternatives: Vec::new(),
+        message,
+    })?;
+    if !evaluation.admitted {
+        return Err(SandboxAdmissionError {
+            kind: "sandbox_policy_refused",
+            requested_target: requested_target.map(str::to_string),
+            resolved_target: Some(crate::sandbox_policy::OCI_LOCAL_TARGET.to_string()),
+            canonical_policy_identity: Some(policy.identity.clone()),
+            restriction_overlay_identities: effective.restriction_overlay_identities.clone(),
+            effective_policy_identity: Some(effective.identity.clone()),
+            refusals: evaluation.refusals.clone(),
+            supported_alternatives: Vec::new(),
+            message: evaluation
+                .refusals
+                .first()
+                .map(|refusal| refusal.reason.clone())
+                .unwrap_or_else(|| String::from("sandbox provider refused the selected policy")),
+        });
+    }
+    Ok(Some(ResolvedSandboxAdmission {
+        policy,
+        effective,
+        evaluation,
+        plan,
+        resolution: if requested_target.is_some() {
+            "explicit"
+        } else {
+            "automatic"
+        },
+    }))
+}
+
+fn render_sandbox_admission_command_output(
+    command: &str,
+    format: OutputFormat,
+    contract_path: &Path,
+    member: Option<&str>,
+    task: Option<&str>,
+    dry_run: bool,
+    error: &SandboxAdmissionError,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => CommandOutput::failure(stylize_text_failure(
+            &format!("ota {}", command.to_ascii_lowercase()),
+            &format!(
+                "{}\nWhere: {}\nNext: declare a compatible ephemeral container lane or remove the unsupported sandbox request",
+                error.message,
+                display_contract_target(&compact_contract_path(contract_path), member)
+            ),
+        )),
+        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+            "ok": false,
+            "command": command.to_ascii_lowercase(),
+            "path": contract_path.display().to_string(),
+            "member": member,
+            "task": task,
+            "dry_run": dry_run,
+            "execution_started": false,
+            "sandbox_admission": error,
+        }))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sandbox_admission_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    _agent: bool,
+    _reason: Option<&str>,
+    error: &SandboxAdmissionError,
+) -> RunCommandFailure {
+    let mut receipt = run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        None,
+        overrides,
+        task_name,
+        member,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        &[],
+        None,
+        1,
+        false,
+        None,
+        None,
+        Some(String::from(
+            "declare a compatible ephemeral container lane or remove the unsupported sandbox request",
+        )),
+    );
+    receipt.blocked.push(format!(
+        "OTA_SANDBOX_POLICY_REFUSED:{}:{}",
+        error
+            .refusals
+            .first()
+            .map(|refusal| refusal.segment_id.as_str())
+            .unwrap_or(task_name),
+        error.message
+    ));
+    refresh_execution_receipt_status(&mut receipt);
+    let summary = render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+    RunCommandFailure {
+        message: stylize_text_failure("ota run", &error.message),
+        summary: Some(summary),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn crossing_grant_run_failure(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    _agent: bool,
+    _reason: Option<&str>,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> RunCommandFailure {
+    let mut receipt = run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        None,
+        overrides,
+        task_name,
+        member,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        &[],
+        None,
+        1,
+        false,
+        None,
+        None,
+        Some(String::from(
+            "supply an exact live grant from the contract-bound authority, or select a closure that does not require a crossing",
+        )),
+    );
+    receipt
+        .blocked
+        .push(format!("OTA_CROSSING_GRANT_REFUSED:{}", error.reason));
+    receipt.refusal = Some(crossing_grant_refusal_record(
+        contract, task_name, grant, error,
+    ));
+    refresh_execution_receipt_status(&mut receipt);
+    let summary = render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+    RunCommandFailure {
+        message: stylize_text_failure(
+            "ota run",
+            &format!(
+                "Crossing grant admission refused: {error}\nWhere: {}",
+                display_contract_target(&compact_contract_path(contract_path), member)
+            ),
+        ),
+        summary: Some(summary),
+        exit_code: 1,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn crossing_grant_up_result(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    dry_run: bool,
+    _agent: bool,
+    _run_behavior_preference: UpRunBehaviorPreference,
+    grant: Option<&str>,
+    error: GrantAdmissionError,
+) -> RepoUpResult {
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_CROSSING_GRANT_REFUSED"),
+            category: String::from("policy"),
+            owner: String::from("agent_safety"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Crossing grant admission refused"),
+        why: error.to_string(),
+        next: String::from(
+            "supply an exact live grant from the contract-bound authority, or select a workflow closure that does not require a crossing",
+        ),
+    };
+    let task_name = contract
+        .selected_run_task_name_for(workflow_name)
+        .map(str::to_string);
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, contract_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        context,
+        "BLOCKED",
+        "preconditions",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(format!("crossing_grant_{}", error.reason));
+    receipt
+        .blocked
+        .push(format!("OTA_CROSSING_GRANT_REFUSED:{}", error.reason));
+    receipt.refusal = Some(crossing_grant_refusal_record(
+        contract,
+        workflow_name.unwrap_or("default"),
+        grant,
+        &error,
+    ));
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: if dry_run { "preview" } else { "preconditions" },
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+}
+
+fn crossing_grant_refusal_record(
+    contract: &Contract,
+    lane_name: &str,
+    grant: Option<&str>,
+    error: &GrantAdmissionError,
+) -> crate::output::GovernanceRefusalRecord {
+    crate::output::GovernanceRefusalRecord {
+        reason_family: error.reason.to_string(),
+        boundary_family: String::from("crossing_grant_authority"),
+        closure_status: String::from("admission_refused"),
+        requested_task: lane_name.to_string(),
+        blocked_task: lane_name.to_string(),
+        closure_path: vec![lane_name.to_string()],
+        evidence_class: String::from("runner_evaluated"),
+        authority_source: Some(
+            error
+                .authority_source
+                .unwrap_or("prebound_file")
+                .to_string(),
+        ),
+        authority_id: contract
+            .governance
+            .crossing_authority
+            .as_ref()
+            .map(|authority| authority.authority_id.clone()),
+        requested_grant_id: grant.map(str::to_string),
+        scope_identity: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.identity.clone()),
+        contract_identity: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.contract_identity.clone()),
+        scope_boundary_family: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.boundary_family.clone()),
+        scope_classification: error
+            .semantic_scope
+            .as_ref()
+            .map(|scope| scope.classification.clone()),
+        evaluation_details: Some(error.public_details()),
+        execution_started: Some(false),
+    }
+}
+
+fn crossing_execution_up_failure_result(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    error: String,
+) -> RepoUpResult {
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_CROSSING_EXECUTION_FAILED"),
+            category: String::from("policy"),
+            owner: String::from("agent_safety"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Admitted crossing failed before a normal execution result"),
+        why: error,
+        next: String::from(
+            "inspect the crossing failure, repair the selected workflow, and rerun with a fresh live grant",
+        ),
+    };
+    let task_name = contract
+        .selected_run_task_name_for(workflow_name)
+        .map(str::to_string);
+    let context = task_name
+        .as_deref()
+        .map(|task_name| {
+            task_phase_execution_context(contract, contract_path, task_name, overrides, None)
+        })
+        .unwrap_or_else(native_phase_execution_context);
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        context,
+        "FAILED",
+        "execution",
+        workflow_name,
+        None,
+        task_name.as_deref(),
+        std::slice::from_ref(&finding),
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(String::from("crossing_execution_failed_before_receipt"));
+    receipt
+        .blocked
+        .push(String::from("OTA_CROSSING_EXECUTION_FAILED"));
+    refresh_execution_receipt_status(&mut receipt);
+    RepoUpResult {
+        ok: false,
+        status: "FAILED",
+        phase: "execution",
+        report: DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![finding],
+        },
+        preview: None,
+        governance_preflight: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: task_name,
+        task_command: None,
+        exit_code: Some(1),
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+}
+
+fn sandbox_admission_up_result(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    dry_run: bool,
+    agent: bool,
+    run_behavior_preference: UpRunBehaviorPreference,
+    error: SandboxAdmissionError,
+    policy_snapshot: DoctorPolicySnapshot<'_>,
+) -> RepoUpResult {
+    let finding = Finding {
+        identity: Some(FindingIdentity {
+            code: String::from("OTA_SANDBOX_POLICY_REFUSED"),
+            category: String::from("policy"),
+            owner: String::from("agent_safety"),
+        }),
+        severity: FindingSeverity::Error,
+        summary: String::from("Selected sandbox policy cannot be enforced"),
+        why: format!(
+            "{}; canonical_policy={}; effective_policy={}; target={}",
+            error.message,
+            error
+                .canonical_policy_identity
+                .as_deref()
+                .unwrap_or("unavailable"),
+            error
+                .effective_policy_identity
+                .as_deref()
+                .unwrap_or("unavailable"),
+            error.resolved_target.as_deref().unwrap_or("unresolved"),
+        ),
+        next: String::from(
+            "declare a compatible ephemeral container lane or remove the unsupported sandbox request",
+        ),
+    };
+    let report = DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![finding.clone()],
+    };
+    let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+        contract_path,
+        contract,
+        PhaseExecutionContext::default(),
+        "BLOCKED",
+        if dry_run { "preview" } else { "preconditions" },
+        workflow_name,
+        None,
+        None,
+        &report.findings,
+        None,
+        Some(finding.next.clone()),
+        Some(overrides),
+        Some(policy_snapshot),
+    );
+    receipt
+        .blocked
+        .push(format!("OTA_SANDBOX_POLICY_REFUSED:{}", error.message));
+    let mut governance_preflight = up_result_preflight_evaluation(
+        contract,
+        workflow_name,
+        overrides,
+        run_behavior_preference,
+        &report,
+        agent,
+        None,
+    );
+    governance_preflight.state = String::from("refused");
+    governance_preflight.sandbox_admission = serde_json::to_value(&error).ok();
+    RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: if dry_run { "preview" } else { "preconditions" },
+        report,
+        preview: None,
+        governance_preflight: Some(governance_preflight),
+        receipt,
+        service: None,
+        service_command: None,
+        task: None,
+        task_command: None,
+        exit_code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
 }
 
 fn should_use_command_terminal_passthrough(closure_allows_terminal_passthrough: bool) -> bool {
@@ -99463,10 +108114,16 @@ fn should_use_command_terminal_passthrough(closure_allows_terminal_passthrough: 
 fn task_command_interaction_posture_for_backend(
     contract: &Contract,
     task_name: &str,
-    backend: Backend,
+    overrides: ExecutionOverrides,
 ) -> Option<CommandInteractionPosture> {
     contract.tasks.get(task_name).and_then(|task| {
-        task.resolved_execution_for_backend(backend, current_os())
+        let effective = effective_task_execution(contract, task_name, overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
+        task.resolved_execution_for_backend(effective.backend, target_os)
             .and_then(|execution| {
                 execution
                     .command()
@@ -99482,7 +108139,7 @@ fn run_preview_interaction_summary(
     agent: bool,
 ) -> Option<crate::output::RunPreviewInteractionSummary> {
     let backend = effective_task_execution(contract, task_name, overrides).backend;
-    let posture = task_command_interaction_posture_for_backend(contract, task_name, backend)?;
+    let posture = task_command_interaction_posture_for_backend(contract, task_name, overrides)?;
     let terminal_available =
         resolve_command_terminal_passthrough(posture, agent, backend == Backend::Native);
     let resolution = match posture {
@@ -99519,7 +108176,10 @@ fn up_required_command_interaction_blocker(
             let Some(posture) = task_command_interaction_posture_for_backend(
                 contract,
                 step.task.as_str(),
-                step.backend,
+                ExecutionOverrides {
+                    backend: Some(step.backend),
+                    ..overrides
+                },
             ) else {
                 continue;
             };
@@ -99561,8 +108221,13 @@ fn task_requires_interactive_stream(
     let Some(task) = contract.tasks.get(task_name.as_str()) else {
         return false;
     };
-    let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-    task.resolved_execution_for_backend(backend, current_os())
+    let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+    let target_os = crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    );
+    task.resolved_execution_for_backend(effective.backend, target_os)
         .and_then(|execution| execution.compose())
         .is_some_and(|compose| {
             compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Attach
@@ -99577,6 +108242,9 @@ fn run_selected_precondition_failure(
     contract_path: &Path,
     show_receipt: bool,
     replay_input_preflight: &TaskReplayInputPreflight,
+    agent: bool,
+    reason: Option<&str>,
+    allow_provisioning: bool,
 ) -> Option<RunCommandFailure> {
     let task_name = canonical_declared_task_name(contract, task_name);
     if resolve_execution_plan_for_task(contract, contract_path, task_name.as_str(), overrides)
@@ -99608,7 +108276,7 @@ fn run_selected_precondition_failure(
         overrides,
     )
     .ok()?;
-    let preconditions_report = run_preview_preconditions_report(
+    let preconditions_report = run_execution_preconditions_report(
         contract,
         contract_path,
         task_name.as_str(),
@@ -99635,16 +108303,36 @@ fn run_selected_precondition_failure(
             current_requirement_platform(),
         );
         if !native_actions.is_empty() {
+            if !allow_provisioning {
+                // Provisioning belongs to the authorized work unit. Defer only the native
+                // prerequisite findings; every independent deterministic blocker must still
+                // refuse before broker contact.
+                let unresolved_report = run_non_provisionable_preconditions(&preconditions_report);
+                let unresolved_summary = run_preview_summary(
+                    contract,
+                    task_name.as_str(),
+                    member,
+                    &env_report,
+                    &unresolved_report,
+                    overrides,
+                );
+                if !doctor_verdict_blocks_preview(unresolved_summary.verdict) {
+                    return None;
+                }
+                summary = unresolved_summary;
+            }
             let request = crate::policy_pack::ProvisioningBackendRequest {
                 actions: native_actions,
             };
-            if best_effort_apply_provisioning_request_with_adapter_bootstrap(
-                contract_path,
-                &request,
-                &ProvisioningExecutionTarget::Native,
-                replay_input_preflight.loaded_policy.as_ref(),
-            ) {
-                let refreshed_report = run_preview_preconditions_report(
+            if allow_provisioning
+                && best_effort_apply_provisioning_request_with_adapter_bootstrap(
+                    contract_path,
+                    &request,
+                    &ProvisioningExecutionTarget::Native,
+                    replay_input_preflight.loaded_policy.as_ref(),
+                )
+            {
+                let refreshed_report = run_execution_preconditions_report(
                     contract,
                     contract_path,
                     task_name.as_str(),
@@ -99708,6 +108396,67 @@ fn run_selected_precondition_failure(
         .map(str::to_string)
         .collect::<Vec<_>>();
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+    let blocker_finding = Finding {
+        identity: primary_blocker.code.as_ref().map(|code| FindingIdentity {
+            code: code.clone(),
+            category: String::from("preconditions"),
+            owner: String::from("agent_safety"),
+        }),
+        severity: primary_blocker.severity,
+        summary: primary_blocker.summary.clone(),
+        why: primary_blocker.why.clone(),
+        next: primary_blocker.next.clone(),
+    };
+    let mut receipt = repo_execution_receipt_with_overrides(
+        contract_path,
+        contract,
+        task_phase_execution_context(
+            contract,
+            contract_path,
+            task_name.as_str(),
+            overrides,
+            member.map(str::to_string),
+        ),
+        "BLOCKED",
+        "preconditions",
+        None,
+        member,
+        Some(task_name.as_str()),
+        std::slice::from_ref(&blocker_finding),
+        None,
+        Some(rewritten_next.clone()),
+        Some(overrides),
+    );
+    receipt.failure_origin = Some(
+        primary_blocker
+            .code
+            .clone()
+            .unwrap_or_else(|| String::from("precondition_blocked")),
+    );
+    receipt.blocked = vec![primary_blocker.summary.clone()];
+    receipt.replay_input_policy = replay_input_preflight.policy.clone();
+    if let Some(evidence) = crate::runner::current_oci_local_application_evidence() {
+        receipt.witnessed_observations.sandbox_application = Some(evidence);
+    }
+    if active_crossing_transaction_is_pending() {
+        attach_task_crossing_to_receipt(
+            &mut receipt,
+            contract,
+            task_name.as_str(),
+            overrides,
+            agent,
+            reason,
+        );
+    }
+    refresh_execution_receipt_status(&mut receipt);
+    if active_crossing_transaction_is_pending()
+        && let Err(failure) =
+            archive_sandbox_run_receipt(contract, contract_path, &mut receipt, Some(1))
+    {
+        return Some(failure);
+    }
+    let receipt_summary =
+        render_execution_receipt_summary_block(&receipt, Some(task_name.as_str()), "RUN SUMMARY");
 
     if let Some(message) = render_run_version_mismatch_precondition_text(
         &text_path_display,
@@ -99720,9 +108469,9 @@ fn run_selected_precondition_failure(
     ) {
         return Some(RunCommandFailure {
             message,
-            summary: None,
+            summary: Some(receipt_summary),
             exit_code: 1,
-            receipt: None,
+            receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
         });
     }
 
@@ -99743,10 +108492,73 @@ fn run_selected_precondition_failure(
 
     Some(RunCommandFailure {
         message,
-        summary: None,
+        summary: Some(receipt_summary),
         exit_code: 1,
-        receipt: None,
+        receipt: show_receipt.then(|| render_execution_receipt_text(&receipt)),
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_crossing_run_failure_evidence(
+    failure: RunCommandFailure,
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    show_receipt: bool,
+    agent: bool,
+    reason: Option<&str>,
+) -> RunCommandFailure {
+    if !active_crossing_transaction_is_pending() {
+        return failure;
+    }
+    let mut receipt = run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        None,
+        overrides,
+        task_name,
+        member,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        &[],
+        None,
+        failure.exit_code,
+        false,
+        None,
+        None,
+        Some(String::from(
+            "inspect the crossing failure, repair the selected lane, and rerun with a fresh live grant",
+        )),
+    );
+    receipt.failure_origin = Some(String::from("crossing_execution_failed_before_receipt"));
+    receipt
+        .blocked
+        .push(String::from("CROSSING_EXECUTION_FAILED_BEFORE_RECEIPT"));
+    attach_task_crossing_to_receipt(&mut receipt, contract, task_name, overrides, agent, reason);
+    refresh_execution_receipt_status(&mut receipt);
+    if let Err(mut archive_failure) = archive_sandbox_run_receipt(
+        contract,
+        contract_path,
+        &mut receipt,
+        Some(failure.exit_code),
+    ) {
+        archive_failure.message = format!("{}\n{}", failure.message, archive_failure.message);
+        return archive_failure;
+    }
+    let mut failure = failure;
+    failure.summary = Some(render_execution_receipt_summary_block(
+        &receipt,
+        Some(task_name),
+        "RUN SUMMARY",
+    ));
+    failure.receipt = show_receipt.then(|| render_execution_receipt_text(&receipt));
+    failure
 }
 
 fn enforce_task_replay_input_preflight(
@@ -99928,6 +108740,26 @@ fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
         || is_effect_governance_policy_block_summary(summary)
 }
 
+fn run_non_provisionable_preconditions(report: &DoctorReport) -> DoctorReport {
+    DoctorReport {
+        ok: false,
+        provisioning: report.provisioning.clone(),
+        adapter_bootstrap: report.adapter_bootstrap.clone(),
+        execution_target: report.execution_target.clone(),
+        findings: report
+            .findings
+            .iter()
+            .filter(|finding| {
+                !matches!(
+                    finding.code(),
+                    "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+                )
+            })
+            .cloned()
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn run_precondition_blocker_stops_for_effect_policy_block() {
@@ -99936,6 +108768,44 @@ fn run_precondition_blocker_stops_for_effect_policy_block() {
     ));
     assert!(run_precondition_blocker_should_stop_execution(
         "Effect governance policy blocked task effect `network:broad`",
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn run_pre_authority_filter_defers_only_native_provisioning_findings() {
+    let report = DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![
+            Finding::identified(
+                "OTA_NATIVE_PREREQUISITE_MISSING",
+                "environment",
+                "host",
+                FindingSeverity::Error,
+                "Native prerequisite missing: build-tools",
+                "build tools are missing",
+                "install build tools",
+            ),
+            Finding::identified(
+                "OTA_EFFECT_POLICY_DENY",
+                "policy",
+                "organization",
+                FindingSeverity::Error,
+                "Effect governance policy blocked task effect `network:broad`",
+                "the selected effect is denied",
+                "narrow the effect",
+            ),
+        ],
+    };
+
+    let unresolved = run_non_provisionable_preconditions(&report);
+
+    assert_eq!(unresolved.findings.len(), 1);
+    assert!(run_precondition_blocker_should_stop_execution(
+        unresolved.findings[0].summary.as_str()
     ));
 }
 
@@ -100176,6 +109046,12 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -100228,11 +109104,7 @@ fn run_single_contract_target_streaming(
                 outcome.target.clone(),
                 outcome.runtime.clone(),
                 Some(format!(
-                    "{}; {}",
-                    format!(
-                        "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
-                    ),
-                    details_footer
+                    "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`; {details_footer}"
                 )),
             );
             attach_pre_execution_replay_inputs(&mut receipt, &replay_inputs);
@@ -100263,6 +109135,12 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -100302,20 +109180,17 @@ fn run_single_contract_target_streaming(
                 member,
                 persist_logs,
             );
-            let next_note = match &error {
-                RunError::RuntimeListenerResolutionFailed {
-                    task,
-                    listener,
-                    kind,
-                } => runtime_listener_resolution_receipt_note(
-                    member, task, listener, kind, overrides,
-                ),
-                _ => format!(
-                    "{}; {}",
-                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                    details_footer
-                ),
-            };
+            let next_note = run_error_receipt_note(
+                &target.contract,
+                &target.contract_path,
+                member,
+                task_name.as_str(),
+                overrides,
+                task_inputs,
+                agent,
+                &error,
+                details_footer,
+            );
             let error_target = match &error {
                 RunError::PersistentContainerListenerBindConflict { container, .. } => {
                     Some(container.clone())
@@ -100370,11 +109245,13 @@ fn run_single_contract_target_streaming(
                     receipt.next.take(),
                 ));
             }
-            let summary = render_execution_receipt_summary_block(
-                &receipt,
-                Some(task_name.as_str()),
-                "RUN SUMMARY",
-            );
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(1),
+            )?;
+            let summary = render_run_error_summary_block(&receipt, task_name.as_str(), &error);
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_structured_error_text(
@@ -100384,6 +109261,7 @@ fn run_single_contract_target_streaming(
                     member,
                     overrides,
                     task_inputs,
+                    agent,
                     &error,
                     &summary,
                     receipt_text.as_deref(),
@@ -100547,6 +109425,12 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -100636,6 +109520,12 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(outcome.exit_code),
+            )?;
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -100675,20 +109565,17 @@ fn run_single_contract_target_captured(
                 &error_detail,
                 persist_logs,
             );
-            let next_note = match &error {
-                RunError::RuntimeListenerResolutionFailed {
-                    task,
-                    listener,
-                    kind,
-                } => runtime_listener_resolution_receipt_note(
-                    member, task, listener, kind, overrides,
-                ),
-                _ => format!(
-                    "{}; {}",
-                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                    details_footer
-                ),
-            };
+            let next_note = run_error_receipt_note(
+                &target.contract,
+                &target.contract_path,
+                member,
+                task_name.as_str(),
+                overrides,
+                task_inputs,
+                agent,
+                &error,
+                details_footer,
+            );
             let error_target = match &error {
                 RunError::PersistentContainerListenerBindConflict { container, .. } => {
                     Some(container.clone())
@@ -100743,11 +109630,13 @@ fn run_single_contract_target_captured(
                     receipt.next.take(),
                 ));
             }
-            let summary = render_execution_receipt_summary_block(
-                &receipt,
-                Some(task_name.as_str()),
-                "RUN SUMMARY",
-            );
+            archive_sandbox_run_receipt(
+                &target.contract,
+                &target.contract_path,
+                &mut receipt,
+                Some(1),
+            )?;
+            let summary = render_run_error_summary_block(&receipt, task_name.as_str(), &error);
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_structured_error_text(
@@ -100757,6 +109646,7 @@ fn run_single_contract_target_captured(
                     member,
                     overrides,
                     task_inputs,
+                    agent,
                     &error,
                     &summary,
                     receipt_text.as_deref(),
@@ -100840,6 +109730,9 @@ pub(crate) fn replay_baseline_record(
             &target.contract_path,
             false,
             &replay_input_preflight,
+            false,
+            None,
+            true,
         ) {
             return Err(failure.message);
         }
@@ -101659,6 +110552,7 @@ fn apply_interrupted_run_classification(
     }
 
     receipt.ok = false;
+    receipt.status = Some(String::from("interrupted"));
     if receipt.summary.error_count > 0 {
         receipt.summary.error_count = 0;
     }
@@ -103153,9 +112047,61 @@ fn repo_run_command_with_overrides(
     overrides: ExecutionOverrides,
     task_inputs: &[String],
 ) -> String {
+    repo_run_command_with_overrides_for_actor(task_name, member, overrides, task_inputs, false)
+}
+
+fn repo_run_command_with_overrides_for_actor(
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    agent: bool,
+) -> String {
     let mut command = repo_run_command(task_name, member);
     append_run_execution_override_flags(&mut command, overrides);
+    if agent {
+        command.push_str(" --agent");
+    }
     append_repo_run_task_inputs(&mut command, task_inputs);
+    command
+}
+
+fn repo_run_command_with_free_host_port(
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    agent: bool,
+) -> String {
+    let mut command = repo_run_command(task_name, member);
+    append_run_execution_override_flags(
+        &mut command,
+        ExecutionOverrides {
+            host_port: None,
+            ..overrides
+        },
+    );
+    command.push_str(" --host-port <free port>");
+    if agent {
+        command.push_str(" --agent");
+    }
+    append_repo_run_task_inputs(&mut command, task_inputs);
+    command
+}
+
+fn repo_up_command_with_free_host_port(overrides: ExecutionOverrides, agent: bool) -> String {
+    let mut command = String::from("ota up");
+    append_run_execution_override_flags(
+        &mut command,
+        ExecutionOverrides {
+            host_port: None,
+            ..overrides
+        },
+    );
+    command.push_str(" --host-port <free port>");
+    if agent {
+        command.push_str(" --agent");
+    }
     command
 }
 
@@ -103166,6 +112112,19 @@ fn repo_run_stream_command_with_overrides(
     task_inputs: &[String],
 ) -> String {
     let mut command = repo_run_command_with_overrides(task_name, member, overrides, task_inputs);
+    command.push_str(" --stream");
+    command
+}
+
+fn repo_run_stream_command_with_overrides_for_actor(
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    agent: bool,
+) -> String {
+    let mut command =
+        repo_run_command_with_overrides_for_actor(task_name, member, overrides, task_inputs, agent);
     command.push_str(" --stream");
     command
 }
@@ -103295,9 +112254,14 @@ fn selected_toolchain_target_os_for_task(
     contract: &Contract,
     task_name: &str,
     overrides: ExecutionOverrides,
-) -> &'static str {
-    let backend = effective_task_execution(contract, task_name, overrides).backend;
-    requirement_target_os_for_backend(backend)
+) -> String {
+    let effective = effective_task_execution(contract, task_name, overrides);
+    crate::runner::target_os_for_declared_backend(
+        effective.backend,
+        effective.container,
+        current_os(),
+    )
+    .to_string()
 }
 
 fn toolchain_summary_backend_for_mode(mode: DoctorMode) -> Backend {
@@ -103417,18 +112381,15 @@ fn selected_toolchain_summaries_for_task_names(
     }
 
     for task_name in task_names {
-        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-        let target_os = requirement_target_os_for_backend(backend);
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name.as_str())
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let backend = effective.backend;
+        let target_os = crate::runner::target_os_for_declared_backend(
+            backend,
+            effective.container,
+            current_os(),
+        );
+        let toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides);
 
         for toolchain_name in toolchain_names {
             let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
@@ -103471,9 +112432,13 @@ fn selected_task_toolchain_summaries(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Vec<ToolchainSelectionSummary> {
+    let task_names =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+            .map(|plan| plan.tasks)
+            .unwrap_or_else(|_| vec![task_name.to_string()]);
     selected_toolchain_summaries_for_task_names(
         contract,
-        &[task_name.to_string()],
+        &task_names,
         overrides,
         effective_task_execution(contract, task_name, overrides).backend,
     )
@@ -103760,15 +112725,78 @@ fn runtime_listener_resolution_receipt_note(
     listener: &str,
     kind: &RuntimeListenerResolutionKind,
     overrides: ExecutionOverrides,
+    agent: bool,
 ) -> String {
     runtime_listener_resolution_text(
         task,
         listener,
         kind,
-        &repo_run_stream_command_with_overrides(task, member, overrides, &[]),
+        &repo_run_stream_command_with_overrides_for_actor(task, member, overrides, &[], agent),
     )
     .next_steps
     .join("; ")
+}
+
+fn run_error_receipt_note(
+    contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    task_inputs: &[String],
+    agent: bool,
+    error: &RunError,
+    details_footer: &str,
+) -> String {
+    match error {
+        RunError::RuntimeListenerResolutionFailed {
+            task,
+            listener,
+            kind,
+        } => {
+            runtime_listener_resolution_receipt_note(member, task, listener, kind, overrides, agent)
+        }
+        RunError::RepoExecutionConflict {
+            owners,
+            reasons,
+            runtime_conflicts,
+            ..
+        } => repo_execution_runtime_conflict_text(
+            contract,
+            Some(contract_path),
+            task_name,
+            overrides,
+            owners,
+            runtime_conflicts,
+            repo_run_command_with_free_host_port(task_name, member, overrides, task_inputs, agent),
+            reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener],
+        )
+        .map(|conflict| conflict.next_steps.join("; "))
+        .unwrap_or_else(|| {
+            format!(
+                "repair task `{task_name}` and rerun `{}`; {details_footer}",
+                repo_run_command_with_overrides_for_actor(
+                    task_name,
+                    member,
+                    overrides,
+                    task_inputs,
+                    agent,
+                )
+            )
+        }),
+        _ => {
+            format!(
+                "repair task `{task_name}` and rerun `{}`; {details_footer}",
+                repo_run_command_with_overrides_for_actor(
+                    task_name,
+                    member,
+                    overrides,
+                    task_inputs,
+                    agent,
+                )
+            )
+        }
+    }
 }
 
 fn render_run_structured_error_text(
@@ -103778,14 +112806,21 @@ fn render_run_structured_error_text(
     member: Option<&str>,
     overrides: ExecutionOverrides,
     task_inputs: &[String],
+    agent: bool,
     error: &RunError,
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> String {
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
-    let rerun_command = repo_run_command_with_overrides(task_name, member, overrides, task_inputs);
-    let rerun_stream_command =
-        repo_run_stream_command_with_overrides(task_name, member, overrides, task_inputs);
+    let rerun_command =
+        repo_run_command_with_overrides_for_actor(task_name, member, overrides, task_inputs, agent);
+    let rerun_stream_command = repo_run_stream_command_with_overrides_for_actor(
+        task_name,
+        member,
+        overrides,
+        task_inputs,
+        agent,
+    );
     let mut detail_lines = Vec::new();
     let (summary, mut why_lines, mut next_steps) = match error {
         RunError::RuntimeListenerResolutionFailed {
@@ -103797,7 +112832,13 @@ fn render_run_structured_error_text(
                 task,
                 listener,
                 kind,
-                &repo_run_stream_command_with_overrides(task, member, overrides, &[]),
+                &repo_run_stream_command_with_overrides_for_actor(
+                    task,
+                    member,
+                    overrides,
+                    &[],
+                    agent,
+                ),
             );
             (
                 runtime_listener_resolution.summary,
@@ -103829,22 +112870,87 @@ fn render_run_structured_error_text(
         RunError::RepoExecutionConflict {
             path,
             reasons,
+            runtime_conflicts,
             owners,
             ..
         } => {
             detail_lines.extend(repo_execution_conflict_detail_lines(reasons, owners));
-            (
-                String::from("Active execution conflict"),
-                vec![format!(
+            let legacy_service_owner =
+                repo_execution_conflict_has_legacy_service_owner(reasons, owners);
+            let runtime_conflict = repo_execution_runtime_conflict_text(
+                contract,
+                Some(contract_path),
+                task_name,
+                overrides,
+                owners,
+                runtime_conflicts,
+                repo_run_command_with_free_host_port(
+                    task_name,
+                    member,
+                    overrides,
+                    task_inputs,
+                    agent,
+                ),
+                reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener],
+            );
+            if reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener]
+                && let Some(runtime_conflict) = runtime_conflict.as_ref()
+            {
+                (
+                    String::from("Host port already in use"),
+                    runtime_conflict.why_lines.clone(),
+                    runtime_conflict.next_steps.clone(),
+                )
+            } else {
+                let mut why_lines = vec![format!(
                     "ota could not start this task because active repo executions recorded in `{path}` conflict with it"
-                )],
-                vec![
+                )];
+                let mut next_steps = vec![if owners.len() == 1 {
                     String::from(
                         "wait for the conflicting execution to finish or stop it before retrying",
-                    ),
-                    format!("then rerun `{}`", rerun_command),
-                ],
-            )
+                    )
+                } else {
+                    String::from(
+                        "wait for all conflicting executions to finish or stop them before retrying",
+                    )
+                }];
+                if let Some(runtime_conflict) = runtime_conflict {
+                    why_lines.extend(runtime_conflict.why_lines);
+                    next_steps.splice(0..0, runtime_conflict.next_steps);
+                    let remaining_reasons = reasons
+                        .iter()
+                        .copied()
+                        .filter(|reason| *reason != RepoExecutionConflictReason::RuntimeListener)
+                        .map(repo_execution_conflict_reason_label)
+                        .collect::<Vec<_>>();
+                    if !remaining_reasons.is_empty() {
+                        next_steps.push(format!(
+                            "resolve the remaining conflict reasons before retrying: {}",
+                            remaining_reasons
+                                .iter()
+                                .map(|reason| format!("`{reason}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                }
+                if legacy_service_owner {
+                    why_lines.push(String::from(
+                    "the active service record predates runtime-listener ownership, so ota cannot prove that its endpoint is disjoint from this run",
+                ));
+                    next_steps.push(String::from(
+                    "if that service should remain active, restart it once with the current ota binary so its listener ownership is recorded",
+                ));
+                }
+                if runtime_conflicts.is_empty() {
+                    next_steps.push(format!("then rerun `{}`", rerun_command));
+                }
+                (
+                    String::from("Active execution conflict"),
+                    why_lines,
+                    next_steps,
+                )
+            }
         }
         RunError::RepoExecutionLockFailed {
             action,
@@ -103954,7 +113060,7 @@ fn render_run_structured_error_text(
             let summary = resolved_toolchain_fulfillment_attempt_summary(
                 contract,
                 toolchain.as_str(),
-                target_os,
+                target_os.as_str(),
             );
             let provider = summary.provider_label.as_str();
             (
@@ -103983,7 +113089,7 @@ fn render_run_structured_error_text(
             vec![
                 format!(
                     "rerun `{}` without `--skip-deps`",
-                    repo_run_command_with_overrides(
+                    repo_run_command_with_overrides_for_actor(
                         task,
                         member,
                         ExecutionOverrides {
@@ -103991,6 +113097,7 @@ fn render_run_structured_error_text(
                             ..overrides
                         },
                         &[],
+                        agent,
                     )
                 ),
                 task_use_details_step(Some(contract_path), member),
@@ -104082,8 +113189,13 @@ fn render_run_structured_error_text(
                 .and_then(|runtime| runtime.listeners.get(listener.as_str()))
                 .and_then(|listener_spec| listener_spec.project.host.as_ref())
                 .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
-            let run_command =
-                repo_run_command_with_overrides(task.as_str(), member, overrides, &[]);
+            let run_command = repo_run_command_with_overrides_for_actor(
+                task.as_str(),
+                member,
+                overrides,
+                &[],
+                agent,
+            );
             let mut next_steps = vec![format!(
                 "stop the process or container currently using `{address}:{port}`"
             )];
@@ -104166,13 +113278,26 @@ fn render_run_structured_error_text(
                 why_lines.push(String::from(
                     "this usually means another local workload is still running",
                 ));
-                next_steps.push(format!(
-                    "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
-                ));
+                if overrides.host_port == Some(*port) {
+                    why_lines.push(format!(
+                        "the explicit `--host-port {port}` override selected this native bind"
+                    ));
+                    next_steps.push(String::from("or rerun with `--host-port <free port>`"));
+                } else {
+                    next_steps.push(format!(
+                        "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
+                    ));
+                }
             }
             next_steps.push(format!(
                 "rerun `{}`",
-                repo_run_stream_command_with_overrides(task.as_str(), member, overrides, &[])
+                repo_run_stream_command_with_overrides_for_actor(
+                    task.as_str(),
+                    member,
+                    overrides,
+                    &[],
+                    agent,
+                )
             ));
             next_steps.push(task_use_details_step(Some(contract_path), member));
             (
@@ -104203,7 +113328,13 @@ fn render_run_structured_error_text(
                 format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
                 format!(
                     "rerun `{}`",
-                    repo_run_stream_command_with_overrides(task, member, overrides, &[])
+                    repo_run_stream_command_with_overrides_for_actor(
+                        task,
+                        member,
+                        overrides,
+                        &[],
+                        agent,
+                    )
                 ),
             ],
         ),
@@ -104258,19 +113389,12 @@ fn render_run_structured_error_text(
             ],
         ),
         RunError::HostPortOverrideUnsupportedBackend { task, backend } => (
-            String::from("Host port override requires container execution"),
+            String::from("Host port override is unsupported for the selected backend"),
             vec![format!(
-                "task `{task}` resolved to `{backend}` execution, but `--host-port` only applies to projected container host publication"
+                "task `{task}` resolved to `{backend}` execution, but `--host-port` requires a direct native listener, container host publication, or supported native Compose publication"
             )],
             vec![
-                format!(
-                    "rerun with container mode if the contract supports it, for example {}",
-                    paint_code(&match member {
-                        Some(member) =>
-                            format!("ota run --member {member} {task} --mode container"),
-                        None => format!("ota run {task} --mode container"),
-                    })
-                ),
+                task_use_details_step(Some(contract_path), member),
                 String::from("or rerun without `--host-port`"),
             ],
         ),
@@ -104524,10 +113648,15 @@ fn render_run_structured_error_text(
             return output;
         }
         RunError::NativeListenerBindConflict { task, listener, .. } => {
+            let field = if overrides.host_port.is_some() {
+                String::from("execution.host_port")
+            } else {
+                format!("tasks.{task}.runtime.listeners.{listener}.bind.port")
+            };
             let mut output = structured_field_error_text(
                 "RUN",
                 &text_path_display,
-                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                &field,
                 &summary,
                 &why_lines,
                 &next_steps,
@@ -104583,7 +113712,13 @@ fn render_run_structured_error_text(
                 task,
                 listener,
                 kind,
-                &repo_run_stream_command_with_overrides(task, member, overrides, &[]),
+                &repo_run_stream_command_with_overrides_for_actor(
+                    task,
+                    member,
+                    overrides,
+                    &[],
+                    agent,
+                ),
             );
             let mut output = structured_field_error_text(
                 "RUN",
@@ -104758,8 +113893,134 @@ fn repo_execution_conflict_reason_label(
             "env_materialization_path"
         }
         crate::runner::RepoExecutionConflictReason::WritePath => "write_path",
+        crate::runner::RepoExecutionConflictReason::RuntimeListener => "runtime_listener",
         crate::runner::RepoExecutionConflictReason::ServiceTask => "service_task",
     }
+}
+
+struct RepoExecutionRuntimeConflictText {
+    why_lines: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+fn repo_execution_conflict_host_port(
+    runtime_conflicts: &[RepoExecutionRuntimeConflict],
+) -> Option<u16> {
+    let ports = runtime_conflicts
+        .iter()
+        .filter_map(|conflict| conflict.requested.port)
+        .collect::<BTreeSet<_>>();
+    (ports.len() == 1).then(|| *ports.first().expect("one runtime conflict port"))
+}
+
+fn repo_execution_runtime_conflict_text(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    owners: &[RepoExecutionLockOwner],
+    runtime_conflicts: &[RepoExecutionRuntimeConflict],
+    rerun_with_free_host_port: String,
+    complete_conflict: bool,
+) -> Option<RepoExecutionRuntimeConflictText> {
+    if runtime_conflicts.is_empty() {
+        return None;
+    }
+    let requested_mode =
+        format_backend(effective_task_execution(contract, task_name, overrides).backend);
+    let mut why_lines = Vec::new();
+    let mut active_owners = Vec::new();
+    for conflict in runtime_conflicts {
+        let host_port = conflict.requested.port?;
+        let requested_address = conflict.requested.address.as_deref().unwrap_or("host");
+        let requested_listener = conflict.requested.listener.as_deref().unwrap_or("service");
+        let active_owner = owners.iter().find(|owner| {
+            owner
+                .runtime_owners
+                .iter()
+                .any(|runtime_owner| runtime_owner == &conflict.active)
+        });
+        let active_mode = active_owner
+            .map(|owner| owner.execution_mode.as_str())
+            .unwrap_or("unknown");
+        let active_task = active_owner
+            .map(|owner| owner.task.as_str())
+            .unwrap_or(conflict.active.task.as_str());
+        let active_address = conflict.active.address.as_deref().unwrap_or("host");
+        let active_port = conflict.active.port.unwrap_or(host_port);
+        let requested_line = if requested_mode == "native" {
+            format!(
+                "native task `{task_name}` listener `{requested_listener}` requested `{requested_address}:{host_port}`"
+            )
+        } else {
+            format!(
+                "{requested_mode} task `{task_name}` requested host port `{host_port}` for listener `{requested_listener}`"
+            )
+        };
+        let active_line = format!(
+            "active {active_mode} execution `{active_task}` already owns `{active_address}:{active_port}`"
+        );
+        if !why_lines.contains(&requested_line) {
+            why_lines.push(requested_line);
+        }
+        if !why_lines.contains(&active_line) {
+            why_lines.push(active_line);
+        }
+        if let Some(active_owner) = active_owner
+            && !active_owners.contains(&active_owner)
+        {
+            active_owners.push(active_owner);
+        }
+    }
+
+    let selected_host_port = repo_execution_conflict_host_port(runtime_conflicts);
+    let host_port_override_supported = selected_host_port.is_some_and(|host_port| {
+        overrides.host_port.is_some()
+            || crate::runner::preflight_task_execution_overrides(
+                contract,
+                task_name,
+                ExecutionOverrides {
+                    host_port: Some(host_port),
+                    ..overrides
+                },
+                contract_path,
+            )
+            .is_ok()
+    });
+    let mut next_steps = if runtime_conflicts.len() == 1 && host_port_override_supported {
+        vec![if complete_conflict {
+            format!("rerun `{rerun_with_free_host_port}` to select a different host port")
+        } else {
+            format!(
+                "use `{rerun_with_free_host_port}` on the next retry to resolve the `runtime_listener` conflict"
+            )
+        }]
+    } else if runtime_conflicts.len() == 1 {
+        vec![String::from(
+            "select a free port for the conflicting listener in `ota.yaml` before retrying",
+        )]
+    } else {
+        vec![String::from(
+            "select a free host port for each conflicting listener in `ota.yaml` before retrying",
+        )]
+    };
+    let has_active_owners = !active_owners.is_empty();
+    for owner in active_owners {
+        next_steps.push(format!(
+            "or stop the active `{}` execution with pid `{}` before retrying",
+            owner.task, owner.pid
+        ));
+    }
+    if !has_active_owners {
+        next_steps.push(String::from(
+            "or stop the active execution that owns the conflicting listener before retrying",
+        ));
+    }
+
+    Some(RepoExecutionRuntimeConflictText {
+        why_lines,
+        next_steps,
+    })
 }
 
 fn repo_execution_conflict_detail_lines(
@@ -104852,6 +114113,32 @@ fn repo_execution_conflict_detail_lines(
                     .join(", ")
             ));
         }
+        if !owner.runtime_owners.is_empty() {
+            detail_lines.push(format!(
+                "runtime owners: {}",
+                owner
+                    .runtime_owners
+                    .iter()
+                    .map(|runtime_owner| {
+                        let listener = runtime_owner.listener.as_deref().unwrap_or("service");
+                        let endpoint = match (runtime_owner.address.as_deref(), runtime_owner.port)
+                        {
+                            (Some(address), Some(port)) => format!("{address}:{port}"),
+                            _ => runtime_owner.allocation.as_str().to_string(),
+                        };
+                        format!(
+                            "`{}:{} ({}; {})`",
+                            runtime_owner.namespace, listener, endpoint, runtime_owner.task
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        } else if owner.service_task {
+            detail_lines.push(String::from(
+                "runtime ownership: `legacy_or_unresolved` (restart with current ota for precise listener admission)",
+            ));
+        }
         detail_lines.push(format!("pid: `{}`", owner.pid));
         detail_lines.push(format!("started: `{}`", owner.started_at));
     }
@@ -104862,6 +114149,16 @@ fn repo_execution_conflict_detail_lines(
         ));
     }
     detail_lines
+}
+
+fn repo_execution_conflict_has_legacy_service_owner(
+    reasons: &[RepoExecutionConflictReason],
+    owners: &[RepoExecutionLockOwner],
+) -> bool {
+    reasons.contains(&RepoExecutionConflictReason::ServiceTask)
+        && owners
+            .iter()
+            .any(|owner| owner.service_task && owner.runtime_owners.is_empty())
 }
 
 fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
@@ -104903,6 +114200,34 @@ fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+fn render_run_error_summary_block(
+    receipt: &ExecutionReceipt,
+    task_name: &str,
+    error: &RunError,
+) -> String {
+    let (reasons, host_port) = match error {
+        RunError::RepoExecutionConflict {
+            reasons,
+            runtime_conflicts,
+            ..
+        } => (
+            reasons
+                .iter()
+                .map(|reason| repo_execution_conflict_reason_label(*reason).to_string())
+                .collect::<Vec<_>>(),
+            repo_execution_conflict_host_port(runtime_conflicts),
+        ),
+        _ => (Vec::new(), None),
+    };
+    render_execution_receipt_summary_block_with_conflict(
+        receipt,
+        Some(task_name),
+        "RUN SUMMARY",
+        &reasons,
+        host_port,
+    )
 }
 
 fn refresh_execution_receipt_status(receipt: &mut ExecutionReceipt) {
@@ -105956,6 +115281,7 @@ fn capture_witnessed_observations_before_execution(
     Ok(ExecutionReceiptWitnessedObservations {
         query_traces: query_traces.into_values().collect(),
         replay_baseline_recordings: Vec::new(),
+        sandbox_application: None,
     })
 }
 
@@ -106354,6 +115680,229 @@ fn attach_witnessed_observations(
         .witnessed_observations
         .query_traces
         .dedup_by(|left, right| left.id == right.id);
+    if let Some(evidence) = crate::runner::current_oci_local_application_evidence() {
+        receipt.witnessed_observations.sandbox_application = Some(evidence);
+    }
+}
+
+fn archive_sandbox_execution_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    receipt: &mut ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
+) -> Result<Option<PathBuf>, String> {
+    finalize_and_attach_active_crossing_transaction(receipt, terminal_exit_code)?;
+    let application = receipt.witnessed_observations.sandbox_application.as_ref();
+    let crossing_authority = receipt
+        .crossing
+        .as_ref()
+        .and_then(|crossing| crossing.authority.as_ref());
+    if application.is_none() && crossing_authority.is_none() {
+        return Ok(None);
+    }
+    if let Some(application) = application {
+        crate::sandbox_policy::validate_application_evidence_against_contract(
+            contract,
+            application,
+        )?;
+        validate_sandbox_application_against_receipt_steps(application, &receipt.steps)?;
+    }
+    let root = contract_working_dir(contract_path);
+    let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
+    let normalized_snapshot = normalized_contract_snapshot_value(contract)?;
+    receipt.contract_snapshot_hash = Some(snapshot.hash);
+    receipt.contract_snapshot_ref = snapshot
+        .archive_path
+        .as_deref()
+        .map(receipt_storage_path_display);
+    receipt.assumption_set_hash = Some(assumption_set_hash_from_snapshot(&normalized_snapshot)?);
+    let archive_path = next_receipt_archive_path(root, "repo-receipt")?;
+    let archive_path_display = receipt_storage_path_display(&archive_path);
+    let path_display = compact_path(contract_path, ".");
+    let workflow = application
+        .filter(|application| {
+            application.lane.kind == crate::sandbox_policy::SandboxLaneKind::Workflow
+        })
+        .map(|application| application.lane.name.as_str())
+        .or_else(|| {
+            receipt
+                .crossing
+                .as_ref()
+                .filter(|crossing| crossing.lane_kind == "workflow")
+                .and_then(|crossing| crossing.lane_id.strip_prefix("workflow:"))
+        });
+    let authority_scope = crossing_authority
+        .map(|authority| {
+            serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
+                authority.archive_evidence.clone(),
+            )
+            .map(|archived| archived.semantic_scope().clone())
+            .map_err(|error| {
+                format!("crossing authority evidence cannot supply an archive scope: {error}")
+            })
+        })
+        .transpose()?;
+    let archive_context = if let Some(application) = application {
+        crate::output::ReceiptArchiveContext {
+            schema_version: authority_scope.as_ref().map_or(1, |_| 2),
+            kind: String::from("execution"),
+            lane_kind: Some(match application.lane.kind {
+                crate::sandbox_policy::SandboxLaneKind::Task => String::from("task"),
+                crate::sandbox_policy::SandboxLaneKind::Workflow => String::from("workflow"),
+            }),
+            lane_name: Some(application.lane.name.clone()),
+            semantic_scope: authority_scope.clone(),
+        }
+    } else if let Some(crossing) = receipt.crossing.as_ref() {
+        crate::output::ReceiptArchiveContext {
+            schema_version: authority_scope.as_ref().map_or(1, |_| 2),
+            kind: String::from("execution"),
+            lane_kind: Some(crossing.lane_kind.clone()),
+            lane_name: crossing
+                .lane_id
+                .split_once(':')
+                .map(|(_, lane_name)| lane_name.to_string()),
+            semantic_scope: authority_scope,
+        }
+    } else {
+        return Err(String::from(
+            "execution receipt archive is missing immutable lane context",
+        ));
+    };
+    let findings = Vec::<Finding>::new();
+    let payload = ReceiptSuccess {
+        ok: receipt.ok,
+        path: path_display.as_str(),
+        mode: "receipt",
+        workflow,
+        summary: receipt.summary,
+        receipt: receipt.clone(),
+        archive_path: Some(archive_path_display.as_str()),
+        archive_context: Some(archive_context),
+        promoted_baseline: None,
+        artifact_routing: receipt_artifact_routing(
+            contract_path,
+            workflow,
+            receipt,
+            Some(archive_path_display.as_str()),
+        ),
+        findings: &findings,
+    };
+    write_receipt_archive_create_new_durable(&archive_path, &payload)?;
+    let archive_bytes = read_durable_receipt_archive(&archive_path)?;
+    let receipt_archive_identity = format!("sha256:{:x}", Sha256::digest(&archive_bytes));
+    write_proof_runtime_crossing_handoff(root, receipt, &archive_path)?;
+    #[cfg(unix)]
+    persist_active_crossing_systemd_completion(
+        receipt,
+        receipt_archive_identity.as_str(),
+        terminal_exit_code,
+    )?;
+    prune_receipt_archives(
+        root,
+        "repo-receipt",
+        RECEIPT_ARCHIVE_LIMIT,
+        Some(&archive_path),
+    )?;
+    Ok(Some(archive_path))
+}
+
+fn validate_sandbox_application_against_receipt_steps(
+    application: &crate::sandbox_policy::SandboxApplicationEvidence,
+    steps: &[ExecutionReceiptStep],
+) -> Result<(), String> {
+    if application.status
+        == crate::sandbox_policy::SandboxApplicationStatus::EnforcedThroughCompletion
+    {
+        for segment in application.segments.iter().filter(|segment| {
+            segment.purpose
+                == crate::sandbox_policy::SandboxSegmentApplicationPurpose::TaskExecution
+        }) {
+            let task = segment.segment_id.strip_prefix("task:").ok_or_else(|| {
+                String::from("sandbox application segment has an invalid task identity")
+            })?;
+            if !steps.iter().any(|step| {
+                step.task.as_deref() == Some(task)
+                    && step.generation == Some(segment.invocation_generation)
+                    && step.exit_code.is_some()
+            }) {
+                return Err(format!(
+                    "completed sandbox segment `{task}` generation {} has no matching archived execution outcome",
+                    segment.invocation_generation
+                ));
+            }
+        }
+        for step in steps.iter().filter(|step| {
+            step.task.is_some() && step.generation.is_some() && step.exit_code.is_some()
+        }) {
+            let segment_id = format!("task:{}", step.task.as_deref().unwrap_or_default());
+            if !application.segments.iter().any(|segment| {
+                segment.segment_id == segment_id
+                    && segment.purpose
+                        == crate::sandbox_policy::SandboxSegmentApplicationPurpose::TaskExecution
+                    && Some(segment.invocation_generation) == step.generation
+            }) {
+                return Err(format!(
+                    "archived task outcome `{}` generation {} has no matching completed sandbox segment",
+                    step.task.as_deref().unwrap_or_default(),
+                    step.generation.unwrap_or_default()
+                ));
+            }
+        }
+    }
+    for edge in &application.selected_edges {
+        let executed_task = edge.executed_segment.strip_prefix("task:").ok_or_else(|| {
+            String::from("selected sandbox edge has an invalid executed-segment identity")
+        })?;
+        if edge.state == crate::sandbox_policy::SandboxSelectedEdgeState::Entered
+            && !steps.iter().any(|step| {
+                step.task.as_deref() == Some(executed_task)
+                    && step.generation == Some(edge.generation)
+                    && step.exit_code.is_some()
+            })
+        {
+            return Err(format!(
+                "entered sandbox edge for `{executed_task}` generation {} has no matching archived execution outcome",
+                edge.generation
+            ));
+        }
+        if let (Some(source_exit_code), Some(source_generation)) =
+            (edge.source_exit_code, edge.source_generation)
+        {
+            let source_task = edge.source.strip_prefix("task:").ok_or_else(|| {
+                String::from("selected sandbox edge has an invalid source-segment identity")
+            })?;
+            if !steps.iter().any(|step| {
+                step.task.as_deref() == Some(source_task)
+                    && step.generation == Some(source_generation)
+                    && step.exit_code == Some(source_exit_code)
+            }) {
+                return Err(format!(
+                    "conditional sandbox edge source `{source_task}` generation {source_generation} does not match an archived execution outcome"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn archive_sandbox_run_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    receipt: &mut ExecutionReceipt,
+    terminal_exit_code: Option<i32>,
+) -> Result<(), RunCommandFailure> {
+    archive_sandbox_execution_receipt(contract, contract_path, receipt, terminal_exit_code)
+        .map(|_| ())
+        .map_err(|message| RunCommandFailure {
+            message: stylize_text_failure(
+                "ota run",
+                &format!("sandbox enforcement evidence could not be archived: {message}"),
+            ),
+            summary: None,
+            exit_code: 1,
+            receipt: Some(render_execution_receipt_text(receipt)),
+        })
 }
 
 // Generated artifacts are contract lineage, not freshness proof. Capture the exact declaration
@@ -106992,6 +116541,11 @@ fn run_execution_receipt_with_shared(
                 Some(step.exit_code),
             );
             receipt_step.stage_family = String::from("verify");
+            receipt_step.task = Some(step.name.clone());
+            receipt_step.generation = Some(step.generation);
+            let (relation, parent) = execution_receipt_step_relation(&step.relation);
+            receipt_step.execution_relation = Some(relation.to_string());
+            receipt_step.execution_parent = parent.map(str::to_string);
             if let Some(step_resolutions) = step_target_resolutions.get(index)
                 && !step_resolutions.is_empty()
             {
@@ -107188,6 +116742,21 @@ fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) 
     }
 
     relation_detail
+}
+
+fn execution_receipt_step_relation(
+    relation: &TaskExecutionRelation,
+) -> (&'static str, Option<&str>) {
+    match relation {
+        TaskExecutionRelation::Requested => ("requested", None),
+        TaskExecutionRelation::DependsOn { parent } => ("depends_on", Some(parent.as_str())),
+        TaskExecutionRelation::AggregateMember { parent } => {
+            ("aggregate_member", Some(parent.as_str()))
+        }
+        TaskExecutionRelation::AfterSuccess { parent } => ("after_success", Some(parent.as_str())),
+        TaskExecutionRelation::AfterFailure { parent } => ("after_failure", Some(parent.as_str())),
+        TaskExecutionRelation::AfterAlways { parent } => ("after_always", Some(parent.as_str())),
+    }
 }
 
 struct RunCommandFailure {
@@ -109194,6 +118763,84 @@ fn write_proof_artifact(path: &Path, content: &str) -> Result<(), String> {
     })
 }
 
+const PROOF_RUNTIME_CROSSING_HANDOFF_PATH_ENV: &str = "OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH";
+const PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN_ENV: &str = "OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProofRuntimeCrossingHandoff {
+    token: String,
+    receipt_archive_identity: String,
+    receipt_archive_path: String,
+    transaction_id: String,
+    scope_identity: String,
+}
+
+fn write_proof_runtime_crossing_handoff(
+    root: &Path,
+    receipt: &ExecutionReceipt,
+    archive_path: &Path,
+) -> Result<(), String> {
+    let (Some(path), Some(token), Some(authority)) = (
+        env::var_os(PROOF_RUNTIME_CROSSING_HANDOFF_PATH_ENV),
+        env::var_os(PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN_ENV),
+        receipt
+            .crossing
+            .as_ref()
+            .and_then(|crossing| crossing.authority.as_ref()),
+    ) else {
+        return Ok(());
+    };
+    let archived =
+        serde_json::from_value::<ArchivedCrossingGrantEvidence>(authority.archive_evidence.clone())
+            .map_err(|error| {
+                format!("crossing handoff cannot decode archived authority evidence: {error}")
+            })?;
+    let transaction = archived
+        .transaction
+        .as_ref()
+        .ok_or_else(|| String::from("crossing handoff requires a terminal crossing transaction"))?;
+    let path = PathBuf::from(path);
+    let proof_root = root.join(".ota").join("proof");
+    let parent = path.parent().ok_or_else(|| {
+        String::from("crossing handoff path must have an existing proof-artifact parent")
+    })?;
+    let canonical_proof_root = proof_root.canonicalize().map_err(|error| {
+        format!("could not resolve proof artifact root for crossing handoff: {error}")
+    })?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| format!("could not resolve crossing handoff parent: {error}"))?;
+    if !canonical_parent.starts_with(&canonical_proof_root) {
+        return Err(String::from(
+            "crossing handoff path must remain inside the runner-owned proof artifact directory",
+        ));
+    }
+    let archive_bytes = fs::read(archive_path).map_err(|error| {
+        format!("could not read crossing receipt archive for proof handoff: {error}")
+    })?;
+    let handoff = ProofRuntimeCrossingHandoff {
+        token: token.to_string_lossy().to_string(),
+        receipt_archive_identity: contract_snapshot_hash(&archive_bytes),
+        receipt_archive_path: receipt_storage_path_display(archive_path),
+        transaction_id: transaction.transaction_id.clone(),
+        scope_identity: archived.admission.semantic_scope.identity,
+    };
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|error| format!("could not create runner-owned crossing handoff: {error}"))?;
+    serde_json::to_writer_pretty(&mut file, &handoff)
+        .map_err(|error| format!("could not serialize crossing handoff: {error}"))?;
+    file.write_all(b"\n")
+        .map_err(|error| format!("could not finalize crossing handoff: {error}"))
+}
+
 const PROOF_RUNTIME_ARCHIVE_LIMIT: usize = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109203,12 +118850,34 @@ struct ProofRuntimeArchiveScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     task: Option<String>,
     backend: String,
+    /// Preserve caller selection separately from the effective backend. An implicit native
+    /// default and an explicit native override are different authority scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lifecycle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_platform: Option<crate::sandbox_policy::SandboxTargetPlatform>,
+    /// Host-port selection changes the execution boundary and is part of the canonical
+    /// invocation scope used to re-derive crossing authority.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<u64>,
+    #[serde(default)]
+    skip_dependencies: bool,
+    /// The runtime-proof helper invocation set is part of the selected proof scope. Keep role,
+    /// declaration order, and duplicate task uses rather than collapsing to task names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    proof_invocations: Vec<CrossingProofInvocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ready_timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -109250,7 +118919,11 @@ struct ProofRuntimeArchiveReadRecord {
 #[derive(Debug, Deserialize)]
 struct ProofRuntimeArchiveReadProof {
     ok: bool,
+    #[serde(default)]
+    execution_id: Option<String>,
     proof_verdict: String,
+    #[serde(default)]
+    crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
 }
 
 #[derive(Serialize)]
@@ -109271,14 +118944,26 @@ struct LifecycleProofArchiveScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     boundary_identity: Option<String>,
     backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend_override: Option<String>,
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lifecycle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     target: Option<String>,
     target_os: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_platform: Option<crate::sandbox_policy::SandboxTargetPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<u64>,
+    #[serde(default)]
+    skip_dependencies: bool,
 }
 
 #[derive(Serialize)]
@@ -109317,6 +119002,8 @@ struct LifecycleProofArchiveReadProof {
     proof_scope: ProofRuntimeScope,
     services: Vec<LifecycleProofServiceRecord>,
     proof_verdict: String,
+    #[serde(default)]
+    crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
     finalization: crate::output::LifecycleProofFinalization,
     assertion: Option<LifecycleProofAssertion>,
     not_proved: Vec<ProofRuntimeNotProved>,
@@ -109337,19 +119024,56 @@ fn build_proof_runtime_archive_context(
     contract_path: &Path,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
+    proof_invocations: Vec<CrossingProofInvocation>,
+    ready_timeout: Option<Duration>,
 ) -> Result<ProofRuntimeArchiveContext, String> {
     let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
-    let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
+    snapshot.archive_path.as_deref().ok_or_else(|| {
         String::from("proof archive requires an archived semantic contract snapshot")
     })?;
-    let scope = proof_runtime_archive_scope(contract, contract_path, workflow_name, overrides);
+    let scope = proof_runtime_archive_scope(
+        contract,
+        contract_path,
+        workflow_name,
+        overrides,
+        proof_invocations,
+        ready_timeout,
+    );
+    let contract_snapshot_ref = proof_archive_contract_snapshot_ref(&snapshot.hash);
     Ok(ProofRuntimeArchiveContext {
         contract_identity: repo_contract_identity(contract),
         contract_snapshot_hash: snapshot.hash,
-        contract_snapshot_ref: receipt_storage_path_display(snapshot_path),
+        contract_snapshot_ref,
         source_identity: git_head_identity(root).ok(),
         scope,
     })
+}
+
+fn proof_archive_contract_snapshot_ref(snapshot_hash: &str) -> String {
+    receipt_storage_path_display(
+        &PathBuf::from(".ota")
+            .join("contracts")
+            .join(contract_snapshot_archive_file_name(snapshot_hash)),
+    )
+}
+
+fn resolve_proof_archive_contract_snapshot(
+    root: &Path,
+    snapshot_ref: &str,
+    snapshot_hash: &str,
+) -> Option<PathBuf> {
+    let relative = PathBuf::from(proof_archive_contract_snapshot_ref(snapshot_hash));
+    let expected = contract_snapshot_archive_dir(root)
+        .join(contract_snapshot_archive_file_name(snapshot_hash));
+    let recorded = Path::new(snapshot_ref);
+    if recorded == relative {
+        Some(root.join(relative))
+    } else if recorded == expected {
+        // Compatibility for archives emitted before proof references became repo-relative.
+        Some(expected)
+    } else {
+        None
+    }
 }
 
 fn proof_runtime_archive_scope(
@@ -109357,6 +119081,8 @@ fn proof_runtime_archive_scope(
     contract_path: &Path,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
+    proof_invocations: Vec<CrossingProofInvocation>,
+    ready_timeout: Option<Duration>,
 ) -> ProofRuntimeArchiveScope {
     let task = selected_up_primary_task_name(contract, workflow_name).map(str::to_string);
     let phase = task.as_deref().map_or_else(
@@ -109365,13 +119091,55 @@ fn proof_runtime_archive_scope(
             task_phase_execution_context(contract, contract_path, task_name, overrides, None)
         },
     );
+    let resolved_overrides = ExecutionOverrides {
+        backend: match phase.backend.as_deref() {
+            Some("native") => Some(Backend::Native),
+            Some("container") => Some(Backend::Container),
+            Some("remote") => Some(Backend::Remote),
+            _ => overrides.backend,
+        },
+        lifecycle: match phase.lifecycle.as_deref() {
+            Some("ephemeral") => Some(Lifecycle::Ephemeral),
+            Some("persistent") => Some(Lifecycle::Persistent),
+            _ => overrides.lifecycle,
+        },
+        ..overrides
+    };
+    let target_platform = proof_runtime_archive_policy(
+        contract,
+        workflow_name,
+        task.as_deref(),
+        resolved_overrides,
+        &proof_invocations,
+    )
+    .ok()
+    .map(|policy| policy.target_platform);
     ProofRuntimeArchiveScope {
         workflow: workflow_name.map(str::to_string),
         task,
         backend: phase.backend.unwrap_or_else(|| String::from("native")),
+        backend_override: overrides.backend.map(|backend| {
+            String::from(match backend {
+                Backend::Native => "native",
+                Backend::Container => "container",
+                Backend::Remote => "remote",
+            })
+        }),
         provider: phase.provider,
         lifecycle: phase.lifecycle,
+        lifecycle_override: overrides.lifecycle.map(|lifecycle| {
+            String::from(match lifecycle {
+                Lifecycle::Ephemeral => "ephemeral",
+                Lifecycle::Persistent => "persistent",
+            })
+        }),
         target: phase.target,
+        target_platform,
+        host_port: overrides.host_port,
+        memory: overrides.memory,
+        skip_dependencies: overrides.skip_deps,
+        proof_invocations,
+        ready_timeout_seconds: ready_timeout.map(|duration| duration.as_secs()),
     }
 }
 
@@ -109390,6 +119158,242 @@ fn claim_assurance_proof_scope(
         lifecycle: scope.lifecycle.clone(),
         target: scope.target.clone(),
     }
+}
+
+fn proof_runtime_archive_overrides(scope: &ProofRuntimeArchiveScope) -> Option<ExecutionOverrides> {
+    let backend = match scope.backend_override.as_deref() {
+        None => None,
+        Some("native") => Some(Backend::Native),
+        Some("container") => Some(Backend::Container),
+        Some("remote") => Some(Backend::Remote),
+        Some(_) => return None,
+    };
+    let lifecycle = match scope.lifecycle_override.as_deref() {
+        None => None,
+        Some("ephemeral") => Some(Lifecycle::Ephemeral),
+        Some("persistent") => Some(Lifecycle::Persistent),
+        Some(_) => return None,
+    };
+    Some(ExecutionOverrides {
+        backend,
+        lifecycle,
+        host_port: scope.host_port,
+        memory: scope.memory,
+        skip_deps: scope.skip_dependencies,
+        ..ExecutionOverrides::default()
+    })
+}
+
+fn lifecycle_proof_archive_overrides(
+    scope: &LifecycleProofArchiveScope,
+) -> Result<ExecutionOverrides, String> {
+    let backend = match scope.backend_override.as_deref() {
+        None => None,
+        Some("native") => Some(Backend::Native),
+        Some("container") => Some(Backend::Container),
+        Some("remote") => Some(Backend::Remote),
+        Some(_) => {
+            return Err(String::from(
+                "lifecycle proof archive has invalid backend override",
+            ));
+        }
+    };
+    let lifecycle = match scope.lifecycle_override.as_deref() {
+        None => None,
+        Some("ephemeral") => Some(Lifecycle::Ephemeral),
+        Some("persistent") => Some(Lifecycle::Persistent),
+        Some(_) => {
+            return Err(String::from(
+                "lifecycle proof archive has invalid lifecycle override",
+            ));
+        }
+    };
+    Ok(ExecutionOverrides {
+        backend,
+        lifecycle,
+        host_port: scope.host_port,
+        memory: scope.memory,
+        skip_deps: scope.skip_dependencies,
+        ..ExecutionOverrides::default()
+    })
+}
+
+fn proof_runtime_archive_policy(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    proof_invocations: &[CrossingProofInvocation],
+) -> Result<crate::sandbox_policy::SandboxPolicy, String> {
+    let proof_roots = proof_invocations
+        .iter()
+        .map(|invocation| invocation.task.clone())
+        .collect::<Vec<_>>();
+    if workflow_name.is_some() || contract.selected_workflow(None).is_some() {
+        return crate::sandbox_policy::sandbox_policy_for_workflow_with_proof_roots(
+            contract,
+            workflow_name,
+            overrides,
+            &proof_roots,
+        );
+    }
+    if proof_roots.is_empty() {
+        return task_name
+            .ok_or_else(|| String::from("runtime proof archive does not select a task"))
+            .and_then(|task| {
+                crate::sandbox_policy::sandbox_policy_for_task(contract, task, overrides)
+            });
+    }
+    Err(String::from(
+        "task-only runtime proof archive cannot declare workflow proof helper invocations",
+    ))
+}
+
+/// Re-derive the complete selected proof scope from the archived contract. Archive-authored
+/// safety and a different child receipt scope cannot establish crossing authority.
+fn proof_runtime_archive_crossing_scope(
+    contract: &Contract,
+    scope: &ProofRuntimeArchiveScope,
+    archive_version: u32,
+) -> Option<(bool, Option<crate::crossing::CrossingSemanticScope>)> {
+    let overrides = proof_runtime_archive_overrides(scope)?;
+    let workflow = contract.selected_workflow(scope.workflow.as_deref());
+    if scope.workflow.is_some() && workflow.is_none() {
+        return None;
+    }
+    let workflow_name = workflow.as_ref().map(|(name, _)| *name);
+    let task_name = workflow
+        .is_none()
+        .then_some(scope.task.as_deref())
+        .flatten();
+    let policy = proof_runtime_archive_policy(
+        contract,
+        workflow_name,
+        task_name,
+        overrides,
+        &scope.proof_invocations,
+    )
+    .ok()?;
+    if archive_version >= 3 && scope.target_platform.as_ref() != Some(&policy.target_platform) {
+        return None;
+    }
+
+    let expected = if let Some((_, workflow)) = workflow {
+        let mut expected = workflow
+            .proof
+            .seam_observations
+            .iter()
+            .enumerate()
+            .map(|(order, observation)| CrossingProofInvocation {
+                id: format!("seam_observation:{}", observation.id),
+                kind: String::from("seam_observation"),
+                task: observation.task.clone(),
+                order,
+            })
+            .collect::<Vec<_>>();
+        let controls = scope
+            .proof_invocations
+            .iter()
+            .filter(|invocation| invocation.kind == "negative_control")
+            .collect::<Vec<_>>();
+        if controls.len() > 1
+            || scope.proof_invocations.iter().any(|invocation| {
+                invocation.kind != "seam_observation" && invocation.kind != "negative_control"
+            })
+        {
+            return None;
+        }
+        if let Some(control) = controls.first() {
+            let control_id = control.id.strip_prefix("negative_control:")?;
+            let declared = workflow
+                .proof
+                .negative_controls
+                .iter()
+                .find(|candidate| candidate.id == control_id)?;
+            expected.push(CrossingProofInvocation {
+                id: format!("negative_control:{}", declared.id),
+                kind: String::from("negative_control"),
+                task: declared.task.clone(),
+                order: expected.len(),
+            });
+        }
+        if scope.proof_invocations != expected {
+            return None;
+        }
+        expected
+    } else {
+        if !scope.proof_invocations.is_empty() {
+            return None;
+        }
+        Vec::new()
+    };
+    if contract.governance.crossing_authority.is_none() {
+        return Some((false, None));
+    }
+    // Version 5 added normalized readiness timeout selection. A governed archive must preserve
+    // the complete invocation selection used to decide whether its crossing grant was required.
+    if archive_version < 5 {
+        return None;
+    }
+    let mut unsafe_closure_tasks = policy
+        .segments
+        .iter()
+        .filter_map(|segment| {
+            (!task_effective_safety_with_overrides(
+                contract,
+                segment.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(segment.backend),
+                    ..overrides
+                },
+            )
+            .effective_safe)
+                .then(|| segment.task.clone())
+        })
+        .collect::<Vec<_>>();
+    unsafe_closure_tasks.sort();
+    unsafe_closure_tasks.dedup();
+    let requirement = evaluate_crossing_requirement(
+        Some(unsafe_closure_tasks.is_empty()),
+        false,
+        &unsafe_closure_tasks,
+        "workflow",
+    );
+    let crossing_required = requirement.required?;
+    if !crossing_required {
+        return Some((false, None));
+    }
+    let proof_transaction_selection = CrossingProofTransactionSelection {
+        selected_services: Vec::new(),
+        service_closure: Vec::new(),
+        ready_timeout_seconds: scope.ready_timeout_seconds,
+    };
+    let semantic_scope = crossing_scope_from_policy(
+        policy,
+        overrides,
+        &[],
+        &[],
+        None,
+        Some("runtime_proof"),
+        None,
+        requirement
+            .boundary_family
+            .map(|family| family.label())
+            .unwrap_or("unknown"),
+        requirement
+            .classification
+            .map(|classification| classification.label())
+            .unwrap_or("unknown"),
+    )
+    .and_then(|scope| {
+        crossing_scope_with_workflow_instance_selection(scope, contract, workflow_name)
+    })
+    .and_then(|scope| crossing_scope_with_proof_invocations(scope, expected))
+    .and_then(|scope| {
+        crossing_scope_with_proof_transaction_selection(scope, proof_transaction_selection)
+    })
+    .ok()?;
+    Some((true, Some(semantic_scope)))
 }
 
 fn load_proof_runtime_archive_candidates(
@@ -109416,18 +119420,149 @@ fn load_proof_runtime_archive_candidates(
                 return None;
             }
             let archive = serde_json::from_slice::<ProofRuntimeArchiveReadRecord>(&bytes).ok()?;
-            let expected_snapshot_path = contract_snapshot_archive_dir(root).join(
-                contract_snapshot_archive_file_name(&archive.contract_snapshot_hash),
-            );
-            if Path::new(&archive.contract_snapshot_ref) != expected_snapshot_path {
-                return None;
-            }
+            let expected_snapshot_path = resolve_proof_archive_contract_snapshot(
+                root,
+                &archive.contract_snapshot_ref,
+                &archive.contract_snapshot_hash,
+            )?;
             let snapshot_bytes = fs::read(&expected_snapshot_path).ok()?;
             if contract_snapshot_hash(&snapshot_bytes) != archive.contract_snapshot_hash {
                 return None;
             }
+            let snapshot_contract = serde_json::from_slice::<Contract>(&snapshot_bytes).ok()?;
+            let (crossing_required, expected_crossing_scope) =
+                proof_runtime_archive_crossing_scope(
+                    &snapshot_contract,
+                    &archive.scope,
+                    archive.version,
+                )?;
+            if crossing_required && archive.proof.crossing_evidence.is_none() {
+                // A governed archived runtime lane cannot become assurance evidence after its
+                // crossing link is removed and the local file is re-hashed.
+                return None;
+            }
+            if let Some(crossing) = archive.proof.crossing_evidence.as_ref() {
+                if archive.version >= 6
+                    && (archive.proof.execution_id.is_none()
+                        || crossing.proof_execution_id != archive.proof.execution_id)
+                {
+                    return None;
+                }
+                if archive.version >= 6 && crossing.authority.is_none() {
+                    return None;
+                }
+                // Reject a crossing from a different valid invocation before treating its child
+                // receipt as evidence for this proof archive.
+                if expected_crossing_scope
+                    .as_ref()
+                    .is_none_or(|scope| scope.identity != crossing.scope_identity)
+                {
+                    return None;
+                }
+                if let Some(authority) = crossing.authority.as_ref() {
+                    let archived_authority =
+                        serde_json::from_value::<ArchivedCrossingAuthorityEvidence>(
+                            authority.archive_evidence.clone(),
+                        )
+                        .ok()?;
+                    if archived_authority.semantic_scope().identity != crossing.scope_identity {
+                        return None;
+                    }
+                    let (transaction, expected_authority) = match &archived_authority {
+                        ArchivedCrossingAuthorityEvidence::PreboundFile(evidence) => {
+                            crate::crossing_authority::verify_archived_grant_admission(
+                                &snapshot_contract,
+                                root,
+                                &evidence.admission,
+                            )
+                            .ok()?;
+                            let carrier = evidence.carrier_admission.as_ref()?;
+                            if evidence.admission.crossing_admission().ok()?.ne(carrier) {
+                                return None;
+                            }
+                            let transaction = evidence.transaction.as_ref()?;
+                            crate::crossing_transaction::verify_crossing_transaction_evidence(
+                                transaction,
+                                carrier,
+                            )
+                            .ok()?;
+                            let expected = crossing_authority_output_with_transaction(
+                                &VerifiedCrossingAuthorityAdmission::PreboundFile(
+                                    evidence.admission.clone(),
+                                ),
+                                Some(transaction.clone()),
+                                true,
+                            )
+                            .ok()?;
+                            (transaction, expected)
+                        }
+                        ArchivedCrossingAuthorityEvidence::AuthorityBroker(evidence) => {
+                            crate::broker_session::verify_broker_archive_evidence(root, evidence)
+                                .ok()?;
+                            let expected = crossing_authority_output_with_transaction(
+                                &VerifiedCrossingAuthorityAdmission::AuthorityBroker(
+                                    evidence.admission.clone(),
+                                ),
+                                Some(evidence.transaction.clone()),
+                                true,
+                            )
+                            .ok()?;
+                            (&evidence.transaction, expected)
+                        }
+                    };
+                    if verify_exact_proof_authority_projection(authority, &expected_authority)
+                        .is_err()
+                    {
+                        return None;
+                    }
+                    let expected_receipt_status =
+                        archive.proof.execution_id.as_deref().map(|execution_id| {
+                            format!("proof:{execution_id}:{}", archive.proof.proof_verdict)
+                        });
+                    if transaction.transaction_id != crossing.transaction_id
+                        || transaction.scope_identity != crossing.scope_identity
+                        || (archive.version >= 6
+                            && transaction.receipt_status.as_deref()
+                                != expected_receipt_status.as_deref())
+                        || archive.proof.ok != (transaction.state == "completed")
+                    {
+                        return None;
+                    }
+                } else {
+                    // Legacy runtime-proof archives point at the child run receipt that owned the
+                    // crossing transaction. New proof-wide archives carry authority directly.
+                    let (Some(receipt_archive_path), Some(receipt_archive_identity)) = (
+                        crossing.receipt_archive_path.as_ref(),
+                        crossing.receipt_archive_identity.as_ref(),
+                    ) else {
+                        return None;
+                    };
+                    let receipt_path = root.join(receipt_archive_path);
+                    let receipt = read_repo_receipt_archive_record(&receipt_path).ok()?;
+                    let authority = receipt
+                        .payload
+                        .receipt
+                        .crossing
+                        .as_ref()
+                        .and_then(|entry| entry.authority.as_ref())?;
+                    let archived_authority =
+                        serde_json::from_value::<ArchivedCrossingGrantEvidence>(
+                            authority.archive_evidence.clone(),
+                        )
+                        .ok()?;
+                    let transaction = archived_authority.transaction.as_ref()?;
+                    let receipt_bytes = fs::read(&receipt_path).ok()?;
+                    if transaction.transaction_id != crossing.transaction_id
+                        || archived_authority.admission.semantic_scope.identity
+                            != crossing.scope_identity
+                        || contract_snapshot_hash(&receipt_bytes) != *receipt_archive_identity
+                    {
+                        return None;
+                    }
+                }
+            }
             (archive.kind == "runtime_proof"
-                && archive.version == 1
+                && matches!(archive.version, 1 | 2 | 3 | 4 | 5 | 6)
                 && archive.replay_posture == "witness_only")
                 .then_some(crate::claim_assurance::ProofArchiveCandidate {
                     identity,
@@ -109453,14 +119588,33 @@ fn write_lifecycle_proof_archive(
     proof: &LifecycleProofStatus,
 ) -> Result<ProofRuntimeArchive, String> {
     let snapshot = build_contract_snapshot_artifact(root, contract, true)?;
-    let snapshot_path = snapshot.archive_path.as_deref().ok_or_else(|| {
+    snapshot.archive_path.as_deref().ok_or_else(|| {
         String::from("lifecycle proof archive requires an archived semantic contract snapshot")
     })?;
     let contract_identity = repo_contract_identity(contract);
     let source_identity = git_head_identity(root).ok();
-    let snapshot_ref = receipt_storage_path_display(snapshot_path);
-    let execution_scope =
-        proof_runtime_archive_scope(contract, contract_path, Some(workflow), overrides);
+    let snapshot_ref = proof_archive_contract_snapshot_ref(&snapshot.hash);
+    let proof_invocations = contract
+        .selected_workflow(Some(workflow))
+        .and_then(|(_, workflow)| workflow.proof.lifecycle.as_ref())
+        .and_then(|lifecycle| lifecycle.assertion.as_ref())
+        .map(|assertion| {
+            vec![CrossingProofInvocation {
+                id: format!("lifecycle_assertion:{}", assertion.task),
+                kind: String::from("lifecycle_assertion"),
+                task: assertion.task.clone(),
+                order: 0,
+            }]
+        })
+        .unwrap_or_default();
+    let execution_scope = proof_runtime_archive_scope(
+        contract,
+        contract_path,
+        Some(workflow),
+        overrides,
+        proof_invocations,
+        None,
+    );
     let boundary_identities = proof
         .services
         .iter()
@@ -109471,6 +119625,11 @@ fn write_lifecycle_proof_archive(
             "lifecycle proof services do not share one runner-owned boundary identity",
         ));
     }
+    let target_os = execution_scope
+        .target_platform
+        .as_ref()
+        .map(|platform| platform.os.clone())
+        .unwrap_or_else(|| current_os().to_string());
     let scope = LifecycleProofArchiveScope {
         workflow: workflow.to_string(),
         member: member.map(str::to_string),
@@ -109480,14 +119639,20 @@ fn write_lifecycle_proof_archive(
         boundary_identity: boundary_identities.into_iter().next().map(str::to_string),
         mode: execution_scope.backend.clone(),
         backend: execution_scope.backend,
+        backend_override: execution_scope.backend_override,
         provider: execution_scope.provider,
         lifecycle: execution_scope.lifecycle,
+        lifecycle_override: execution_scope.lifecycle_override,
         target: execution_scope.target,
-        target_os: current_os().to_string(),
+        target_os,
+        target_platform: execution_scope.target_platform,
+        host_port: execution_scope.host_port,
+        memory: execution_scope.memory,
+        skip_dependencies: execution_scope.skip_dependencies,
     };
     let record = LifecycleProofArchiveRecord {
         kind: "lifecycle_proof",
-        version: 2,
+        version: 3,
         contract_identity: &contract_identity,
         contract_snapshot_hash: &snapshot.hash,
         contract_snapshot_ref: &snapshot_ref,
@@ -109556,14 +119721,12 @@ fn verify_lifecycle_proof_archive(
                 compact_path(archive_path, ".")
             )
         })?;
-    let expected_snapshot_path = contract_snapshot_archive_dir(root).join(
-        contract_snapshot_archive_file_name(&archive.contract_snapshot_hash),
-    );
-    if Path::new(&archive.contract_snapshot_ref) != expected_snapshot_path {
-        return Err(String::from(
-            "lifecycle proof archive snapshot reference is not canonical",
-        ));
-    }
+    let expected_snapshot_path = resolve_proof_archive_contract_snapshot(
+        root,
+        &archive.contract_snapshot_ref,
+        &archive.contract_snapshot_hash,
+    )
+    .ok_or_else(|| String::from("lifecycle proof archive snapshot reference is not canonical"))?;
     let snapshot = fs::read(&expected_snapshot_path)
         .map_err(|error| format!("failed to read lifecycle proof snapshot: {error}"))?;
     if contract_snapshot_hash(&snapshot) != archive.contract_snapshot_hash {
@@ -109577,6 +119740,142 @@ fn verify_lifecycle_proof_archive(
         return Err(String::from(
             "lifecycle proof archive contract identity does not match its semantic snapshot",
         ));
+    }
+    let archive_overrides = lifecycle_proof_archive_overrides(&archive.scope)?;
+    let declared_assertion = snapshot_contract
+        .selected_workflow(Some(archive.scope.workflow.as_str()))
+        .and_then(|(_, workflow)| workflow.proof.lifecycle.as_ref())
+        .and_then(|lifecycle| lifecycle.assertion.as_ref());
+    let proof_invocations = declared_assertion
+        .map(|assertion| {
+            vec![CrossingProofInvocation {
+                id: format!("lifecycle_assertion:{}", assertion.task),
+                kind: String::from("lifecycle_assertion"),
+                task: assertion.task.clone(),
+                order: 0,
+            }]
+        })
+        .unwrap_or_default();
+    let proof_roots = proof_invocations
+        .iter()
+        .map(|invocation| invocation.task.clone())
+        .collect::<Vec<_>>();
+    let proof_policy = crate::sandbox_policy::sandbox_policy_for_workflow_with_proof_roots(
+        &snapshot_contract,
+        Some(archive.scope.workflow.as_str()),
+        archive_overrides,
+        &proof_roots,
+    )?;
+    if archive.scope.mode != archive.scope.backend {
+        return Err(String::from(
+            "lifecycle proof archive mode does not match its selected backend",
+        ));
+    }
+    if archive.version == 3
+        && archive.scope.target_platform.as_ref() != Some(&proof_policy.target_platform)
+    {
+        return Err(format!(
+            "lifecycle proof archive has an invalid transaction binding: target platform recorded={:?} expected={:?}",
+            archive.scope.target_platform, proof_policy.target_platform
+        ));
+    }
+    if archive.scope.target_os != proof_policy.target_platform.os {
+        return Err(String::from(
+            "lifecycle proof archive target OS does not match its selected platform",
+        ));
+    }
+    let mut unsafe_closure_tasks = proof_policy
+        .segments
+        .iter()
+        .filter_map(|segment| {
+            (!task_effective_safety_with_overrides(
+                &snapshot_contract,
+                segment.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(segment.backend),
+                    ..archive_overrides
+                },
+            )
+            .effective_safe)
+                .then(|| segment.task.clone())
+        })
+        .collect::<Vec<_>>();
+    unsafe_closure_tasks.sort();
+    unsafe_closure_tasks.dedup();
+    let crossing_requirement = evaluate_crossing_requirement(
+        Some(unsafe_closure_tasks.is_empty()),
+        false,
+        &unsafe_closure_tasks,
+        "workflow",
+    );
+    let expected_crossing_scope = if archive.version == 3
+        && snapshot_contract.governance.crossing_authority.is_some()
+        && crossing_requirement.required == Some(true)
+    {
+        Some(
+            crossing_scope_from_policy(
+                proof_policy,
+                archive_overrides,
+                &[],
+                &[],
+                None,
+                Some("lifecycle_proof"),
+                None,
+                crossing_requirement
+                    .boundary_family
+                    .map(|family| family.label())
+                    .unwrap_or("unknown"),
+                crossing_requirement
+                    .classification
+                    .map(|classification| classification.label())
+                    .unwrap_or("unknown"),
+            )
+            .and_then(|scope| {
+                crossing_scope_with_workflow_instance_selection(
+                    scope,
+                    &snapshot_contract,
+                    Some(archive.scope.workflow.as_str()),
+                )
+            })
+            .and_then(|scope| crossing_scope_with_proof_invocations(scope, proof_invocations))
+            .and_then(|scope| {
+                crossing_scope_with_proof_transaction_selection(
+                    scope,
+                    CrossingProofTransactionSelection {
+                        selected_services: archive.scope.selected_services.clone(),
+                        service_closure: archive.scope.service_closure.clone(),
+                        ready_timeout_seconds: None,
+                    },
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    match (
+        expected_crossing_scope.as_ref(),
+        archive.proof.crossing_evidence.as_ref(),
+    ) {
+        (Some(expected), Some(crossing)) => verify_terminal_proof_crossing_evidence(
+            &snapshot_contract,
+            root,
+            crossing,
+            expected,
+            archive.proof.transaction_id.as_str(),
+            archive.proof.proof_verdict.as_str(),
+            archive.proof.ok,
+        )?,
+        (Some(_), None) => {
+            return Err(String::from(
+                "governed lifecycle proof archive omits required crossing authority",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(String::from(
+                "lifecycle proof archive carries crossing authority for an ungoverned lane",
+            ));
+        }
+        (None, None) => {}
     }
     let declared_lifecycle = snapshot_contract
         .selected_workflow(Some(archive.scope.workflow.as_str()))
@@ -109782,8 +120081,19 @@ fn verify_lifecycle_proof_archive(
         archive.proof.finalization.state.as_str(),
         "completed" | "completed_after_interruption"
     );
+    let valid_version_scope = match archive.version {
+        2 => {
+            archive.scope.target_platform.is_none()
+                && archive.scope.host_port.is_none()
+                && archive.scope.memory.is_none()
+                && !archive.scope.skip_dependencies
+                && archive.proof.crossing_evidence.is_none()
+        }
+        3 => archive.scope.target_platform.is_some(),
+        _ => false,
+    };
     if archive.kind != "lifecycle_proof"
-        || archive.version != 2
+        || !valid_version_scope
         || archive.scope.workflow != archive.proof.workflow
         || archive.proof.mode != "lifecycle-proof"
         || archive.proof.phase != "lifecycle"
@@ -109874,10 +120184,84 @@ fn write_proof_runtime_archive(
         })?;
     }
     prune_proof_runtime_archives(&archive_dir)?;
+    verify_emitted_proof_runtime_archive(root, &archive_path, &identity)?;
+    if !load_proof_runtime_archive_candidates(root)
+        .iter()
+        .any(|candidate| candidate.identity == identity)
+    {
+        return Err(String::from(
+            "proof archive failed immediate semantic reconciliation",
+        ));
+    }
     Ok(ProofRuntimeArchive {
         identity,
         path: receipt_storage_path_display(&archive_path),
     })
+}
+
+fn verify_emitted_proof_runtime_archive(
+    root: &Path,
+    archive_path: &Path,
+    identity: &str,
+) -> Result<(), String> {
+    verify_proof_runtime_archive_identity(archive_path, identity)?;
+    let bytes = fs::read(archive_path)
+        .map_err(|error| format!("failed to read emitted proof archive: {error}"))?;
+    let archive = serde_json::from_slice::<ProofRuntimeArchiveReadRecord>(&bytes)
+        .map_err(|error| format!("emitted proof archive is invalid: {error}"))?;
+    if archive.kind != "runtime_proof"
+        || archive.version != 6
+        || archive.replay_posture != "witness_only"
+    {
+        return Err(String::from(
+            "emitted proof archive has an invalid current-version envelope",
+        ));
+    }
+    let snapshot_path = resolve_proof_archive_contract_snapshot(
+        root,
+        &archive.contract_snapshot_ref,
+        &archive.contract_snapshot_hash,
+    )
+    .ok_or_else(|| String::from("emitted proof archive has an invalid snapshot reference"))?;
+    let snapshot = fs::read(snapshot_path)
+        .map_err(|error| format!("emitted proof archive snapshot is unavailable: {error}"))?;
+    if contract_snapshot_hash(&snapshot) != archive.contract_snapshot_hash {
+        return Err(String::from(
+            "emitted proof archive snapshot identity does not match its content",
+        ));
+    }
+    let contract = serde_json::from_slice::<Contract>(&snapshot)
+        .map_err(|error| format!("emitted proof archive snapshot is invalid: {error}"))?;
+    let (crossing_required, expected_scope) =
+        proof_runtime_archive_crossing_scope(&contract, &archive.scope, archive.version)
+            .ok_or_else(|| String::from("emitted proof archive scope does not re-derive"))?;
+    let crossing = archive.proof.crossing_evidence.as_ref();
+    if crossing_required && crossing.is_none() {
+        return Err(String::from(
+            "emitted governed proof archive omits crossing authority",
+        ));
+    }
+    if let Some(crossing) = crossing {
+        let execution_id = archive
+            .proof
+            .execution_id
+            .as_deref()
+            .ok_or_else(|| String::from("emitted proof archive omits execution identity"))?;
+        let expected_scope = expected_scope.as_ref().ok_or_else(|| {
+            String::from("emitted proof archive carries authority for an ungoverned scope")
+        })?;
+        verify_terminal_proof_crossing_evidence(
+            &contract,
+            root,
+            crossing,
+            expected_scope,
+            execution_id,
+            archive.proof.proof_verdict.as_str(),
+            archive.proof.ok,
+        )
+        .map_err(|error| format!("emitted proof archive authority is invalid: {error}"))?;
+    }
+    Ok(())
 }
 
 fn verify_proof_runtime_archive_identity(
@@ -110008,6 +120392,7 @@ fn spawn_proof_runtime_up_process(
     up_log_artifact_path: &Path,
     execution_boundary_trace_path: &Path,
     execution_boundary_trace_token: &str,
+    crossing_handoff_path: &Path,
     policy_snapshot_path: Option<&Path>,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
@@ -110043,6 +120428,14 @@ fn spawn_proof_runtime_up_process(
         EXECUTION_BOUNDARY_TRACE_TOKEN_ENV,
         execution_boundary_trace_token,
     );
+    command.env(
+        PROOF_RUNTIME_CROSSING_HANDOFF_PATH_ENV,
+        crossing_handoff_path,
+    );
+    command.env(
+        PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN_ENV,
+        execution_boundary_trace_token,
+    );
     if !seam_markers.is_empty() {
         let bindings = serde_json::to_string(
             &seam_markers
@@ -110075,8 +120468,13 @@ fn spawn_proof_runtime_up_process(
         command.process_group(0);
     }
 
-    command
-        .spawn()
+    let selected_workflow = workflow_name.unwrap_or("default");
+    let capability = active_proof_parent_authority_capability(ProofParentInvocation {
+        kind: String::from("workflow"),
+        name: selected_workflow.to_string(),
+        proof_invocation: None,
+    })?;
+    spawn_with_proof_parent_authority(&mut command, capability)
         .map_err(|error| format!("could not start detached `ota up` for runtime proof: {error}"))
 }
 
@@ -110155,10 +120553,10 @@ fn runtime_proof_child_env() -> BTreeMap<OsString, OsString> {
         }
     }
     for (name, value) in env::vars_os() {
-        if name
-            .to_str()
-            .is_some_and(|name| name.starts_with("OTA_") || name.starts_with("NPM_CONFIG_"))
-        {
+        if name.to_str().is_some_and(|name| {
+            (name.starts_with("OTA_") || name.starts_with("NPM_CONFIG_"))
+                && name != PROOF_PARENT_AUTHORITY_FD_ENV
+        }) {
             selected.entry(name).or_insert(value);
         }
     }
@@ -110239,8 +120637,20 @@ fn spawn_up_detached_run_process(
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
 
-    command
-        .spawn()
+    let capability = ACTIVE_PROOF_PARENT_AUTHORITY.with(|active| {
+        active.borrow().as_ref().cloned().map(|mut capability| {
+            capability.parent_pid = std::process::id();
+            capability.invocation = ProofParentInvocation {
+                kind: String::from("workflow_task"),
+                name: task_name.to_string(),
+                proof_invocation: None,
+            };
+            capability.identity = proof_parent_authority_capability_identity(&capability)
+                .expect("verified proof parent authority should re-identify");
+            capability
+        })
+    });
+    spawn_with_proof_parent_authority(&mut command, capability)
         .map_err(|error| format!("could not start detached `ota run {task_name}`: {error}"))
 }
 
@@ -110762,7 +121172,27 @@ fn proof_runtime_execute_seam_observation(
         });
     }
     command.arg(".").stdin(Stdio::null());
-    match command.output() {
+    let invocation = match proof_parent_task_invocation(
+        format!("seam_observation:{}", observation.id).as_str(),
+        "seam_observation",
+        observation.task.as_str(),
+    ) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    let capability = match active_proof_parent_authority_capability(invocation) {
+        Ok(capability) => capability,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    match output_with_proof_parent_authority(&mut command, capability) {
         Ok(output) if output.status.success() => {
             let attestation = proof_runtime_read_seam_attestation(
                 &attestation_path,
@@ -110965,7 +121395,27 @@ fn proof_runtime_execute_negative_control(
         });
     }
     command.arg(".").stdin(Stdio::null());
-    match command.output() {
+    let invocation = match proof_parent_task_invocation(
+        format!("negative_control:{}", control.id).as_str(),
+        "negative_control",
+        control.task.as_str(),
+    ) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    let capability = match active_proof_parent_authority_capability(invocation) {
+        Ok(capability) => capability,
+        Err(error) => {
+            let mut record = base();
+            record.detail = Some(error);
+            return record;
+        }
+    };
+    match output_with_proof_parent_authority(&mut command, capability) {
         Ok(output) if output.status.success() => {
             let _ = fs::remove_file(&attestation_path);
             ProofRuntimeNegativeControl {
@@ -114622,6 +125072,48 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             failure_origin
         ));
     }
+    if let Some(refusal) = receipt.refusal.as_ref() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Refusal Evidence")));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Reason:"),
+            refusal.reason_family
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Boundary:"),
+            refusal.boundary_family
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Closure:"),
+            refusal.closure_status
+        ));
+        if let Some(authority_source) = refusal.authority_source.as_deref() {
+            stdout.push_str(&format!(
+                "\n{} {authority_source}",
+                paint_key("Authority Source:")
+            ));
+        }
+        if let Some(authority_id) = refusal.authority_id.as_deref() {
+            stdout.push_str(&format!("\n{} {authority_id}", paint_key("Authority:")));
+        }
+        if let Some(requested_grant_id) = refusal.requested_grant_id.as_deref() {
+            stdout.push_str(&format!(
+                "\n{} {requested_grant_id}",
+                paint_key("Requested Grant:")
+            ));
+        }
+        if let Some(execution_started) = refusal.execution_started {
+            stdout.push_str(&format!(
+                "\n{} {execution_started}",
+                paint_key("Execution Started:")
+            ));
+        }
+        if let Some(details) = refusal.evaluation_details.as_deref() {
+            stdout.push_str(&format!("\n{} {details}", paint_key("Evaluation:")));
+        }
+    }
     if !receipt.env_sources.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Env Sources")));
         for source in &receipt.env_sources {
@@ -114833,6 +125325,59 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 "\n  {} {}",
                 paint_key("Attestation:"),
                 recording.attestation_path
+            ));
+        }
+    }
+
+    if let Some(application) = receipt.witnessed_observations.sandbox_application.as_ref() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Sandbox Enforcement Evidence")
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Status:"),
+            serde_json::to_value(application.status)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"))
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Target:"),
+            paint_code(&application.provider_target)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Policy:"),
+            paint_code(&application.effective_policy_identity)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {} of {} admitted",
+            paint_key("Selected Edges:"),
+            application.selected_edges.len(),
+            application.admitted_edge_identities.len()
+        ));
+        for segment in &application.segments {
+            let status = serde_json::to_value(segment.status)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"));
+            let cleanup = serde_json::to_value(segment.cleanup.state)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"));
+            let purpose = serde_json::to_value(segment.purpose)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| String::from("unknown"));
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {}, cleanup: {})",
+                paint_key(&segment.segment_id),
+                paint_code(&segment.boundary_identity),
+                purpose,
+                status,
+                cleanup
             ));
         }
     }
@@ -116389,6 +126934,10 @@ struct RepoUpResult {
     stderr: String,
 }
 
+fn repo_up_exit_code(result: &RepoUpResult) -> i32 {
+    result.exit_code.unwrap_or(if result.ok { 0 } else { 1 })
+}
+
 fn attach_crossing_to_up_result(
     result: &mut RepoUpResult,
     contract: &Contract,
@@ -116398,6 +126947,15 @@ fn attach_crossing_to_up_result(
     agent: bool,
     reason: Option<&str>,
 ) {
+    if matches!(result.phase, "preview" | "preconditions")
+        || result
+            .receipt
+            .failure_origin
+            .as_deref()
+            .is_some_and(|origin| origin.starts_with("crossing_grant_"))
+    {
+        return;
+    }
     attach_workflow_crossing_to_receipt(
         &mut result.receipt,
         contract,
@@ -116414,8 +126972,11 @@ struct RepoUpPreview {
     summary: DoctorSummary,
     contract_identity: ContractIdentity,
     execution: UpPreviewExecution,
+    overrides: Option<ExecutionPlanOverrides>,
     plan: UpPreviewPlan,
     governance: crate::output::GovernanceEvaluation,
+    sandbox_admission: Option<JsonValue>,
+    crossing_grant_admission: Option<Box<crate::output::CrossingGrantAdmissionPreview>>,
     blockers: Vec<Finding>,
 }
 
@@ -116451,6 +127012,14 @@ struct RepoReceiptReport {
 }
 
 struct RepoReceiptHistoryReport {
+    history_source: String,
+    completeness_posture: String,
+    operator_profile_posture: Option<String>,
+    operator_profile_identity: Option<String>,
+    operator_peer_identity: Option<String>,
+    repository_binding_identity: Option<String>,
+    catalog_namespace_identity: Option<String>,
+    catalog_snapshot_identity: Option<String>,
     archives: Vec<ReceiptHistoryEntry>,
     invalid_archives: Vec<ReceiptHistoryInvalidArchive>,
 }
@@ -116537,6 +127106,25 @@ enum UpRunBehaviorPreference {
     Detach,
 }
 
+fn up_run_behavior_preference_label(preference: UpRunBehaviorPreference) -> &'static str {
+    match preference {
+        UpRunBehaviorPreference::Auto => "auto",
+        UpRunBehaviorPreference::Attach => "attach",
+        UpRunBehaviorPreference::Detach => "detach",
+    }
+}
+
+fn archived_up_run_behavior_preference(value: &str) -> Result<UpRunBehaviorPreference, String> {
+    match value {
+        "auto" => Ok(UpRunBehaviorPreference::Auto),
+        "attach" => Ok(UpRunBehaviorPreference::Attach),
+        "detach" => Ok(UpRunBehaviorPreference::Detach),
+        _ => Err(format!(
+            "unsupported archived workflow run behavior `{value}`"
+        )),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpRunBehavior {
     Attach,
@@ -116547,6 +127135,7 @@ enum UpRunBehavior {
 struct CommandRunResult {
     exit_code: i32,
     executed_tasks: Vec<String>,
+    task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
     target: Option<String>,
@@ -116554,6 +127143,30 @@ struct CommandRunResult {
     service_termination: Option<ServiceTermination>,
     fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     host_service_cleanup: Vec<crate::runner::HostServiceCleanupEvidence>,
+}
+
+fn append_up_executed_task_steps(receipt: &mut ExecutionReceipt, task_steps: &[ExecutedTaskStep]) {
+    for task_step in task_steps {
+        let mut receipt_step = execution_receipt_step(
+            receipt.steps.len() + 1,
+            task_step.name.clone(),
+            if task_step.exit_code == 0 {
+                String::from("READY")
+            } else {
+                String::from("FAILED")
+            },
+            execution_receipt_step_detail(task_step, task_step.name.as_str()),
+            Some(task_step.exit_code),
+        );
+        receipt_step.stage_family = String::from("execution");
+        receipt_step.task = Some(task_step.name.clone());
+        receipt_step.generation = Some(task_step.generation);
+        let (relation, parent) = execution_receipt_step_relation(&task_step.relation);
+        receipt_step.execution_relation = Some(relation.to_string());
+        receipt_step.execution_parent = parent.map(str::to_string);
+        receipt.steps.push(receipt_step);
+    }
+    receipt.summary.step_count = receipt.steps.len();
 }
 
 #[derive(Debug, Clone, Default)]
@@ -116643,6 +127256,10 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     witnessed_observations: ExecutionReceiptWitnessedObservations,
     #[serde(default)]
+    crossing: Option<crate::output::ExecutionBoundaryCrossing>,
+    #[serde(default)]
+    steps: Vec<ExecutionReceiptStep>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     backend: Option<String>,
@@ -116667,6 +127284,8 @@ struct ArchivedRepoReceiptEnvelope {
     workflow: Option<String>,
     #[serde(default)]
     archive_path: Option<String>,
+    #[serde(default)]
+    archive_context: Option<crate::output::ReceiptArchiveContext>,
     #[serde(default)]
     summary: ArchivedReceiptSummaryData,
     receipt: ArchivedRepoReceiptData,
@@ -116948,6 +127567,10 @@ fn execution_receipt_step(
         stage_family: canonical_execution_stage_family_key(&label).to_string(),
         label,
         status: status.into(),
+        task: None,
+        execution_relation: None,
+        execution_parent: None,
+        generation: None,
         detail,
         exit_code,
         target_resolutions: Vec::new(),
@@ -117796,6 +128419,7 @@ fn render_repo_receipt(
                     summary: report.receipt.summary,
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
+                    archive_context: None,
                     promoted_baseline: report.promoted_baseline.clone(),
                     artifact_routing: receipt_artifact_routing(
                         contract_path,
@@ -118001,6 +128625,18 @@ fn render_repo_receipt_history(
                 paint_key("Archives:"),
                 report.archives.len()
             ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Source:"),
+                report.history_source
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Completeness:"),
+                report.completeness_posture
+            ));
             if !report.invalid_archives.is_empty() {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
@@ -118085,6 +128721,14 @@ fn render_repo_receipt_history(
                 ok: true,
                 path: json_path,
                 mode: "history",
+                history_source: &report.history_source,
+                completeness_posture: &report.completeness_posture,
+                operator_profile_posture: report.operator_profile_posture.as_deref(),
+                operator_profile_identity: report.operator_profile_identity.as_deref(),
+                operator_peer_identity: report.operator_peer_identity.as_deref(),
+                repository_binding_identity: report.repository_binding_identity.as_deref(),
+                catalog_namespace_identity: report.catalog_namespace_identity.as_deref(),
+                catalog_snapshot_identity: report.catalog_snapshot_identity.as_deref(),
                 summary: ReceiptHistorySummary {
                     archive_count: report.archives.len(),
                     invalid_archive_count: report.invalid_archives.len(),
@@ -118709,6 +129353,7 @@ fn acquire_workspace_repo(
         return Ok(CommandRunResult {
             exit_code: 0,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -118749,6 +129394,7 @@ fn acquire_workspace_repo(
         return Ok(CommandRunResult {
             exit_code: clone.exit_code,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -118773,6 +129419,7 @@ fn acquire_workspace_repo(
             return Ok(CommandRunResult {
                 exit_code: checkout.exit_code,
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -118787,6 +129434,7 @@ fn acquire_workspace_repo(
     Ok(CommandRunResult {
         exit_code: 0,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout,
         stderr,
         target: None,
@@ -118814,6 +129462,7 @@ fn run_git_command(
             Ok(CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -118828,6 +129477,7 @@ fn run_git_command(
             Ok(CommandRunResult {
                 exit_code: status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::new(),
                 stderr: String::new(),
                 target: None,
@@ -118870,6 +129520,7 @@ fn resolve_provisioning_execution_target(
     match resolve_execution_backend(contract, task_name, overrides) {
         Ok(ResolvedExecutionBackend::Container {
             image,
+            platform,
             engine,
             lifecycle,
             ..
@@ -118890,6 +129541,7 @@ fn resolve_provisioning_execution_target(
             }
             Ok(ProvisioningExecutionTarget::Container {
                 image,
+                platform,
                 engine,
                 lifecycle,
                 container_name: None,
@@ -119057,11 +129709,17 @@ fn selected_workflow_task_requirement_surface(
     let retains_global_tool_fallback = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            let target_os = crate::runner::target_os_for_declared_backend(
+                effective.backend,
+                effective.container,
+                current_os(),
+            );
             contract
-                .resolved_task_requirement_surface_for_execution(
+                .resolved_task_requirement_surface_for_execution_for_os(
                     task,
                     effective.backend,
                     effective.context_name,
+                    target_os,
                 )
                 .tools
                 .is_empty()
@@ -119074,10 +129732,16 @@ fn selected_workflow_task_requirement_surface(
             continue;
         };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-        let scoped = contract.resolved_task_requirement_surface_for_execution(
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
+        let scoped = contract.resolved_task_requirement_surface_for_execution_for_os(
             task,
             effective.backend,
             effective.context_name,
+            target_os,
         );
         if !scoped.runtimes.is_empty() {
             scoped_runtimes = true;
@@ -119099,7 +129763,7 @@ fn selected_workflow_task_requirement_surface(
             );
         }
         if let Some(exe) =
-            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+            task.effective_command_launch_executable_for_backend(effective.backend, target_os)
         {
             selected_tool_names.insert(exe.clone());
             surface
@@ -119116,14 +129780,14 @@ fn selected_workflow_task_requirement_surface(
             surface.merge(&contract.resolved_context_requirement_surface(context));
         }
         if matches!(effective.backend, Backend::Native) {
-            let scoped_native = task.scoped_native_requirements_for_execution(
+            let scoped_native = task.scoped_native_requirements_for_execution_for_os(
                 effective.backend,
                 effective.context_name,
+                target_os,
             );
-            surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
-                scoped_native,
-                requirement_target_os_for_backend(effective.backend),
-            ));
+            surface.merge(
+                &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
+            );
         }
     }
 
@@ -119148,27 +129812,17 @@ fn selected_workflow_task_requirement_surface(
     }
 
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
-    for task_name in &task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-        let toolchain_names = toolchain_names.into_iter().collect();
+    for (toolchain_name, target_os) in selected_workflow_toolchain_targets(
+        contract,
+        overrides,
+        workflow_name,
+        effective_execution(contract, overrides).0,
+    ) {
         surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &surface,
-            &toolchain_names,
-            target_os,
+            &BTreeSet::from([toolchain_name]),
+            target_os.as_str(),
             Some(&required_tool_names),
         );
     }
@@ -119216,27 +129870,17 @@ fn up_policy_requirement_surface(
         );
     }
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-        let toolchain_names = toolchain_names.into_iter().collect();
+    for (toolchain_name, target_os) in selected_workflow_toolchain_targets(
+        contract,
+        overrides,
+        workflow_name,
+        effective_execution(contract, overrides).0,
+    ) {
         surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
             contract,
             &surface,
-            &toolchain_names,
-            target_os,
+            &BTreeSet::from([toolchain_name]),
+            target_os.as_str(),
             Some(&required_tool_names),
         );
     }
@@ -119468,17 +130112,15 @@ fn selected_activation_actions_for_mode(
     preflight: &DoctorReport,
     mode: DoctorMode,
 ) -> Vec<RequirementActivationAction> {
-    let requirement_surface = up_activation_requirement_surface(contract, overrides, workflow_name);
-    let activation_backend = match mode {
+    let fallback_backend = match mode {
         DoctorMode::Container => Backend::Container,
         DoctorMode::Native => Backend::Native,
         DoctorMode::Remote => Backend::Remote,
     };
-    let target_os = requirement_target_os_for_backend(activation_backend);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
-    requirement_surface_activation_actions(&requirement_surface, target_os, activation_backend)
+    selected_workflow_activation_candidates(contract, overrides, workflow_name, fallback_backend)
         .into_iter()
         .filter(|action| {
             !policy_provisioned_tools.contains(action.tool_name.as_str())
@@ -119490,6 +130132,47 @@ fn selected_activation_actions_for_mode(
                     || activation_action_needs_local_bootstrap(action))
         })
         .collect()
+}
+
+fn selected_workflow_activation_candidates(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> Vec<RequirementActivationAction> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return requirement_surface_activation_actions(
+            &up_activation_requirement_surface(contract, overrides, workflow_name),
+            requirement_target_os_for_backend(fallback_backend),
+            fallback_backend,
+        );
+    }
+
+    let mut actions = Vec::new();
+    for task_name in task_names {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        );
+        let Some(requirement_surface) =
+            selected_task_requirement_surface(contract, task_name.as_str(), overrides)
+        else {
+            continue;
+        };
+        for action in requirement_surface_activation_actions(
+            &requirement_surface,
+            target_os,
+            effective.backend,
+        ) {
+            if !actions.contains(&action) {
+                actions.push(action);
+            }
+        }
+    }
+    actions
 }
 
 fn corepack_activation_is_required_for_native_execution(
@@ -119542,25 +130225,17 @@ fn up_activation_requirement_surface(
 
     let mut surface = requirement_surface;
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let effective_backend = effective_task_execution(contract, task_name, overrides).backend;
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
-        }
-        let toolchain_names = toolchain_names.into_iter().collect();
+    for (toolchain_name, target_os) in selected_workflow_toolchain_targets(
+        contract,
+        overrides,
+        workflow_name,
+        effective_execution(contract, overrides).0,
+    ) {
         surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &surface,
-            &toolchain_names,
-            requirement_target_os_for_backend(effective_backend),
+            &BTreeSet::from([toolchain_name]),
+            target_os.as_str(),
             Some(&required_tool_names),
         );
     }
@@ -119581,6 +130256,40 @@ fn requirement_target_os_for_backend(backend: Backend) -> &'static str {
         Backend::Container => "linux",
         Backend::Native | Backend::Remote => current_requirement_platform(),
     }
+}
+
+fn selected_workflow_toolchain_targets(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> BTreeSet<(String, String)> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        let target_os = requirement_target_os_for_backend(fallback_backend).to_string();
+        return contract
+            .selected_workflow_required_toolchain_names(workflow_name)
+            .into_iter()
+            .map(|name| (name, target_os.clone()))
+            .collect();
+    }
+
+    let mut targets = BTreeSet::new();
+    for task_name in task_names {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let target_os = crate::runner::target_os_for_declared_backend(
+            effective.backend,
+            effective.container,
+            current_os(),
+        )
+        .to_string();
+        targets.extend(
+            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides)
+                .into_iter()
+                .map(|name| (name, target_os.clone())),
+        );
+    }
+    targets
 }
 
 fn selected_up_toolchain_preview_actions(
@@ -119624,37 +130333,23 @@ fn selected_up_toolchain_preview_actions(
         return actions;
     }
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
+    for (toolchain_name, target_os) in
+        selected_workflow_toolchain_targets(contract, overrides, workflow_name, fallback_backend)
+    {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if !toolchain.active_for_os(target_os.as_str()) {
+            continue;
         }
-        for toolchain_name in toolchain_names {
-            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-                continue;
-            };
-            if !toolchain.active_for_os(target_os) {
-                continue;
-            }
-            let action = declared_toolchain_preview_action_for_required_tools(
-                toolchain_name.as_str(),
-                toolchain,
-                target_os,
-                &required_tool_names,
-            );
-            if seen.insert(action.clone()) {
-                actions.push(action);
-            }
+        let action = declared_toolchain_preview_action_for_required_tools(
+            toolchain_name.as_str(),
+            toolchain,
+            target_os.as_str(),
+            &required_tool_names,
+        );
+        if seen.insert(action.clone()) {
+            actions.push(action);
         }
     }
 
@@ -119689,35 +130384,21 @@ fn selected_up_toolchain_run_fulfillment_targets(
         return targets.into_iter().collect();
     }
 
-    for task_name in task_names {
-        let task_name = task_name.as_str();
-        let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name, overrides).backend,
-        );
-        let mut toolchain_names =
-            selected_task_scoped_toolchain_names(contract, task_name, overrides)
-                .into_iter()
-                .collect::<Vec<_>>();
-        if toolchain_names.is_empty() {
-            toolchain_names = contract
-                .task_required_toolchain_names(task_name)
-                .into_iter()
-                .collect::<Vec<_>>();
+    for (toolchain_name, target_os) in
+        selected_workflow_toolchain_targets(contract, overrides, workflow_name, fallback_backend)
+    {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if toolchain.fulfillment_mode() != crate::schema::ToolchainFulfillmentMode::Run
+            || !toolchain.active_for_os(target_os.as_str())
+        {
+            continue;
         }
-        for toolchain_name in toolchain_names {
-            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-                continue;
-            };
-            if toolchain.fulfillment_mode() != crate::schema::ToolchainFulfillmentMode::Run
-                || !toolchain.active_for_os(target_os)
-            {
-                continue;
-            }
-            targets.insert(ToolchainRunFulfillmentTarget {
-                toolchain_name,
-                target_os: target_os.to_string(),
-            });
-        }
+        targets.insert(ToolchainRunFulfillmentTarget {
+            toolchain_name,
+            target_os,
+        });
     }
 
     targets.into_iter().collect()
@@ -120417,7 +131098,13 @@ fn append_up_preview_service_actions_for_workflow(
 
     if let Some(run_task) = activation_task {
         let requested_task = contract.tasks.get(run_task).map(|task| {
-            TaskSummary::from_spec_with_overrides(run_task, task, current_os(), contract, overrides)
+            let effective = effective_task_execution(contract, run_task, overrides);
+            let target_os = crate::runner::target_os_for_declared_backend(
+                effective.backend,
+                effective.container,
+                current_os(),
+            );
+            TaskSummary::from_spec_with_overrides(run_task, task, target_os, contract, overrides)
         });
         let execution_plan =
             resolve_execution_plan_for_task(contract, contract_path, run_task, overrides).ok();
@@ -120708,22 +131395,23 @@ fn build_up_preview_with_actor(
             render_up_preview_native_activation_action(&action),
         );
     }
-    for action in requirement_surface_activation_actions(
-        &up_activation_requirement_surface(contract, overrides, workflow_name),
-        current_os(),
-        match up_doctor_mode(contract, overrides, workflow_name) {
-            DoctorMode::Container => Backend::Container,
-            DoctorMode::Native => Backend::Native,
-            DoctorMode::Remote => Backend::Remote,
-        },
+    let fallback_backend = match up_doctor_mode(contract, overrides, workflow_name) {
+        DoctorMode::Container => Backend::Container,
+        DoctorMode::Native => Backend::Native,
+        DoctorMode::Remote => Backend::Remote,
+    };
+    let mut seen_skipped_activation = BTreeSet::new();
+    for action in selected_workflow_activation_candidates(
+        contract,
+        overrides,
+        workflow_name,
+        fallback_backend,
     ) {
-        if policy_provisioned_tools.contains(action.tool_name.as_str()) {
-            push_preview_plan_action(
-                &mut skipped,
-                &mut staged_skipped,
-                "setup",
-                render_up_preview_skipped_activation_action(&action),
-            );
+        let rendered = render_up_preview_skipped_activation_action(&action);
+        if policy_provisioned_tools.contains(action.tool_name.as_str())
+            && seen_skipped_activation.insert(rendered.clone())
+        {
+            push_preview_plan_action(&mut skipped, &mut staged_skipped, "setup", rendered);
         }
     }
 
@@ -120785,6 +131473,7 @@ fn build_up_preview_with_actor(
             target,
             task: primary_task.map(String::from),
         },
+        overrides: execution_plan_overrides(overrides),
         plan,
         governance: governance_evaluation_for_workflow_preview(
             contract,
@@ -120795,6 +131484,8 @@ fn build_up_preview_with_actor(
             agent,
             None,
         ),
+        sandbox_admission: None,
+        crossing_grant_admission: None,
         blockers: preflight
             .findings
             .iter()
@@ -120907,7 +131598,10 @@ fn run_up_task(
                             let Some(posture) = task_command_interaction_posture_for_backend(
                                 contract,
                                 step.task.as_str(),
-                                step.backend,
+                                ExecutionOverrides {
+                                    backend: Some(step.backend),
+                                    ..overrides
+                                },
                             ) else {
                                 return false;
                             };
@@ -120934,6 +131628,7 @@ fn run_up_task(
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
             executed_tasks: outcome.executed_tasks,
+            task_steps: outcome.task_steps,
             stdout: String::new(),
             stderr: String::new(),
             target: outcome.target,
@@ -120954,6 +131649,7 @@ fn run_up_task(
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
             executed_tasks: outcome.executed_tasks,
+            task_steps: outcome.task_steps,
             stdout: outcome.stdout,
             stderr: outcome.stderr,
             target: outcome.target,
@@ -121086,7 +131782,6 @@ fn up_success_execution_context(
     )
 }
 
-#[cfg(test)]
 fn is_workflow_surface_readiness_finding(finding: &Finding) -> bool {
     finding.summary.starts_with("Surface readiness failed:")
         || finding.summary.starts_with("Surface readiness timed out:")
@@ -121179,6 +131874,7 @@ fn run_up_task_detached_until_ready(
         return Ok(CommandRunResult {
             exit_code: 0,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -121220,6 +131916,7 @@ fn run_up_task_detached_until_ready(
     Ok(CommandRunResult {
         exit_code: 1,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout: String::new(),
         stderr: render_detached_run_failure_output(
             &failure,
@@ -122646,6 +133343,7 @@ fn run_activation_action(
                 return Ok(CommandRunResult {
                     exit_code: 0,
                     executed_tasks: Vec::new(),
+                    task_steps: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -122693,6 +133391,7 @@ fn run_corepack_activation_action(
             return Ok(CommandRunResult {
                 exit_code: bootstrap.exit_code,
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -122717,6 +133416,7 @@ fn run_corepack_activation_action(
         return Ok(CommandRunResult {
             exit_code: enable.exit_code,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -122749,6 +133449,7 @@ fn run_corepack_activation_action(
     Ok(CommandRunResult {
         exit_code: prepare.exit_code,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout: format!("{stdout}{}", prepare.stdout),
         stderr: format!("{stderr}{}", prepare.stderr),
         target: None,
@@ -122837,6 +133538,7 @@ fn run_process_command(
             Ok(output) => CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -122852,6 +133554,7 @@ fn run_process_command(
                 Ok(exit_code) => CommandRunResult {
                     exit_code,
                     executed_tasks: Vec::new(),
+                    task_steps: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -122882,6 +133585,7 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
     CommandRunResult {
         exit_code,
         executed_tasks: Vec::new(),
+        task_steps: Vec::new(),
         stdout: String::new(),
         stderr: format!("failed to execute `{command_label}`: {error}\n"),
         target: None,
@@ -123139,6 +133843,7 @@ fn execute_repo_up_with_behavior(
         overrides,
         workflow_name,
         false,
+        None,
         policy_env,
         dry_run,
         mode,
@@ -123147,17 +133852,192 @@ fn execute_repo_up_with_behavior(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_repo_up_with_behavior_with_agent_and_grant(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    effect_overrides: &[String],
+    agent: bool,
+    grant: Option<&str>,
+    reason: Option<&str>,
+    sandbox_target: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
+    let grant_admission = match evaluate_workflow_crossing_grant(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        effect_overrides,
+        run_behavior_preference,
+        ready_timeout,
+        agent,
+        grant,
+        sandbox_target,
+    ) {
+        Ok(admission) => admission,
+        Err(error) => {
+            return Ok(crossing_grant_up_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                dry_run,
+                agent,
+                run_behavior_preference,
+                grant,
+                error,
+            ));
+        }
+    };
+    let has_grant_admission = grant_admission.is_some();
+    let mut pending_grant_admission = if dry_run {
+        None
+    } else {
+        grant_admission.clone()
+    };
+    let mut crossing_grant_guard =
+        dry_run.then(|| ActiveCrossingGrantGuard::activate_preview(grant_admission));
+    let mut crossing_transaction_guard = None;
+    let mut crossing_activation_error = None;
+    let mut activate_crossing_authority = || -> Result<(), String> {
+        let Some(plan) = pending_grant_admission.take() else {
+            return Ok(());
+        };
+        match activate_crossing_authority_plan(contract_working_dir(resolved_path), plan) {
+            Ok((authority, transaction)) => {
+                crossing_grant_guard = Some(authority);
+                crossing_transaction_guard = Some(transaction);
+                Ok(())
+            }
+            Err(error) => {
+                let details = error.public_details();
+                crossing_activation_error = Some(error);
+                Err(details)
+            }
+        }
+    };
+    // Keep the orchestration wrapper's frame small while the nested up path is active.
+    let mut result = Box::new(
+        match execute_repo_up_with_behavior_with_agent_and_authority_activation(
+            contract,
+            resolved_path,
+            overrides,
+            workflow_name,
+            agent,
+            sandbox_target,
+            policy_env,
+            dry_run,
+            mode,
+            run_behavior_preference,
+            ready_timeout,
+            true,
+            &mut activate_crossing_authority,
+        ) {
+            Ok(result) => result,
+            Err(error) if has_grant_admission => crossing_execution_up_failure_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                error,
+            ),
+            Err(error) => return Err(error),
+        },
+    );
+    if let Some(error) = crossing_activation_error {
+        return Ok(crossing_grant_up_result(
+            contract,
+            resolved_path,
+            workflow_name,
+            overrides,
+            dry_run,
+            agent,
+            run_behavior_preference,
+            grant,
+            error,
+        ));
+    }
+    let terminal_exit_code = Some(repo_up_exit_code(&result));
+    if dry_run {
+        if let Some(preview) = result.preview.as_mut() {
+            preview.crossing_grant_admission = active_crossing_grant_preview().map(Box::new);
+        }
+    } else if has_grant_admission || result.phase != "preconditions" {
+        attach_workflow_crossing_to_receipt(
+            &mut result.receipt,
+            contract,
+            workflow_name,
+            overrides,
+            run_behavior_preference,
+            agent,
+            reason,
+        );
+    }
+    if !dry_run && has_grant_admission && result.receipt.crossing.is_some() {
+        archive_sandbox_execution_receipt(
+            contract,
+            resolved_path,
+            &mut result.receipt,
+            terminal_exit_code,
+        )
+        .map_err(|error| format!("crossing authority evidence could not be archived: {error}"))?;
+    }
+    Ok(*result)
+}
+
 fn execute_repo_up_with_behavior_with_agent(
     contract: &Contract,
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
     agent: bool,
+    sandbox_target: Option<&str>,
     policy_env: Option<&BTreeMap<String, String>>,
     dry_run: bool,
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
+    let mut activate_authority = || Ok(());
+    execute_repo_up_with_behavior_with_agent_and_authority_activation(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        agent,
+        sandbox_target,
+        policy_env,
+        dry_run,
+        mode,
+        run_behavior_preference,
+        ready_timeout,
+        true,
+        &mut activate_authority,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_repo_up_with_behavior_with_agent_and_authority_activation(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    agent: bool,
+    sandbox_target: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+    execute_instance_prerequisites: bool,
+    activate_authority: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<RepoUpResult, String> {
     let replay_input_preflight =
         workflow_replay_input_preflight(contract, resolved_path, workflow_name);
@@ -123237,24 +134117,164 @@ fn execute_repo_up_with_behavior_with_agent(
             contract.selected_workflow_task_closure_names(workflow_name),
         )
     };
-    let mut result = execute_repo_up_with_behavior_with_agent_inner(
+    let sandbox_admission = resolve_workflow_sandbox_admission(
         contract,
         resolved_path,
-        overrides,
         workflow_name,
+        overrides,
         agent,
-        policy_env,
-        dry_run,
-        mode,
-        run_behavior_preference,
-        ready_timeout,
-        &replay_input_preflight,
-    )?;
+        sandbox_target,
+        replay_input_preflight.loaded_policy.as_ref(),
+    );
+    let sandbox_admission = match sandbox_admission {
+        Ok(admission) => admission,
+        Err(error) => {
+            return Ok(sandbox_admission_up_result(
+                contract,
+                resolved_path,
+                workflow_name,
+                overrides,
+                dry_run,
+                agent,
+                run_behavior_preference,
+                error,
+                replay_input_preflight.doctor_policy_snapshot(),
+            ));
+        }
+    };
+    let (result, sandbox_application) = crate::runner::with_oci_local_application_plan(
+        sandbox_admission
+            .as_ref()
+            .and_then(|admission| admission.plan.as_ref()),
+        || {
+            let result = execute_repo_up_with_behavior_with_agent_inner(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                agent,
+                sandbox_target,
+                policy_env,
+                dry_run,
+                mode,
+                run_behavior_preference,
+                ready_timeout,
+                &replay_input_preflight,
+                execute_instance_prerequisites,
+                activate_authority,
+            );
+            (
+                result,
+                crate::runner::current_oci_local_application_evidence(),
+            )
+        },
+    );
+    let mut result = result?;
+    let terminal_exit_code = Some(repo_up_exit_code(&result));
+    let sandbox_admission_json = sandbox_admission.as_ref().map(sandbox_admission_json);
+    if let Some(preview) = result.preview.as_mut() {
+        preview.sandbox_admission = sandbox_admission_json.clone();
+        preview.governance.preflight.sandbox_admission = sandbox_admission_json.clone();
+    }
+    if let Some(preflight) = result.governance_preflight.as_mut() {
+        preflight.sandbox_admission = sandbox_admission_json;
+    }
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_replay_inputs);
     attach_witnessed_observations(&mut result.receipt, &captured_witnessed_observations);
     attach_pre_execution_replay_inputs(&mut result.receipt, &captured_hydration_provenance);
     result.receipt.replay_input_policy = replay_input_policy;
+    if !dry_run {
+        result.receipt.witnessed_observations.sandbox_application = sandbox_application;
+        if !active_crossing_authority_is_configured() {
+            archive_sandbox_execution_receipt(
+                contract,
+                resolved_path,
+                &mut result.receipt,
+                terminal_exit_code,
+            )
+            .map_err(|error| {
+                format!("sandbox enforcement evidence could not be archived: {error}")
+            })?;
+        }
+    }
     Ok(result)
+}
+
+fn unresolved_workflow_instance_prerequisite_preflight_before_authority(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    replay_input_preflight: &TaskReplayInputPreflight,
+) -> Option<DoctorReport> {
+    for selector in contract.selected_workflow_instance_prerequisite_selectors(workflow_name) {
+        let adjusted =
+            contract_adjusted_for_selected_workflow_env_profile(contract, Some(selector.as_str()));
+        let prerequisite_contract = adjusted.as_ref().unwrap_or(contract);
+        let doctor_mode = up_doctor_mode(prerequisite_contract, overrides, Some(selector.as_str()));
+        let mut report =
+            diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+                prerequisite_contract,
+                resolved_path,
+                doctor_mode,
+                Some(selector.as_str()),
+                overrides,
+                replay_input_preflight.policy.as_ref(),
+                replay_input_preflight.doctor_policy_snapshot(),
+            );
+        append_up_safe_task_effect_policy_findings(
+            prerequisite_contract,
+            Some(selector.as_str()),
+            overrides,
+            replay_input_preflight.loaded_policy.as_ref(),
+            &mut report,
+        );
+        if report.ok {
+            continue;
+        }
+        let provisioning_actions = selected_up_provisioning_actions(
+            prerequisite_contract,
+            overrides,
+            Some(selector.as_str()),
+            &report,
+        );
+        let activation_actions = selected_up_activation_actions(
+            prerequisite_contract,
+            overrides,
+            Some(selector.as_str()),
+            &report,
+        );
+        let fallback_backend =
+            selected_up_primary_task_name(prerequisite_contract, Some(selector.as_str()))
+                .map(|task_name| {
+                    effective_task_execution(prerequisite_contract, task_name, overrides).backend
+                })
+                .unwrap_or_else(|| effective_execution(prerequisite_contract, overrides).0);
+        let toolchain_targets = selected_up_toolchain_run_fulfillment_targets(
+            prerequisite_contract,
+            overrides,
+            Some(selector.as_str()),
+            fallback_backend,
+        );
+        let preparation_available =
+            selected_up_setup_task_name(prerequisite_contract, Some(selector.as_str())).is_some()
+                || selected_up_prepare_task_name(prerequisite_contract, Some(selector.as_str()))
+                    .is_some()
+                || selected_up_prepare_action(prerequisite_contract, Some(selector.as_str()))
+                    .is_some();
+        if has_effect_governance_policy_blocker(&report)
+            || !pre_authority_errors_are_fully_resolvable(
+                &report.findings,
+                &provisioning_actions,
+                &activation_actions,
+                &toolchain_targets,
+                preparation_available,
+            )
+        {
+            return Some(report);
+        }
+    }
+    None
 }
 
 fn execute_repo_up_with_behavior_with_agent_inner(
@@ -123263,12 +134283,15 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
     agent: bool,
+    sandbox_target: Option<&str>,
     policy_env: Option<&BTreeMap<String, String>>,
     dry_run: bool,
     mode: RepoExecutionMode,
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
     replay_input_preflight: &TaskReplayInputPreflight,
+    execute_instance_prerequisites: bool,
+    activate_authority: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<RepoUpResult, String> {
     let replay_input_policy = replay_input_preflight.policy.as_ref();
     let adjusted_contract =
@@ -123516,6 +134539,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let mut executed_task_names = BTreeSet::<String>::new();
+    let mut executed_task_steps = Vec::<ExecutedTaskStep>::new();
     let mut fulfilled_toolchains = Vec::<ToolchainFulfillmentEvidence>::new();
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
@@ -123601,7 +134625,17 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         });
     }
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight =
+    let mut preflight = if dry_run {
+        diagnose_preconditions_non_mutating_with_mode_for_workflow_with_overrides_and_replay_input_policy(
+            contract,
+            resolved_path,
+            doctor_mode,
+            workflow_name,
+            overrides,
+            replay_input_policy,
+            replay_input_preflight.doctor_policy_snapshot(),
+        )
+    } else {
         diagnose_preconditions_with_mode_for_workflow_with_overrides_and_replay_input_policy(
             contract,
             resolved_path,
@@ -123610,7 +134644,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             overrides,
             replay_input_policy,
             replay_input_preflight.doctor_policy_snapshot(),
-        );
+        )
+    };
     append_up_safe_task_effect_policy_findings(
         contract,
         workflow_name,
@@ -123756,6 +134791,107 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         workflow_name,
         fallback_backend,
     );
+    let initial_activation_actions =
+        selected_up_activation_actions(contract, overrides, workflow_name, &preflight);
+    if !preflight.ok
+        && !pre_authority_errors_are_fully_resolvable(
+            &preflight.findings,
+            &provisioning_actions,
+            &initial_activation_actions,
+            &toolchain_fulfillment_targets,
+            setup_task.is_some() || prepare_task.is_some() || prepare_action.is_some(),
+        )
+    {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            governance_preflight: Some(derive_preflight(&preflight, None)),
+            receipt: repo_execution_receipt_with_policy_snapshot(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &preflight,
+                ),
+                "NOT READY",
+                "preconditions",
+                workflow_name,
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
+            ),
+            report: preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
+    if let Some(prerequisite_preflight) =
+        unresolved_workflow_instance_prerequisite_preflight_before_authority(
+            contract,
+            resolved_path,
+            overrides,
+            workflow_name,
+            replay_input_preflight,
+        )
+    {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            governance_preflight: Some(derive_preflight(&prerequisite_preflight, None)),
+            receipt: repo_execution_receipt_with_policy_snapshot(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &prerequisite_preflight,
+                ),
+                "NOT READY",
+                "preconditions",
+                workflow_name,
+                None,
+                None,
+                &prerequisite_preflight.findings,
+                None,
+                prerequisite_preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+                Some(replay_input_preflight.doctor_policy_snapshot()),
+            ),
+            report: prerequisite_preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
+    if !dry_run {
+        activate_authority()?;
+    }
     if !provisioning_actions.is_empty() {
         let provisioning_request = crate::policy_pack::ProvisioningBackendRequest {
             actions: provisioning_actions.clone(),
@@ -124348,21 +135484,27 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         });
     }
 
-    for prerequisite_selector in
-        selected_workflow_instance_prerequisite_selectors(contract, workflow_name)
+    for prerequisite_selector in execute_instance_prerequisites
+        .then(|| selected_workflow_instance_prerequisite_selectors(contract, workflow_name))
+        .unwrap_or_default()
     {
-        let prerequisite_result = execute_repo_up_with_behavior_with_agent(
-            contract,
-            resolved_path,
-            overrides,
-            Some(prerequisite_selector.as_str()),
-            agent,
-            policy_env,
-            false,
-            mode,
-            run_behavior_preference,
-            ready_timeout,
-        )?;
+        let mut no_authority_activation = || Ok(());
+        let prerequisite_result =
+            execute_repo_up_with_behavior_with_agent_and_authority_activation(
+                contract,
+                resolved_path,
+                overrides,
+                Some(prerequisite_selector.as_str()),
+                agent,
+                sandbox_target,
+                policy_env,
+                false,
+                mode,
+                run_behavior_preference,
+                ready_timeout,
+                false,
+                &mut no_authority_activation,
+            )?;
         stdout.push_str(&prerequisite_result.stdout);
         stderr.push_str(&prerequisite_result.stderr);
         if !prerequisite_result.ok {
@@ -124391,6 +135533,28 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+                    resolved_path,
+                    contract,
+                    task_phase_execution_context(
+                        contract,
+                        resolved_path,
+                        prepare_task_name,
+                        prepare_overrides,
+                        outcome.target.clone(),
+                    ),
+                    "PREPARE FAILED",
+                    "prepare",
+                    workflow_name,
+                    None,
+                    Some(prepare_task_name),
+                    &[],
+                    Some(outcome.exit_code),
+                    None,
+                    Some(prepare_overrides),
+                    Some(replay_input_preflight.doctor_policy_snapshot()),
+                );
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "PREPARE FAILED",
@@ -124406,27 +135570,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
-                        resolved_path,
-                        contract,
-                        task_phase_execution_context(
-                            contract,
-                            resolved_path,
-                            prepare_task_name,
-                            prepare_overrides,
-                            outcome.target.clone(),
-                        ),
-                        "PREPARE FAILED",
-                        "prepare",
-                        workflow_name,
-                        None,
-                        Some(prepare_task_name),
-                        &[],
-                        Some(outcome.exit_code),
-                        None,
-                        Some(prepare_overrides),
-                        Some(replay_input_preflight.doctor_policy_snapshot()),
-                    ),
+                    receipt,
                     report: DoctorReport {
                         ok: false,
                         provisioning: None,
@@ -124513,7 +135657,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     });
                 }
             }
-            Err(error) => return Err(render_up_run_error(resolved_path, overrides, error)),
+            Err(error) => return Err(render_up_run_error(resolved_path, overrides, agent, error)),
         }
     } else if let Some(prepare_action) = prepare_action {
         let prepare_task_command = Some(prepare_action.preview());
@@ -124648,7 +135792,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     });
                 }
             }
-            Err(error) => return Err(render_up_run_error(resolved_path, overrides, error)),
+            Err(error) => return Err(render_up_run_error(resolved_path, overrides, agent, error)),
         }
     }
 
@@ -124679,6 +135823,12 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     }
 
     if let Some(setup_task_name) = setup_task {
+        let setup_task_execution_overrides = up_execution_overrides_for_task(
+            contract,
+            workflow_name,
+            setup_task_name,
+            task_execution_overrides,
+        );
         let setup_task_command = contract
             .tasks
             .get(setup_task_name)
@@ -124686,7 +135836,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         let setup_contract = contract_adjusted_for_up_setup_phase(
             contract,
             setup_task_name,
-            task_execution_overrides,
+            setup_task_execution_overrides,
             prepare_task,
         );
         let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
@@ -124694,7 +135844,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             setup_contract_ref,
             resolved_path,
             setup_task_name,
-            task_execution_overrides,
+            setup_task_execution_overrides,
             policy_env,
             mode,
             agent,
@@ -124702,6 +135852,28 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+                    resolved_path,
+                    contract,
+                    task_phase_execution_context(
+                        contract,
+                        resolved_path,
+                        setup_task_name,
+                        setup_task_execution_overrides,
+                        outcome.target.clone(),
+                    ),
+                    "SETUP FAILED",
+                    "setup",
+                    workflow_name,
+                    None,
+                    Some(setup_task_name),
+                    &[],
+                    Some(outcome.exit_code),
+                    None,
+                    Some(task_execution_overrides),
+                    Some(replay_input_preflight.doctor_policy_snapshot()),
+                );
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "SETUP FAILED",
@@ -124717,27 +135889,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         },
                         None,
                     )),
-                    receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
-                        resolved_path,
-                        contract,
-                        task_phase_execution_context(
-                            contract,
-                            resolved_path,
-                            setup_task_name,
-                            task_execution_overrides,
-                            outcome.target.clone(),
-                        ),
-                        "SETUP FAILED",
-                        "setup",
-                        workflow_name,
-                        None,
-                        Some(setup_task_name),
-                        &[],
-                        Some(outcome.exit_code),
-                        None,
-                        Some(task_execution_overrides),
-                        Some(replay_input_preflight.doctor_policy_snapshot()),
-                    ),
+                    receipt,
                     report: DoctorReport {
                         ok: false,
                         provisioning: None,
@@ -124759,6 +135911,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
                 executed_task_names.extend(outcome.executed_tasks);
+                executed_task_steps.extend(outcome.task_steps);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
                 if !preflight.ok {
                     let refreshed =
@@ -124779,36 +135932,38 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                             &toolchain_fulfillment_targets,
                         )
                     {
+                        let mut receipt = repo_execution_receipt_with_overrides_and_policy_snapshot(
+                            resolved_path,
+                            contract,
+                            doctor_report_execution_context(
+                                contract,
+                                resolved_path,
+                                doctor_mode,
+                                overrides.lifecycle,
+                                &refreshed,
+                            ),
+                            "BLOCKED",
+                            "provisioning",
+                            workflow_name,
+                            None,
+                            None,
+                            &refreshed.findings,
+                            None,
+                            refreshed
+                                .findings
+                                .first()
+                                .map(|finding| finding.next.clone()),
+                            Some(task_execution_overrides),
+                            Some(replay_input_preflight.doctor_policy_snapshot()),
+                        );
+                        append_up_executed_task_steps(&mut receipt, &executed_task_steps);
                         return Ok(RepoUpResult {
                             ok: false,
                             status: "BLOCKED",
                             phase: "provisioning",
                             preview: None,
                             governance_preflight: Some(derive_preflight(&refreshed, None)),
-                            receipt: repo_execution_receipt_with_overrides_and_policy_snapshot(
-                                resolved_path,
-                                contract,
-                                doctor_report_execution_context(
-                                    contract,
-                                    resolved_path,
-                                    doctor_mode,
-                                    overrides.lifecycle,
-                                    &refreshed,
-                                ),
-                                "BLOCKED",
-                                "provisioning",
-                                workflow_name,
-                                None,
-                                None,
-                                &refreshed.findings,
-                                None,
-                                refreshed
-                                    .findings
-                                    .first()
-                                    .map(|finding| finding.next.clone()),
-                                Some(task_execution_overrides),
-                                Some(replay_input_preflight.doctor_policy_snapshot()),
-                            ),
+                            receipt,
                             report: refreshed,
                             service: None,
                             service_command: None,
@@ -124837,7 +135992,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, overrides, error));
+                return Err(render_up_run_error(resolved_path, overrides, agent, error));
             }
         }
     }
@@ -124860,67 +136015,79 @@ fn execute_repo_up_with_behavior_with_agent_inner(
     }
 
     if let Some(run_task_name) = activation_task {
+        let run_task_execution_overrides = up_execution_overrides_for_task(
+            contract,
+            workflow_name,
+            run_task_name,
+            task_execution_overrides,
+        );
         let run_task_command = contract
             .tasks
             .get(run_task_name)
             .and_then(task_command_preview);
-        let run_result =
-            if selected_up_run_task_is_service(contract, workflow_name, task_execution_overrides)
-                && matches!(
-                    run_behavior,
-                    UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
-                )
+        let run_result = if selected_up_run_task_is_service(
+            contract,
+            workflow_name,
+            run_task_execution_overrides,
+        ) && matches!(
+            run_behavior,
+            UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
+        ) {
+            let effective_execution =
+                effective_task_execution(contract, run_task_name, run_task_execution_overrides);
+            let native_preflight = if effective_execution.backend == Backend::Native
+                && let Some(task) = contract.tasks.get(run_task_name)
             {
-                let effective_execution =
-                    effective_task_execution(contract, run_task_name, task_execution_overrides);
-                let native_preflight = if effective_execution.backend == Backend::Native
-                    && let Some(task) = contract.tasks.get(run_task_name)
-                {
-                    if task_execution_overrides.host_port.is_some() {
-                        Ok(())
-                    } else {
-                        let runtime = task.service_runtime_for_backend(Backend::Native);
-                        preflight_native_runtime_listener_binds(run_task_name, runtime)
-                    }
-                } else {
+                if run_task_execution_overrides.host_port.is_some() {
                     Ok(())
-                };
-                if let Err(error) = native_preflight {
-                    Err(error)
                 } else {
-                    let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
-                    let proof_overrides = if keep_running {
-                        overrides
-                    } else {
-                        task_execution_overrides
-                    };
-                    run_up_task_detached_until_ready(
-                        contract,
-                        resolved_path,
-                        workflow_name,
-                        run_task_name,
-                        proof_overrides,
-                        policy_env,
-                        ready_timeout,
-                        keep_running,
-                        replay_input_preflight,
-                    )
-                    .map_err(|error| RunError::SpawnFailed {
-                        task: run_task_name.to_string(),
-                        source: io::Error::other(error),
-                    })
+                    let runtime = task.service_runtime_for_backend(Backend::Native);
+                    preflight_native_runtime_listener_binds(run_task_name, runtime)
                 }
             } else {
-                run_up_task(
+                Ok(())
+            };
+            if let Err(error) = native_preflight {
+                Err(error)
+            } else {
+                let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
+                let proof_overrides = if keep_running {
+                    up_execution_overrides_for_task(
+                        contract,
+                        workflow_name,
+                        run_task_name,
+                        overrides,
+                    )
+                } else {
+                    run_task_execution_overrides
+                };
+                run_up_task_detached_until_ready(
                     contract,
                     resolved_path,
+                    workflow_name,
                     run_task_name,
-                    task_execution_overrides,
+                    proof_overrides,
                     policy_env,
-                    mode,
-                    agent,
+                    ready_timeout,
+                    keep_running,
+                    replay_input_preflight,
                 )
-            };
+                .map_err(|error| RunError::SpawnFailed {
+                    task: run_task_name.to_string(),
+                    source: io::Error::other(error),
+                })
+            }
+        } else {
+            run_up_task(
+                contract,
+                resolved_path,
+                run_task_name,
+                run_task_execution_overrides,
+                policy_env,
+                mode,
+                agent,
+            )
+        };
         match run_result {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_some() => {
                 stdout.push_str(&outcome.stdout);
@@ -124933,7 +136100,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         contract,
                         resolved_path,
                         run_task_name,
-                        task_execution_overrides,
+                        run_task_execution_overrides,
                         outcome.target.clone(),
                     ),
                     "RUN FAILED",
@@ -124944,11 +136111,12 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     &[],
                     Some(exit_code),
                     None,
-                    Some(task_execution_overrides),
+                    Some(run_task_execution_overrides),
                     Some(replay_input_preflight.doctor_policy_snapshot()),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "RUN FAILED",
@@ -124986,6 +136154,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stderr.push_str(&outcome.stderr);
                 run_runtime = outcome.runtime;
                 executed_task_names.extend(outcome.executed_tasks);
+                executed_task_steps.extend(outcome.task_steps);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Err(error) => {
@@ -124993,7 +136162,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     contract,
                     resolved_path,
                     workflow_name,
-                    task_execution_overrides,
+                    run_task_execution_overrides,
                     run_behavior_preference,
                     agent,
                     run_task_name,
@@ -125004,7 +136173,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, overrides, error));
+                return Err(render_up_run_error(resolved_path, overrides, agent, error));
             }
         }
     }
@@ -125035,6 +136204,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             workflow_name,
             Some(&executed_task_names),
         );
+        append_up_executed_task_steps(&mut receipt, &executed_task_steps);
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
@@ -125080,6 +136250,8 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         && matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
         && let Some(attach_task_name) = selected_up_attach_task_name(contract, workflow_name)
     {
+        let attach_overrides =
+            up_execution_overrides_for_task(contract, workflow_name, attach_task_name, overrides);
         let attach_task_command = contract
             .tasks
             .get(attach_task_name)
@@ -125088,7 +136260,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
             contract,
             resolved_path,
             attach_task_name,
-            overrides,
+            attach_overrides,
             policy_env,
             RepoExecutionMode::Stream,
             agent,
@@ -125097,6 +136269,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 executed_task_names.extend(outcome.executed_tasks);
+                executed_task_steps.extend(outcome.task_steps);
                 fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Ok(outcome) => {
@@ -125110,7 +136283,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                         contract,
                         resolved_path,
                         attach_task_name,
-                        overrides,
+                        attach_overrides,
                         outcome.target.clone(),
                     ),
                     "ATTACH FAILED",
@@ -125121,11 +136294,12 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                     &[],
                     Some(exit_code),
                     None,
-                    Some(overrides),
+                    Some(attach_overrides),
                     Some(replay_input_preflight.doctor_policy_snapshot()),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+                append_up_executed_task_steps(&mut receipt, &outcome.task_steps);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "ATTACH FAILED",
@@ -125159,7 +136333,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, overrides, error));
+                return Err(render_up_run_error(resolved_path, overrides, agent, error));
             }
         }
     }
@@ -125199,6 +136373,7 @@ fn execute_repo_up_with_behavior_with_agent_inner(
         workflow_name,
         Some(&executed_task_names),
     );
+    append_up_executed_task_steps(&mut receipt, &executed_task_steps);
     apply_toolchain_fulfillment_evidence(&mut receipt.toolchains, &fulfilled_toolchains);
     receipt.workloads = workloads;
     Ok(RepoUpResult {
@@ -127602,6 +138777,7 @@ fn run_workspace_repo_refresh_command(
             return Ok(CommandRunResult {
                 exit_code: fetch.exit_code,
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -127621,6 +138797,7 @@ fn run_workspace_repo_refresh_command(
         return Ok(CommandRunResult {
             exit_code: reset.exit_code,
             executed_tasks: Vec::new(),
+            task_steps: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -128140,6 +139317,7 @@ fn run_workspace_repo_task(
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
                         executed_tasks: Vec::new(),
+                        task_steps: result.task_steps,
                         stdout: result.stdout,
                         stderr: result.stderr,
                         target: result.target,
@@ -128165,6 +139343,7 @@ fn run_workspace_repo_task(
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
                         executed_tasks: Vec::new(),
+                        task_steps: result.task_steps,
                         stdout: String::new(),
                         stderr: String::new(),
                         target: result.target,
@@ -128710,6 +139889,47 @@ fn selected_up_activation_task_name<'a>(
     })
 }
 
+fn selected_up_host_port_task_name<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Option<&'a str> {
+    let candidates = [
+        selected_up_run_task_name(contract, workflow_name),
+        selected_up_setup_task_name(contract, workflow_name),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|task_name| {
+            let backend = effective_task_execution(contract, task_name, overrides).backend;
+            contract
+                .tasks
+                .get(*task_name)
+                .and_then(|task| task.service_runtime_for_backend(backend))
+                .is_some()
+        })
+        .or_else(|| candidates.into_iter().flatten().next())
+}
+
+fn up_execution_overrides_for_task(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> ExecutionOverrides {
+    if overrides.host_port.is_some()
+        && selected_up_host_port_task_name(contract, workflow_name, overrides) != Some(task_name)
+    {
+        ExecutionOverrides {
+            host_port: None,
+            ..overrides
+        }
+    } else {
+        overrides
+    }
+}
+
 fn selected_up_agent_task_names(
     contract: &Contract,
     workflow_name: Option<&str>,
@@ -128747,8 +139967,10 @@ fn up_execution_option_admission_blocker(
 ) -> Option<(String, Finding, Vec<String>)> {
     for task_name in selected_up_agent_task_names(contract, workflow_name, run_behavior_preference)
     {
+        let task_overrides =
+            up_execution_overrides_for_task(contract, workflow_name, &task_name, overrides);
         let Err(error) =
-            resolve_execution_plan_for_task(contract, contract_path, &task_name, overrides)
+            resolve_execution_plan_for_task(contract, contract_path, &task_name, task_overrides)
         else {
             continue;
         };
@@ -128933,6 +140155,7 @@ fn run_shell_command(
                 .map(|exit_code| CommandRunResult {
                     exit_code,
                     executed_tasks: Vec::new(),
+                    task_steps: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -128953,6 +140176,7 @@ fn run_shell_command(
             .map(|output| CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
                 executed_tasks: Vec::new(),
+                task_steps: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -129504,6 +140728,7 @@ fn parse_backend_requirement_gap(line: &str) -> Option<(String, String, String, 
 fn render_up_run_error(
     contract_path: &Path,
     overrides: ExecutionOverrides,
+    agent: bool,
     error: RunError,
 ) -> String {
     match error {
@@ -129551,29 +140776,102 @@ fn render_up_run_error(
             task,
             path,
             reasons,
+            runtime_conflicts,
             owners,
         } => {
             let where_value = display_contract_target(&compact_contract_path(contract_path), None);
-            let why_lines = vec![format!(
+            let legacy_service_owner =
+                repo_execution_conflict_has_legacy_service_owner(&reasons, &owners);
+            let runtime_conflict = load_contract(contract_path).ok().and_then(|contract| {
+                repo_execution_runtime_conflict_text(
+                    &contract,
+                    Some(contract_path),
+                    task.as_str(),
+                    overrides,
+                    &owners,
+                    &runtime_conflicts,
+                    repo_up_command_with_free_host_port(overrides, agent),
+                    reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener],
+                )
+            });
+            let mut why_lines = vec![format!(
                 "ota could not start the selected workflow path because active repo executions recorded in `{path}` conflict with task `{task}`"
             )];
-            let next_steps = vec![
-                String::from(
-                    "run `ota up --dry-run` to preview preparation without starting anything",
+            let agent_suffix = if agent { " --agent" } else { "" };
+            let mut next_steps = vec![
+                format!(
+                    "run `ota up --dry-run{agent_suffix}` to preview preparation without starting anything"
                 ),
-                String::from(
-                    "wait for the conflicting execution to finish or stop it before retrying",
-                ),
-                String::from("then rerun `ota up`"),
+                if owners.len() == 1 {
+                    String::from(
+                        "wait for the conflicting execution to finish or stop it before retrying",
+                    )
+                } else {
+                    String::from(
+                        "wait for all conflicting executions to finish or stop them before retrying",
+                    )
+                },
             ];
+            if let Some(runtime_conflict) = runtime_conflict.as_ref()
+                && reasons.as_slice() != [RepoExecutionConflictReason::RuntimeListener]
+            {
+                why_lines.extend(runtime_conflict.why_lines.clone());
+                next_steps.splice(0..0, runtime_conflict.next_steps.clone());
+                let remaining_reasons = reasons
+                    .iter()
+                    .copied()
+                    .filter(|reason| *reason != RepoExecutionConflictReason::RuntimeListener)
+                    .map(repo_execution_conflict_reason_label)
+                    .collect::<Vec<_>>();
+                if !remaining_reasons.is_empty() {
+                    next_steps.push(format!(
+                        "resolve the remaining conflict reasons before retrying: {}",
+                        remaining_reasons
+                            .iter()
+                            .map(|reason| format!("`{reason}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
+            if legacy_service_owner {
+                why_lines.push(String::from(
+                    "the active service record predates runtime-listener ownership, so ota cannot prove that its endpoint is disjoint from this workflow",
+                ));
+                next_steps.push(String::from(
+                    "if that service should remain active, restart it once with the current ota binary so its listener ownership is recorded",
+                ));
+            }
+            if runtime_conflicts.is_empty() {
+                next_steps.push(format!("then rerun `ota up{agent_suffix}`"));
+            }
             let detail_lines = repo_execution_conflict_detail_lines(&reasons, &owners);
-            let mut output = structured_error_text(
-                "UP",
-                &where_value,
-                "Active execution conflict",
-                &why_lines,
-                &next_steps,
-            );
+            let (summary, why_lines, next_steps) =
+                if reasons.as_slice() == [RepoExecutionConflictReason::RuntimeListener] {
+                    runtime_conflict
+                        .map(|runtime_conflict| {
+                            (
+                                String::from("Host port already in use"),
+                                runtime_conflict.why_lines,
+                                runtime_conflict.next_steps,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            (
+                                String::from("Active execution conflict"),
+                                why_lines,
+                                next_steps,
+                            )
+                        })
+                } else {
+                    (
+                        String::from("Active execution conflict"),
+                        why_lines,
+                        next_steps,
+                    )
+                };
+            let mut output =
+                structured_error_text("UP", &where_value, &summary, &why_lines, &next_steps);
             if !detail_lines.is_empty() {
                 output.push('\n');
                 append_error_detail_section(
@@ -129699,14 +140997,26 @@ fn render_up_run_error(
                 why_lines.push(String::from(
                     "this usually means another local workload is still running",
                 ));
-                next_steps.push(format!(
-                    "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
-                ));
+                if overrides.host_port == Some(port) {
+                    why_lines.push(format!(
+                        "the explicit `--host-port {port}` override selected this native bind"
+                    ));
+                    next_steps.push(String::from("or rerun with `--host-port <free port>`"));
+                } else {
+                    next_steps.push(format!(
+                        "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
+                    ));
+                }
             }
+            let field = if overrides.host_port.is_some() {
+                String::from("execution.host_port")
+            } else {
+                format!("tasks.{task}.runtime.listeners.{listener}.bind.port")
+            };
             render_field_error_with_tail(
                 "UP",
                 &where_value,
-                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                &field,
                 "Listener bind conflict",
                 &why_lines,
                 &[next_steps, vec![String::from("rerun `ota up`")]].concat(),
@@ -129754,7 +141064,7 @@ fn render_up_run_error(
             let summary = resolved_toolchain_fulfillment_attempt_summary(
                 &contract,
                 toolchain.as_str(),
-                target_os,
+                target_os.as_str(),
             );
             let provider = summary.provider_label.as_str();
             render_field_error_with_tail(

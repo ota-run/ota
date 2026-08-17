@@ -86,6 +86,7 @@
             "task": { "type": "string" }
           }
         },
+        "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
         "plan": {
           "type": "object",
           "additionalProperties": false,
@@ -147,6 +148,12 @@
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
+                },
+                "sandbox_admission": {
+                  "oneOf": [
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                  ]
                 },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },
@@ -216,6 +223,15 @@
             },
             "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
           }
+        },
+        "sandbox_admission": {
+          "oneOf": [
+            { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+            { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+          ]
+        },
+        "crossing_grant_admission": {
+          "$ref": "./run-preview.json#/$defs/crossingGrantAdmission"
         },
         "blockers": {
           "type": "array",
@@ -305,6 +321,7 @@
                   "task": { "type": "string" }
                 }
               },
+              "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
               "plan": {
                 "type": "object",
                 "additionalProperties": false,
@@ -364,10 +381,16 @@
                     "additionalProperties": false,
                     "required": ["state", "evidence_classes", "receipt_expected", "proof_expected"],
                     "properties": {
-                      "state": {
-                        "enum": ["allowed", "refused", "blocked", "warning_only"]
-                      },
-                      "review_required": { "type": "boolean" },
+                    "state": {
+                      "enum": ["allowed", "refused", "blocked", "warning_only"]
+                    },
+                    "sandbox_admission": {
+                      "oneOf": [
+                        { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                        { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                      ]
+                    },
+                    "review_required": { "type": "boolean" },
                       "declared_safe_for_agent": { "type": "boolean" },
                       "effective_safe_for_agent": { "type": "boolean" },
                       "unsafe_closure_tasks": {
@@ -436,6 +459,15 @@
                 "sandbox_policy": { "$ref": "./tasks.json#/$defs/harnessSandboxPolicy" }
               }
             },
+              "sandbox_admission": {
+                "oneOf": [
+                  { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                  { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                ]
+              },
+              "crossing_grant_admission": {
+                "$ref": "./run-preview.json#/$defs/crossingGrantAdmission"
+              },
               "blockers": {
                 "type": "array",
                 "items": { "$ref": "./shared.json#/$defs/finding" }
@@ -456,7 +488,7 @@
         "status": { "type": "string" },
         "cause": { "type": "string" },
         "phase": {
-          "enum": ["preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
+          "enum": ["preview", "preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
         },
         "findings": {
           "type": "array",
@@ -478,6 +510,12 @@
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
+                },
+                "sandbox_admission": {
+                  "oneOf": [
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmission" },
+                    { "$ref": "./run-preview.json#/$defs/sandboxAdmissionError" }
+                  ]
                 },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },
@@ -625,6 +663,9 @@
             },
             "crossing": {
               "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing"
+            },
+            "refusal": {
+              "$ref": "./tasks.json#/$defs/governanceRefusalRecord"
             },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },

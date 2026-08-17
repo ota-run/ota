@@ -26,6 +26,459 @@
 
 ## Unreleased
 
+## 1.6.26
+
+- Close the bounded V11.7 OSS audited-crossing slice through the independently administered
+  hardened-launcher acceptance branch. Immutable Linux/x64 PID 1 runs `31939777636` and
+  `31953535665` prove the production client, protected history, one-use selected execution,
+  terminal cleanup, archive reconciliation, and administrator-driven reboot/fault recovery.
+  Provider attestation remains optional stronger hardening, while contract-authored
+  `governance.crossing_requirements` is explicitly deferred to follow-on authoring work.
+
+- Emit the full 40-character source commit from `ota --version --json` so protected deployment
+  evidence can bind the installed Core binary to one exact source revision rather than a prefix.
+
+- Treat wildcard (`*`) task tool and runtime requirements as executable-availability requirements
+  when a present command does not expose parseable version output. Pinned requirements still fail
+  closed when Ota cannot establish the installed version. This keeps POSIX `sh` tasks portable to
+  Debian and Ubuntu systems where `dash --version` exits nonzero without weakening version pins.
+
+- Add the production protected receipt-history Core surface for the Linux systemd Launcher.
+  `ota receipt --history --source systemd_protected_launcher` uses one fixed protected socket,
+  rejects repository and contract-file overrides, and never falls back to local archives. The
+  bounded manifest binds the admitted non-agent operator profile and live peer, repository and
+  catalog identities, and three content-addressed objects per entry: receipt archive, immutable
+  contract snapshot, and launcher-finalization sidecar. Core reconstructs those exact bytes and
+  applies the existing semantic archive verifier; optional `--archive-identity` selects one exact
+  archive without exposing a protected path. Local history remains the default and now publishes
+  an explicit source and completeness posture in text and JSON.
+  Immutable Linux/x64 PID 1 run
+  [31823037642](https://github.com/ota-run/authority-launcher/actions/runs/31823037642)
+  proves the installed production invocation client and protected-history source against Protocol
+  `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `d9d424168b1c1dad48351651c610789e54f74dcf`, and Launcher
+  `c80828aa7b64a4bb8c1d9957d937d4fae4d70828`. The retained artifacts contain one valid and zero
+  invalid protected archive, one catalog entry and three content-addressed objects, exact terminal
+  cleanup, one-use/refusal/recovery evidence, unchanged refusal worktrees, and no private signing
+  material. The workflow controller provisioned the authority stack, so independently administered
+  launcher separation and provider attestation remain open.
+  Independently administered Linux/x64 PID 1
+  [run 31939777636](https://github.com/ota-run/authority-launcher/actions/runs/31939777636)
+  separately proves the consumer-only positive path against Protocol
+  `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `634a2c169e083da4e02abd72a7bf29ae388ddf3d`, and Launcher
+  `ea7480e8d8b8aa214c5602628fb6dfa6382e2088`. It retains the stopped/process-free provisioning
+  precondition, exact installed runner and authority identities, one completed consumed work unit,
+  exact cleanup, one valid protected archive, zero invalid archives, and no private authority
+  material. The separate administrator-driven reboot/fault-recovery matrix is green in immutable
+  Linux/x64 PID 1
+  [run 31953535665](https://github.com/ota-run/authority-launcher/actions/runs/31953535665)
+  against Protocol `04a199a1eddd72b5b61958e0fe7f2d4e662e05cf`, clean source-built Core
+  `e49f21ee77e522a614a776bcf17c9f9be16c8a90`, and Launcher
+  `a348a13fd60b067266013cf8a0f047bbe274fd81`. Its consumer artifact independently re-verifies the
+  three expected protected archives with zero invalid or legacy entries, exact boot transitions,
+  unchanged repository state, and complete cleanup. Provider attestation remains open.
+
+- Preserve honest launcher crash-recovery evidence. Live systemd finalization keeps its directly
+  observed exit and child-reaped posture; restart recovery uses signed finalization schema v2 with
+  `recovered_absent_completion_bound`, verified child absence, and no claimed observed exit or
+  reaping. Receipt history re-verifies either exact version without upgrading legacy evidence.
+  Immutable Linux/x64 PID 1 run
+  [31758094819](https://github.com/ota-run/authority-launcher/actions/runs/31758094819)
+  proves the corrected portable-finalization path, one-use consumption, exact crash recovery,
+  valid archive history, zero terminal boundary residue, and unchanged refusal/crash worktrees.
+
+- Add the locally tested portable protected-systemd launcher-finalization candidate. New
+  launcher-owned crossing transaction schema v3 is bound into the signed consume exchange and
+  requires broker-archive schema v2 plus portable finalization verification. Historical transaction
+  v2 and broker-archive v1 evidence retain their original compatibility posture. The launcher now retains protected
+  post-cleanup recovery state until the client acknowledges a producer-signed sidecar binding exact
+  cleanup evidence, receipt-archive identity, and crossing transaction. Core durably publishes the
+  exact execution receipt archive before emitting launcher completion. The root launcher reopens
+  that private archive through the execution-principal repository descriptor, requires exact owner,
+  content, and transaction identity, and atomically publishes the root-owned sidecar; the job
+  principal only acknowledges it. Core publishes the archive with atomic create-new semantics and
+  file/directory durability; the launcher requires private execution-principal-owned `0700`
+  directories and retains the exact terminal until a separate identity-bound acknowledgement. Its
+  signed profile binds `CAP_DAC_OVERRIDE` in the exact bounding set, but not ambiently, solely so
+  the root launcher can traverse that private hierarchy inside its protected mount namespace.
+  Core then independently verifies both signatures and every identity relationship. Immutable PID
+  1 crash pressure and a production operator client remain required before shipment.
+
+- Add the selected-execution candidate for the protected systemd authority carrier.
+  After exact V3 admission and atomic one-use lease consumption, Core may execute only the frozen
+  work unit, finalize its crossing transaction and receipt, and require the launcher to persist
+  that exact completion before Core exits. The launcher independently reaps the child and removes
+  the exact scope, cgroup, and active slot before emitting terminal finalization. Local tests cover
+  exact acknowledgement, identity substitution, failure, interruption, and carrier-specific
+  transaction persistence posture. V3 receipt archives accept only launcher-active-slot
+  transactions in both runtime verification and the published receipt schema, while signed-file
+  and legacy broker carriers remain repository-journal-bound. Receipt history preserves that
+  carrier distinction instead of reinterpreting a verified launcher-owned V3 transaction as a
+  repository journal. Immutable Linux/x64 PID 1 pressure run
+  [31664495937](https://github.com/ota-run/authority-launcher/actions/runs/31664495937)
+  binds Core `06976f3eb4919a0bddaa318ed0824a6b9448aaaf`, Launcher
+  `e8b6ae5108559508cfb75141cb9b317d46c182f3`, and Protocol
+  `9fb00a4ab0f1b4c635dbab67c2e6b140b8eade9c`. It proves completed, failed,
+  interrupted, replay-refused, and crash-recovered selected execution with exact child, scope,
+  cgroup, and active-slot cleanup. Portable archive binding of launcher finalization remains open.
+
+- Add protected systemd V3 one-use lease consumption after exact authorization-decision admission.
+  Core binds pending transaction posture to its private persistence owner, so launcher active-slot
+  transactions can emit the exact consume request without creating repository state while ordinary
+  receipt/archive verification remains repository-journal-only. The Launcher persists the consume
+  intent before relay, records the signed consumed response, and still refuses selected execution
+  before exact scope, cgroup, child, and active-slot cleanup. Immutable Linux/x64 PID 1 systemd run
+  [31631358796](https://github.com/ota-run/authority-launcher/actions/runs/31631358796) passes against
+  Protocol `899718c93f205eea8ae403e041be9449daa89192`, Launcher
+  `2185682777c3603ae428dda68d47b1e39d709753`, and clean source-built Core
+  `874c5954798453f92a0141bfc964fe1a90db8d92`. Its pressure-only broker atomically persists spent
+  lease identities in root-owned state before returning `consumed`, then returns a signed
+  `already_consumed` response for the identical lease and consume request while Core accepts only
+  the first consumption. The matrix also proves signed refusal and ambiguity controls,
+  protected-installation/runtime/credential drift, unavailable broker, intent/acknowledgement and
+  post-consumption crash recovery, byte-identical repository state, and zero terminal slots/scopes
+  or selected-work, `.ota`, receipt, and archive residue. Selected execution, crossing
+  receipt/archive evidence, and independently administered provider/launcher separation remain
+  open.
+- Immutable Linux/x64 PID 1 systemd run
+  [31561247605](https://github.com/ota-run/authority-launcher/actions/runs/31561247605) binds exact
+  Protocol `6a92d8db9d089e44d1980f1871bf6e90eccb9960`, Launcher
+  `77ab20aa6ed5e3dd42cc6815ba2de7cd36d543bf`, and clean source-built Core
+  `b71b78ca33ea2edd7bb03ceb66c5e1e104217cd9`. It proves execution-disabled allowed, denied, stale,
+  wrong-scope, pending-timeout, ambiguous, unavailable-proxy, protected-installation/runtime drift,
+  missing-credential, and crash-recovery paths with independently re-verifiable public signed
+  decision/relay identities, zero terminal slots/scopes, byte-identical repository manifests, and no
+  selected-work, `.ota`, lease, receipt, archive, private-key, or credential residue. One-use lease
+  consumption, selected execution, crossing evidence, and provider-attested separation remain open.
+
+- Native task progress loaders now show the selected execution class explicitly, for example
+  `Running setup:dev (native)`, matching the existing container and remote labels.
+
+- Refined active-execution admission around actual resource ownership. Long-running tasks now bind
+  fixed, Ota-managed dynamic, isolated, or unresolved runtime listeners across their complete execution
+  closure, including hooks. Native and container services can coexist when their projected host
+  endpoints and effective write namespaces are disjoint; different task names still refuse when
+  they compete for the same host listener. Shared write and env-materialization paths now also
+  conflict on ancestor/descendant overlap instead of exact text only. Legacy active records without
+  runtime or write-namespace identity remain fail-closed, and conflict output now tells operators
+  to restart a still-needed legacy service once with the current Ota binary so precise listener
+  admission becomes available. A sole fixed runtime-listener collision now reports `Host port
+  already in use`, names the requested and active execution modes plus endpoint owner, suggests a
+  truthful `--host-port <free port>` rerun when that selected lane admits host-port overrides, and
+  preserves the existing run-summary layout with additive `Reason` and `Host port` rows. Mixed
+  ownership conflicts keep the broader active-conflict title while still carrying port-specific
+  remediation, preserves the original agent lane in suggested commands, and states which remaining
+  typed reasons must also be resolved before retrying.
+- Extended `ota run <task> --host-port <port>` to direct native service execution. Container and
+  native Compose lanes still remap only the host publication, while direct native lanes apply the
+  selected port to both the canonical bind and projected host endpoint because no publication
+  boundary exists. Ota reprojects typed launch arguments and runtime environment values, gives the
+  explicit override precedence over conflicting task env, and uses the same effective listener for
+  collision admission, readiness, summaries, and receipts. `ota up` now routes the option only to
+  the selected workflow run or setup task that owns the listener; dependencies, hooks, and
+  interactive attach helpers do not inherit it. Dry-run JSON publishes the admitted override
+  instead of silently omitting it.
+
+- Fixed interactive native task closures so typed hydration and bootstrap phases retain Ota's
+  canonical `🦦` loader instead of inheriting terminal ownership from a later interactive command.
+  On Unix, Ctrl-C now terminates Ota's complete native child process group and waits for it to
+  settle before emitting the interrupted summary, preventing late npm output after Ota reports
+  completion.
+
+- Add compatibility-preserving support for the separated-producer
+  `ota.authority-launcher.systemd/v2` profile. V3 broker bindings and the published receipt schema
+  require an exact registered profile-ID/identity pair; legacy V1 evidence remains verifiable but
+  cannot be relabelled as V2.
+
+- Add the complete `ota.authority-launcher.systemd/v3` and
+  `ota.authority-job-principal.systemd/v2` verification branches. Core independently re-derives the
+  ordered launcher and job-principal observations, nested identities, protected socket source, and
+  limited-primary-group posture from signed evidence. V3 bindings and signed payloads require that
+  exact profile pair and instance schema 3; Core, Protocol, and published receipt schemas reject
+  legacy schema/profile substitution while preserving V1/V2 evidence only in its original branch.
+- Complete local execution-disabled V3 candidate pressure on an ARM64 OrbStack PID 1 systemd VM.
+  Exact signed attestation reaches Core's authorization request, which the launcher deliberately
+  withholds before exact scope/cgroup/child/slot cleanup. Installation drift, runtime-property
+  drift, unavailable producer credentials, and crash-after-scope recovery all preserve zero
+  selected work. Immutable hosted Linux/x64 proof, authorization, lease consumption, receipts, and
+  provider-attested separation remain open.
+- Prepare the immutable Linux/x64 PID 1 systemd V3 pressure lane in Authority Launcher. The lane
+  rejects non-source or dirty Core binaries, requires an immutable Protocol dependency, proves the
+  complete signed execution-disabled path, and exercises installation drift, runtime drift,
+  unavailable producer credentials, and crash recovery. It remains an unrun pressure definition,
+  not hosted evidence.
+
+- Add the next execution-disabled systemd protected-launcher bridge. An exact, identity-bound local
+  continuation now binds the exact invocation, child, working directory, posture, and principal
+  mapping while unlocking CLI parsing after process-posture admission and preserving the same
+  private `FD_CLOEXEC` descriptor for Core's scope-bound broker session. Core then verifies the
+  signed V3 attestation through its existing trust-root, signature, freshness, profile, process,
+  principal, and semantic-scope checks before it can emit an authorization request. Launcher-only
+  startup-gate and principal-mapping values are consumed into private memory and removed from the
+  process environment before CLI dispatch, with task-spawn removal retained as defense in depth.
+- Keep authorization and execution disabled in this slice. The launcher observes Core's exact
+  authorization request but does not forward it, and emits only the typed
+  `attestation_admitted_before_authorization_boundary_removed` refusal after exact scope, cgroup,
+  child, and active-slot cleanup. No decision, lease, selected work, receipt, archive, or provider
+  attestation claim is created.
+
+- Removed the source checkout's absolute `CARGO_MANIFEST_DIR` from production schema discovery.
+  Published JSON schemas are now embedded into the Ota binary, so installed or relocated source
+  builds validate machine output against their exact version-matched schema set without a source
+  checkout or compiler-path dependency.
+- Proved the execution-disabled systemd posture gate at Core
+  `cc680cef790bf8334ee0dfe513c202a51c21954e`, Protocol
+  `b4f36fe450dc4047bd7bd623ea8ba60fd951e31d`, and Launcher
+  `d8aa1d0bf9783d29d53d0a5e912f09f1fa414624`. Hosted normal run
+  [31389237232](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389237232)
+  and root-armed crash/recovery run
+  [31389713244](https://github.com/bobaikato/create-chrome-extension/actions/runs/31389713244)
+  bind reproducible installed binaries, unchanged repository identities, exact transient-scope
+  cleanup, and a typed `posture_admitted_boundary_removed` terminal stage. The crash path records
+  launcher exit `86` before fresh reconciliation. These runs still create no V3 attestation,
+  contact no broker, consume no lease, execute no selected work, and emit no receipt or archive.
+- Added the next execution-disabled systemd-launcher slice at Protocol
+  `adaabfb8300925a09975c7244e27242b5cd41e60` and Launcher
+  `0f9d9eb33e37d6cd855aafdbc7c4d72b3c8957e2`: a canonical protocol scope identity,
+  native root-manager transient-scope creation, exact fixed-slice/control reconciliation, sole-PID
+  kernel-cgroup observation, durable scope-stage journaling, and scope-first startup cleanup. No
+  code path resumes Ota or contacts the broker. OrbStack fails closed because its systemd cannot
+  attach the pre-exec child (`ENOTTY`). Immutable Linux/x64 VPS runs `31373366733` and `31373928434`
+  bind reproducible installed binaries to the exact launcher revision and prove positive scope
+  ownership, terminal removal, root-only post-scope crash recovery before the next request, an
+  unchanged repository, and zero residual slots, scopes, or recorded children. This remains
+  execution-disabled foundation evidence, not broker, selected-work, receipt/archive, or
+  provider-attestation proof.
+
+- Added the immutable stopped-child foundation for the Linux systemd protected launcher. Protocol
+  `6a2d0dc504a313a513ee41105f51449195c85797` defines canonical invocation, working-directory, and
+  child-process identities; Launcher `73a39c95ffab3125819ee655bdc7a740ec3204b9` durably records
+  pre-fork intent, prepares the exact Ota binary as a root-stopped child, verifies its descriptor
+  and principal posture, promotes recoverable temporary state, and uses PID-bound cleanup. This
+  remains execution-disabled foundation evidence: no transient systemd scope, child continuation,
+  broker admission, lease consumption, or selected task execution is claimed.
+
+- Added the reserved Linux `systemd_protected_launcher/v1` broker-attestation branch. Core now
+  requires a private, content-addressed Ota process-posture preface before accepting the signed v3
+  systemd launcher and job-principal instance. The receipt schema and archive re-verification bind
+  the exact v3 carrier. This is a protocol foundation only: the production systemd launcher
+  service, provider/launcher attestation, and hosted v3 pressure remain open.
+
+- Added strict runtime-boundary attestation v2 verification for the Unix broker carrier. Protected
+  bindings select one immutable protocol-published launcher profile and a separate attestor key
+  authority; signed payloads bind the exact launcher session plus ordered required observations and
+  content-addressed launcher/configuration identities. Complete v2 evidence emits
+  `protected_launcher_attested_one_use`. Missing, reordered, failed, unknown, downgraded, or
+  substituted evidence refuses, and receipt archives re-derive the exact v2 branch. Existing v1
+  launcher attestations remain readable and retain `launcher_attested_one_use`; they are never
+  reinterpreted as v2 or provider-attested separation. Authority-launcher run
+  [31269597378](https://github.com/ota-run/authority-launcher/actions/runs/31269597378) is green
+  against exact Core `787ac35f7d0195d2adae85e1113e26ce4a30acc2`, protocol
+  `bff47c2c79b145831a3b411614301d7e09d6f377`, and launcher
+  `01efd331ca0d4dcf2f8899512b1e3705fc649c6d`. It proves the strict profile across live one-use,
+  refusal, recovery, catch-all, runtime-proof, lifecycle-proof, and archive paths. Because the
+  workflow controller provisions the fixed test authority, this remains bounded conformance
+  evidence rather than provider-attested production-host separation.
+
+- Fixed the Unix launcher-session authority module to compile on Windows while preserving its
+  explicit unsupported-platform refusal. Cross-platform archive verification continues to use
+  platform-neutral contract paths without exposing Unix descriptor behavior.
+
+- Fixed source-build identity from Cargo Git checkouts so Cargo's exact root `.cargo-ok` marker no
+  longer creates a false `dirty: true` claim; every other tracked or untracked source change still
+  marks the binary dirty.
+
+- Moved the broker v1 wire structs, fixed protocol domains, bounded framing, and canonical nonce,
+  message, and work-unit identity primitives into the public `ota-authority-protocol` crate pinned
+  by immutable Git revision. Core retains trust-root selection, signature verification, admission,
+  transaction, receipt, and archive authority while compiling against the shared wire model.
+
+- Added fail-closed broker consumption recovery. Ota now durably journals the exact consume intent
+  before transport, re-queries uncertain outcomes only after fresh launcher attestation, persists
+  the separately signed recovery status, and closes consumed, not-consumed, or unknown abandoned
+  transactions as incomplete without resuming work. Recovery requests and statuses use distinct
+  fixed protocol domains; a later execution always requires fresh authorization.
+  Pre-recovery broker archives retain their original seven-domain binding identity and remain
+  readable through an archive-only compatibility projection; live bindings still require the
+  complete nine-domain recovery profile. Consumed recovery also retains its exact intent through
+  the final atomic terminal write so a crash cannot downgrade it into generic abandonment.
+  Authority launcher run
+  [31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) against exact
+  Core `9244eb2bc6a44151c4172c0634ac44bdb216a65a` and immutable protocol
+  `242685d5b7c3904681f1c71d734fbe2d41679dda` proves lost-acknowledgement recovery through fresh
+  attestation, incomplete abandoned-transaction finalization, exactly one later execution under
+  fresh authorization, one valid recovery archive, and zero invalid archives.
+
+- Began the carrier-neutral audited-crossing evidence foundation. New transaction schema v2 binds
+  the authority carrier and authorization identity, while receipt archives bind a re-derived common
+  admission envelope. Legacy v1 receipt history remains limited to the existing `prebound_file`
+  carrier. The later `authority_broker` entry below builds on this foundation for governed `run`
+  and `up` execution.
+
+- Added diagnostic-only `ota authority inspect [--json]` for the fixed `prebound_file` hardening
+  profile. It reuses admission's canonical protected-file verifier across every fixed-store
+  binding, reports typed required/informational observations, exits nonzero for incomplete,
+  failed, or unsupported posture, and redacts protected trust material. The command never selects
+  a grant, mutates authority/high-water state, creates receipts or crossing transactions, or claims
+  more than `current_process_filesystem_guarded` separation.
+
+- Fixed `ota receipt --history --file <contract>` for valid non-default contract filenames. Receipt
+  history now resolves the explicit contract's repository root instead of requiring the file to be
+  named `ota.yaml`; archived snapshot verification semantics are unchanged.
+
+- Extended audited-crossing admission to `ota proof runtime` and `ota proof lifecycle`. Both
+  commands now accept `--grant <id>` and refuse before creating proof artifacts, spawning a child,
+  acquiring lifecycle ownership, starting a service, or running a proof task. Proof invocation
+  role and order, lifecycle service closure, target platform, host-port, memory, dependency
+  selection, and runtime readiness timeout are semantic scope. One proof-owned crossing
+  transaction now covers the complete runtime or lifecycle invocation set and cleanup. A bounded
+  runner-private Unix descriptor carries authority only between immediate Ota children and is
+  removed before selected code executes. Runtime archive v6 and lifecycle archive v3 embed and
+  re-derive terminal authority, rejecting stripped, borrowed, mismatched, or nonterminal evidence.
+  Public refusal JSON remains path-redacted and pre-side-effect.
+
+- Receipt-history verification now fails closed when an archived repo receipt omits its immutable
+  contract snapshot reference or matching snapshot identity. Historical authority requirements are
+  derived only from that archived contract, while ordinary audited crossings remain valid when the
+  archived contract did not opt into grant authority.
+- Authority-bearing receipt archives now preserve a canonical selected-invocation scope so grant
+  authority applies only to the exact archived execution closure. History re-derives lane, graph,
+  platform, execution selection, workflow run behavior, and effect overrides from the archived
+  contract rather than trusting an editable lane label. Snapshot-less older-release archives remain
+  inspectable as `legacy_unverified` and cannot participate in baseline, proof, or authority
+  selection.
+
+- activated V11.7 audited execution boundary authority. Contracts can opt into a fixed
+  system-bound crossing authority with `governance.crossing_authority.authority_id`; `ota run` and
+  `ota up` accept `--grant <id>` and refuse a governed heavier closure before sandbox admission,
+  provisioning, or child execution when the grant is missing, stale, revoked, untrusted, or out of
+  exact semantic scope. Ota derives that scope from the ordered selected task/workflow graph,
+  dependency and hook edges, target platform, and execution/effect overrides. The first
+  `prebound_file` carrier verifies Ed25519 signatures over RFC-8785 canonical JSON from fixed
+  protected system paths, bounded signed freshness, revocation state, and protected monotonic
+  sequence/clock evidence. `ota run` repeats time-, sequence-, and revocation-sensitive admission
+  immediately before transaction creation. Real execution persists a runner-owned per-scope
+  crossing transaction before selected-lane side effects and terminalizes it on success,
+  precondition/startup failure, interruption, or abandoned recovery. Successful admission and that
+  terminal transaction are runner-authored
+  receipt evidence; archived receipts retain the exact signed authority snapshot and reject
+  missing, pending, identity-mismatched, or outcome-inconsistent transaction evidence during
+  re-derivation against the current fixed trust binding. The local transaction is explicitly
+  `runner_local_content_addressed`, not independently authenticated same-user tamper evidence.
+  The signed-file carrier additionally reports
+  `authority_separation_posture: current_process_filesystem_guarded`; filesystem ownership does
+  not establish that the invoking job lacks administrative escalation, so stronger authority
+  separation remains a hardened-launcher or provider-attestation capability.
+  Grant refusal and dry-run never emit a crossing record; successful dry-run publishes only
+  `admissible_not_consumed`. Refused dry-run and admission-produced execution receipts instead
+  carry typed `prebound_file` authority-source, authority/grant selection, reason, and
+  `execution_started: false` evidence without minting crossing authority. When task dry-run has
+  derived the complete scope, task-preview and workflow-refusal evidence also carry scope and
+  contract identities, boundary family, and classification so an external issuer can create an
+  exact grant without reconstructing Ota semantics or receiving task inputs or trust material.
+  Existing contracts remain unchanged until they opt in, and no grant bypasses agent-safe
+  refusal. This first carrier remains bounded offline authority rather than one-use broker
+  authority.
+
+- added the Unix launcher-session `authority_broker` carrier for governed `ota run` and `ota up`.
+  Ota selects exactly one protected binding from `/etc/ota/crossing-brokers.json`, freezes the
+  semantic work unit, verifies challenge-bound launcher attestation and signed authorization,
+  creates a durable pending crossing transaction, and atomically consumes the prepared one-use
+  lease after deterministic admission and before provisioning or selected work. Task processes do
+  not inherit the launcher descriptor. Dry-run
+  performs no launcher interaction and reports `requires_live_authorization`. Transaction and
+  receipt schemas now bind carrier-specific broker admission, consumption, terminal outcome, and
+  archive re-verification; missing consumption, replay, or carrier substitution fail closed.
+  Ordinary workflow readiness timeout, selected workflow instance, ordered prerequisite-instance
+  closure, and runner-derived scope breadth are identity-bound. The archived binding is a public
+  verification snapshot and never serializes the live launcher descriptor. Signed
+  protocol payloads retained for archive verification accept only bounded public-safe principal,
+  invocation, and authority-mount labels; raw nonce, descriptor, credential, and path values remain
+  excluded.
+  `ota up` now evaluates unrelated blockers and every ordered prerequisite-instance preflight
+  before broker contact; prerequisite instances execute once in canonical order inside the same
+  authorized work unit.
+  Grant-required runtime and lifecycle proof now retain one authority transaction across the
+  complete proof invocation and cleanup set. The transaction terminal status binds a fresh
+  runner-generated proof execution identity and the final proof verdict, proof archives re-derive
+  that exact linkage, and ordinary post-admission failures finalize explicitly instead of relying
+  on process teardown. Runtime readiness state is no longer substituted for the terminal proof
+  verdict in broker-backed archive evidence. New runtime and lifecycle proof archives retain a
+  canonical repo-relative contract-snapshot reference so later Doctor and archive verification do
+  not depend on whether the producing command resolved the repository root absolutely; same-root
+  absolute references emitted by earlier builds remain readable. Archive creation now refuses
+  unless the newly written record immediately passes the same semantic loader used by Doctor.
+  Runtime and lifecycle archives preserve requested backend and lifecycle overrides separately
+  from effective execution values, so implicit defaults cannot be reinterpreted as explicit
+  authority scope.
+  Initial hosted broker pressure is green in authority-launcher run
+  [31033509379](https://github.com/ota-run/authority-launcher/actions/runs/31033509379) against exact
+  Core `bd80b29d971ccd5ac8609d9fc767a491ff382ef8`. It covers live and typed adversarial run
+  admission, runtime archive reconciliation through Doctor, and completed runtime/lifecycle proof
+  authority. The lifecycle fixture deliberately uses a root-owned deterministic pressure control
+  while Docker remains inaccessible, so it proves Ota transaction/finalization behavior rather
+  than Docker-provider behavior.
+  Follow-up authority-launcher run
+  [31250919192](https://github.com/ota-run/authority-launcher/actions/runs/31250919192) against exact
+  Core `257be61dd91799237357390b145be950f2fc6b3f` proves broker-unavailable, bounded
+  approval-timeout, local-cancellation, and conflicting-pending-response refusal before selected
+  work. Every refusal retains an unchanged checkout and no receipt state. Hosted recovery run
+  [31257509444](https://github.com/ota-run/authority-launcher/actions/runs/31257509444) closes the
+  bounded post-consumption lost-acknowledgement gate. Independent dispatch
+  [31260927337](https://github.com/ota-run/authority-launcher/actions/runs/31260927337), with final
+  merge-gate confirmation in
+  [31261639968](https://github.com/ota-run/authority-launcher/actions/runs/31261639968), proves
+  terminal cancellation before late approval, insufficient pre-wait attestation freshness,
+  repeated broad-closure execution under distinct work-unit authority, and two valid bounded
+  archives. Provider/launcher-attested separation remains open.
+  Released lifecycle-proof archive v2 records remain readable in their original ungoverned shape;
+  v3 is required for platform-bound and direct crossing-authority evidence.
+
+- Added a pre-release operator guide for the first `prebound_file` carrier. It separates the
+  Linux fixed trust store at `/etc/ota/crossing-authorities.json` from provisioner-owned signed
+  bundle and sequence state, documents root-owned filesystem requirements, and explicitly states
+  that GitHub-hosted runners cannot prove independent authority separation.
+- added V11.21 enforced sandbox policy application. Agent execution now compiles the selected
+  task/workflow closure into a provider-neutral, target-platform-bound segment graph; applies
+  policy-pack restrictions only as identified monotonic overlays; and negotiates the first
+  `oci_local` provider without changing declared execution mode. Authoritative controls fail closed
+  before preparation when the selected path is not an explicit ephemeral container platform, when
+  writable/protected paths cannot be represented safely, or when stock OCI cannot enforce targeted
+  egress. Provider-backed runs use a read-only repository mount, declared writable carve-outs,
+  external-network denial where requested, pre-mutation cleanup leases, initial and terminal engine
+  inspection, and per-invocation boundary evidence. Completed sandbox receipts are archived
+  automatically with the normalized contract snapshot; archive reads re-derive canonical and
+  effective policy from the contract plus an identified policy-authority snapshot, reconcile
+  completed segments with archived task outcomes, and reject unbound segment, edge, overlay,
+  capability, or application identity. Engine inspection rejects every undeclared mount, including
+  image volumes and runtime sockets outside the exact repository-root/carve-out set. Reusing one
+  task identity across multiple execution phases refuses instead of collapsing distinct
+  invocations. Managed isolated paths also refuse because their durable files or named volumes do
+  not yet have transaction-bound creation, retention, and failure-cleanup evidence. The first OCI
+  adapter admits finite
+  command bodies only and refuses typed task bodies, requirements, services, conditional checks,
+  and lifecycle-proof paths that would otherwise execute outside an evidenced provider boundary.
+  `ota doctor` reports selected boundaries that have no compatible enforcing target. This proves
+  only the selected cooperating execution boundary, never application output, repository-wide
+  security, or raw shell outside Ota. Container `platform` is now canonical across ordinary and
+  provider-enforced execution: Ota uses the declared Linux OCI target for variants, inputs,
+  environment, service bindings, requirements, and every execution-backend container creation
+  path; persistent containers reconcile when that target changes. Dry-run does not start
+  provider-backed runtime/tool probe containers, while real OCI precondition probes bind to their
+  exact admitted requirement-owning segment and run as separately identified, cleanup-confirmed
+  invocations inside the registered sandbox application transaction. Blocking probes retain
+  refusal-receipt evidence and cannot substitute for task execution. OCI platform inspection now
+  binds the exact provider-applied `create --platform` request to the created container's platform
+  evidence instead of reading a host-native variant from multi-platform image metadata. A provider
+  that reports a full mismatched container platform still refuses; Docker's OS-only container
+  report is accepted only after the full declared platform was applied during successful creation.
+- fixed `ota run <task> --agent --sandbox-target oci_local` and other Ota-owned run flags after
+  the task name so the task-input boundary rewriter no longer misclassifies them as task inputs
+- preserved receipt-history and receipt-diff compatibility with archived receipts created before
+  execution stage-family metadata was added. New receipts keep publishing the richer stage truth;
+  older archives remain inspectable instead of being silently classified as invalid.
+
 ## 1.6.25
 
 - fixed Doctor agent-readiness derivation for intentionally read-only agent boundaries. A contract

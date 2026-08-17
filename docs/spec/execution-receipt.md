@@ -102,8 +102,10 @@ OOM kill. For host-managed service cleanup owned by ota, receipts can also inclu
 cleanup trigger, and any failure detail ota captured while stopping that host-managed service.
 When execution was blocked by an active repo-execution ownership conflict, receipts can also
 include `execution_conflict`; this records the typed ownership reasons such as `host_service`,
-`compose_project`, or `persistent_backend_family` while keeping the existing `blocked[]`
-compatibility lane.
+`compose_project`, `persistent_backend_family`, `write_path`, or `runtime_listener` while keeping
+the existing `blocked[]` compatibility lane. Runtime listener conflicts are derived from the
+selected closure's effective execution namespace and projected endpoint, not from task-name
+equality alone; unresolved or legacy service ownership remains conservative.
 When the selected task or workflow crosses a heavier audited execution boundary, repo-target
 execution receipts may also include additive `crossing`. This record is ota-authored execution
 evidence, not caller-authored narration. The current shipped slice publishes:
@@ -122,9 +124,86 @@ evidence, not caller-authored narration. The current shipped slice publishes:
 - optional `reason`
 - `evidence_attachment_state`
 - `evidence_classes`
+- optional `authority` when a contract-bound signed grant admitted the crossing
 
-Current shipped receipts keep `requirement_source` honest as `derived`, because ota is not yet
-projecting contract-declared crossing requirements or grant/approval truth on this lane.
+Current receipts keep `requirement_source` honest as `derived`: Ota derives the crossing from the
+selected effective safety closure. When `governance.crossing_authority` is configured and a signed
+grant admits that closure, `authority` carries the fixed authority binding, issuer/key and bundle
+identities, exact grant and semantic-scope identities, admission/freshness/revocation posture,
+and the archived signed evidence needed to re-derive the historical decision. Real execution also
+carries `authority.transaction`: a runner-owned journal created
+before selected-lane side effects and finalized as `completed`, `failed`, `interrupted`, or
+`incomplete`. The crossing `id` is that transaction identity. Archive verification rejects
+missing, pending, identity-mismatched, or outcome-inconsistent transaction evidence. This is
+grant-admission and per-use crossing evidence, not reusable authority or proof that the grant
+remains live now.
+
+Crossing transaction schema v2 records `authority_carrier` and the carrier-neutral
+`authorization_identity`; its archive evidence carries a re-derived carrier admission envelope.
+The earlier v1 `grant_identity` shape remains readable only as legacy `prebound_file` evidence.
+For `authority_broker`, v2 additionally requires the signed consume request/response and binds the
+prepared one-use lease to the durable pending transaction before execution. Receipt history
+re-verifies the launcher attestation, authorization, lease, consumption, exact semantic scope, and
+terminal outcome against the protected broker binding.
+The exact scope includes the selected workflow instance, its ordered prerequisite-instance closure,
+ordinary workflow readiness timeout, and a runner-derived breadth record: closure node/edge counts,
+effect categories, and hashed resource identities/counts. Breadth is
+explanatory evidence, never authorization by itself, and archive verification re-derives it from
+the archived contract. The archived binding is a public verification snapshot and omits the live
+launcher descriptor. Signed protocol payloads are retained only with bounded public-safe
+invocation, principal, and authority-mount labels; raw nonces, descriptors, credentials,
+filesystem paths, and secret provider material are excluded from public evidence.
+`authority.authority_separation_posture` is an explicit boundary. `current_process_filesystem_guarded`
+describes the signed-file carrier. `launcher_attested_one_use` describes verified launcher protocol
+evidence plus atomic broker consumption; it does not by itself prove every provider privilege or
+host-isolation claim. `protected_launcher_attested_one_use` requires the additive v2 attestation
+branch: one exact protocol-published protected-launcher profile, all ordered required observations
+verified, content-addressed launcher and configuration identities, and a separate attestor key
+authority. It proves only those signed observations and remains distinct from reserved
+provider-attested posture. The additive v3 `systemd_protected_launcher_attested_one_use` branch
+binds Core's private process-posture preface to the complete, ordered systemd launcher and job-
+principal profiles. V3 authority requires instance schema 3 with exactly
+`ota.authority-launcher.systemd/v3` and `ota.authority-job-principal.systemd/v2`; legacy profiles
+remain readable only through their original evidence branch. It proves only that signed systemd
+profile instance; it is not provider-attested separation. Core archive history re-verifies the
+original v1, v2, or v3 branch in local regressions; it never upgrades legacy evidence by defaulting
+newer fields. The systemd carrier archives the
+verified V3 admission, atomic consumption, exact semantic scope, and terminal crossing transaction,
+while the outer launcher emits post-process child/scope/cgroup/active-slot finalization. The
+launcher durably retains post-cleanup finalization until it verifies the exact
+execution-principal-owned private archive, atomically publishes a root-owned producer-signed
+sidecar, and receives the client's exact acknowledgement. The job principal does not read the
+private archive directory: `.ota` and `.ota/receipts` are execution-principal-owned and mode
+`0700`. Core publishes the archive atomically with create-new semantics and syncs both file and
+directory before completion. The launcher retains and replays the exact terminal until the client
+acknowledges its identity. One signature binds cleanup; a separate signature binds that exact
+finalization to the receipt-archive identity and crossing transaction. New launcher-owned crossing transaction schema
+v3 is bound into the signed consume exchange and requires broker-archive schema v2 plus portable
+finalization verification. Historical transaction v2 and broker-archive v1 evidence remain
+readable under their original schema rather than being silently upgraded. Immutable Linux/x64 PID 1
+pressure proves the production client, least-privilege protected-history source, independently
+administered hardened-launcher path, and administrator-driven reboot/fault recovery. Provider
+attestation remains optional stronger hardening; it is not implied by this receipt posture. Local
+archive storage is not tamper-proof against later deletion by the execution principal, although
+deletion cannot forge valid producer-signed evidence.
+`authority.transaction.authentication_posture` is an explicit persistence boundary. Signed-file
+and legacy broker transactions use `runner_local_content_addressed`: the journal is runner-authored,
+locked, and content-addressed, but is not independently authenticated against another same-user
+process with write access to `.ota/state`. A V3 systemd broker transaction instead uses
+`launcher_active_slot_content_addressed`; the protected launcher owns the private active-slot
+journal and Core re-verifies that exact posture from the archived V3 admission. Neither posture by
+itself is provider-attested separation. Archive verification proves signed authority admission plus
+internal transaction, crossing-record, and receipt reconciliation. Broker-backed `run`, `up`,
+runtime-proof, and lifecycle-proof archives add independently signed per-use protocol evidence.
+Proof archives own one transaction across their complete invocation set and embed the terminal
+carrier admission directly; immutable hosted broker pressure covers runtime and lifecycle proof
+transactions.
+Authority `actor_mode` is runner-observed as `agent` or `non_agent`; it does not claim a verified
+human identity merely because agent mode was absent.
+When grant admission refuses, the receipt carries no `crossing`. Its typed `refusal` instead names
+`boundary_family: crossing_grant_authority`, `authority_source: prebound_file`, the configured
+authority and requested grant when present, the stable reason family, runner evaluation detail, and
+`execution_started: false`.
 They now also publish additive `evidence_classes` on the crossing record itself so consumers can
 distinguish caller assertion from runner-derived and runner-attested truth without inferring it
 from field names. The current shipped posture is:
@@ -134,6 +213,19 @@ from field names. The current shipped posture is:
 - `evidence_attachment_state`: `attested`
 - `principal_attribution_state`: `attested`
 - lane, boundary, classification, requirement source, actor mode, and intent source: `derived`
+
+Contracts without `governance.crossing_authority` retain the existing audited-crossing behavior.
+Contracts that opt in fail before execution when a heavier non-agent lane lacks exact live authority.
+A grant cannot authorize an agent-mode closure that the agent-safe boundary refuses.
+Receipt-history verification derives whether authority was required only from the receipt's archived,
+content-addressed contract snapshot. A repo receipt archive without that snapshot and its matching
+identity is unverifiable; history never recovers authority requirements from the current worktree.
+The archive also distinguishes a diagnosis-only `readiness` receipt from an `execution` receipt with
+a canonical recorded selected-invocation scope. Archive verification reconciles the content-addressed
+record, but does not make local storage tamper-proof against a caller who can rewrite both the archive
+and its local storage. Authority configuration alone never turns readiness or a safe archived lane into
+a crossing. Older snapshot-less archives are reported as
+`legacy_unverified` and are excluded from baseline, proof, and authority selection.
 The corresponding governance output now also keeps phase semantics explicit for non-run and
 crossing-evidence posture: post-execution governance can publish why execution did not run
 (`preview_only`, `preflight_refusal`, `preflight_blocked`) and whether a crossing record was

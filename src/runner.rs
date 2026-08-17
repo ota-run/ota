@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -96,6 +97,7 @@ use crate::schema::{
     format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
     task_target_env_name,
 };
+use crate::semantic_identity::semantic_contract_identity;
 use crate::terminal::supports_dynamic_stderr_ui;
 #[cfg(test)]
 use crate::toolchains::declared_toolchain_contract;
@@ -287,7 +289,7 @@ fn clear_stream_phase_line() {
 
 fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
     match backend {
-        Backend::Native => "",
+        Backend::Native => " (native)",
         Backend::Container => " (container)",
         Backend::Remote => " (remote)",
     }
@@ -295,7 +297,7 @@ fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
 
 fn backend_loader_suffix(backend: &ResolvedExecutionBackend) -> &'static str {
     match backend {
-        ResolvedExecutionBackend::Native { .. } => "",
+        ResolvedExecutionBackend::Native { .. } => " (native)",
         ResolvedExecutionBackend::Container { .. } => " (container)",
         ResolvedExecutionBackend::Remote { .. }
         | ResolvedExecutionBackend::BackendProvider { .. } => " (remote)",
@@ -813,6 +815,8 @@ pub enum RunError {
     },
     #[error("task `{task}` cannot enforce read-only replay baseline consumption: {reason}")]
     ReplayBaselineReadOnlyBoundaryUnavailable { task: String, reason: String },
+    #[error("task `{task}` cannot apply the admitted sandbox policy: {details}")]
+    SandboxPolicyApplicationFailed { task: String, details: String },
     #[error(
         "task `{task}` mutated replay baseline artifact `{artifact}` after execution; Ota detected the change but the selected `verify_unchanged` boundary could not refuse it"
     )]
@@ -1024,6 +1028,7 @@ pub enum RunError {
         task: String,
         path: String,
         reasons: Vec<RepoExecutionConflictReason>,
+        runtime_conflicts: Vec<RepoExecutionRuntimeConflict>,
         owners: Vec<RepoExecutionLockOwner>,
     },
     #[error(
@@ -1319,6 +1324,1102 @@ impl DeclaredEnvSourceLoadError {
 pub struct RunPlan {
     pub tasks: Vec<String>,
     pub steps: Vec<RunPlanStep>,
+    pub edges: Vec<RunPlanEdge>,
+}
+
+#[derive(Debug, Clone)]
+struct OciLocalApplicationContext {
+    plan: crate::sandbox_policy::OciLocalApplicationPlan,
+    evidence: crate::sandbox_policy::SandboxApplicationEvidence,
+    active_precondition_probe: Option<OciLocalPreconditionProbeContext>,
+    next_precondition_probe_generation: usize,
+}
+
+#[derive(Debug, Clone)]
+struct OciLocalPreconditionProbeContext {
+    boundary_task_name: String,
+    segment_id: String,
+    generation: usize,
+}
+
+thread_local! {
+    static OCI_LOCAL_APPLICATION_CONTEXT: RefCell<Option<OciLocalApplicationContext>> =
+        const { RefCell::new(None) };
+}
+
+pub(crate) fn with_oci_local_application_plan<T>(
+    plan: Option<&crate::sandbox_policy::OciLocalApplicationPlan>,
+    action: impl FnOnce() -> T,
+) -> T {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let active = plan.cloned().map(|plan| {
+            let started_at = OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("sandbox application start time should format");
+            let runner_transaction_identity = semantic_contract_identity(&(
+                plan.identity.as_str(),
+                std::process::id(),
+                OffsetDateTime::now_utc().unix_timestamp_nanos(),
+            ))
+            .expect("sandbox runner transaction identity should serialize");
+            let challenge_identity = semantic_contract_identity(&(
+                runner_transaction_identity.as_str(),
+                plan.identity.as_str(),
+                started_at.as_str(),
+                "oci_local_single_use_challenge",
+            ))
+            .expect("sandbox local challenge identity should serialize");
+            OciLocalApplicationContext {
+                evidence: crate::sandbox_policy::SandboxApplicationEvidence {
+                    schema_version: crate::sandbox_policy::SANDBOX_POLICY_SCHEMA_VERSION,
+                    lane: plan.lane.clone(),
+                    execution_selection: plan.execution_selection,
+                    canonical_policy_identity: plan.canonical_policy_identity.clone(),
+                    restriction_authority: plan.restriction_authority.clone(),
+                    restriction_overlays: plan.restriction_overlays.clone(),
+                    restriction_overlay_identities: plan.restriction_overlay_identities.clone(),
+                    effective_policy_identity: plan.effective_policy_identity.clone(),
+                    target_platform: plan.target_platform.clone(),
+                    provider_target: crate::sandbox_policy::OCI_LOCAL_TARGET.to_string(),
+                    provider_adapter_version: crate::sandbox_policy::OCI_LOCAL_ADAPTER_VERSION
+                        .to_string(),
+                    capability_identity: plan.capability_identity.clone(),
+                    application_plan_identity: plan.identity.clone(),
+                    runner_transaction_identity,
+                    started_at,
+                    attestation: crate::sandbox_policy::SandboxLocalAttestationEvidence {
+                        issuer: String::from("ota_runner"),
+                        trust: String::from("runner_owned_runtime_inspection"),
+                        challenge_identity,
+                        verifier: crate::sandbox_policy::OCI_LOCAL_ADAPTER_VERSION.to_string(),
+                    },
+                    status: crate::sandbox_policy::SandboxApplicationStatus::NotStarted,
+                    admitted_edge_identities: plan
+                        .edges
+                        .iter()
+                        .map(|edge| edge.identity.clone())
+                        .collect(),
+                    admitted_segments: plan.segments.clone(),
+                    admitted_edges: plan.edges.clone(),
+                    selected_edges: Vec::new(),
+                    segments: Vec::new(),
+                },
+                plan,
+                active_precondition_probe: None,
+                next_precondition_probe_generation: 0,
+            }
+        });
+        let previous = context.replace(active);
+        let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action));
+        if output.is_err() {
+            finalize_oci_local_application_after_panic();
+        }
+        context.replace(previous);
+        match output {
+            Ok(output) => output,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
+fn finalize_oci_local_application_after_panic() {
+    let boundaries = OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let context = context.borrow();
+        let Some(context) = context.as_ref() else {
+            return Vec::new();
+        };
+        context
+            .evidence
+            .segments
+            .iter()
+            .filter(|segment| {
+                !matches!(
+                    segment.cleanup.state,
+                    crate::sandbox_policy::SandboxCleanupState::Confirmed
+                )
+            })
+            .filter_map(|segment| {
+                let mut parts = segment.boundary_identity.splitn(3, ':');
+                let kind = parts.next()?;
+                let engine = parts.next()?;
+                let boundary = parts.next()?;
+                (kind == "container").then(|| {
+                    let task = context
+                        .plan
+                        .segments
+                        .iter()
+                        .find(|plan| plan.segment_id == segment.segment_id)
+                        .map(|plan| plan.task.clone())
+                        .unwrap_or_else(|| String::from("sandbox-finalizer"));
+                    (engine.to_string(), boundary.to_string(), task)
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    for (engine, boundary, task) in boundaries {
+        if remove_persistent_container(&engine, &boundary, &task).is_err() {
+            record_oci_local_cleanup(
+                &engine,
+                &boundary,
+                crate::sandbox_policy::SandboxCleanupState::Unknown,
+            );
+        }
+    }
+}
+
+fn record_oci_local_selected_edge(
+    task_name: &str,
+    relation: &TaskExecutionRelation,
+    generation: usize,
+    state: &TaskRunState,
+    selected_state: crate::sandbox_policy::SandboxSelectedEdgeState,
+) -> Result<(), RunError> {
+    let (source_task, destination_task, condition, source_step) = match relation {
+        TaskExecutionRelation::Requested => return Ok(()),
+        TaskExecutionRelation::DependsOn { parent }
+        | TaskExecutionRelation::AggregateMember { parent } => (
+            task_name,
+            parent.as_str(),
+            crate::sandbox_policy::SandboxPolicyEdgeCondition::Unconditional,
+            None,
+        ),
+        TaskExecutionRelation::AfterSuccess { parent } => (
+            parent.as_str(),
+            task_name,
+            crate::sandbox_policy::SandboxPolicyEdgeCondition::OnSuccess,
+            state
+                .task_steps
+                .iter()
+                .rev()
+                .find(|step| step.name == *parent)
+                .map(|step| (step.exit_code, step.generation)),
+        ),
+        TaskExecutionRelation::AfterFailure { parent } => (
+            parent.as_str(),
+            task_name,
+            crate::sandbox_policy::SandboxPolicyEdgeCondition::OnFailure,
+            state
+                .task_steps
+                .iter()
+                .rev()
+                .find(|step| step.name == *parent)
+                .map(|step| (step.exit_code, step.generation)),
+        ),
+        TaskExecutionRelation::AfterAlways { parent } => (
+            parent.as_str(),
+            task_name,
+            crate::sandbox_policy::SandboxPolicyEdgeCondition::Always,
+            state
+                .task_steps
+                .iter()
+                .rev()
+                .find(|step| step.name == *parent)
+                .map(|step| (step.exit_code, step.generation)),
+        ),
+    };
+    let source_exit_code = source_step.map(|(exit_code, _)| exit_code);
+    let source_generation = source_step.map(|(_, generation)| generation);
+    let source = format!("task:{source_task}");
+    let destination = format!("task:{destination_task}");
+    let executed_segment = format!("task:{task_name}");
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return Ok(());
+        };
+        let Some(edge) = context.plan.edges.iter().find(|edge| {
+            edge.source == source
+                && edge.destination == destination
+                && edge.condition == condition
+        }) else {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "runtime selected edge `{source}` -> `{destination}` ({condition:?}) outside the admitted sandbox policy graph"
+                ),
+            });
+        };
+        let identity = semantic_contract_identity(&(
+            edge.identity.as_str(),
+            source.as_str(),
+            destination.as_str(),
+            executed_segment.as_str(),
+            condition,
+            edge.order,
+            generation,
+            selected_state,
+            source_exit_code,
+            source_generation,
+        ))
+        .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details,
+        })?;
+        if context
+            .evidence
+            .selected_edges
+            .iter()
+            .any(|selected| selected.identity == identity)
+        {
+            return Ok(());
+        }
+        context
+            .evidence
+            .selected_edges
+            .push(crate::sandbox_policy::SandboxSelectedEdgeEvidence {
+                identity,
+                edge_identity: edge.identity.clone(),
+                source,
+                destination,
+                executed_segment,
+                condition,
+                edge_order: edge.order,
+                generation,
+                state: selected_state,
+                source_exit_code,
+                source_generation,
+            });
+        Ok(())
+    })
+}
+
+fn oci_local_segment_plan(task_name: &str) -> Option<crate::sandbox_policy::OciLocalSegmentPlan> {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let context = context.borrow();
+        let context = context.as_ref()?;
+        let segment_id = context
+            .active_precondition_probe
+            .as_ref()
+            .filter(|probe| probe.boundary_task_name == task_name)
+            .map(|probe| probe.segment_id.as_str());
+        context
+            .plan
+            .segments
+            .iter()
+            .find(|segment| {
+                segment_id
+                    .map(|segment_id| segment.segment_id == segment_id)
+                    .unwrap_or_else(|| segment.task == task_name)
+            })
+            .cloned()
+    })
+}
+
+fn oci_local_segment_invocation_generation(task_name: &str) -> usize {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let context = context.borrow();
+        let Some(context) = context.as_ref() else {
+            return 0;
+        };
+        if let Some(probe) = context
+            .active_precondition_probe
+            .as_ref()
+            .filter(|probe| probe.boundary_task_name == task_name)
+        {
+            return probe.generation;
+        }
+        let segment_id = format!("task:{task_name}");
+        context
+            .evidence
+            .selected_edges
+            .iter()
+            .rev()
+            .find(|edge| {
+                edge.executed_segment == segment_id
+                    && edge.state == crate::sandbox_policy::SandboxSelectedEdgeState::Entered
+            })
+            .map(|edge| edge.generation)
+            .unwrap_or(0)
+    })
+}
+
+fn oci_local_segment_application_purpose(
+    task_name: &str,
+) -> crate::sandbox_policy::SandboxSegmentApplicationPurpose {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .and_then(|context| context.active_precondition_probe.as_ref())
+            .filter(|probe| probe.boundary_task_name == task_name)
+            .map(|_| crate::sandbox_policy::SandboxSegmentApplicationPurpose::PreconditionProbe)
+            .unwrap_or_default()
+    })
+}
+
+fn with_oci_local_precondition_probe<T>(
+    segment_id: Option<&str>,
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    action: impl FnOnce() -> Result<T, RunError>,
+) -> Result<T, RunError> {
+    let ResolvedExecutionBackend::Container {
+        image, platform, ..
+    } = backend
+    else {
+        return action();
+    };
+    let previous_probe = OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return Ok(None);
+        };
+        let segment_id =
+            segment_id.ok_or_else(|| RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: String::from(
+                    "oci_local provider-backed precondition probe has no admitted segment owner",
+                ),
+            })?;
+        let segment = context
+            .plan
+            .segments
+            .iter()
+            .find(|segment| segment.segment_id == segment_id)
+            .ok_or_else(|| RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local could not bind the provider-backed precondition probe to admitted segment `{segment_id}`"
+                ),
+            })?;
+        if segment.declared_image != *image || segment.platform.as_deref() != platform.as_deref() {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local precondition probe segment `{segment_id}` does not match image `{image}` and platform `{}`",
+                    platform.as_deref().unwrap_or("<undeclared>")
+                ),
+            });
+        }
+        let probe = OciLocalPreconditionProbeContext {
+            boundary_task_name: task_name.to_string(),
+            segment_id: segment.segment_id.clone(),
+            generation: context.next_precondition_probe_generation,
+        };
+        context.next_precondition_probe_generation += 1;
+        Ok(Some(context.active_precondition_probe.replace(probe)))
+    })?;
+    let Some(previous_probe) = previous_probe else {
+        return action();
+    };
+    let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action));
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        if let Some(context) = context.borrow_mut().as_mut() {
+            context.active_precondition_probe = previous_probe;
+        }
+    });
+    match output {
+        Ok(output) => output,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+pub(crate) fn current_oci_local_application_evidence()
+-> Option<crate::sandbox_policy::SandboxApplicationEvidence> {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .map(|context| context.evidence.clone())
+    })
+}
+
+fn ensure_current_oci_local_application_completed(task_name: &str) -> Result<(), RunError> {
+    let Some(evidence) = current_oci_local_application_evidence() else {
+        return Ok(());
+    };
+    OCI_LOCAL_APPLICATION_CONTEXT
+        .with(|context| {
+            let context = context.borrow();
+            let plan = &context
+                .as_ref()
+                .expect("sandbox evidence requires an active application plan")
+                .plan;
+            crate::sandbox_policy::validate_application_evidence_against_plan(&evidence, plan)
+        })
+        .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details,
+        })?;
+    if evidence.segments.is_empty() {
+        return Ok(());
+    }
+    if evidence.status != crate::sandbox_policy::SandboxApplicationStatus::EnforcedThroughCompletion
+    {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local did not retain and finalize every applied boundary through completion (status: {:?})",
+                evidence.status
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn register_oci_local_cleanup_lease(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+    declared_image: &str,
+) -> Result<(), RunError> {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return Ok(());
+        };
+        let active_probe = context
+            .active_precondition_probe
+            .as_ref()
+            .filter(|probe| probe.boundary_task_name == task_name);
+        let Some(segment) = context.plan.segments.iter().find(|segment| {
+            active_probe
+                .map(|probe| segment.segment_id == probe.segment_id)
+                .unwrap_or_else(|| segment.task == task_name)
+        }) else {
+            return Ok(());
+        };
+        let purpose = active_probe
+            .map(|_| crate::sandbox_policy::SandboxSegmentApplicationPurpose::PreconditionProbe)
+            .unwrap_or_default();
+        let invocation_generation =
+            active_probe
+                .map(|probe| probe.generation)
+                .unwrap_or_else(|| {
+                    context
+                        .evidence
+                        .selected_edges
+                        .iter()
+                        .rev()
+                        .find(|edge| {
+                            edge.executed_segment == segment.segment_id
+                                && edge.state
+                                    == crate::sandbox_policy::SandboxSelectedEdgeState::Entered
+                        })
+                        .map(|edge| edge.generation)
+                        .unwrap_or(0)
+                });
+        if context.evidence.segments.iter().any(|evidence| {
+            evidence.boundary_identity == format!("container:{engine}:{container_name}")
+        }) {
+            return Ok(());
+        }
+        let boundary_identity = format!("container:{engine}:{container_name}");
+        let cleanup_lease_identity = semantic_contract_identity(&(
+            context.evidence.runner_transaction_identity.as_str(),
+            context.plan.identity.as_str(),
+            segment.segment_id.as_str(),
+            purpose,
+            invocation_generation,
+            boundary_identity.as_str(),
+            "cleanup_authority_registered_before_mutation",
+        ))
+        .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details,
+        })?;
+        let rendered_policy_identity =
+            semantic_contract_identity(&(segment, purpose, engine, container_name, declared_image))
+                .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+                    task: task_name.to_string(),
+                    details,
+                })?;
+        context
+            .evidence
+            .segments
+            .push(crate::sandbox_policy::SandboxSegmentApplicationEvidence {
+                segment_id: segment.segment_id.clone(),
+                segment_policy_identity: segment.segment_policy_identity.clone(),
+                purpose,
+                invocation_generation,
+                cleanup_lease_identity,
+                boundary_identity,
+                declared_image: declared_image.to_string(),
+                resolved_image_identity: None,
+                resolved_platform: None,
+                rendered_policy_identity,
+                applied_policy_identity: None,
+                terminal_application_identity: None,
+                terminal_observation_identity: None,
+                writable_mounts: Vec::new(),
+                filesystem: crate::sandbox_policy::SandboxControlApplicationEvidence {
+                    required: String::from("repo_root_read_only_with_declared_writable_carveouts"),
+                    application: crate::sandbox_policy::SandboxControlApplicationState::Pending,
+                    evidence_identity: None,
+                },
+                network: crate::sandbox_policy::SandboxControlApplicationEvidence {
+                    required: if segment.deny_external_network {
+                        String::from("external_ip_connectivity_denied")
+                    } else {
+                        String::from("no_authoritative_network_control")
+                    },
+                    application: if segment.deny_external_network {
+                        crate::sandbox_policy::SandboxControlApplicationState::Pending
+                    } else {
+                        crate::sandbox_policy::SandboxControlApplicationState::NotRequired
+                    },
+                    evidence_identity: None,
+                },
+                cleanup: crate::sandbox_policy::SandboxCleanupEvidence {
+                    authority: String::from("ota_runner"),
+                    state: crate::sandbox_policy::SandboxCleanupState::Registered,
+                    terminal_identity: None,
+                },
+                status: crate::sandbox_policy::SandboxSegmentApplicationStatus::LeaseRegistered,
+            });
+        Ok(())
+    })
+}
+
+fn verify_oci_local_boundary_application(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+    expected_repo_root: Option<&Path>,
+) -> Result<String, RunError> {
+    let Some(segment_plan) = oci_local_segment_plan(task_name) else {
+        return Ok(String::new());
+    };
+    let image = container_command_output(
+        engine,
+        &["inspect", "-f", "{{.Image}}", container_name],
+        None,
+        task_name,
+    )?;
+    if image.exit_code != 0 || !image.stdout.trim().starts_with("sha256:") {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local could not establish the engine-resolved image identity before execution",
+            ),
+        });
+    }
+    let expected_platform = segment_plan.platform.as_deref().ok_or_else(|| {
+        RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local application plan is missing its contract-declared target platform",
+            ),
+        }
+    })?;
+    let container_platform = container_command_output(
+        engine,
+        &["inspect", "-f", "{{.Platform}}", container_name],
+        None,
+        task_name,
+    )?;
+    let resolved_platform = resolve_oci_local_platform_evidence(
+        expected_platform,
+        (container_platform.exit_code == 0).then(|| container_platform.stdout.trim()),
+    )
+    .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+        task: task_name.to_string(),
+        details,
+    })?;
+    let network = container_command_output(
+        engine,
+        &[
+            "inspect",
+            "-f",
+            "{{.HostConfig.NetworkMode}}",
+            container_name,
+        ],
+        None,
+        task_name,
+    )?;
+    if network.exit_code != 0 {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local could not inspect the applied container network boundary",
+            ),
+        });
+    }
+    if segment_plan.deny_external_network && network.stdout.trim() != "none" {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local expected network mode `none` but the engine applied `{}`",
+                network.stdout.trim()
+            ),
+        });
+    }
+    let mounts = container_command_output(
+        engine,
+        &["inspect", "-f", "{{json .Mounts}}", container_name],
+        None,
+        task_name,
+    )?;
+    if mounts.exit_code != 0 {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local could not inspect the applied container filesystem boundary",
+            ),
+        });
+    }
+    let mounts =
+        serde_json::from_str::<Vec<serde_json::Value>>(mounts.stdout.trim()).map_err(|error| {
+            RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!("oci_local returned invalid mount inspection evidence: {error}"),
+            }
+        })?;
+    let repo_mount = mounts
+        .iter()
+        .find(|mount| {
+            mount.get("Destination").and_then(serde_json::Value::as_str) == Some("/workspace")
+        })
+        .ok_or_else(|| RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local engine inspection did not observe the declared repository-root mount",
+            ),
+        })?;
+    if repo_mount
+        .get("RW")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local engine inspection observed a writable repository-root mount",
+            ),
+        });
+    }
+    let repo_mount_type = repo_mount
+        .get("Type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if repo_mount_type != "bind" {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local expected the repository root to use a bind mount, but engine inspection reported `{repo_mount_type}`"
+            ),
+        });
+    }
+    let observed_repo_source = PathBuf::from(
+        repo_mount
+            .get("Source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default(),
+    )
+    .canonicalize()
+    .map_err(|error| RunError::SandboxPolicyApplicationFailed {
+        task: task_name.to_string(),
+        details: format!(
+            "oci_local could not canonicalize the inspected repository mount source: {error}"
+        ),
+    })?;
+    if let Some(expected_repo_root) = expected_repo_root {
+        let expected_repo_root =
+            expected_repo_root
+                .canonicalize()
+                .map_err(|error| RunError::SandboxPolicyApplicationFailed {
+                    task: task_name.to_string(),
+                    details: format!(
+                        "oci_local could not canonicalize the selected repository root during inspection: {error}"
+                    ),
+                })?;
+        if observed_repo_source != expected_repo_root {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: String::from(
+                    "oci_local engine inspection observed a repository-root source that does not match the selected contract working directory",
+                ),
+            });
+        }
+    }
+    let expected_writable = segment_plan
+        .writable_paths
+        .iter()
+        .chain(segment_plan.isolated_paths.iter())
+        .map(|path| format!("/workspace/{}", path.trim_matches('/')))
+        .collect::<BTreeSet<_>>();
+    let mut allowed_mount_destinations = expected_writable.clone();
+    allowed_mount_destinations.insert(String::from("/workspace"));
+    validate_oci_mount_destinations(task_name, &mounts, &allowed_mount_destinations)?;
+    let mut observed_writable = BTreeSet::new();
+    let mut writable_mounts = Vec::new();
+    let mut complete_mount_set = Vec::new();
+    for mount in &mounts {
+        let destination = mount
+            .get("Destination")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let writable = mount
+            .get("RW")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let source = mount
+            .get("Source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let mount_type = mount
+            .get("Type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        complete_mount_set.push((
+            destination.to_string(),
+            mount_type.to_string(),
+            writable,
+            source.to_string(),
+        ));
+        if destination == "/workspace" {
+            continue;
+        } else if destination.starts_with("/workspace/") && writable {
+            if !expected_writable.contains(destination) {
+                return Err(RunError::SandboxPolicyApplicationFailed {
+                    task: task_name.to_string(),
+                    details: format!(
+                        "oci_local engine inspection observed undeclared writable mount `{destination}`"
+                    ),
+                });
+            }
+            let relative = destination.trim_start_matches("/workspace/");
+            let source_identity = if segment_plan
+                .isolated_paths
+                .iter()
+                .any(|path| path == relative)
+            {
+                if mount_type != "volume" {
+                    return Err(RunError::SandboxPolicyApplicationFailed {
+                        task: task_name.to_string(),
+                        details: format!(
+                            "oci_local expected isolated path `{relative}` to use a managed volume, but engine inspection reported `{mount_type}`"
+                        ),
+                    });
+                }
+                semantic_contract_identity(&(
+                    relative,
+                    mount_type,
+                    source,
+                    "engine_managed_volume_source",
+                ))
+                .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+                    task: task_name.to_string(),
+                    details,
+                })?
+            } else {
+                let expected_source =
+                    observed_repo_source.join(relative).canonicalize().map_err(|error| {
+                        RunError::SandboxPolicyApplicationFailed {
+                            task: task_name.to_string(),
+                            details: format!(
+                                "oci_local could not canonicalize expected writable source `{relative}` during inspection: {error}"
+                            ),
+                        }
+                    })?;
+                let observed_source = PathBuf::from(source).canonicalize().map_err(|error| {
+                    RunError::SandboxPolicyApplicationFailed {
+                        task: task_name.to_string(),
+                        details: format!(
+                            "oci_local could not canonicalize observed writable source `{relative}` during inspection: {error}"
+                        ),
+                    }
+                })?;
+                if mount_type != "bind" || observed_source != expected_source {
+                    return Err(RunError::SandboxPolicyApplicationFailed {
+                        task: task_name.to_string(),
+                        details: format!(
+                            "oci_local writable mount `{relative}` is not bound to its canonical repository source"
+                        ),
+                    });
+                }
+                semantic_contract_identity(&(
+                    relative,
+                    mount_type,
+                    observed_source.to_string_lossy().as_ref(),
+                    "canonical_repository_source",
+                ))
+                .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+                    task: task_name.to_string(),
+                    details,
+                })?
+            };
+            writable_mounts.push(crate::sandbox_policy::SandboxWritableMountEvidence {
+                path: relative.to_string(),
+                source_identity,
+            });
+            observed_writable.insert(destination.to_string());
+        }
+    }
+    if observed_writable != expected_writable {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local writable mount evidence does not match policy: expected {:?}, observed {:?}",
+                expected_writable, observed_writable
+            ),
+        });
+    }
+    complete_mount_set.sort();
+    writable_mounts.sort_by(|left, right| left.path.cmp(&right.path));
+    let filesystem_evidence_identity = semantic_contract_identity(&(
+        observed_repo_source.to_string_lossy().as_ref(),
+        repo_mount_type,
+        "/workspace",
+        false,
+        &writable_mounts,
+        &complete_mount_set,
+    ))
+    .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+        task: task_name.to_string(),
+        details,
+    })?;
+    let network_evidence_identity =
+        semantic_contract_identity(&network.stdout.trim()).map_err(|details| {
+            RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details,
+            }
+        })?;
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return Ok(String::new());
+        };
+        let boundary_identity = format!("container:{engine}:{container_name}");
+        let Some(evidence) = context
+            .evidence
+            .segments
+            .iter_mut()
+            .find(|evidence| evidence.boundary_identity == boundary_identity)
+        else {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: String::from(
+                    "oci_local application evidence is missing its pre-mutation cleanup lease",
+                ),
+            });
+        };
+        let initial_filesystem_identity = evidence.filesystem.evidence_identity.clone();
+        let initial_network_identity = evidence.network.evidence_identity.clone();
+        let initial_writable_mounts = evidence.writable_mounts.clone();
+        evidence.resolved_image_identity = Some(image.stdout.trim().to_string());
+        evidence.resolved_platform = Some(resolved_platform);
+        evidence.filesystem.application =
+            crate::sandbox_policy::SandboxControlApplicationState::Enforced;
+        evidence.filesystem.evidence_identity = Some(filesystem_evidence_identity);
+        evidence.network.application = if segment_plan.deny_external_network {
+            crate::sandbox_policy::SandboxControlApplicationState::Enforced
+        } else {
+            crate::sandbox_policy::SandboxControlApplicationState::NotRequired
+        };
+        evidence.network.evidence_identity = Some(network_evidence_identity);
+        if !evidence.writable_mounts.is_empty() && evidence.writable_mounts != writable_mounts {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: String::from(
+                    "oci_local terminal inspection no longer matches the initially witnessed writable mount sources",
+                ),
+            });
+        }
+        evidence.writable_mounts = writable_mounts;
+        let applied_policy_identity = semantic_contract_identity(&(
+            evidence.rendered_policy_identity.as_str(),
+            evidence.resolved_image_identity.as_deref(),
+            evidence.resolved_platform.as_deref(),
+            &evidence.filesystem,
+            &evidence.network,
+            &evidence.writable_mounts,
+            boundary_identity.as_str(),
+        ))
+        .map_err(|details| RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details,
+        })?;
+        if let Some(initial) = evidence.applied_policy_identity.as_ref()
+            && initial != &applied_policy_identity
+        {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local terminal inspection no longer matches the initially applied policy \
+                     (applied policy: {initial}, terminal policy: {applied_policy_identity}, \
+                     filesystem evidence: {:?} -> {:?}, network evidence: {:?} -> {:?}, \
+                     writable mounts changed: {})",
+                    initial_filesystem_identity,
+                    evidence.filesystem.evidence_identity,
+                    initial_network_identity,
+                    evidence.network.evidence_identity,
+                    initial_writable_mounts != evidence.writable_mounts,
+                ),
+            });
+        }
+        evidence.applied_policy_identity = Some(applied_policy_identity.clone());
+        evidence.status = crate::sandbox_policy::SandboxSegmentApplicationStatus::Applied;
+        Ok(applied_policy_identity)
+    })
+}
+
+fn resolve_oci_local_platform_evidence(
+    expected_platform: &str,
+    observed_container_platform: Option<&str>,
+) -> Result<String, String> {
+    let mut expected_parts = expected_platform.split('/');
+    let expected_os = expected_parts.next().unwrap_or_default();
+    let expected_architecture = expected_parts.next().unwrap_or_default();
+    if expected_os.is_empty() || expected_architecture.is_empty() {
+        return Err(format!(
+            "oci_local expected platform `{expected_platform}` is missing its OS or architecture"
+        ));
+    }
+    let observed = observed_container_platform.unwrap_or_default();
+    let mut observed_parts = observed.split('/');
+    let observed_os = observed_parts.next().unwrap_or_default();
+    let observed_architecture = observed_parts.next().unwrap_or_default();
+    if observed_os != expected_os {
+        return Err(format!(
+            "oci_local expected platform `{expected_platform}` but provider inspection observed `{observed}`"
+        ));
+    }
+    if !observed_architecture.is_empty() && observed != expected_platform {
+        return Err(format!(
+            "oci_local expected platform `{expected_platform}` but provider inspection observed `{observed}`"
+        ));
+    }
+
+    // Docker's container inspection currently reports only the OS even though
+    // `docker create --platform` applies the full requested target. Successful provider creation
+    // plus inspection of the exact created container preserves provider-owned platform truth
+    // without substituting the host-native variant exposed by multi-platform image metadata.
+    Ok(expected_platform.to_string())
+}
+
+fn oci_local_boundary_task_for_terminal_inspection(
+    engine: &str,
+    container_name: &str,
+) -> Option<String> {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let context = context.borrow();
+        let context = context.as_ref()?;
+        let boundary_identity = format!("container:{engine}:{container_name}");
+        let segment = context.evidence.segments.iter().find(|segment| {
+            segment.boundary_identity == boundary_identity
+                && segment.status == crate::sandbox_policy::SandboxSegmentApplicationStatus::Applied
+        })?;
+        context
+            .plan
+            .segments
+            .iter()
+            .find(|plan| plan.segment_id == segment.segment_id)
+            .map(|plan| plan.task.clone())
+    })
+}
+
+fn record_oci_local_terminal_application(
+    engine: &str,
+    container_name: &str,
+    observed_policy_identity: &str,
+) {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        let boundary_identity = format!("container:{engine}:{container_name}");
+        let Some(evidence) = context
+            .evidence
+            .segments
+            .iter_mut()
+            .find(|evidence| evidence.boundary_identity == boundary_identity)
+        else {
+            return;
+        };
+        evidence.terminal_observation_identity = Some(observed_policy_identity.to_string());
+        evidence.terminal_application_identity = semantic_contract_identity(&(
+            evidence.cleanup_lease_identity.as_str(),
+            evidence.applied_policy_identity.as_deref(),
+            evidence.terminal_observation_identity.as_deref(),
+            boundary_identity.as_str(),
+            "terminal_runtime_control_inspection",
+        ))
+        .ok();
+    });
+}
+
+fn record_oci_local_enforcement_lost(engine: &str, container_name: &str) {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        let boundary_identity = format!("container:{engine}:{container_name}");
+        if let Some(evidence) = context
+            .evidence
+            .segments
+            .iter_mut()
+            .find(|evidence| evidence.boundary_identity == boundary_identity)
+        {
+            evidence.status =
+                crate::sandbox_policy::SandboxSegmentApplicationStatus::EnforcementLost;
+        }
+    });
+}
+
+fn record_oci_local_cleanup(
+    engine: &str,
+    container_name: &str,
+    state: crate::sandbox_policy::SandboxCleanupState,
+) {
+    OCI_LOCAL_APPLICATION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let Some(context) = context.as_mut() else {
+            return;
+        };
+        let boundary_identity = format!("container:{engine}:{container_name}");
+        let Some(evidence) = context
+            .evidence
+            .segments
+            .iter_mut()
+            .find(|evidence| evidence.boundary_identity == boundary_identity)
+        else {
+            return;
+        };
+        evidence.cleanup.state = state;
+        evidence.cleanup.terminal_identity = semantic_contract_identity(&(
+            evidence.cleanup_lease_identity.as_str(),
+            boundary_identity.as_str(),
+            state,
+        ))
+        .ok();
+        let prior_status = evidence.status;
+        evidence.status = match (state, prior_status) {
+            (
+                crate::sandbox_policy::SandboxCleanupState::Confirmed,
+                crate::sandbox_policy::SandboxSegmentApplicationStatus::Applied,
+            ) => {
+                crate::sandbox_policy::SandboxSegmentApplicationStatus::EnforcedThroughCompletion
+            }
+            (crate::sandbox_policy::SandboxCleanupState::Unknown, _) => {
+                crate::sandbox_policy::SandboxSegmentApplicationStatus::EnforcementUnknownAfterInterruption
+            }
+            (
+                crate::sandbox_policy::SandboxCleanupState::Registered
+                | crate::sandbox_policy::SandboxCleanupState::Incomplete
+                | crate::sandbox_policy::SandboxCleanupState::Confirmed,
+                _,
+            ) => {
+                crate::sandbox_policy::SandboxSegmentApplicationStatus::EnforcementLost
+            }
+        };
+        context.evidence.status = if context.evidence.segments.iter().all(|evidence| {
+            evidence.status
+                == crate::sandbox_policy::SandboxSegmentApplicationStatus::EnforcedThroughCompletion
+        }) {
+            crate::sandbox_policy::SandboxApplicationStatus::EnforcedThroughCompletion
+        } else if context.evidence.segments.iter().any(|evidence| {
+            evidence.status
+                == crate::sandbox_policy::SandboxSegmentApplicationStatus::EnforcementUnknownAfterInterruption
+        }) {
+            crate::sandbox_policy::SandboxApplicationStatus::EnforcementUnknownAfterInterruption
+        } else {
+            crate::sandbox_policy::SandboxApplicationStatus::EnforcementLost
+        };
+    });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1328,6 +2429,13 @@ pub struct RunPlanStep {
     pub backend: Backend,
     pub context: Option<String>,
     pub backend_selection_source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPlanEdge {
+    pub source: String,
+    pub destination: String,
+    pub relation: TaskExecutionRelation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1856,6 +2964,47 @@ pub struct RepoExecutionWriteOwner {
     pub namespace: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoExecutionRuntimeAllocation {
+    Fixed,
+    ManagedDynamic,
+    Isolated,
+    Unresolved,
+}
+
+impl RepoExecutionRuntimeAllocation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::ManagedDynamic => "managed_dynamic",
+            Self::Isolated => "isolated",
+            Self::Unresolved => "unresolved",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoExecutionRuntimeOwner {
+    pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    pub namespace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    pub allocation: RepoExecutionRuntimeAllocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoExecutionRuntimeConflict {
+    pub requested: RepoExecutionRuntimeOwner,
+    pub active: RepoExecutionRuntimeOwner,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoExecutionLockOwner {
     pub task: String,
@@ -1876,6 +3025,8 @@ pub struct RepoExecutionLockOwner {
     pub write_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub write_owners: Vec<RepoExecutionWriteOwner>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_owners: Vec<RepoExecutionRuntimeOwner>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_task: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1893,6 +3044,7 @@ pub enum RepoExecutionConflictReason {
     PersistentBackendFamily,
     EnvMaterializationPath,
     WritePath,
+    RuntimeListener,
     ServiceTask,
 }
 
@@ -1935,6 +3087,7 @@ fn repo_execution_lock_owner_for_backend(
     let mut env_materialization_paths: Vec<String> = Vec::new();
     let mut write_paths: Vec<String> = Vec::new();
     let mut write_owners: Vec<RepoExecutionWriteOwner> = Vec::new();
+    let mut runtime_owners: Vec<RepoExecutionRuntimeOwner> = Vec::new();
     let mut service_task = false;
     let plan = plan_task_execution_with_overrides(contract, task_name, overrides)
         .expect("active execution owner should plan a known task");
@@ -1980,12 +3133,42 @@ fn repo_execution_lock_owner_for_backend(
             push_unique_write_owner(
                 &mut write_owners,
                 RepoExecutionWriteOwner {
-                    path: path.clone(),
+                    path: normalize_owned_resource_path(path.as_str()),
                     namespace: write_ownership_namespace_for_path(path.as_str(), &step_backend),
                 },
             );
         }
-        service_task |= task.service_runtime_for_backend(step.backend).is_some();
+        if let Some(runtime) = task.service_runtime_for_backend(step.backend) {
+            service_task = true;
+            let step_backend = resolve_execution_backend_with_contract_path(
+                contract,
+                step.task.as_str(),
+                ExecutionOverrides {
+                    backend: Some(step.backend),
+                    lifecycle: overrides.lifecycle,
+                    host_port: if step.task == task_name {
+                        overrides.host_port
+                    } else {
+                        None
+                    },
+                    memory: overrides.memory,
+                    skip_deps: overrides.skip_deps,
+                },
+                contract_path,
+            )
+            .unwrap_or_else(|_| backend.clone());
+            collect_runtime_resource_owners(
+                step.task.as_str(),
+                runtime,
+                &step_backend,
+                if step.task == task_name {
+                    overrides.host_port
+                } else {
+                    None
+                },
+                &mut runtime_owners,
+            );
+        }
     }
     let lifecycle = match backend {
         ResolvedExecutionBackend::Native {
@@ -2009,10 +3192,214 @@ fn repo_execution_lock_owner_for_backend(
         env_materialization_paths,
         write_paths,
         write_owners,
+        runtime_owners,
         service_task,
         parent_pid: active_execution_parent_pid_from_env(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
+    }
+}
+
+fn collect_runtime_resource_owners(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
+    owners: &mut Vec<RepoExecutionRuntimeOwner>,
+) {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => {
+            if runtime.listeners.is_empty() {
+                return;
+            }
+            let override_listener = host_port_override
+                .and_then(|_| selected_host_port_override_listener(task_name, runtime).ok());
+            for (listener_name, listener) in &runtime.listeners {
+                let compose_publication = listener.project.publication.compose.is_some();
+                let fixed = if compose_publication {
+                    listener.project.host.as_ref().and_then(|host| {
+                        let port = if override_listener.as_deref() == Some(listener_name.as_str()) {
+                            host_port_override
+                        } else if host.port.mode == TaskRuntimeHostPortMode::Fixed {
+                            host.port.value
+                        } else {
+                            None
+                        }?;
+                        Some((host.address.trim().to_string(), port))
+                    })
+                } else if listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed {
+                    let port = if override_listener.as_deref() == Some(listener_name.as_str()) {
+                        host_port_override
+                    } else {
+                        listener.bind.port.value
+                    };
+                    port.map(|port| (listener.bind.address.trim().to_string(), port))
+                } else {
+                    None
+                };
+                push_unique_runtime_owner(
+                    owners,
+                    match fixed {
+                        Some((address, port)) => fixed_runtime_owner(
+                            task_name,
+                            listener_name,
+                            "host",
+                            listener.protocol,
+                            address,
+                            port,
+                        ),
+                        None => unresolved_listener_owner(task_name, listener_name, "host"),
+                    },
+                );
+            }
+        }
+        ResolvedExecutionBackend::Container { .. } => {
+            let mut publications = task_runtime_listener_publications(Some(runtime));
+            apply_host_port_override_to_listener_publications(
+                task_name,
+                Some(runtime),
+                &mut publications,
+                host_port_override,
+            )
+            .expect("validated runtime owner should accept admitted host-port override");
+            for (listener_name, publication) in publications {
+                let owner = match (publication.host_port_mode, publication.host_port) {
+                    (TaskRuntimeHostPortMode::Fixed, Some(port)) => fixed_runtime_owner(
+                        task_name,
+                        listener_name.as_str(),
+                        "host",
+                        publication.protocol,
+                        publication.host_address,
+                        port,
+                    ),
+                    (TaskRuntimeHostPortMode::Auto, _) => RepoExecutionRuntimeOwner {
+                        task: task_name.to_string(),
+                        listener: Some(listener_name),
+                        namespace: String::from("host"),
+                        protocol: Some(publication.protocol.network_protocol().to_string()),
+                        address: Some(publication.host_address),
+                        port: None,
+                        allocation: RepoExecutionRuntimeAllocation::ManagedDynamic,
+                    },
+                    _ => unresolved_listener_owner(task_name, listener_name.as_str(), "host"),
+                };
+                push_unique_runtime_owner(owners, owner);
+            }
+            for (listener_name, listener) in &runtime.listeners {
+                if listener.project.host.is_some() {
+                    continue;
+                }
+                push_unique_runtime_owner(
+                    owners,
+                    RepoExecutionRuntimeOwner {
+                        task: task_name.to_string(),
+                        listener: Some(listener_name.clone()),
+                        namespace: runtime_resource_namespace(backend),
+                        protocol: Some(listener.protocol.network_protocol().to_string()),
+                        address: Some(listener.bind.address.trim().to_string()),
+                        port: listener.bind.port.value,
+                        allocation: RepoExecutionRuntimeAllocation::Isolated,
+                    },
+                );
+            }
+        }
+        ResolvedExecutionBackend::Remote { .. }
+        | ResolvedExecutionBackend::BackendProvider { .. } => {
+            let namespace = runtime_resource_namespace(backend);
+            if runtime.listeners.is_empty() {
+                return;
+            }
+            for (listener_name, listener) in &runtime.listeners {
+                let owner = if listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed
+                {
+                    listener.bind.port.value.map(|port| {
+                        fixed_runtime_owner(
+                            task_name,
+                            listener_name,
+                            namespace.as_str(),
+                            listener.protocol,
+                            listener.bind.address.trim().to_string(),
+                            port,
+                        )
+                    })
+                } else {
+                    None
+                }
+                .unwrap_or_else(|| {
+                    unresolved_listener_owner(task_name, listener_name, namespace.as_str())
+                });
+                push_unique_runtime_owner(owners, owner);
+            }
+        }
+    }
+}
+
+fn runtime_resource_namespace(backend: &ResolvedExecutionBackend) -> String {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => String::from("host"),
+        ResolvedExecutionBackend::Container { engine, .. } => format!("container:{engine}"),
+        ResolvedExecutionBackend::Remote {
+            provider,
+            target,
+            cwd,
+            ..
+        } => format!(
+            "remote:{provider}:{target}:{}",
+            cwd.as_deref().unwrap_or(".")
+        ),
+        ResolvedExecutionBackend::BackendProvider {
+            provider,
+            target,
+            cwd,
+            ..
+        } => format!(
+            "provider:{provider}:{target}:{}",
+            cwd.as_deref().unwrap_or(".")
+        ),
+    }
+}
+
+fn fixed_runtime_owner(
+    task_name: &str,
+    listener_name: &str,
+    namespace: &str,
+    protocol: TaskRuntimeProtocol,
+    address: String,
+    port: u16,
+) -> RepoExecutionRuntimeOwner {
+    RepoExecutionRuntimeOwner {
+        task: task_name.to_string(),
+        listener: Some(listener_name.to_string()),
+        namespace: namespace.to_string(),
+        protocol: Some(protocol.network_protocol().to_string()),
+        address: Some(address),
+        port: Some(port),
+        allocation: RepoExecutionRuntimeAllocation::Fixed,
+    }
+}
+
+fn unresolved_listener_owner(
+    task_name: &str,
+    listener_name: &str,
+    namespace: &str,
+) -> RepoExecutionRuntimeOwner {
+    RepoExecutionRuntimeOwner {
+        task: task_name.to_string(),
+        listener: Some(listener_name.to_string()),
+        namespace: namespace.to_string(),
+        protocol: None,
+        address: None,
+        port: None,
+        allocation: RepoExecutionRuntimeAllocation::Unresolved,
+    }
+}
+
+fn push_unique_runtime_owner(
+    owners: &mut Vec<RepoExecutionRuntimeOwner>,
+    owner: RepoExecutionRuntimeOwner,
+) {
+    if !owners.contains(&owner) {
+        owners.push(owner);
     }
 }
 
@@ -2099,11 +3486,18 @@ fn collect_action_env_materialization_paths(
 }
 
 fn push_unique_owned_path(paths: &mut Vec<String>, value: &str) {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || paths.iter().any(|existing| existing == trimmed) {
+    let normalized = normalize_owned_resource_path(value);
+    if normalized.is_empty() || paths.iter().any(|existing| existing == &normalized) {
         return;
     }
-    paths.push(trimmed.to_string());
+    paths.push(normalized);
+}
+
+fn normalize_owned_resource_path(value: &str) -> String {
+    crate::execution::normalize_dependency_isolated_path(value)
+        .unwrap_or_else(|| value.trim().replace('\\', "/"))
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn push_unique_write_owner(
@@ -2179,6 +3573,7 @@ pub fn plan_task_execution_with_overrides(
 
     let mut ordered = Vec::new();
     let mut steps = Vec::new();
+    let mut edges = Vec::new();
     let mut visited = BTreeSet::new();
     visit_task_with_overrides(
         contract,
@@ -2190,13 +3585,22 @@ pub fn plan_task_execution_with_overrides(
         &mut visited,
         &mut ordered,
         &mut steps,
+        &mut edges,
     );
 
-    if let Some(blocked_task) = ordered.iter().find(|name| {
-        contract
-            .tasks
-            .get(name.as_str())
-            .is_some_and(|task| !task.active_for_os(current_os()))
+    if let Some((blocked_task, blocked_os)) = steps.iter().find_map(|step| {
+        let task = contract.tasks.get(step.task.as_str())?;
+        let effective = effective_task_execution(
+            contract,
+            step.task.as_str(),
+            ExecutionOverrides {
+                backend: Some(step.backend),
+                ..overrides
+            },
+        );
+        let target_os =
+            target_os_for_declared_backend(step.backend, effective.container, current_os());
+        (!task.active_for_os(target_os)).then(|| (step.task.clone(), target_os.to_string()))
     }) {
         let supported_os = contract
             .tasks
@@ -2206,8 +3610,8 @@ pub fn plan_task_execution_with_overrides(
             .unwrap_or_else(|| String::from("none"));
         return Err(RunError::UnsupportedTaskPlatform {
             task: task_name.to_string(),
-            blocked_task: blocked_task.clone(),
-            os: current_os().to_string(),
+            blocked_task,
+            os: blocked_os,
             supported_os,
         });
     }
@@ -2215,6 +3619,7 @@ pub fn plan_task_execution_with_overrides(
     Ok(RunPlan {
         tasks: ordered,
         steps,
+        edges,
     })
 }
 
@@ -2420,6 +3825,7 @@ fn service_env_bindings_for_task(
     task: &TaskSpec,
     backend: Backend,
     context_name: Option<&str>,
+    target_os: &str,
     engine_hint: Option<&str>,
     password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> BTreeMap<String, String> {
@@ -2427,7 +3833,7 @@ fn service_env_bindings_for_task(
         contract.execution.as_ref(),
         backend,
         context_name,
-        current_os(),
+        target_os,
     )
     .into_iter()
     .filter_map(|(name, binding)| {
@@ -2615,7 +4021,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     let host_uid = host_uid_template_value(working_dir);
     let host_gid = host_gid_template_value(working_dir);
     let backend_kind = resolved_execution_backend_kind(backend);
-    let current_os = current_os();
+    let target_os = target_os_for_execution_backend(backend, current_os());
     let engine_hint = match backend {
         ResolvedExecutionBackend::Container { engine, .. } => Some(engine.as_str()),
         _ => None,
@@ -2625,7 +4031,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     env.extend(load_task_env_file_values(
         task,
         backend_kind,
-        current_os,
+        target_os,
         working_dir,
     ));
     env.extend(
@@ -2633,7 +4039,7 @@ fn effective_task_env_for_backend_with_resolved_env(
             contract.execution.as_ref(),
             backend_kind,
             context_name,
-            current_os,
+            target_os,
         )
         .into_iter()
         .map(|(name, value)| {
@@ -2656,6 +4062,7 @@ fn effective_task_env_for_backend_with_resolved_env(
         task,
         backend_kind,
         context_name,
+        target_os,
         engine_hint,
         password_env_values,
     ));
@@ -2719,11 +4126,11 @@ pub(crate) fn effective_task_env_for_selection(
     let host_home = host_home_template_value();
     let host_uid = host_uid_template_value(working_dir);
     let host_gid = host_gid_template_value(working_dir);
-    let current_os = current_os();
+    let target_os = target_os_for_declared_backend(backend, effective.container, current_os());
     env.extend(load_task_env_file_values(
         task,
         backend,
-        current_os,
+        target_os,
         working_dir,
     ));
     let engine_hint = if backend == Backend::Container {
@@ -2741,7 +4148,7 @@ pub(crate) fn effective_task_env_for_selection(
             contract.execution.as_ref(),
             backend,
             context_name,
-            current_os,
+            target_os,
         )
         .into_iter()
         .map(|(name, value)| {
@@ -2764,6 +4171,7 @@ pub(crate) fn effective_task_env_for_selection(
         task,
         backend,
         context_name,
+        target_os,
         engine_hint.as_deref(),
         None,
     ));
@@ -2805,7 +4213,12 @@ fn apply_runner_owned_proof_env<I>(
         process_env
             .iter()
             .filter(|(name, _)| {
-                name.starts_with("OTA_PROOF_") && name.as_str() != OTA_PROOF_MARKER_BINDINGS_ENV
+                name.starts_with("OTA_PROOF_")
+                    && name.as_str() != OTA_PROOF_MARKER_BINDINGS_ENV
+                    // Parent/child crossing handoff is runner-private. Selected task code must
+                    // never receive a writable evidence path or its transaction capability.
+                    && !name.starts_with("OTA_PROOF_RUNTIME_CROSSING_")
+                    && name.as_str() != "OTA_PROOF_PARENT_AUTHORITY_FD"
             })
             .map(|(name, value)| (name.clone(), value.clone())),
     );
@@ -2857,16 +4270,18 @@ fn load_task_env_file_values(
     merged
 }
 
-pub(crate) fn ensure_task_env_files_ready(
+fn ensure_task_env_files_ready_for_os(
     task_name: &str,
     task: &TaskSpec,
     backend: Backend,
+    target_os: &str,
     working_dir: &Path,
 ) -> Result<(), RunError> {
-    ensure_task_env_files_ready_with_planned_outputs(
+    ensure_task_env_files_ready_with_planned_outputs_for_os(
         task_name,
         task,
         backend,
+        target_os,
         working_dir,
         &BTreeSet::new(),
     )
@@ -2876,10 +4291,29 @@ pub(crate) fn ensure_task_env_files_ready_with_planned_outputs(
     task_name: &str,
     task: &TaskSpec,
     backend: Backend,
+    target_os: &str,
     working_dir: &Path,
     planned_outputs: &BTreeSet<String>,
 ) -> Result<(), RunError> {
-    for path in task.env_files_for_backend_for_os(backend, current_os()) {
+    ensure_task_env_files_ready_with_planned_outputs_for_os(
+        task_name,
+        task,
+        backend,
+        target_os,
+        working_dir,
+        planned_outputs,
+    )
+}
+
+fn ensure_task_env_files_ready_with_planned_outputs_for_os(
+    task_name: &str,
+    task: &TaskSpec,
+    backend: Backend,
+    target_os: &str,
+    working_dir: &Path,
+    planned_outputs: &BTreeSet<String>,
+) -> Result<(), RunError> {
+    for path in task.env_files_for_backend_for_os(backend, target_os) {
         let trimmed = path.trim();
         if trimmed.is_empty() {
             continue;
@@ -2909,6 +4343,28 @@ pub(crate) fn ensure_task_env_files_ready_with_planned_outputs(
                     "env file `{trimmed}` declared in `env_files` is not valid dotenv content: {source}"
                 ),
             })?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_oci_mount_destinations(
+    task_name: &str,
+    mounts: &[serde_json::Value],
+    allowed_destinations: &BTreeSet<String>,
+) -> Result<(), RunError> {
+    for mount in mounts {
+        let destination = mount
+            .get("Destination")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if !allowed_destinations.contains(destination) {
+            return Err(RunError::SandboxPolicyApplicationFailed {
+                task: task_name.to_string(),
+                details: format!(
+                    "oci_local engine inspection observed undeclared mount `{destination}`; the enforced boundary permits only the repository root and declared writable or isolated carve-outs"
+                ),
+            });
         }
     }
     Ok(())
@@ -3105,11 +4561,21 @@ fn projected_command_launch_for_task(
     backend: Backend,
     command: &crate::schema::TaskCommandLaunchSpec,
 ) -> crate::schema::TaskCommandSpec {
+    projected_command_launch_for_task_with_runtime(task, backend, command, None)
+}
+
+fn projected_command_launch_for_task_with_runtime(
+    task: &TaskSpec,
+    backend: Backend,
+    command: &crate::schema::TaskCommandLaunchSpec,
+    runtime_override: Option<&TaskRuntimeSpec>,
+) -> crate::schema::TaskCommandSpec {
     let mut projected = projected_structured_command_for_task(task, backend, command);
     let Some(runtime_projection) = command.runtime_projection.as_ref() else {
         return projected;
     };
-    let Some(runtime) = task.service_runtime_for_backend(backend) else {
+    let Some(runtime) = runtime_override.or_else(|| task.service_runtime_for_backend(backend))
+    else {
         return projected;
     };
     let Some(listener) = runtime.listeners.get(runtime_projection.listener.as_str()) else {
@@ -3178,6 +4644,7 @@ fn preview_backend_for_kind(backend_kind: Backend) -> ResolvedExecutionBackend {
             context_name: None,
             shared_local_backend: None,
             image: String::new(),
+            platform: None,
             engine: String::new(),
             lifecycle: Lifecycle::Ephemeral,
             memory_bytes: None,
@@ -5405,6 +6872,15 @@ fn interruption_observed_since(epoch: u64) -> bool {
     current_run_interrupt_epoch() != epoch
 }
 
+pub(crate) fn begin_command_interrupt_observation() -> u64 {
+    install_run_interrupt_handler();
+    current_run_interrupt_epoch()
+}
+
+pub(crate) fn command_interrupted_since(epoch: u64) -> bool {
+    interruption_observed_since(epoch)
+}
+
 #[cfg(test)]
 pub(crate) fn simulate_run_interrupt_for_test() {
     RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
@@ -7486,9 +8962,11 @@ fn pnpm_boundary_cwd(
     Some(normalized_pnpm_cwd(path.strip_suffix("/node_modules")?))
 }
 
-fn remove_execution_boundary_trace_env(command: &mut Command) {
+fn remove_runner_private_env(command: &mut Command) {
     command.env_remove(EXECUTION_BOUNDARY_TRACE_PATH_ENV);
     command.env_remove(EXECUTION_BOUNDARY_TRACE_TOKEN_ENV);
+    command.env_remove("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY");
+    command.env_remove("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE");
 }
 
 fn observe_virtualenv_boundary_precondition(
@@ -8324,6 +9802,7 @@ pub(crate) enum ResolvedExecutionBackend {
         context_name: Option<String>,
         shared_local_backend: Option<ResolvedSharedLocalBackend>,
         image: String,
+        platform: Option<String>,
         engine: String,
         lifecycle: Lifecycle,
         memory_bytes: Option<u64>,
@@ -8590,6 +10069,7 @@ fn run_task_internal_with_started_services(
             return Err(error);
         }
     };
+    ensure_current_oci_local_application_completed(task_name)?;
     // Preserve the child exit code on its task step, but make the top-level result stable for an
     // observed user interrupt. Consumers can then distinguish interruption from task failure.
     let exit_code = if state.interrupted { 130 } else { exit_code };
@@ -8688,7 +10168,7 @@ fn run_host_shell_command(
         } => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
-            remove_execution_boundary_trace_env(&mut process);
+            remove_runner_private_env(&mut process);
             if capture_output {
                 let mut child = process
                     .stdin(Stdio::inherit())
@@ -8750,7 +10230,7 @@ fn run_host_shell_command(
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
-            remove_execution_boundary_trace_env(&mut process);
+            remove_runner_private_env(&mut process);
             process
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -8882,6 +10362,7 @@ pub(crate) struct LifecycleProofIsolatedContainer {
     context_name: Option<String>,
     repo_ownership_token: String,
     image: String,
+    platform: Option<String>,
     engine: String,
     container_name: String,
     memory_bytes: Option<u64>,
@@ -9433,6 +10914,16 @@ fn finite_command_stdin(interaction: Option<CommandInteractionPosture>) -> Stdio
     }
 }
 
+fn stream_step_inherits_terminal(
+    allow_terminal_passthrough: bool,
+    capture_output: bool,
+    interaction: Option<CommandInteractionPosture>,
+) -> bool {
+    allow_terminal_passthrough
+        && !capture_output
+        && interaction != Some(CommandInteractionPosture::Forbidden)
+}
+
 fn required_command_terminal_is_available(
     interaction: Option<CommandInteractionPosture>,
     mode: &TaskExecutionMode,
@@ -9478,7 +10969,7 @@ fn execute_native_launch_command(
         .args(args)
         .current_dir(working_dir)
         .envs(env_overrides.iter());
-    remove_execution_boundary_trace_env(&mut process);
+    remove_runner_private_env(&mut process);
 
     match mode {
         TaskExecutionMode::Stream {
@@ -9493,11 +10984,14 @@ fn execute_native_launch_command(
             // all three stdio streams directly. This is the path that lets Wrangler (and similar
             // tools) detect a real TTY. The `emit_progress` spinner is bypassed to avoid the
             // pipe interception it requires.
-            let step_inherits = allow_terminal_passthrough
-                && !capture_output
-                && interaction != Some(CommandInteractionPosture::Forbidden);
+            let step_inherits = stream_step_inherits_terminal(
+                allow_terminal_passthrough,
+                capture_output,
+                interaction,
+            );
 
             if emit_progress && !step_inherits {
+                configure_owned_native_process_group(&mut process);
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start_with_policy(
                     &running_loader_label(task_name, backend),
@@ -9556,7 +11050,7 @@ fn execute_native_launch_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_owned_native_process_group(child);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -9611,6 +11105,9 @@ fn execute_native_launch_command(
                     interrupted,
                 })
             } else {
+                if !step_inherits {
+                    configure_owned_native_process_group(&mut process);
+                }
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
@@ -9663,7 +11160,7 @@ fn execute_native_launch_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_native_child(child, !step_inherits);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -9717,6 +11214,7 @@ fn execute_native_launch_command(
             }
         }
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
+            configure_owned_native_process_group(&mut process);
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut child = process
                 .stdin(finite_command_stdin(interaction))
@@ -9747,7 +11245,7 @@ fn execute_native_launch_command(
                 &mut child,
                 readiness_probe.as_ref(),
                 |child| {
-                    let _ = child.kill();
+                    interrupt_owned_native_process_group(child);
                     let _ = cleanup_interrupted_native_service_workload_and_note(
                         task_name,
                         runtime_spec,
@@ -10275,8 +11773,16 @@ fn execute_task_with_hooks(
     if let Some(exit_code) = state
         .completed_by_generation
         .get(&(task_name.to_string(), generation))
+        .copied()
     {
-        return Ok(*exit_code);
+        record_oci_local_selected_edge(
+            task_name,
+            &relation,
+            generation,
+            state,
+            crate::sandbox_policy::SandboxSelectedEdgeState::Reused,
+        )?;
+        return Ok(exit_code);
     }
 
     let task = contract
@@ -10290,10 +11796,18 @@ fn execute_task_with_hooks(
         Some(contract_path),
     )?;
     let backend_kind = resolved_execution_backend_kind(&backend);
+    let target_os = target_os_for_execution_backend(&backend, current_os);
     let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
 
     if let Some(skip_note) = should_skip_task_for_conditions(contract, task_name, task, working_dir)
     {
+        record_oci_local_selected_edge(
+            task_name,
+            &relation,
+            generation,
+            state,
+            crate::sandbox_policy::SandboxSelectedEdgeState::Skipped,
+        )?;
         state.task_steps.push(ExecutedTaskStep {
             name: task_name.to_string(),
             exit_code: 0,
@@ -10313,6 +11827,13 @@ fn execute_task_with_hooks(
             .insert((task_name.to_string(), generation), 0);
         return Ok(0);
     }
+    record_oci_local_selected_edge(
+        task_name,
+        &relation,
+        generation,
+        state,
+        crate::sandbox_policy::SandboxSelectedEdgeState::Entered,
+    )?;
 
     if let Some(aggregate) = task.aggregate.as_ref() {
         let mut aggregate_exit_code = 0;
@@ -10381,7 +11902,6 @@ fn execute_task_with_hooks(
             contract_path,
             task_name,
             task,
-            requested_overrides.host_port,
             policy_env,
             &backend,
             mode.clone(),
@@ -10414,6 +11934,7 @@ fn execute_task_with_hooks(
         task,
         input_args,
         backend_kind,
+        target_os,
         requested_overrides,
         requested_relation,
     )?;
@@ -10478,7 +11999,7 @@ fn execute_task_with_hooks(
         }
     }
 
-    ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
+    ensure_task_env_files_ready_for_os(task_name, task, backend_kind, target_os, working_dir)?;
     ensure_task_adapter_inputs_ready(task_name, task, backend_kind, working_dir)?;
 
     ensure_task_required_artifacts(contract, task_name, task, working_dir)?;
@@ -10492,7 +12013,7 @@ fn execute_task_with_hooks(
         task,
         &backend,
         &prep_env,
-        current_os,
+        target_os,
         state,
     )?;
 
@@ -10514,7 +12035,7 @@ fn execute_task_with_hooks(
         task,
         &backend,
         &prep_env,
-        current_os,
+        target_os,
         state,
     )?;
 
@@ -10541,7 +12062,7 @@ fn execute_task_with_hooks(
         &backend,
         &prep_env,
         mode.clone(),
-        current_os,
+        target_os,
         state,
     )?;
 
@@ -10561,7 +12082,7 @@ fn execute_task_with_hooks(
     )?;
 
     let execution =
-        if let Some(execution) = task.resolved_execution_for_backend(backend_kind, current_os) {
+        if let Some(execution) = task.resolved_execution_for_backend(backend_kind, target_os) {
             execution
         } else if task.variants.is_empty() {
             return Err(RunError::InvalidTaskExecution {
@@ -10570,7 +12091,7 @@ fn execute_task_with_hooks(
         } else {
             return Err(RunError::NoMatchingTaskVariant {
                 task: task_name.to_string(),
-                os: current_os.to_string(),
+                os: target_os.to_string(),
             });
         };
     let initial_task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
@@ -10620,7 +12141,7 @@ fn execute_task_with_hooks(
         task,
         &backend,
         working_dir,
-        current_os,
+        target_os,
         state,
     )?;
     let mut path_export = match backend {
@@ -10636,7 +12157,20 @@ fn execute_task_with_hooks(
     let mut combined_env = native_activation_env.unwrap_or_default();
     combined_env.extend(env_overrides);
     combined_env.extend(input_resolution.env_overrides.clone());
-    let runtime = task.service_runtime_for_backend(backend_kind);
+    let declared_runtime = task.service_runtime_for_backend(backend_kind);
+    let native_runtime_override = if requested_relation
+        && matches!(backend, ResolvedExecutionBackend::Native { .. })
+        && native_compose_up_engine(execution).is_none()
+    {
+        selected_native_direct_host_port_override(
+            task_name,
+            declared_runtime,
+            requested_overrides.host_port,
+        )?
+    } else {
+        None
+    };
+    let runtime = native_runtime_override.as_ref().or(declared_runtime);
     let projected_command = execution
         .command()
         .map(|command| projected_structured_command_for_task(task, backend_kind, command));
@@ -10645,7 +12179,7 @@ fn execute_task_with_hooks(
         .map(|compose| projected_compose_command_for_task(task, backend_kind, compose));
     let projected_launch_command = match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
-            projected_command_launch_for_task(task, backend_kind, command),
+            projected_command_launch_for_task_with_runtime(task, backend_kind, command, runtime),
         ),
         Some(crate::schema::TaskLaunchSpec::Compose(compose)) => Some(
             projected_compose_launch_command_for_task(task, backend_kind, compose),
@@ -10930,7 +12464,7 @@ fn execute_task_with_hooks(
         prepared_execution = PreparedTaskExecution::Shell {
             command,
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         };
     }
     if requires_read_only_replay_baseline
@@ -11089,7 +12623,6 @@ fn execute_task_with_hooks(
         contract_path,
         task_name,
         task,
-        requested_overrides.host_port,
         policy_env,
         &backend,
         mode.clone(),
@@ -11309,12 +12842,13 @@ fn run_task_condition_command_check(check: &CheckSpec, working_dir: &Path) -> Ta
         return TaskConditionStatus::Failed;
     };
 
-    let mut child = match shell_command(command)
+    let mut process = shell_command(command);
+    process
         .current_dir(working_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    remove_runner_private_env(&mut process);
+    let mut child = match process.spawn() {
         Ok(child) => child,
         Err(_) => return TaskConditionStatus::Failed,
     };
@@ -12090,7 +13624,6 @@ fn execute_post_hooks(
     contract_path: &Path,
     task_name: &str,
     task: &TaskSpec,
-    host_port_override: Option<u16>,
     policy_env: Option<&BTreeMap<String, String>>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -12108,10 +13641,7 @@ fn execute_post_hooks(
             contract_path,
             &task.after_success,
             task_name,
-            ExecutionOverrides {
-                host_port: host_port_override,
-                ..ExecutionOverrides::default()
-            },
+            ExecutionOverrides::default(),
             policy_env,
             backend,
             mode.clone(),
@@ -12128,10 +13658,7 @@ fn execute_post_hooks(
             contract_path,
             &task.after_failure,
             task_name,
-            ExecutionOverrides {
-                host_port: host_port_override,
-                ..ExecutionOverrides::default()
-            },
+            ExecutionOverrides::default(),
             policy_env,
             backend,
             mode.clone(),
@@ -12148,10 +13675,7 @@ fn execute_post_hooks(
         contract_path,
         &task.after_always,
         task_name,
-        ExecutionOverrides {
-            host_port: host_port_override,
-            ..ExecutionOverrides::default()
-        },
+        ExecutionOverrides::default(),
         policy_env,
         backend,
         mode.clone(),
@@ -12320,39 +13844,46 @@ fn execute_task_command_with_replay_baseline_mounts(
                 })
                 .transpose()?
                 .flatten();
-            let effective_runtime = native_compose_override
-                .as_ref()
-                .map(|override_spec| &override_spec.runtime)
-                .or(runtime);
-            let mut resolved_env = env_overrides.clone();
-            if let Some(override_spec) = native_compose_override.as_ref() {
-                resolved_env.insert(
-                    String::from("COMPOSE_FILE"),
-                    override_spec.compose_file_value.clone(),
-                );
-            } else {
+            let native_runtime_override =
                 preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
-            }
-            preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
-            extend_missing_env(
-                &mut resolved_env,
-                runtime_bind_env_for_native(effective_runtime),
-            );
-            let result = execute_native_launch_command(
-                contract,
-                task,
-                task_name,
-                effective_runtime,
-                exe,
-                args,
-                *interaction,
-                effective_working_dir.as_path(),
-                &resolved_env,
-                mode,
-                backend,
-            );
-            if let Some(override_spec) = native_compose_override {
-                let _ = fs::remove_file(override_spec.override_file);
+            let result = (|| {
+                let effective_runtime = native_compose_override
+                    .as_ref()
+                    .map(|override_spec| &override_spec.runtime)
+                    .or(native_runtime_override.as_ref())
+                    .or(runtime);
+                let mut resolved_env = env_overrides.clone();
+                if let Some(override_spec) = native_compose_override.as_ref() {
+                    resolved_env.insert(
+                        String::from("COMPOSE_FILE"),
+                        override_spec.compose_file_value.clone(),
+                    );
+                } else {
+                    preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+                }
+                preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
+                let runtime_env = runtime_bind_env_for_native(effective_runtime);
+                if host_port_override.is_some() && native_compose_override.is_none() {
+                    resolved_env.extend(runtime_env);
+                } else {
+                    extend_missing_env(&mut resolved_env, runtime_env);
+                }
+                execute_native_launch_command(
+                    contract,
+                    task,
+                    task_name,
+                    effective_runtime,
+                    exe,
+                    args,
+                    *interaction,
+                    effective_working_dir.as_path(),
+                    &resolved_env,
+                    mode,
+                    backend,
+                )
+            })();
+            if let Some(override_spec) = native_compose_override.as_ref() {
+                let _ = fs::remove_file(&override_spec.override_file);
             }
             result
         }
@@ -12398,17 +13929,24 @@ fn execute_task_command_with_replay_baseline_mounts(
             },
         ) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
-                preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
-                preflight_native_runtime_listener_binds(task_name, runtime)?;
+                let runtime_override =
+                    preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+                let effective_runtime = runtime_override.as_ref().or(runtime);
+                preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
                 let mut resolved_env = env_overrides.clone();
-                extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
+                let runtime_env = runtime_bind_env_for_native(effective_runtime);
+                if host_port_override.is_some() {
+                    resolved_env.extend(runtime_env);
+                } else {
+                    extend_missing_env(&mut resolved_env, runtime_env);
+                }
                 // Native shell execution needs the same source-managed tool path as container shells.
                 let command = command_with_optional_path_export(command, path_export);
                 execute_native_task_command(
                     contract,
                     task,
                     task_name,
-                    runtime,
+                    effective_runtime,
                     command.as_str(),
                     *interaction,
                     effective_working_dir.as_path(),
@@ -12421,6 +13959,7 @@ fn execute_task_command_with_replay_baseline_mounts(
                 context_name,
                 shared_local_backend,
                 image,
+                platform,
                 engine,
                 lifecycle,
                 memory_bytes,
@@ -12449,6 +13988,7 @@ fn execute_task_command_with_replay_baseline_mounts(
                     path_export,
                     secret_env_names,
                     image,
+                    platform.as_deref(),
                     engine,
                     *lifecycle,
                     *memory_bytes,
@@ -12485,6 +14025,7 @@ fn execute_task_command_with_replay_baseline_mounts(
                         path_export,
                         secret_env_names,
                         image,
+                        platform.as_deref(),
                         engine,
                         *lifecycle,
                         *memory_bytes,
@@ -12690,7 +14231,7 @@ fn execute_prepare_task(
         PreparedTaskExecution::Shell {
             command,
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
     )?;
     execute_task_command(
@@ -13135,12 +14676,12 @@ fn prepared_structured_command_for_backend(
             exe: exe.to_string(),
             args,
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, exe, &args),
             cwd: None,
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
     }
 }
@@ -13154,14 +14695,20 @@ fn prepared_structured_command_spec_for_backend(
             exe: command.exe.clone(),
             args: command.args.clone(),
             cwd: command.cwd.clone(),
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, command.exe.as_str(), &command.args),
             cwd: command.cwd.clone(),
-            interaction: None,
+            interaction: typed_prepare_command_interaction(),
         },
     }
+}
+
+fn typed_prepare_command_interaction() -> Option<CommandInteractionPosture> {
+    // Typed preparation is a deterministic runner-owned phase. A later interactive task in the
+    // same closure must not transfer terminal ownership backward into hydration or bootstrap.
+    Some(CommandInteractionPosture::Forbidden)
 }
 
 fn wrapped_prepare_execution_for_orchestrator(
@@ -14315,7 +15862,7 @@ fn execute_ensure_virtualenv_action(
     let mut command = Command::new(spec.provider.label());
     command.current_dir(working_dir);
     command.envs(env_overrides);
-    remove_execution_boundary_trace_env(&mut command);
+    remove_runner_private_env(&mut command);
     command.arg("venv");
     if let Some(python) = spec.python.as_deref() {
         command.arg("--python");
@@ -15428,26 +16975,41 @@ pub(crate) fn run_backend_command_captured(
     working_dir: &Path,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
-    execute_task_command(
-        None,
-        None,
-        task_name,
-        None,
-        &PreparedTaskExecution::Shell {
-            command: command.to_string(),
-            cwd: None,
-            interaction: None,
-        },
-        working_dir,
-        &BTreeMap::new(),
-        None,
-        &BTreeSet::new(),
-        backend,
-        None,
-        None,
-        TaskExecutionMode::Capture,
-        None,
-    )
+    let execute = || {
+        execute_task_command(
+            None,
+            None,
+            task_name,
+            None,
+            &PreparedTaskExecution::Shell {
+                command: command.to_string(),
+                cwd: None,
+                interaction: None,
+            },
+            working_dir,
+            &BTreeMap::new(),
+            None,
+            &BTreeSet::new(),
+            backend,
+            None,
+            None,
+            TaskExecutionMode::Capture,
+            None,
+        )
+    };
+    execute()
+}
+
+pub(crate) fn run_backend_precondition_probe_captured(
+    segment_id: Option<&str>,
+    task_name: &str,
+    command: &str,
+    working_dir: &Path,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
+    with_oci_local_precondition_probe(segment_id, task_name, backend, || {
+        run_backend_command_captured(task_name, command, working_dir, backend)
+    })
 }
 
 // Runs a command by argv (no shell) on native backends, shell on container/remote backends.
@@ -15491,22 +17053,38 @@ pub(crate) fn run_backend_argv_command_captured_with_env(
             interaction: None,
         },
     };
-    execute_task_command(
-        None,
-        None,
-        task_name,
-        None,
-        &execution,
-        working_dir,
-        env_overrides,
-        None,
-        &BTreeSet::new(),
-        backend,
-        None,
-        None,
-        TaskExecutionMode::Capture,
-        None,
-    )
+    let execute = || {
+        execute_task_command(
+            None,
+            None,
+            task_name,
+            None,
+            &execution,
+            working_dir,
+            env_overrides,
+            None,
+            &BTreeSet::new(),
+            backend,
+            None,
+            None,
+            TaskExecutionMode::Capture,
+            None,
+        )
+    };
+    execute()
+}
+
+pub(crate) fn run_backend_precondition_probe_argv_captured(
+    segment_id: Option<&str>,
+    task_name: &str,
+    exe: &str,
+    args: &[String],
+    working_dir: &Path,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
+    with_oci_local_precondition_probe(segment_id, task_name, backend, || {
+        run_backend_argv_command_captured(task_name, exe, args, working_dir, backend)
+    })
 }
 
 #[derive(Debug, Clone, Default)]
@@ -16209,8 +17787,12 @@ fn selected_task_activation_requirement_surface_for_run_path(
 ) -> RequirementSurface {
     let backend_kind = resolved_execution_backend_kind(backend);
     let context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
-    let mut surface =
-        contract.resolved_task_requirement_surface_for_execution(task, backend_kind, context_name);
+    let mut surface = contract.resolved_task_requirement_surface_for_execution_for_os(
+        task,
+        backend_kind,
+        context_name,
+        target_os,
+    );
     for (name, requirement) in &surface.tools.clone() {
         surface.tools.insert(
             name.clone(),
@@ -16236,7 +17818,7 @@ fn selected_task_activation_requirement_surface_for_run_path(
         contract,
         &surface,
         &contract
-            .task_toolchain_names_for_execution(task, backend_kind, context_name)
+            .task_toolchain_names_for_execution_for_os(task, backend_kind, context_name, target_os)
             .into_iter()
             .collect(),
         target_os,
@@ -16878,7 +18460,12 @@ fn wrap_container_command_for_corepack_activation(
     let mut command_parts = Vec::new();
     let mut uses_corepack = false;
     for toolchain_name in contract
-        .task_toolchain_names_for_execution(task, Backend::Container, selected_container_context)
+        .task_toolchain_names_for_execution_for_os(
+            task,
+            Backend::Container,
+            selected_container_context,
+            "linux",
+        )
         .into_iter()
     {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
@@ -16964,7 +18551,8 @@ fn task_toolchain_names_for_resolved_backend(
 ) -> Vec<String> {
     let backend_kind = resolved_execution_backend_kind(backend);
     let context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
-    contract.task_toolchain_names_for_execution(task, backend_kind, context_name)
+    let target_os = target_os_for_execution_backend(backend, current_os());
+    contract.task_toolchain_names_for_execution_for_os(task, backend_kind, context_name, target_os)
 }
 
 #[cfg(test)]
@@ -17000,16 +18588,42 @@ fn render_toolchain_command(
     shell_quote_command_argv(backend, command.program.as_str(), &command.args)
 }
 
-fn target_os_for_toolchain_backend<'a>(
-    backend: &ResolvedExecutionBackend,
+fn target_os_for_execution_backend<'a>(
+    backend: &'a ResolvedExecutionBackend,
     current_os: &'a str,
 ) -> &'a str {
     match backend {
-        ResolvedExecutionBackend::Container { .. } => "linux",
+        ResolvedExecutionBackend::Container { platform, .. } => platform
+            .as_deref()
+            .and_then(|platform| platform.split('/').next())
+            .filter(|os| !os.is_empty())
+            .unwrap_or("linux"),
         ResolvedExecutionBackend::Remote { .. }
         | ResolvedExecutionBackend::BackendProvider { .. }
         | ResolvedExecutionBackend::Native { .. } => current_os,
     }
+}
+
+pub(crate) fn target_os_for_declared_backend<'a>(
+    backend: Backend,
+    container: Option<&'a ContainerBackend>,
+    current_os: &'a str,
+) -> &'a str {
+    match backend {
+        Backend::Container => container
+            .and_then(|container| container.platform.as_deref())
+            .and_then(|platform| platform.split('/').next())
+            .filter(|os| !os.is_empty())
+            .unwrap_or("linux"),
+        Backend::Native | Backend::Remote => current_os,
+    }
+}
+
+fn target_os_for_toolchain_backend<'a>(
+    backend: &'a ResolvedExecutionBackend,
+    current_os: &'a str,
+) -> &'a str {
+    target_os_for_execution_backend(backend, current_os)
 }
 
 fn backend_fulfillment_plan(
@@ -17418,7 +19032,9 @@ fn source_managed_tool_names_for_execution(
     target_os: &str,
 ) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    for toolchain_name in contract.task_toolchain_names_for_execution(task, backend, context_name) {
+    for toolchain_name in
+        contract.task_toolchain_names_for_execution_for_os(task, backend, context_name, target_os)
+    {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -17537,8 +19153,12 @@ fn direct_task_requirement_versions_for_backend(
     context_name: Option<&str>,
     target_os: &str,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
-    let mut surface =
-        contract.resolved_task_requirement_surface_for_execution(task, backend, context_name);
+    let mut surface = contract.resolved_task_requirement_surface_for_execution_for_os(
+        task,
+        backend,
+        context_name,
+        target_os,
+    );
     let scoped_tools_empty = surface.tools.is_empty();
 
     for (name, requirement) in &surface.runtimes.clone() {
@@ -17574,7 +19194,8 @@ fn direct_task_requirement_versions_for_backend(
         surface.merge(&contract.resolved_context_requirement_surface(context));
     }
     if backend == Backend::Native {
-        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
+        let scoped_native =
+            task.scoped_native_requirements_for_execution_for_os(backend, context_name, target_os);
         surface.merge(
             &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
         );
@@ -17585,7 +19206,7 @@ fn direct_task_requirement_versions_for_backend(
         contract,
         &surface,
         &contract
-            .task_toolchain_names_for_execution(task, backend, context_name)
+            .task_toolchain_names_for_execution_for_os(task, backend, context_name, target_os)
             .into_iter()
             .collect(),
         target_os,
@@ -17737,7 +19358,12 @@ fn detect_missing_backend_requirements(
 
     for (name, required_version) in tools {
         let executable = task_tool_executable_name(name.as_str());
-        match probe_backend_command_version(backend, working_dir, executable) {
+        match probe_backend_command_requirement_version(
+            backend,
+            working_dir,
+            executable,
+            required_version,
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
@@ -17836,7 +19462,13 @@ fn detect_missing_named_container_requirements(
 
     for (name, required_version) in tools {
         let executable = task_tool_executable_name(name.as_str());
-        match probe_named_container_command_version(engine, container_name, task_name, executable) {
+        match probe_named_container_command_requirement_version(
+            engine,
+            container_name,
+            task_name,
+            executable,
+            required_version,
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
@@ -17997,7 +19629,12 @@ fn probe_backend_runtime_requirement_version(
     let mut first_version = None;
     let mut last_error = None;
     for executable in task_runtime_executable_candidates(runtime_name, required_version) {
-        match probe_backend_command_version(backend, working_dir, executable.as_str()) {
+        match probe_backend_command_requirement_version(
+            backend,
+            working_dir,
+            executable.as_str(),
+            required_version,
+        ) {
             Ok(Some(version)) => {
                 if version_matches_requirement(required_version, &version) {
                     return Ok(Some(version));
@@ -18034,11 +19671,12 @@ fn probe_named_container_runtime_requirement_version(
     let mut first_version = None;
     let mut last_error = None;
     for executable in task_runtime_executable_candidates(runtime_name, required_version) {
-        match probe_named_container_command_version(
+        match probe_named_container_command_requirement_version(
             engine,
             container_name,
             task_name,
             executable.as_str(),
+            required_version,
         ) {
             Ok(Some(version)) => {
                 if version_matches_requirement(required_version, &version) {
@@ -18098,6 +19736,48 @@ fn probe_backend_command_version(
     Err(String::from(
         "version probe did not return a parseable version",
     ))
+}
+
+fn probe_backend_command_requirement_version(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    command_name: &str,
+    required_version: &str,
+) -> Result<Option<String>, String> {
+    match probe_backend_command_version(backend, working_dir, command_name) {
+        Err(_) if required_version.trim() == "*" => {
+            probe_backend_command_available(backend, working_dir, command_name)
+                .map(|available| available.then(|| String::from("*")))
+        }
+        result => result,
+    }
+}
+
+fn probe_backend_command_available(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    command_name: &str,
+) -> Result<bool, String> {
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return Ok(crate::doctor::resolve_command_path(command_name)
+            .or_else(|| resolve_probeable_command_path_in_working_dir(working_dir, command_name))
+            .is_some());
+    }
+
+    let quoted = shell_quote(command_name);
+    let probe_command = if cfg!(windows) {
+        format!("where {quoted} >NUL 2>&1")
+    } else {
+        format!("command -v {quoted} >/dev/null 2>&1")
+    };
+    let output = run_backend_command_captured(
+        "__ota_backend_requirement_presence_probe__",
+        probe_command.as_str(),
+        working_dir,
+        backend,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(output.exit_code == 0)
 }
 
 fn probe_native_backend_command_version(
@@ -18329,6 +20009,41 @@ fn probe_named_container_command_version(
     ))
 }
 
+fn probe_named_container_command_requirement_version(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    command_name: &str,
+    required_version: &str,
+) -> Result<Option<String>, String> {
+    match probe_named_container_command_version(engine, container_name, task_name, command_name) {
+        Err(_) if required_version.trim() == "*" => {
+            let quoted = shell_quote(command_name);
+            let probe_command = format!("command -v {quoted} >/dev/null 2>&1");
+            let path_export = container_task_path_export(engine, container_name, task_name, None)
+                .map_err(|error| error.to_string())?;
+            let probe_command =
+                command_with_optional_path_export(probe_command.as_str(), path_export.as_deref());
+            let output = container_command_output(
+                engine,
+                &[
+                    "exec",
+                    "-i",
+                    container_name,
+                    "sh",
+                    "-lc",
+                    probe_command.as_str(),
+                ],
+                None,
+                task_name,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((output.exit_code == 0).then(|| String::from("*")))
+        }
+        result => result,
+    }
+}
+
 pub(crate) fn tool_runtime_version_probe_commands(
     command_name: &str,
     quoted_command: &str,
@@ -18375,6 +20090,7 @@ fn provisioning_target_for_resolved_backend(
             context_name,
             shared_local_backend,
             image,
+            platform,
             engine,
             lifecycle,
             memory_bytes,
@@ -18402,6 +20118,7 @@ fn provisioning_target_for_resolved_backend(
             });
             Ok(ProvisioningExecutionTarget::Container {
                 image: image.clone(),
+                platform: platform.clone(),
                 engine: engine.clone(),
                 lifecycle: *lifecycle,
                 container_name,
@@ -18829,15 +20546,23 @@ fn resolve_task_inputs(
     task: &TaskSpec,
     input_args: &[String],
     caller_backend: Backend,
+    target_os: &str,
     execution_overrides: ExecutionOverrides,
     enforce_required_inputs: bool,
 ) -> Result<ResolvedTaskInputs, RunError> {
     let mut provided = BTreeMap::new();
     let mut explicit_inputs = BTreeSet::new();
-    if let Some(input_name) = single_task_input_name(task)
+    if let Some(input_name) = single_task_input_name(task, target_os)
         && let Some(value) = single_task_input_shorthand_value(input_args)
     {
-        insert_task_input_value(task_name, task, &mut provided, input_name.clone(), value)?;
+        insert_task_input_value(
+            task_name,
+            task,
+            target_os,
+            &mut provided,
+            input_name.clone(),
+            value,
+        )?;
         explicit_inputs.insert(input_name);
     } else {
         let mut index = 0;
@@ -18872,7 +20597,7 @@ fn resolve_task_inputs(
             }
 
             let input_name = flag.replace('-', "_");
-            let effective_inputs = task.inputs_for_current_os();
+            let effective_inputs = task.inputs_for_os(target_os);
             let Some(_spec) = effective_inputs.get(&input_name) else {
                 return Err(RunError::UnknownTaskInput {
                     task: task_name.to_string(),
@@ -18894,7 +20619,7 @@ fn resolve_task_inputs(
                 }
             };
 
-            insert_task_input_value(task_name, task, &mut provided, input_name, value)?;
+            insert_task_input_value(task_name, task, target_os, &mut provided, input_name, value)?;
             explicit_inputs.insert(flag.replace('-', "_"));
 
             index += 1;
@@ -18909,10 +20634,11 @@ fn resolve_task_inputs(
         &explicit_inputs,
         &mut provided,
         caller_backend,
+        target_os,
         execution_overrides,
     )?;
 
-    let effective_inputs = task.inputs_for_current_os();
+    let effective_inputs = task.inputs_for_os(target_os);
     for (name, spec) in &effective_inputs {
         if provided.contains_key(name) {
             continue;
@@ -19096,6 +20822,7 @@ fn ensure_target_producer_state(
         Some(producer_contract_path.as_path()),
     )?;
     let producer_backend_kind = resolved_execution_backend_kind(&producer_backend);
+    let producer_target_os = target_os_for_execution_backend(&producer_backend, current_os);
     let producer_task = producer_contract.tasks.get(producer_task_name).ok_or_else(|| {
         RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
@@ -19114,7 +20841,7 @@ fn ensure_target_producer_state(
         }
     })?;
     let producer_task_command = producer_task
-        .resolved_execution_for_backend(producer_backend_kind, current_os)
+        .resolved_execution_for_backend(producer_backend_kind, producer_target_os)
         .map(|execution| execution.preview())
         .ok_or_else(|| RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
@@ -20524,8 +22251,8 @@ fn activation_expected_state(mode: TaskTargetActivationMode) -> &'static str {
     }
 }
 
-fn single_task_input_name(task: &TaskSpec) -> Option<String> {
-    let inputs = task.inputs_for_current_os();
+fn single_task_input_name(task: &TaskSpec, target_os: &str) -> Option<String> {
+    let inputs = task.inputs_for_os(target_os);
     (inputs.len() == 1)
         .then(|| inputs.keys().next().cloned())
         .flatten()
@@ -20545,11 +22272,12 @@ fn single_task_input_shorthand_value(input_args: &[String]) -> Option<String> {
 fn insert_task_input_value(
     task_name: &str,
     task: &TaskSpec,
+    target_os: &str,
     provided: &mut BTreeMap<String, String>,
     input_name: String,
     value: String,
 ) -> Result<(), RunError> {
-    let effective_inputs = task.inputs_for_current_os();
+    let effective_inputs = task.inputs_for_os(target_os);
     let spec = effective_inputs
         .get(&input_name)
         .expect("validated input insertion should only reference declared task inputs");
@@ -20581,6 +22309,7 @@ fn resolve_task_target_bindings(
     explicit_inputs: &BTreeSet<String>,
     provided_inputs: &mut BTreeMap<String, String>,
     caller_backend: Backend,
+    target_os: &str,
     execution_overrides: ExecutionOverrides,
 ) -> Result<Vec<TaskTargetResolutionEvidence>, RunError> {
     let mut resolutions = Vec::new();
@@ -20667,6 +22396,7 @@ fn resolve_task_target_bindings(
                     insert_task_input_value(
                         task_name,
                         task,
+                        target_os,
                         provided_inputs,
                         override_input_name.to_string(),
                         effective_url.clone(),
@@ -20685,7 +22415,7 @@ fn resolve_task_target_bindings(
             Err(error) => {
                 if let Some(override_input_name) = override_input.as_deref()
                     && let Some(default) = task
-                        .inputs
+                        .inputs_for_os(target_os)
                         .get(override_input_name)
                         .and_then(|input| input.default.clone())
                 {
@@ -22010,14 +23740,11 @@ fn task_runtime_listener_publications(
         .iter()
         .filter_map(|(listener_name, listener)| {
             let host = listener.project.host.as_ref()?;
+            let bind_port = listener.bind.port.value?;
             Some((
                 listener_name.clone(),
                 ContainerPortPublication {
-                    bind_port: listener
-                        .bind
-                        .port
-                        .value
-                        .expect("validated container runtime listener should declare a bind port"),
+                    bind_port,
                     host_address: host.address.trim().to_string(),
                     host_port_mode: host.port.mode,
                     host_port: host.port.value,
@@ -22067,7 +23794,7 @@ fn preflight_native_compose_host_port_shape(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
     engine: crate::schema::ComposeCliEngine,
-) -> Result<(String, u16, String), RunError> {
+) -> Result<(String, u16, String, String, String), RunError> {
     let Some(runtime) = runtime else {
         return Err(RunError::HostPortOverrideNoProjectedListener {
             task: task_name.to_string(),
@@ -22119,7 +23846,13 @@ fn preflight_native_compose_host_port_shape(
             listener: listener_name.clone(),
         })?;
 
-    Ok((listener_name, bind_port, service.to_string()))
+    Ok((
+        listener_name,
+        bind_port,
+        service.to_string(),
+        host_projection.address.trim().to_string(),
+        listener.protocol.network_protocol().to_string(),
+    ))
 }
 
 fn selected_native_compose_host_port_override(
@@ -22147,12 +23880,9 @@ fn selected_native_compose_host_port_override(
     {
         crate::schema::ComposeCliEngine::Podman
     } else {
-        return Err(RunError::HostPortOverrideUnsupportedBackend {
-            task: task_name.to_string(),
-            backend: "native",
-        });
+        return Ok(None);
     };
-    let (listener_name, bind_port, service) =
+    let (listener_name, bind_port, service, host_address, protocol) =
         preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
     let runtime = runtime.expect("validated native compose runtime should exist");
 
@@ -22162,8 +23892,10 @@ fn selected_native_compose_host_port_override(
         task_name,
         repo_working_dir,
         service.as_str(),
+        host_address.as_str(),
         host_port,
         bind_port,
+        protocol.as_str(),
     )?;
 
     let mut effective_runtime = runtime.clone();
@@ -22245,8 +23977,10 @@ fn write_native_compose_host_port_override_file(
     task_name: &str,
     working_dir: &Path,
     service: &str,
+    host_address: &str,
     host_port: u16,
     bind_port: u16,
+    protocol: &str,
 ) -> Result<PathBuf, RunError> {
     let state_dir = working_dir
         .join(".ota")
@@ -22267,10 +24001,12 @@ fn write_native_compose_host_port_override_file(
         host_port
     ));
     let contents = format!(
-        "services:\n  {}:\n    ports: !override\n      - \"{}:{}\"\n",
+        "services:\n  {}:\n    ports: !override\n      - target: {}\n        published: {}\n        host_ip: {}\n        protocol: {}\n",
         yaml_single_quote(service),
+        bind_port,
         host_port,
-        bind_port
+        yaml_single_quote(host_address),
+        yaml_single_quote(protocol),
     );
     fs::write(&file_path, contents).map_err(|source| {
         RunError::DependencyIsolationOwnershipFailure {
@@ -22337,20 +24073,73 @@ fn selected_host_port_override_listener(
     })
 }
 
+fn selected_native_direct_host_port_override(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    host_port_override: Option<u16>,
+) -> Result<Option<TaskRuntimeSpec>, RunError> {
+    let Some(host_port) = host_port_override else {
+        return Ok(None);
+    };
+    let runtime = runtime.ok_or_else(|| RunError::HostPortOverrideNoProjectedListener {
+        task: task_name.to_string(),
+    })?;
+    let listener_name = selected_host_port_override_listener(task_name, runtime)?;
+    let listener = runtime
+        .listeners
+        .get(listener_name.as_str())
+        .expect("selected native listener should exist");
+    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+        RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        }
+    })?;
+    if host_projection.port.mode != TaskRuntimeHostPortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedProjectedPort {
+            task: task_name.to_string(),
+            listener: listener_name.clone(),
+        });
+    }
+    if listener.bind.port.mode != TaskRuntimePortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedBindPort {
+            task: task_name.to_string(),
+            listener: listener_name.clone(),
+        });
+    }
+
+    let mut effective_runtime = runtime.clone();
+    let listener = effective_runtime
+        .listeners
+        .get_mut(listener_name.as_str())
+        .expect("selected native listener should remain available");
+    listener.bind.port.value = Some(host_port);
+    let host_projection = listener
+        .project
+        .host
+        .as_mut()
+        .expect("selected native listener should retain its host projection");
+    host_projection.port.value = Some(host_port);
+
+    Ok(Some(effective_runtime))
+}
+
 fn preflight_host_port_override(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
     backend: &ResolvedExecutionBackend,
     host_port_override: Option<u16>,
-) -> Result<(), RunError> {
+) -> Result<Option<TaskRuntimeSpec>, RunError> {
     if host_port_override.is_none() {
-        return Ok(());
+        return Ok(None);
     }
 
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return selected_native_direct_host_port_override(task_name, runtime, host_port_override);
+    }
     if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
         let backend = match backend {
-            ResolvedExecutionBackend::Native { .. } => "native",
-            ResolvedExecutionBackend::Container { .. } => "container",
+            ResolvedExecutionBackend::Native { .. }
+            | ResolvedExecutionBackend::Container { .. } => unreachable!(),
             ResolvedExecutionBackend::Remote { .. } => "remote",
             ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
         };
@@ -22367,7 +24156,7 @@ fn preflight_host_port_override(
         &mut listener_publications,
         host_port_override,
     )?;
-    Ok(())
+    Ok(None)
 }
 
 fn container_memory_override_or_default(
@@ -22718,6 +24507,28 @@ fn runtime_bind_env_for_native(runtime: Option<&TaskRuntimeSpec>) -> BTreeMap<St
     let Some(runtime) = runtime else {
         return env;
     };
+
+    let listener_publications = task_runtime_listener_publications(Some(runtime));
+    let expected_host_ports = listener_publications
+        .iter()
+        .filter_map(|(listener_name, publication)| {
+            (publication.host_port_mode == TaskRuntimeHostPortMode::Fixed)
+                .then(|| {
+                    publication
+                        .host_port
+                        .map(|port| (listener_name.clone(), port))
+                })
+                .flatten()
+        })
+        .collect::<BTreeMap<_, _>>();
+    extend_missing_env(
+        &mut env,
+        runtime_public_env(
+            Some(runtime),
+            listener_publications.as_slice(),
+            &expected_host_ports,
+        ),
+    );
 
     let Some(primary_listener_name) = runtime_primary_bind_listener_name(runtime) else {
         return env;
@@ -23343,6 +25154,7 @@ fn persistent_container_shape_token(
     context_name: Option<&str>,
     shared_local_backend_name: Option<&str>,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
@@ -23355,6 +25167,7 @@ fn persistent_container_shape_token(
         .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
         .hash(&mut hasher);
     image.hash(&mut hasher);
+    platform.hash(&mut hasher);
     engine.hash(&mut hasher);
     for compose_network in compose_networks {
         compose_network.hash(&mut hasher);
@@ -23881,23 +25694,22 @@ pub(crate) fn preflight_task_execution_overrides(
                 .ok_or_else(|| RunError::InvalidTaskExecution {
                     task: task_name.to_string(),
                 })?;
-            let engine = native_compose_up_engine(execution).ok_or_else(|| {
-                RunError::HostPortOverrideUnsupportedBackend {
-                    task: task_name.to_string(),
-                    backend: "native",
+            if let Some(engine) = native_compose_up_engine(execution) {
+                preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
+                if let Some(contract_path) = contract_path {
+                    let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+                    let env = task.env_for_backend_with_context_name_for_os(
+                        contract.execution.as_ref(),
+                        Backend::Native,
+                        effective.context_name,
+                        current_os(),
+                    );
+                    let working_dir =
+                        effective_task_execution_working_dir(task, Backend::Native, root);
+                    effective_native_compose_file_stack(task_name, task, &env, &working_dir)?;
                 }
-            })?;
-            preflight_native_compose_host_port_shape(task_name, runtime, engine)?;
-            if let Some(contract_path) = contract_path {
-                let root = contract_path.parent().unwrap_or_else(|| Path::new("."));
-                let env = task.env_for_backend_with_context_name_for_os(
-                    contract.execution.as_ref(),
-                    Backend::Native,
-                    effective.context_name,
-                    current_os(),
-                );
-                let working_dir = effective_task_execution_working_dir(task, Backend::Native, root);
-                effective_native_compose_file_stack(task_name, task, &env, &working_dir)?;
+            } else {
+                selected_native_direct_host_port_override(task_name, runtime, Some(host_port))?;
             }
             Ok(())
         }
@@ -24095,6 +25907,7 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                 context_name,
                 shared_local_backend,
                 image,
+                platform: container.platform.clone(),
                 engine,
                 lifecycle,
                 memory_bytes,
@@ -24289,6 +26102,7 @@ pub(crate) fn resolve_context_execution_backend(
                 context_name: Some(context_name.to_string()),
                 shared_local_backend: None,
                 image: container.image.clone(),
+                platform: container.platform.clone(),
                 engine,
                 lifecycle,
                 memory_bytes,
@@ -25102,6 +26916,7 @@ fn execute_native_task_command(
     let runtime_spec = runtime;
     let mut process = shell_command(command);
     process.current_dir(working_dir).envs(env_overrides.iter());
+    remove_runner_private_env(&mut process);
     let activation_service_pidfile = matches!(mode, TaskExecutionMode::CaptureActivation)
         .then(|| persistent_service_workload_pidfile_path(task_name))
         .filter(|_| runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service));
@@ -25113,10 +26928,13 @@ fn execute_native_task_command(
             live_log,
             allow_terminal_passthrough,
         } => {
-            let step_inherits = allow_terminal_passthrough
-                && !capture_output
-                && interaction != Some(CommandInteractionPosture::Forbidden);
+            let step_inherits = stream_step_inherits_terminal(
+                allow_terminal_passthrough,
+                capture_output,
+                interaction,
+            );
             if emit_progress && !step_inherits {
+                configure_owned_native_process_group(&mut process);
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start_with_policy(
                     &running_loader_label(task_name, backend),
@@ -25174,7 +26992,7 @@ fn execute_native_task_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_owned_native_process_group(child);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -25230,6 +27048,9 @@ fn execute_native_task_command(
                     interrupted,
                 })
             } else {
+                if !step_inherits {
+                    configure_owned_native_process_group(&mut process);
+                }
                 let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
@@ -25282,7 +27103,7 @@ fn execute_native_task_command(
                     &mut child,
                     readiness_probe.as_ref(),
                     |child| {
-                        let _ = child.kill();
+                        interrupt_native_child(child, !step_inherits);
                         let _ = cleanup_interrupted_native_service_workload_and_note(
                             task_name,
                             runtime_spec,
@@ -25353,8 +27174,10 @@ fn execute_native_task_command(
                         task_name, command, None,
                     ));
                     process.current_dir(working_dir).envs(env_overrides.iter());
+                    remove_runner_private_env(&mut process);
                 }
             }
+            configure_owned_native_process_group(&mut process);
             let mut child = process
                 .stdin(finite_command_stdin(interaction))
                 .stdout(Stdio::piped())
@@ -25760,6 +27583,7 @@ fn execute_ephemeral_closure_session_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     memory_bytes: Option<u64>,
     compose_networks: &[String],
@@ -25767,6 +27591,9 @@ fn execute_ephemeral_closure_session_command(
     mode: TaskExecutionMode,
     sessions: &mut EphemeralClosureSessions,
 ) -> Result<TaskCommandOutput, RunError> {
+    let sandbox_segment_identity = oci_local_segment_plan(task_name)
+        .map(|plan| plan.segment_policy_identity)
+        .unwrap_or_default();
     let identity_seed = container_identity_seed(
         context_name,
         shared_local_backend_name,
@@ -25775,12 +27602,14 @@ fn execute_ephemeral_closure_session_command(
         memory_bytes,
     );
     let session_key = format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}",
         image,
+        platform.unwrap_or_default(),
         engine,
         context_name.unwrap_or_default(),
         identity_seed.unwrap_or_default(),
-        compose_networks.join(",")
+        compose_networks.join(","),
+        sandbox_segment_identity,
     );
 
     if !sessions.sessions.contains_key(&session_key) {
@@ -25797,6 +27626,7 @@ fn execute_ephemeral_closure_session_command(
             context_name,
             repo_ownership_token,
             image,
+            platform,
             engine,
             &container_name,
             memory_bytes,
@@ -25890,6 +27720,7 @@ pub(crate) fn prepare_lifecycle_proof_isolated_container(
         context_name,
         shared_local_backend,
         image,
+        platform,
         engine,
         lifecycle,
         memory_bytes,
@@ -25935,6 +27766,7 @@ pub(crate) fn prepare_lifecycle_proof_isolated_container(
             context_name,
             repo_ownership_token,
             image,
+            platform,
             engine,
             container_name,
             memory_bytes,
@@ -25955,6 +27787,7 @@ impl LifecycleProofIsolatedContainer {
             self.context_name.as_deref(),
             self.repo_ownership_token.as_str(),
             self.image.as_str(),
+            self.platform.as_deref(),
             self.engine.as_str(),
             self.container_name.as_str(),
             self.memory_bytes,
@@ -26117,6 +27950,7 @@ fn execute_container_task_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     lifecycle: Lifecycle,
     memory_bytes: Option<u64>,
@@ -26149,6 +27983,7 @@ fn execute_container_task_command(
     match lifecycle {
         Lifecycle::Ephemeral => {
             if let Some(sessions) = ephemeral_sessions
+                && oci_local_segment_plan(task_name).is_none()
                 && runtime.is_none()
                 && publications.is_empty()
                 && deferred_backend_fulfillment.is_none()
@@ -26166,6 +28001,7 @@ fn execute_container_task_command(
                     path_export,
                     secret_env_names,
                     image,
+                    platform,
                     engine,
                     memory_bytes,
                     compose_networks,
@@ -26216,6 +28052,7 @@ fn execute_container_task_command(
                         path_export,
                         secret_env_names,
                         image,
+                        platform,
                         engine,
                         memory_bytes,
                         compose_networks,
@@ -26282,6 +28119,7 @@ fn execute_container_task_command(
                     path_export,
                     secret_env_names,
                     image,
+                    platform,
                     engine,
                     memory_bytes,
                     compose_networks,
@@ -26408,6 +28246,7 @@ fn execute_container_task_command(
                 path_export,
                 secret_env_names,
                 image,
+                platform,
                 engine,
                 memory_bytes,
                 compose_networks,
@@ -28117,6 +29956,7 @@ fn execute_ephemeral_container_task_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     memory_bytes: Option<u64>,
     compose_networks: &[String],
@@ -28126,18 +29966,93 @@ fn execute_ephemeral_container_task_command(
     mode: TaskExecutionMode,
     replay_baseline_mounts: &[ReplayBaselineReadOnlyMount],
 ) -> Result<TaskCommandOutput, RunError> {
-    let identity_seed = container_identity_seed(
+    let sandbox_plan = oci_local_segment_plan(task_name);
+    if let Some(plan_platform) = sandbox_plan
+        .as_ref()
+        .and_then(|plan| plan.platform.as_deref())
+        && platform != Some(plan_platform)
+    {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local compiled platform `{plan_platform}` does not match resolved container platform `{}`",
+                platform.unwrap_or("<undeclared>")
+            ),
+        });
+    }
+    if sandbox_plan
+        .as_ref()
+        .is_some_and(|plan| plan.deny_external_network && !compose_networks.is_empty())
+    {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local network denial cannot be combined with inherited Compose networks",
+            ),
+        });
+    }
+    if sandbox_plan.is_some() && !dependency_isolation_paths.is_empty() {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local cannot apply managed isolated paths before their provider resources \
+                 have transaction-bound creation and cleanup evidence",
+            ),
+        });
+    }
+    let mut identity_seed = container_identity_seed(
         context_name,
         shared_local_backend_name,
         publications,
         dependency_isolation_paths,
         memory_bytes,
     );
+    if let Some(plan) = sandbox_plan.as_ref() {
+        let sandbox_seed = format!(
+            "sandbox-segment:{}:{:?}:{}",
+            plan.segment_policy_identity,
+            oci_local_segment_application_purpose(task_name),
+            oci_local_segment_invocation_generation(task_name)
+        );
+        identity_seed = Some(match identity_seed {
+            Some(seed) => format!("{seed}|{sandbox_seed}"),
+            None => sandbox_seed,
+        });
+    }
     let container_name =
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     let prepared_runtime =
         resolve_container_task_runtime_from_publications(runtime, listener_publications);
     let workspace_mount_source = container_workspace_mount_source(working_dir);
+    let sandbox_writable_mount_sources = match sandbox_plan.as_ref() {
+        Some(plan) => {
+            let mut sources = BTreeMap::new();
+            for path in &plan.writable_paths {
+                if plan.isolated_paths.contains(path) {
+                    continue;
+                }
+                let source = workspace_mount_source.join(path).canonicalize().map_err(|error| {
+                    RunError::SandboxPolicyApplicationFailed {
+                        task: task_name.to_string(),
+                        details: format!(
+                            "oci_local could not canonicalize writable mount source `{path}` immediately before boundary creation: {error}"
+                        ),
+                    }
+                })?;
+                if !source.starts_with(&workspace_mount_source) {
+                    return Err(RunError::SandboxPolicyApplicationFailed {
+                        task: task_name.to_string(),
+                        details: format!(
+                            "oci_local writable mount source `{path}` escaped the canonical repository root before boundary creation"
+                        ),
+                    });
+                }
+                sources.insert(path.clone(), source);
+            }
+            sources
+        }
+        None => BTreeMap::new(),
+    };
     let mut create = container_engine_command(engine);
     create
         .arg("create")
@@ -28159,16 +30074,47 @@ fn execute_ephemeral_container_task_command(
         ))
         .arg("--entrypoint")
         .arg("sh")
-        .arg("-v")
-        .arg(container_workspace_mount_arg(&workspace_mount_source))
-        .arg("-w")
-        .arg("/workspace");
+        .arg("-v");
+    let workspace_mount = match sandbox_plan.as_ref() {
+        Some(plan) if plan.read_only_repo_root => {
+            format!("{}:/workspace:ro", workspace_mount_source.display())
+        }
+        _ => container_workspace_mount_arg(&workspace_mount_source),
+    };
+    create.arg(workspace_mount).arg("-w").arg("/workspace");
     append_container_host_user_arg(&mut create);
     append_container_host_user_home_arg(&mut create, env_overrides);
-    if let Some(network) = compose_networks.first() {
+    if sandbox_plan
+        .as_ref()
+        .is_some_and(|plan| plan.deny_external_network)
+    {
+        create.arg("--network").arg("none");
+    } else if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
     }
-    for (volume_name, container_path) in container_dependency_isolation_mounts(
+    if let Some(platform) = platform {
+        create.arg("--platform").arg(platform);
+    }
+    if let Some(plan) = sandbox_plan.as_ref() {
+        for path in &plan.writable_paths {
+            if plan.isolated_paths.contains(path) {
+                continue;
+            }
+            let source = sandbox_writable_mount_sources.get(path).ok_or_else(|| {
+                RunError::SandboxPolicyApplicationFailed {
+                    task: task_name.to_string(),
+                    details: format!(
+                        "oci_local lost canonical writable mount source `{path}` before boundary creation"
+                    ),
+                }
+            })?;
+            create
+                .arg("-v")
+                .arg(format!("{}:/workspace/{path}", source.display()));
+        }
+    }
+    register_oci_local_cleanup_lease(task_name, engine, &container_name, image)?;
+    let dependency_isolation_mounts = match container_dependency_isolation_mounts(
         task_name,
         working_dir,
         context_name,
@@ -28176,7 +30122,14 @@ fn execute_ephemeral_container_task_command(
         engine,
         repo_ownership_token,
         dependency_isolation_paths,
-    )? {
+    ) {
+        Ok(mounts) => mounts,
+        Err(error) => {
+            finalize_failed_oci_boundary_creation(engine, &container_name, task_name);
+            return Err(error);
+        }
+    };
+    for (volume_name, container_path) in dependency_isolation_mounts {
         create
             .arg("-v")
             .arg(format!("{volume_name}:{container_path}"));
@@ -28204,11 +30157,18 @@ fn execute_ephemeral_container_task_command(
         .arg("-c")
         .arg(command_with_path_export(command, path_export));
 
-    let create_status = create.output().map_err(|source| RunError::SpawnFailed {
-        task: task_name.to_string(),
-        source,
-    })?;
+    let create_status = match create.output() {
+        Ok(output) => output,
+        Err(source) => {
+            finalize_failed_oci_boundary_creation(engine, &container_name, task_name);
+            return Err(RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            });
+        }
+    };
     if !create_status.status.success() {
+        finalize_failed_oci_boundary_creation(engine, &container_name, task_name);
         let stdout = String::from_utf8_lossy(&create_status.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&create_status.stderr).into_owned();
         return Ok(TaskCommandOutput {
@@ -28221,6 +30181,15 @@ fn execute_ephemeral_container_task_command(
             execution_note: None,
             interrupted: false,
         });
+    }
+    if let Err(error) = verify_oci_local_boundary_application(
+        task_name,
+        engine,
+        &container_name,
+        Some(workspace_mount_source.as_path()),
+    ) {
+        let _ = remove_persistent_container(engine, &container_name, task_name);
+        return Err(error);
     }
 
     if let Some(failure) =
@@ -28467,6 +30436,7 @@ fn execute_fulfilled_ephemeral_container_task_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     memory_bytes: Option<u64>,
     compose_networks: &[String],
@@ -28505,6 +30475,7 @@ fn execute_fulfilled_ephemeral_container_task_command(
         context_name,
         repo_ownership_token,
         image,
+        platform,
         engine,
         &container_name,
         memory_bytes,
@@ -28541,6 +30512,7 @@ fn execute_fulfilled_ephemeral_container_task_command(
 
     let provisioning_target = ProvisioningExecutionTarget::Container {
         image: image.to_string(),
+        platform: platform.map(str::to_string),
         engine: engine.to_string(),
         lifecycle: Lifecycle::Persistent,
         container_name: Some(container_name.clone()),
@@ -28652,6 +30624,7 @@ fn create_idle_ephemeral_container(
     context_name: Option<&str>,
     repo_ownership_token: &str,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     container_name: &str,
     memory_bytes: Option<u64>,
@@ -28661,6 +30634,40 @@ fn create_idle_ephemeral_container(
     env_overrides: &BTreeMap<String, String>,
     secret_env_names: &BTreeSet<String>,
 ) -> Result<ContainerCommandOutput, RunError> {
+    let sandbox_plan = oci_local_segment_plan(task_name);
+    if let Some(plan_platform) = sandbox_plan
+        .as_ref()
+        .and_then(|plan| plan.platform.as_deref())
+        && platform != Some(plan_platform)
+    {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: format!(
+                "oci_local compiled platform `{plan_platform}` does not match resolved container platform `{}`",
+                platform.unwrap_or("<undeclared>")
+            ),
+        });
+    }
+    if sandbox_plan
+        .as_ref()
+        .is_some_and(|plan| plan.deny_external_network && !compose_networks.is_empty())
+    {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local network denial cannot be combined with inherited Compose networks",
+            ),
+        });
+    }
+    if sandbox_plan.is_some() && !dependency_isolation_paths.is_empty() {
+        return Err(RunError::SandboxPolicyApplicationFailed {
+            task: task_name.to_string(),
+            details: String::from(
+                "oci_local cannot apply managed isolated paths before their provider resources \
+                 have transaction-bound creation and cleanup evidence",
+            ),
+        });
+    }
     let workspace_mount_source = container_workspace_mount_source(working_dir);
     let mut create = container_engine_command(engine);
     create
@@ -28683,16 +30690,40 @@ fn create_idle_ephemeral_container(
         ))
         .arg("--entrypoint")
         .arg("sh")
-        .arg("-v")
-        .arg(container_workspace_mount_arg(&workspace_mount_source))
-        .arg("-w")
-        .arg("/workspace");
+        .arg("-v");
+    let workspace_mount = match sandbox_plan.as_ref() {
+        Some(plan) if plan.read_only_repo_root => {
+            format!("{}:/workspace:ro", workspace_mount_source.display())
+        }
+        _ => container_workspace_mount_arg(&workspace_mount_source),
+    };
+    create.arg(workspace_mount).arg("-w").arg("/workspace");
     append_container_host_user_arg(&mut create);
     append_container_host_user_home_arg(&mut create, env_overrides);
-    if let Some(network) = compose_networks.first() {
+    if sandbox_plan
+        .as_ref()
+        .is_some_and(|plan| plan.deny_external_network)
+    {
+        create.arg("--network").arg("none");
+    } else if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
     }
-    for (volume_name, container_path) in container_dependency_isolation_mounts(
+    if let Some(platform) = platform {
+        create.arg("--platform").arg(platform);
+    }
+    if let Some(plan) = sandbox_plan.as_ref() {
+        for path in &plan.writable_paths {
+            if plan.isolated_paths.contains(path) {
+                continue;
+            }
+            let source = workspace_mount_source.join(path);
+            create
+                .arg("-v")
+                .arg(format!("{}:/workspace/{path}", source.display()));
+        }
+    }
+    register_oci_local_cleanup_lease(task_name, engine, container_name, image)?;
+    let dependency_isolation_mounts = match container_dependency_isolation_mounts(
         task_name,
         working_dir,
         context_name,
@@ -28700,7 +30731,14 @@ fn create_idle_ephemeral_container(
         engine,
         repo_ownership_token,
         dependency_isolation_paths,
-    )? {
+    ) {
+        Ok(mounts) => mounts,
+        Err(error) => {
+            finalize_failed_oci_boundary_creation(engine, container_name, task_name);
+            return Err(error);
+        }
+    };
+    for (volume_name, container_path) in dependency_isolation_mounts {
         create
             .arg("-v")
             .arg(format!("{volume_name}:{container_path}"));
@@ -28721,15 +30759,35 @@ fn create_idle_ephemeral_container(
         .arg("-c")
         .arg("while true; do sleep 3600; done");
 
-    let output = create.output().map_err(|source| RunError::SpawnFailed {
-        task: task_name.to_string(),
-        source,
-    })?;
-    Ok(ContainerCommandOutput {
+    let output = match create.output() {
+        Ok(output) => output,
+        Err(source) => {
+            finalize_failed_oci_boundary_creation(engine, container_name, task_name);
+            return Err(RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            });
+        }
+    };
+    let output = ContainerCommandOutput {
         exit_code: output.status.code().unwrap_or(1),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
+    };
+    if output.exit_code == 0 {
+        if let Err(error) = verify_oci_local_boundary_application(
+            task_name,
+            engine,
+            container_name,
+            Some(workspace_mount_source.as_path()),
+        ) {
+            let _ = remove_persistent_container(engine, container_name, task_name);
+            return Err(error);
+        }
+    } else if sandbox_plan.is_some() {
+        finalize_failed_oci_boundary_creation(engine, container_name, task_name);
+    }
+    Ok(output)
 }
 
 fn execute_persistent_container_task_command(
@@ -28745,6 +30803,7 @@ fn execute_persistent_container_task_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     memory_bytes: Option<u64>,
     compose_networks: &[String],
@@ -28768,6 +30827,7 @@ fn execute_persistent_container_task_command(
         context_name,
         shared_local_backend_name,
         image,
+        platform,
         engine,
         compose_networks,
         publications,
@@ -28781,6 +30841,7 @@ fn execute_persistent_container_task_command(
         context_name,
         repo_ownership_token,
         image,
+        platform,
         engine,
         &container_name,
         family_token.as_str(),
@@ -28825,6 +30886,7 @@ fn execute_persistent_container_task_command(
                 context_name,
                 repo_ownership_token,
                 image,
+                platform,
                 engine,
                 &container_name,
                 family_token.as_str(),
@@ -28935,6 +30997,7 @@ fn execute_persistent_container_task_command(
             context_name,
             repo_ownership_token,
             image,
+            platform,
             engine,
             &container_name,
             family_token.as_str(),
@@ -29116,6 +31179,7 @@ fn ensure_persistent_container_ready(
     context_name: Option<&str>,
     repo_ownership_token: &str,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     container_name: &str,
     family_token: &str,
@@ -29145,6 +31209,7 @@ fn ensure_persistent_container_ready(
             context_name,
             repo_ownership_token,
             image,
+            platform,
             engine,
             container_name,
             family_token,
@@ -29196,6 +31261,7 @@ fn ensure_persistent_container_ready(
             context_name,
             repo_ownership_token,
             image,
+            platform,
             engine,
             container_name,
             family_token,
@@ -29261,6 +31327,7 @@ fn ensure_persistent_container_ready(
                 context_name,
                 repo_ownership_token,
                 image,
+                platform,
                 engine,
                 container_name,
                 family_token,
@@ -29644,6 +31711,7 @@ fn create_persistent_container(
     context_name: Option<&str>,
     repo_ownership_token: &str,
     image: &str,
+    platform: Option<&str>,
     engine: &str,
     container_name: &str,
     family_token: &str,
@@ -29679,6 +31747,10 @@ fn create_persistent_container(
         "-w".to_string(),
         "/workspace".to_string(),
     ];
+    if let Some(platform) = platform {
+        args.push("--platform".to_string());
+        args.push(platform.to_string());
+    }
     if let Some(network) = compose_networks.first() {
         args.push("--network".to_string());
         args.push(network.clone());
@@ -30081,15 +32153,60 @@ fn container_removal_already_in_progress(output: &ContainerCommandOutput) -> boo
     combined.contains("removal of container") && combined.contains("already in progress")
 }
 
+fn finalize_failed_oci_boundary_creation(engine: &str, container_name: &str, task_name: &str) {
+    match persistent_container_exists(engine, container_name, task_name) {
+        Ok(false) => record_oci_local_cleanup(
+            engine,
+            container_name,
+            crate::sandbox_policy::SandboxCleanupState::Confirmed,
+        ),
+        Ok(true) => {
+            let _ = remove_persistent_container(engine, container_name, task_name);
+        }
+        Err(_) => record_oci_local_cleanup(
+            engine,
+            container_name,
+            crate::sandbox_policy::SandboxCleanupState::Unknown,
+        ),
+    }
+}
+
 fn remove_persistent_container(
     engine: &str,
     container_name: &str,
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
+    if let Some(sandbox_task) =
+        oci_local_boundary_task_for_terminal_inspection(engine, container_name)
+    {
+        match verify_oci_local_boundary_application(&sandbox_task, engine, container_name, None) {
+            Ok(identity) => {
+                record_oci_local_terminal_application(engine, container_name, identity.as_str())
+            }
+            Err(_) => record_oci_local_enforcement_lost(engine, container_name),
+        }
+    }
     let args = ["rm", "-f", container_name];
     for attempt in 0..EPHEMERAL_CONTAINER_REMOVE_MAX_ATTEMPTS {
         let remove = container_command_output(engine, &args, None, task_name)?;
         if remove.exit_code == 0 {
+            match persistent_container_exists(engine, container_name, task_name) {
+                Ok(false) => record_oci_local_cleanup(
+                    engine,
+                    container_name,
+                    crate::sandbox_policy::SandboxCleanupState::Confirmed,
+                ),
+                Ok(true) => record_oci_local_cleanup(
+                    engine,
+                    container_name,
+                    crate::sandbox_policy::SandboxCleanupState::Incomplete,
+                ),
+                Err(_) => record_oci_local_cleanup(
+                    engine,
+                    container_name,
+                    crate::sandbox_policy::SandboxCleanupState::Unknown,
+                ),
+            }
             return Ok(remove);
         }
         if attempt + 1 < EPHEMERAL_CONTAINER_REMOVE_MAX_ATTEMPTS
@@ -30098,10 +32215,47 @@ fn remove_persistent_container(
             thread::sleep(ephemeral_container_remove_retry_delay(attempt));
             continue;
         }
+        match persistent_container_exists(engine, container_name, task_name) {
+            Ok(false) => record_oci_local_cleanup(
+                engine,
+                container_name,
+                crate::sandbox_policy::SandboxCleanupState::Confirmed,
+            ),
+            Ok(true) => record_oci_local_cleanup(
+                engine,
+                container_name,
+                crate::sandbox_policy::SandboxCleanupState::Incomplete,
+            ),
+            Err(_) => record_oci_local_cleanup(
+                engine,
+                container_name,
+                crate::sandbox_policy::SandboxCleanupState::Unknown,
+            ),
+        }
         return Ok(remove);
     }
 
-    container_command_output(engine, &args, None, task_name)
+    let remove = container_command_output(engine, &args, None, task_name)?;
+    if remove.exit_code != 0 {
+        match persistent_container_exists(engine, container_name, task_name) {
+            Ok(false) => record_oci_local_cleanup(
+                engine,
+                container_name,
+                crate::sandbox_policy::SandboxCleanupState::Confirmed,
+            ),
+            Ok(true) => record_oci_local_cleanup(
+                engine,
+                container_name,
+                crate::sandbox_policy::SandboxCleanupState::Incomplete,
+            ),
+            Err(_) => record_oci_local_cleanup(
+                engine,
+                container_name,
+                crate::sandbox_policy::SandboxCleanupState::Unknown,
+            ),
+        }
+    }
+    Ok(remove)
 }
 
 fn remove_ephemeral_container_and_note(
@@ -30110,7 +32264,16 @@ fn remove_ephemeral_container_and_note(
     container_name: &str,
 ) -> Option<String> {
     match remove_persistent_container(engine, container_name, task_name) {
-        Ok(output) if output.exit_code == 0 => None,
+        Ok(output)
+            if output.exit_code == 0
+                && persistent_container_exists(engine, container_name, task_name)
+                    .is_ok_and(|exists| !exists) =>
+        {
+            None
+        }
+        Ok(output) if output.exit_code == 0 => Some(format!(
+            "ephemeral container cleanup for `{container_name}` could not confirm engine-level absence"
+        )),
         Ok(output) => Some(format!(
             "ephemeral container cleanup failed for `{container_name}`: {}",
             container_command_failure_details(engine, &["rm", "-f", container_name], &output)
@@ -31710,7 +33873,7 @@ pub(crate) fn persistent_container_name(working_dir: &Path, image: &str, engine:
     )
 }
 
-fn persistent_container_name_for_seed(
+pub(crate) fn persistent_container_name_for_seed(
     working_dir: &Path,
     image: &str,
     engine: &str,
@@ -32426,22 +34589,184 @@ fn execution_conflict_reasons_with_active_owner(
     if candidate
         .env_materialization_paths
         .iter()
-        .any(|path| active.env_materialization_paths.contains(path))
+        .any(|candidate_path| {
+            active.env_materialization_paths.iter().any(|active_path| {
+                owned_resource_paths_overlap(candidate_path.as_str(), active_path.as_str())
+            })
+        })
     {
         reasons.push(RepoExecutionConflictReason::EnvMaterializationPath);
     }
     if candidate.write_owners.iter().any(|candidate_owner| {
         active.write_owners.iter().any(|active_owner| {
-            candidate_owner.path == active_owner.path
-                && candidate_owner.namespace == active_owner.namespace
+            candidate_owner.namespace == active_owner.namespace
+                && owned_resource_paths_overlap(
+                    candidate_owner.path.as_str(),
+                    active_owner.path.as_str(),
+                )
         })
-    }) {
+    }) || legacy_write_paths_conflict(candidate, active)
+    {
         reasons.push(RepoExecutionConflictReason::WritePath);
     }
-    if candidate.service_task && active.service_task && candidate.task == active.task {
+    if !runtime_conflicts_with_active_owner(candidate, active).is_empty() {
+        reasons.push(RepoExecutionConflictReason::RuntimeListener);
+    }
+    if candidate.runtime_owners.iter().any(|candidate_owner| {
+        active
+            .runtime_owners
+            .iter()
+            .any(|active_owner| unresolved_runtime_owners_conflict(candidate_owner, active_owner))
+    }) || legacy_service_owners_conflict(candidate, active)
+    {
         reasons.push(RepoExecutionConflictReason::ServiceTask);
     }
     reasons
+}
+
+fn runtime_conflicts_with_active_owner(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> Vec<RepoExecutionRuntimeConflict> {
+    let mut conflicts = Vec::new();
+    for requested in &candidate.runtime_owners {
+        for active_owner in &active.runtime_owners {
+            if runtime_resource_owners_conflict(requested, active_owner) {
+                let conflict = RepoExecutionRuntimeConflict {
+                    requested: requested.clone(),
+                    active: active_owner.clone(),
+                };
+                if !conflicts.contains(&conflict) {
+                    conflicts.push(conflict);
+                }
+            }
+        }
+    }
+    conflicts
+}
+
+fn active_execution_runtime_conflicts(
+    candidate: &RepoExecutionLockOwner,
+    owners: &[RepoExecutionLockOwner],
+) -> Vec<RepoExecutionRuntimeConflict> {
+    let mut conflicts = Vec::new();
+    for owner in owners {
+        for conflict in runtime_conflicts_with_active_owner(candidate, owner) {
+            if !conflicts.contains(&conflict) {
+                conflicts.push(conflict);
+            }
+        }
+    }
+    conflicts
+}
+
+fn owned_resource_paths_overlap(left: &str, right: &str) -> bool {
+    let left = normalize_owned_resource_path(left);
+    let right = normalize_owned_resource_path(right);
+    left == right
+        || left == "."
+        || right == "."
+        || left
+            .strip_prefix(right.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn legacy_write_paths_conflict(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> bool {
+    (candidate.write_owners.is_empty() || active.write_owners.is_empty())
+        && candidate.write_paths.iter().any(|candidate_path| {
+            active.write_paths.iter().any(|active_path| {
+                owned_resource_paths_overlap(candidate_path.as_str(), active_path.as_str())
+            })
+        })
+}
+
+fn runtime_resource_owners_conflict(
+    candidate: &RepoExecutionRuntimeOwner,
+    active: &RepoExecutionRuntimeOwner,
+) -> bool {
+    if candidate.namespace != active.namespace
+        || candidate.allocation != RepoExecutionRuntimeAllocation::Fixed
+        || active.allocation != RepoExecutionRuntimeAllocation::Fixed
+        || candidate.protocol != active.protocol
+        || candidate.port != active.port
+    {
+        return false;
+    }
+    match (candidate.address.as_deref(), active.address.as_deref()) {
+        (Some(candidate_address), Some(active_address)) => {
+            runtime_listener_addresses_overlap(candidate_address, active_address)
+        }
+        _ => false,
+    }
+}
+
+fn unresolved_runtime_owners_conflict(
+    candidate: &RepoExecutionRuntimeOwner,
+    active: &RepoExecutionRuntimeOwner,
+) -> bool {
+    candidate.namespace == active.namespace
+        && candidate.allocation != RepoExecutionRuntimeAllocation::ManagedDynamic
+        && active.allocation != RepoExecutionRuntimeAllocation::ManagedDynamic
+        && candidate.allocation != RepoExecutionRuntimeAllocation::Isolated
+        && active.allocation != RepoExecutionRuntimeAllocation::Isolated
+        && (candidate.allocation == RepoExecutionRuntimeAllocation::Unresolved
+            || active.allocation == RepoExecutionRuntimeAllocation::Unresolved)
+}
+
+fn legacy_service_owners_conflict(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> bool {
+    candidate.service_task
+        && active.service_task
+        && (candidate.runtime_owners.is_empty() || active.runtime_owners.is_empty())
+}
+
+fn runtime_listener_addresses_overlap(left: &str, right: &str) -> bool {
+    let left = normalized_runtime_listener_address(left);
+    let right = normalized_runtime_listener_address(right);
+    if left == right {
+        return true;
+    }
+    if runtime_listener_address_is_wildcard(left.as_str())
+        || runtime_listener_address_is_wildcard(right.as_str())
+    {
+        return true;
+    }
+    runtime_listener_address_is_loopback(left.as_str())
+        && runtime_listener_address_is_loopback(right.as_str())
+}
+
+fn normalized_runtime_listener_address(value: &str) -> String {
+    let normalized = value
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    normalized
+        .parse::<std::net::IpAddr>()
+        .map(|address| address.to_string())
+        .unwrap_or(normalized)
+}
+
+fn runtime_listener_address_is_wildcard(value: &str) -> bool {
+    value == "*"
+        || value
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_unspecified())
+}
+
+fn runtime_listener_address_is_loopback(value: &str) -> bool {
+    value == "localhost"
+        || value
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 fn active_execution_is_related_orchestration_pair(
@@ -32520,12 +34845,15 @@ fn register_active_repo_execution(
         .map(|record| record.owner.clone())
         .collect::<Vec<_>>();
     if !owners.is_empty() {
+        let reasons = active_execution_conflict_reasons(owner, &owners);
+        let runtime_conflicts = active_execution_runtime_conflicts(owner, &owners);
         return Err(RunError::RepoExecutionConflict {
             task: task_name.to_string(),
             path: repo_active_executions_path(working_dir)
                 .display()
                 .to_string(),
-            reasons: active_execution_conflict_reasons(owner, &owners),
+            reasons,
+            runtime_conflicts,
             owners,
         });
     }
@@ -32604,6 +34932,7 @@ fn ensure_no_active_repo_execution_conflicts(
                 .display()
                 .to_string(),
             reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
+            runtime_conflicts: Vec::new(),
             owners,
         })
     }
@@ -33345,6 +35674,7 @@ fn visit_task_with_overrides(
     visited: &mut BTreeSet<String>,
     ordered: &mut Vec<String>,
     steps: &mut Vec<RunPlanStep>,
+    edges: &mut Vec<RunPlanEdge>,
 ) {
     if !visited.insert(task_name.to_string()) {
         return;
@@ -33367,27 +35697,38 @@ fn visit_task_with_overrides(
         )
         .to_string();
 
-    for dependency in task.depends_on_for_backend(backend) {
-        let dependency_spec = contract
-            .tasks
-            .get(dependency)
-            .expect("validated task plan should only reference known tasks");
-        let dependency_overrides = ExecutionOverrides {
-            backend: dependency_spec
-                .dependency_backend_override_for_parent(overrides.backend, backend),
-            ..overrides
-        };
-        visit_task_with_overrides(
-            contract,
-            dependency,
-            dependency_overrides,
-            explicit_backend_override,
-            Some(task_name),
-            Some(backend),
-            visited,
-            ordered,
-            steps,
-        );
+    let skip_requested_dependencies = parent_task.is_none() && overrides.skip_deps;
+    if !skip_requested_dependencies {
+        for dependency in task.depends_on_for_backend(backend) {
+            let dependency_spec = contract
+                .tasks
+                .get(dependency)
+                .expect("validated task plan should only reference known tasks");
+            let dependency_overrides = ExecutionOverrides {
+                backend: dependency_spec
+                    .dependency_backend_override_for_parent(overrides.backend, backend),
+                ..overrides
+            };
+            visit_task_with_overrides(
+                contract,
+                dependency,
+                dependency_overrides,
+                explicit_backend_override,
+                Some(task_name),
+                Some(backend),
+                visited,
+                ordered,
+                steps,
+                edges,
+            );
+            edges.push(RunPlanEdge {
+                source: dependency.clone(),
+                destination: task_name.to_string(),
+                relation: TaskExecutionRelation::DependsOn {
+                    parent: task_name.to_string(),
+                },
+            });
+        }
     }
     if let Some(aggregate) = task.aggregate.as_ref() {
         for child in &aggregate.tasks {
@@ -33401,7 +35742,15 @@ fn visit_task_with_overrides(
                 visited,
                 ordered,
                 steps,
+                edges,
             );
+            edges.push(RunPlanEdge {
+                source: child.clone(),
+                destination: task_name.to_string(),
+                relation: TaskExecutionRelation::AggregateMember {
+                    parent: task_name.to_string(),
+                },
+            });
         }
     }
 
@@ -33413,6 +35762,58 @@ fn visit_task_with_overrides(
         backend_selection_source,
     });
     ordered.push(task_name.to_string());
+
+    for (hooks, relation) in [
+        (
+            task.after_success.as_slice(),
+            SandboxHookRelation::AfterSuccess,
+        ),
+        (
+            task.after_failure.as_slice(),
+            SandboxHookRelation::AfterFailure,
+        ),
+        (
+            task.after_always.as_slice(),
+            SandboxHookRelation::AfterAlways,
+        ),
+    ] {
+        for hook in hooks {
+            visit_task_with_overrides(
+                contract,
+                hook,
+                overrides,
+                explicit_backend_override,
+                Some(task_name),
+                Some(backend),
+                visited,
+                ordered,
+                steps,
+                edges,
+            );
+            edges.push(RunPlanEdge {
+                source: task_name.to_string(),
+                destination: hook.clone(),
+                relation: match relation {
+                    SandboxHookRelation::AfterSuccess => TaskExecutionRelation::AfterSuccess {
+                        parent: task_name.to_string(),
+                    },
+                    SandboxHookRelation::AfterFailure => TaskExecutionRelation::AfterFailure {
+                        parent: task_name.to_string(),
+                    },
+                    SandboxHookRelation::AfterAlways => TaskExecutionRelation::AfterAlways {
+                        parent: task_name.to_string(),
+                    },
+                },
+            });
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SandboxHookRelation {
+    AfterSuccess,
+    AfterFailure,
+    AfterAlways,
 }
 
 #[cfg(unix)]
@@ -33422,6 +35823,48 @@ fn shell_command(command: &str) -> Command {
         .arg("-c")
         .arg(signal_forwarding_shell_script(command.to_string()));
     shell
+}
+
+// Native children need their own process group so interruption can stop the complete task tree
+// without signalling Ota's caller terminal.
+#[cfg(unix)]
+fn configure_owned_native_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt as _;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_owned_native_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn interrupt_owned_native_process_group(child: &mut Child) {
+    let process_group = child.id() as libc::pid_t;
+    if process_group <= 0 {
+        return;
+    }
+
+    // A negative PID targets only the Ota-created process group, including npm's descendants.
+    // SIGTERM is deliberate: noninteractive shells can make background jobs ignore SIGINT.
+    // It never targets the inherited terminal process group.
+    let result = unsafe { libc::kill(-process_group, libc::SIGTERM) };
+    if result != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+        let _ = child.kill();
+    }
+}
+
+fn interrupt_native_child(child: &mut Child, owns_process_group: bool) {
+    if owns_process_group {
+        interrupt_owned_native_process_group(child);
+    } else {
+        // Terminal-passthrough children remain in the caller's foreground process group so
+        // interactive prompts keep working. The terminal delivers Ctrl-C to that group directly.
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(unix))]
+fn interrupt_owned_native_process_group(child: &mut Child) {
+    let _ = child.kill();
 }
 
 #[cfg(windows)]
@@ -33696,6 +36139,422 @@ mod tests {
             .expect("lock should reacquire");
     }
 
+    fn test_repo_execution_owner(
+        task: &str,
+        mode: &str,
+        runtime_owners: Vec<super::RepoExecutionRuntimeOwner>,
+        write_owners: Vec<super::RepoExecutionWriteOwner>,
+    ) -> super::RepoExecutionLockOwner {
+        super::RepoExecutionLockOwner {
+            task: task.to_string(),
+            requested_mode: Some(mode.to_string()),
+            execution_mode: mode.to_string(),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: write_owners
+                .iter()
+                .map(|owner| owner.path.clone())
+                .collect(),
+            write_owners,
+            runtime_owners,
+            service_task: true,
+            parent_pid: None,
+            pid: std::process::id(),
+            started_at: String::from("2026-08-11T12:00:00Z"),
+        }
+    }
+
+    #[test]
+    fn disjoint_native_and_container_service_endpoints_can_coexist() {
+        let _env_guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    development:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths: [node_modules]
+tasks:
+  setup:dev:
+    context: development
+    command:
+      exe: npm
+      args: [ci]
+    effects:
+      writes: [node_modules]
+  dev:
+    context: development
+    depends_on: [setup:dev]
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 3000 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 3000 }
+              primary: true
+"#,
+        )
+        .expect("contract should parse");
+        let fixture = tempdir().expect("tempdir");
+        let _docker = install_fake_docker_on_path(fixture.path());
+        let container_overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Ephemeral),
+            host_port: Some(3002),
+            ..ExecutionOverrides::default()
+        };
+        let container_backend = resolve_execution_backend(&contract, "dev", container_overrides)
+            .expect("container backend");
+        let container_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "dev",
+            container_overrides,
+            &container_backend,
+        );
+        let native_overrides = ExecutionOverrides {
+            backend: Some(Backend::Native),
+            ..ExecutionOverrides::default()
+        };
+        let native_backend =
+            resolve_execution_backend(&contract, "dev", native_overrides).expect("native backend");
+        let native_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "dev",
+            native_overrides,
+            &native_backend,
+        );
+
+        assert!(container_owner.runtime_owners.iter().any(|owner| {
+            owner.address.as_deref() == Some("127.0.0.1") && owner.port == Some(3002)
+        }));
+        assert!(native_owner.runtime_owners.iter().any(|owner| {
+            owner.address.as_deref() == Some("0.0.0.0") && owner.port == Some(3000)
+        }));
+        assert_ne!(container_owner.write_owners, native_owner.write_owners);
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&native_owner, &container_owner,),
+            Vec::<super::RepoExecutionConflictReason>::new()
+        );
+
+        let _container_guard =
+            register_active_repo_execution("dev", fixture.path(), &container_owner)
+                .expect("container service should register");
+        let _native_guard = register_active_repo_execution("dev", fixture.path(), &native_owner)
+            .expect("disjoint native service should coexist");
+    }
+
+    #[test]
+    fn fixed_runtime_listener_conflicts_across_different_task_names() {
+        let first = test_repo_execution_owner(
+            "dev",
+            "native",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("0.0.0.0"),
+                3000,
+            )],
+            vec![],
+        );
+        let second = test_repo_execution_owner(
+            "preview",
+            "container",
+            vec![super::fixed_runtime_owner(
+                "preview",
+                "site",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&second, &first),
+            vec![super::RepoExecutionConflictReason::RuntimeListener]
+        );
+        assert_eq!(
+            super::runtime_conflicts_with_active_owner(&second, &first),
+            vec![super::RepoExecutionRuntimeConflict {
+                requested: second.runtime_owners[0].clone(),
+                active: first.runtime_owners[0].clone(),
+            }]
+        );
+        assert_eq!(
+            super::runtime_conflicts_with_active_owner(&first, &second),
+            vec![super::RepoExecutionRuntimeConflict {
+                requested: first.runtime_owners[0].clone(),
+                active: second.runtime_owners[0].clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn equivalent_ipv6_wildcard_addresses_conflict() {
+        let compressed = test_repo_execution_owner(
+            "dev",
+            "native",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("::"),
+                3000,
+            )],
+            vec![],
+        );
+        let expanded = test_repo_execution_owner(
+            "preview",
+            "container",
+            vec![super::fixed_runtime_owner(
+                "preview",
+                "site",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("0:0:0:0:0:0:0:0"),
+                3000,
+            )],
+            vec![],
+        );
+
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&expanded, &compressed),
+            vec![super::RepoExecutionConflictReason::RuntimeListener]
+        );
+    }
+
+    #[test]
+    fn internal_container_listener_is_recorded_as_isolated_runtime_ownership() {
+        let _env_guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: development
+  contexts:
+    development:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: development
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
+    runtime:
+      kind: service
+      listeners:
+        internal:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 3000 }
+"#,
+        )
+        .expect("contract should parse");
+        let fixture = tempdir().expect("tempdir");
+        let _docker = install_fake_docker_on_path(fixture.path());
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Ephemeral),
+            ..ExecutionOverrides::default()
+        };
+        let backend = resolve_execution_backend(&contract, "dev", overrides)
+            .expect("container backend should resolve");
+        let owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            Some(Path::new("ota.yaml")),
+            "dev",
+            overrides,
+            &backend,
+        );
+
+        assert_eq!(owner.runtime_owners.len(), 1);
+        assert_eq!(
+            owner.runtime_owners[0].allocation,
+            super::RepoExecutionRuntimeAllocation::Isolated
+        );
+        let native = test_repo_execution_owner(
+            "preview",
+            "native",
+            vec![super::fixed_runtime_owner(
+                "preview",
+                "http",
+                "host",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+        assert!(super::execution_conflict_reasons_with_active_owner(&native, &owner).is_empty());
+    }
+
+    #[test]
+    fn managed_dynamic_listeners_and_distinct_remote_namespaces_can_coexist() {
+        let dynamic = |task: &str| super::RepoExecutionRuntimeOwner {
+            task: task.to_string(),
+            listener: Some(String::from("http")),
+            namespace: String::from("host"),
+            protocol: Some(String::from("tcp")),
+            address: Some(String::from("127.0.0.1")),
+            port: None,
+            allocation: super::RepoExecutionRuntimeAllocation::ManagedDynamic,
+        };
+        let first = test_repo_execution_owner("dev", "container", vec![dynamic("dev")], vec![]);
+        let second = test_repo_execution_owner("dev", "container", vec![dynamic("dev")], vec![]);
+        assert!(super::execution_conflict_reasons_with_active_owner(&second, &first).is_empty());
+
+        let remote_a = test_repo_execution_owner(
+            "dev",
+            "remote",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "remote:ssh:host-a:.",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+        let remote_b = test_repo_execution_owner(
+            "dev",
+            "remote",
+            vec![super::fixed_runtime_owner(
+                "dev",
+                "http",
+                "remote:ssh:host-b:.",
+                TaskRuntimeProtocol::Http,
+                String::from("127.0.0.1"),
+                3000,
+            )],
+            vec![],
+        );
+        assert!(
+            super::execution_conflict_reasons_with_active_owner(&remote_b, &remote_a).is_empty()
+        );
+    }
+
+    #[test]
+    fn unresolved_runtime_and_nested_shared_writes_fail_closed() {
+        let unresolved = |task: &str| {
+            test_repo_execution_owner(
+                task,
+                "native",
+                vec![super::unresolved_listener_owner(task, "unknown", "host")],
+                vec![],
+            )
+        };
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(
+                &unresolved("preview"),
+                &unresolved("dev"),
+            ),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+
+        let mut parent = test_repo_execution_owner(
+            "build",
+            "native",
+            vec![],
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from(".next"),
+                namespace: String::from("shared:repo-worktree"),
+            }],
+        );
+        parent.service_task = false;
+        let mut child = test_repo_execution_owner(
+            "cache",
+            "native",
+            vec![],
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from(".next/cache"),
+                namespace: String::from("shared:repo-worktree"),
+            }],
+        );
+        child.service_task = false;
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&child, &parent),
+            vec![super::RepoExecutionConflictReason::WritePath]
+        );
+    }
+
+    #[test]
+    fn legacy_service_records_fail_closed_without_runtime_identity() {
+        let native = test_repo_execution_owner("dev", "native", vec![], vec![]);
+        let container = test_repo_execution_owner("dev", "container", vec![], vec![]);
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&native, &container),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&native, &native),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+
+        let differently_named = test_repo_execution_owner("preview", "native", vec![], vec![]);
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&differently_named, &container),
+            vec![super::RepoExecutionConflictReason::ServiceTask]
+        );
+    }
+
+    #[test]
+    fn legacy_write_paths_fail_closed_without_namespace_identity() {
+        let mut legacy = test_repo_execution_owner("build", "native", vec![], vec![]);
+        legacy.service_task = false;
+        legacy.write_paths = vec![String::from(".next")];
+        let mut current = test_repo_execution_owner(
+            "cache",
+            "container",
+            vec![],
+            vec![super::RepoExecutionWriteOwner {
+                path: String::from(".next/cache"),
+                namespace: String::from("container-isolated:current"),
+            }],
+        );
+        current.service_task = false;
+
+        assert_eq!(
+            super::execution_conflict_reasons_with_active_owner(&current, &legacy),
+            vec![super::RepoExecutionConflictReason::WritePath]
+        );
+    }
+
     #[test]
     fn active_repo_execution_conflict_surfaces_owner_metadata() {
         let fixture = tempdir().expect("tempdir");
@@ -33710,6 +36569,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -33724,6 +36584,7 @@ mod tests {
                 path,
                 reasons,
                 owners,
+                ..
             }) => {
                 assert_eq!(task, "dev");
                 assert!(
@@ -33758,6 +36619,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -33774,6 +36636,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -33800,6 +36663,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: 42000,
@@ -33816,6 +36680,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: Some(parent_owner.pid),
             pid: 42001,
@@ -33851,6 +36716,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -33867,6 +36733,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -33908,6 +36775,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -33924,6 +36792,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -33966,6 +36835,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -33982,6 +36852,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -34022,6 +36893,7 @@ mod tests {
             env_materialization_paths: vec![String::from(".env.local")],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -34038,6 +36910,7 @@ mod tests {
             env_materialization_paths: vec![String::from(".env.local")],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -34083,6 +36956,7 @@ mod tests {
                 path: String::from("node_modules"),
                 namespace: String::from("shared:repo-worktree"),
             }],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -34102,6 +36976,7 @@ mod tests {
                 path: String::from("node_modules"),
                 namespace: String::from("shared:repo-worktree"),
             }],
+            runtime_owners: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -34144,6 +37019,7 @@ mod tests {
                     env_materialization_paths: vec![],
                     write_paths: vec![],
                     write_owners: vec![],
+                    runtime_owners: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: u32::MAX,
@@ -34164,6 +37040,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -34188,6 +37065,7 @@ mod tests {
             env_materialization_paths: vec![],
             write_paths: vec![],
             write_owners: vec![],
+            runtime_owners: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -35533,6 +38411,7 @@ tasks:
                 context_name: Some(String::from("app")),
                 shared_local_backend: None,
                 image: String::from("maven:3.9.14-eclipse-temurin-21-noble"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Persistent,
                 memory_bytes: None,
@@ -35600,6 +38479,7 @@ tasks:
                 context_name: Some(String::from("app")),
                 shared_local_backend: None,
                 image: String::from("mcr.microsoft.com/dotnet/sdk:10.0.103"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
                 memory_bytes: None,
@@ -35660,6 +38540,7 @@ tasks:
                 context_name: Some(String::from("tooling")),
                 shared_local_backend: None,
                 image: String::from("node:24-bookworm"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
                 memory_bytes: None,
@@ -35784,6 +38665,88 @@ tasks:
     }
 
     #[test]
+    fn container_backend_uses_declared_platform_for_variant_env() {
+        let fixture = TempDir::new().expect("tempdir should create");
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: alpine:3.22
+      platform: linux/amd64
+tasks:
+  verify:
+    env:
+      TARGET_VARIANT: base
+    command:
+      exe: sh
+      args: [-c, "true"]
+    variants:
+      - when:
+          os: linux
+        env:
+          TARGET_VARIANT: linux
+"#,
+        )
+        .unwrap();
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("alpine:3.22"),
+            platform: Some(String::from("linux/amd64")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("verify").unwrap(),
+            &backend,
+            fixture.path(),
+        );
+
+        assert_eq!(env.get("TARGET_VARIANT").map(String::as_str), Some("linux"));
+    }
+
+    #[test]
+    fn oci_mount_admission_rejects_every_undeclared_destination() {
+        let mounts = vec![
+            serde_json::json!({
+                "Type": "bind",
+                "Source": "/repo",
+                "Destination": "/workspace",
+                "RW": false
+            }),
+            serde_json::json!({
+                "Type": "volume",
+                "Source": "/var/lib/docker/volumes/image-cache",
+                "Destination": "/image-cache",
+                "RW": false
+            }),
+        ];
+        let allowed = BTreeSet::from([String::from("/workspace")]);
+
+        let error =
+            super::validate_oci_mount_destinations("verify", &mounts, &allowed).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("undeclared mount `/image-cache`")
+        );
+    }
+
+    #[test]
     fn effective_task_env_for_selection_merges_selected_variant_env_bindings() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -35835,6 +38798,61 @@ tasks:
     }
 
     #[test]
+    fn service_env_bindings_use_the_explicit_target_os() {
+        let target_os = if current_os() == "linux" {
+            "windows"
+        } else {
+            "linux"
+        };
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    endpoints:
+      host:
+        address: database.internal
+        port: 5432
+tasks:
+  test:
+    command:
+      exe: echo
+      args: [hi]
+    variants:
+      - when:
+          os: {target_os}
+        env_bindings:
+          DATABASE_URL:
+            from_service:
+              service: postgres
+              view: host
+              scheme: postgres
+"#
+            ),
+        )
+        .unwrap();
+
+        let env = super::service_env_bindings_for_task(
+            &contract,
+            contract.tasks.get("test").unwrap(),
+            Backend::Container,
+            None,
+            target_os,
+            Some("docker"),
+            None,
+        );
+
+        assert_eq!(
+            env.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://database.internal:5432")
+        );
+    }
+
+    #[test]
     fn runner_owned_proof_env_overrides_contract_resolved_values() {
         let mut task_env = BTreeMap::from([
             (
@@ -35865,6 +38883,60 @@ tasks:
             Some("development")
         );
         assert!(!task_env.contains_key("UNRELATED"));
+    }
+
+    #[test]
+    fn runner_owned_proof_env_does_not_expose_crossing_handoff_to_task_code() {
+        let mut task_env = BTreeMap::new();
+        super::apply_runner_owned_proof_env(
+            &mut task_env,
+            vec![
+                (
+                    String::from("OTA_PROOF_SEAM_MARKER"),
+                    String::from("marker"),
+                ),
+                (
+                    String::from("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH"),
+                    String::from(".ota/proof/private.json"),
+                ),
+                (
+                    String::from("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"),
+                    String::from("capability"),
+                ),
+                (
+                    String::from("OTA_PROOF_PARENT_AUTHORITY_FD"),
+                    String::from("9"),
+                ),
+            ],
+            Some("verify"),
+        );
+
+        assert_eq!(
+            task_env.get("OTA_PROOF_SEAM_MARKER").map(String::as_str),
+            Some("marker")
+        );
+        assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_PATH"));
+        assert!(!task_env.contains_key("OTA_PROOF_RUNTIME_CROSSING_HANDOFF_TOKEN"));
+        assert!(!task_env.contains_key("OTA_PROOF_PARENT_AUTHORITY_FD"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_private_launcher_env_is_removed_from_task_processes() {
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg("env")
+            .env("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY", "private-mapping")
+            .env("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE", "attestation_v1");
+
+        super::remove_runner_private_env(&mut command);
+
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains("OTA_LAUNCHER_PRINCIPAL_MAPPING_IDENTITY="));
+        assert!(!stdout.contains("OTA_SYSTEMD_LAUNCHER_STARTUP_GATE="));
     }
 
     #[test]
@@ -35939,6 +39011,7 @@ tasks:
             contract.tasks.get("deploy").unwrap(),
             &[],
             Backend::Native,
+            current_os(),
             ExecutionOverrides::default(),
             true,
         )
@@ -36004,6 +39077,7 @@ tasks:
                 context_name: Some(String::from("tooling")),
                 shared_local_backend: None,
                 image: String::from("node:24-bookworm"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
                 memory_bytes: None,
@@ -36095,6 +39169,7 @@ tasks:
                     environment: None,
                 }),
                 image: String::from("node:24-bookworm"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Persistent,
                 memory_bytes: None,
@@ -36133,6 +39208,7 @@ tasks:
                 context_name: Some(String::from("tooling")),
                 shared_local_backend: None,
                 image: String::from("python:3.12-bookworm"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
                 memory_bytes: None,
@@ -41046,6 +44122,7 @@ tasks:
             &BTreeSet::new(),
             &mut BTreeMap::new(),
             Backend::Native,
+            super::current_os(),
             ExecutionOverrides::default(),
         )
         .expect("target resolution evidence should build");
@@ -41161,6 +44238,7 @@ tasks:
             &BTreeSet::new(),
             &mut BTreeMap::new(),
             Backend::Native,
+            super::current_os(),
             ExecutionOverrides::default(),
         )
         .expect("workspace repo target resolution evidence should build");
@@ -41707,6 +44785,51 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn wildcard_tool_requirement_accepts_executable_without_version_output() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "portable-sh", "#!/bin/sh\nexit 2\n");
+
+        let original_path = env::var_os("PATH");
+        let joined_path = env::join_paths([bin_dir]).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let backend = super::ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let wildcard = super::probe_backend_command_requirement_version(
+            &backend,
+            temp.path(),
+            "portable-sh",
+            "*",
+        )
+        .expect("wildcard requirement should use executable presence");
+        let pinned = super::probe_backend_command_requirement_version(
+            &backend,
+            temp.path(),
+            "portable-sh",
+            "1.0",
+        );
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(wildcard.as_deref(), Some("*"));
+        assert!(
+            pinned
+                .expect_err("pinned requirement must retain version-probe refusal")
+                .contains("version probe command exited with code 2")
+        );
     }
 
     #[test]
@@ -43698,6 +46821,7 @@ execution:
   backends:
     container:
       image: ghcr.io/ota/test:latest
+      platform: linux/amd64
 tasks:
   setup:
     run: |
@@ -44786,6 +47910,8 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  preferred: native
 tasks:
   dev:
     script: |
@@ -46690,7 +49816,7 @@ tasks:
     }
 
     #[test]
-    fn run_task_captured_rejects_host_port_override_for_native_execution() {
+    fn run_task_captured_rejects_host_port_override_without_native_listener_projection() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -46715,11 +49841,10 @@ tasks:
                 ..ExecutionOverrides::default()
             },
         )
-        .expect_err("native execution should reject --host-port override");
+        .expect_err("native execution without a projected listener should reject --host-port");
         assert!(matches!(
             error,
-            RunError::HostPortOverrideUnsupportedBackend { task, backend }
-                if task == "dev" && backend == "native"
+            RunError::HostPortOverrideNoProjectedListener { task } if task == "dev"
         ));
     }
 
@@ -46751,11 +49876,10 @@ tasks:
                 ..ExecutionOverrides::default()
             },
         )
-        .expect_err("native execution should reject --host-port override");
+        .expect_err("native execution without a projected listener should reject --host-port");
         assert!(matches!(
             error,
-            RunError::HostPortOverrideUnsupportedBackend { task, backend }
-                if task == "dev" && backend == "native"
+            RunError::HostPortOverrideNoProjectedListener { task } if task == "dev"
         ));
     }
 
@@ -46886,9 +50010,18 @@ exit 1
         );
         let override_file = fs::read_to_string(state_dir.join("override.yml")).unwrap();
         assert!(
-            override_file.contains(&format!(r#""{}:{}""#, override_port, original_port)),
+            override_file.contains(&format!("target: {original_port}")),
             "{override_file}"
         );
+        assert!(
+            override_file.contains(&format!("published: {override_port}")),
+            "{override_file}"
+        );
+        assert!(
+            override_file.contains("host_ip: '127.0.0.1'"),
+            "{override_file}"
+        );
+        assert!(override_file.contains("protocol: 'tcp'"), "{override_file}");
         let runtime = outcome.runtime.expect("runtime should resolve");
         assert_eq!(runtime.primary_listener.as_deref(), Some("web:http"));
         assert_eq!(
@@ -46898,6 +50031,78 @@ exit 1
                 .map(|endpoint| endpoint.host.port),
             Some(override_port)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_compose_bind_refusal_removes_generated_override_file() {
+        let _guard = env_mutex_lock();
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).expect("occupied host listener");
+        let override_port = occupied.local_addr().expect("occupied address").port();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        files: [docker-compose.yml]
+    compose:
+      kind: up
+      detach: true
+      services: [web]
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 3000 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 3000 }
+              primary: true
+            publication:
+              compose:
+                service: web
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    image: nginx:alpine\n",
+        )
+        .expect("compose fixture");
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+
+        let error = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(override_port),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("occupied native Compose publication should refuse");
+        assert!(matches!(
+            error,
+            RunError::NativeListenerBindConflict { port, .. } if port == override_port
+        ));
+
+        let override_dir = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("compose-overrides");
+        let remaining = fs::read_dir(&override_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(remaining, 0, "refusal must not retain an override file");
     }
 
     #[test]
@@ -47858,7 +51063,7 @@ tasks:
     fn loader_labels_include_execution_class_not_runtime_identity() {
         assert_eq!(
             preparing_loader_label("test", Backend::Native),
-            "Preparing test"
+            "Preparing test (native)"
         );
         assert_eq!(
             preparing_loader_label("test", Backend::Container),
@@ -47869,8 +51074,21 @@ tasks:
             "Preparing test (remote)"
         );
         assert_eq!(
+            running_loader_label_for_backend("test", Backend::Native),
+            "Running test (native)"
+        );
+        assert_eq!(
             running_loader_label_for_backend("test", Backend::Container),
             "Running test (container)"
+        );
+        assert_eq!(
+            running_loader_label(
+                "test",
+                &ResolvedExecutionBackend::Native {
+                    shared_local_backend: None,
+                }
+            ),
+            "Running test (native)"
         );
         assert_eq!(
             running_loader_label(
@@ -47879,6 +51097,7 @@ tasks:
                     context_name: None,
                     shared_local_backend: None,
                     image: String::from("rust:1.94-bookworm"),
+                    platform: None,
                     engine: String::from("docker"),
                     lifecycle: Lifecycle::Ephemeral,
                     memory_bytes: None,
@@ -49932,6 +53151,7 @@ execution:
   backends:
     container:
       image: ghcr.io/ota/test:latest
+      platform: linux/amd64
 env:
   vars:
     OTA_CONTAINER_FLAG:
@@ -49977,6 +53197,10 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("docker-image.txt")).unwrap(),
             "ghcr.io/ota/test:latest"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-platform.txt")).unwrap(),
+            "linux/amd64"
         );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("env.txt")).unwrap(),
@@ -51842,6 +55066,231 @@ tasks:
         );
     }
 
+    #[test]
+    fn direct_task_backend_fulfillment_uses_declared_target_os() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-platform
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: [-c, "exit 1"]
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: powershell
+          args: ["-Command", "exit 0"]
+        requirements:
+          tools:
+            dotnet: ">=9"
+"#,
+        )
+        .expect("contract should parse");
+        let task = contract.tasks.get("verify").expect("task should exist");
+
+        let (_runtimes, tools) = super::direct_task_requirement_versions_for_backend(
+            &contract,
+            task,
+            "verify",
+            Backend::Container,
+            None,
+            "windows",
+        )
+        .expect("target-platform requirements should resolve");
+
+        assert!(tools.contains_key("powershell"), "{tools:?}");
+        assert!(tools.contains_key("dotnet"), "{tools:?}");
+        assert!(!tools.contains_key("sh"), "{tools:?}");
+    }
+
+    #[test]
+    fn resolved_backend_toolchain_selection_uses_declared_target_os() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-platform-toolchain
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+  python:
+    provider: uv
+    version: "3.13"
+tasks:
+  verify:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+    variants:
+      - when:
+          os: windows
+        run: python --version
+        requirements:
+          toolchains:
+            - python
+"#,
+        )
+        .expect("contract should parse");
+        let task = contract.tasks.get("verify").expect("task should exist");
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("windows"),
+            platform: Some(String::from("windows/amd64")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+
+        let selected = super::task_toolchain_names_for_resolved_backend(&contract, task, &backend);
+        assert!(selected.contains(&String::from("python")), "{selected:?}");
+
+        let linux_backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("windows"),
+            platform: Some(String::from("linux/amd64")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+        let linux_selected =
+            super::task_toolchain_names_for_resolved_backend(&contract, task, &linux_backend);
+        assert!(
+            !linux_selected.contains(&String::from("python")),
+            "{linux_selected:?}"
+        );
+    }
+
+    #[test]
+    fn oci_platform_evidence_accepts_complete_provider_metadata() {
+        let resolved =
+            super::resolve_oci_local_platform_evidence("linux/amd64", Some("linux/amd64"))
+                .expect("matching provider metadata should resolve");
+        assert_eq!(resolved, "linux/amd64");
+
+        let error = super::resolve_oci_local_platform_evidence("linux/amd64", Some("linux/arm64"))
+            .expect_err("complete mismatched provider metadata must refuse");
+        assert!(error.contains("linux/arm64"));
+    }
+
+    #[test]
+    fn oci_platform_evidence_accepts_docker_os_only_container_metadata() {
+        let resolved = super::resolve_oci_local_platform_evidence("linux/amd64", Some("linux"))
+            .expect("provider-applied platform plus matching container OS should resolve");
+        assert_eq!(resolved, "linux/amd64");
+
+        let error = super::resolve_oci_local_platform_evidence("linux/amd64", Some("windows"))
+            .expect_err("mismatched container OS must refuse");
+        assert!(error.contains("provider inspection observed `windows`"));
+    }
+
+    #[test]
+    fn precondition_probe_binds_to_the_exact_admitted_segment() {
+        let segment =
+            |segment_id: &str, policy_identity: &str| crate::sandbox_policy::OciLocalSegmentPlan {
+                segment_id: segment_id.to_string(),
+                segment_policy_identity: policy_identity.to_string(),
+                task: segment_id.trim_start_matches("task:").to_string(),
+                declared_image: String::from("debian:bookworm-slim"),
+                read_only_repo_root: true,
+                writable_paths: Vec::new(),
+                protected_paths: Vec::new(),
+                isolated_paths: Vec::new(),
+                pre_boundary_actions: Vec::new(),
+                execution_kind: String::from("command"),
+                deny_external_network: false,
+                platform: Some(String::from("linux/amd64")),
+            };
+        let plan = crate::sandbox_policy::OciLocalApplicationPlan {
+            identity: String::from("sha256:plan"),
+            lane: crate::sandbox_policy::SandboxLaneIdentity {
+                kind: crate::sandbox_policy::SandboxLaneKind::Task,
+                name: String::from("verify"),
+            },
+            execution_selection: crate::sandbox_policy::SandboxExecutionSelection {
+                backend: Some(Backend::Container),
+                lifecycle: Some(Lifecycle::Ephemeral),
+                skip_dependencies: false,
+            },
+            canonical_policy_identity: String::from("sha256:canonical"),
+            restriction_authority: None,
+            restriction_overlays: Vec::new(),
+            restriction_overlay_identities: Vec::new(),
+            effective_policy_identity: String::from("sha256:effective"),
+            capability_identity: String::from("sha256:capability"),
+            target_platform: crate::sandbox_policy::SandboxTargetPlatform {
+                os: String::from("linux"),
+                architecture: String::from("amd64"),
+                platform: Some(String::from("linux/amd64")),
+            },
+            segments: vec![
+                segment("task:setup", "sha256:setup"),
+                segment("task:verify", "sha256:verify"),
+            ],
+            edges: Vec::new(),
+        };
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("debian:bookworm-slim"),
+            platform: Some(String::from("linux/amd64")),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+
+        super::with_oci_local_application_plan(Some(&plan), || {
+            super::with_oci_local_precondition_probe(
+                Some("task:verify"),
+                "doctor-probe:bash",
+                &backend,
+                || {
+                    let selected = super::oci_local_segment_plan("doctor-probe:bash")
+                        .expect("probe segment should resolve");
+                    assert_eq!(selected.segment_id, "task:verify");
+                    assert_eq!(selected.segment_policy_identity, "sha256:verify");
+                    Ok(())
+                },
+            )
+            .expect("exact segment should admit");
+
+            let error = super::with_oci_local_precondition_probe(
+                Some("task:missing"),
+                "doctor-probe:bash",
+                &backend,
+                || Ok(()),
+            )
+            .expect_err("unknown segment must refuse");
+            assert!(error.to_string().contains("task:missing"));
+        });
+
+        let mut ordinary_doctor_probe_ran = false;
+        super::with_oci_local_precondition_probe(None, "doctor-probe:bash", &backend, || {
+            ordinary_doctor_probe_ran = true;
+            Ok(())
+        })
+        .expect("a probe outside enforced execution should retain ordinary Doctor behavior");
+        assert!(ordinary_doctor_probe_ran);
+    }
+
     #[cfg(unix)]
     #[test]
     fn shared_local_backend_fulfillment_runs_once_per_backend_unit_across_workloads() {
@@ -52851,6 +56300,7 @@ project:
                 context_name: None,
                 shared_local_backend: None,
                 image: String::from("ghcr.io/ota/test:latest"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Persistent,
                 memory_bytes: None,
@@ -52950,6 +56400,7 @@ project:
                 context_name: None,
                 shared_local_backend: None,
                 image: String::from("ghcr.io/ota/test:latest"),
+                platform: None,
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Persistent,
                 memory_bytes: None,
@@ -53322,6 +56773,77 @@ tasks:
         assert!(
             wrapped.contains("kill -KILL \"$ota_target\""),
             "owned-child cleanup must retain bounded escalation: {wrapped}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_native_task_waits_for_owned_descendant_exit() {
+        let _guard = env_mutex_lock();
+        let _interrupt_guard = super::isolate_run_interrupt_for_test();
+        let repo = tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        let child_pid_path = repo.path().join("child.pid");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: interrupt-tree
+tasks:
+  setup:
+    command:
+      exe: sh
+      args:
+        - -c
+        - sleep 30 & child=$!; printf '%s\n' "$child" > child.pid; wait "$child"
+"#,
+        )
+        .expect("write contract");
+        let contract = load_contract(&contract_path).expect("load contract");
+
+        let interrupt_path = child_pid_path.clone();
+        let interrupt_thread = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !interrupt_path.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(interrupt_path.exists(), "native descendant should start");
+            super::simulate_run_interrupt_for_test();
+        });
+
+        let outcome = super::run_task_with_args_with_overrides_and_stream_capture(
+            &contract,
+            &contract_path,
+            "setup",
+            &[],
+            ExecutionOverrides::default(),
+            true,
+            None,
+            false,
+        )
+        .expect("interrupted task should return an outcome");
+        interrupt_thread.join().expect("interrupt thread");
+
+        assert!(outcome.interrupted, "{outcome:?}");
+        assert_eq!(outcome.exit_code, 130, "{outcome:?}");
+        let child_pid = fs::read_to_string(&child_pid_path)
+            .expect("read child pid")
+            .trim()
+            .parse::<libc::pid_t>()
+            .expect("parse child pid");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while unsafe { libc::kill(child_pid, 0) } == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            unsafe { libc::kill(child_pid, 0) },
+            -1,
+            "Ota must not report interruption while a native task descendant still runs"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
         );
     }
 
@@ -55005,6 +58527,34 @@ tasks:
         assert_eq!(log.matches("run-persistent").count(), 2);
         assert_eq!(log.matches("rm").count(), 1);
         assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[test]
+    fn persistent_container_shape_identity_includes_platform() {
+        let common = |platform| {
+            super::persistent_container_shape_token(
+                Some("app"),
+                None,
+                "ghcr.io/ota/test:latest",
+                platform,
+                "docker",
+                &[],
+                &[],
+                &[],
+                None,
+            )
+        };
+
+        assert_ne!(
+            common(Some("linux/amd64")),
+            common(Some("linux/arm64")),
+            "a platform change must force persistent-container reconciliation"
+        );
+        assert_ne!(
+            common(None),
+            common(Some("linux/amd64")),
+            "declaring a platform must change persistent-container identity"
+        );
     }
 
     #[cfg(unix)]
@@ -59289,6 +62839,7 @@ workflows:
             env_materialization_paths: Vec::new(),
             write_paths: Vec::new(),
             write_owners: Vec::new(),
+            runtime_owners: Vec::new(),
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -62706,6 +66257,7 @@ case "$command" in
     env_entries=""
     pub_entries=""
     memory=""
+    platform=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --rm|-i)
@@ -62753,6 +66305,10 @@ case "$command" in
           memory="$2"
           shift 2
           ;;
+        --platform)
+          platform="$2"
+          shift 2
+          ;;
         --env)
           case "$2" in
             *=*)
@@ -62783,6 +66339,7 @@ case "$command" in
     printf "%s" "$host_dir" > "$state_dir/$name.path"
     printf "%s" "$mounts" > "$state_dir/$name.mounts"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
+    printf "%s" "$platform" > "$host_dir/docker-platform.txt"
     if [ -n "$network" ]; then
       printf "%s\n" "$network" > "$state_dir/$name.networks"
     else
@@ -62830,6 +66387,7 @@ case "$command" in
     network=""
     pub_entries=""
     memory=""
+    platform=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -62881,6 +66439,10 @@ case "$command" in
           memory="$2"
           shift 2
           ;;
+        --platform)
+          platform="$2"
+          shift 2
+          ;;
         --env)
           export "$2"
           shift 2
@@ -62900,6 +66462,7 @@ case "$command" in
     printf "%s" "$mounts" >> "$host_dir/docker-all-mounts.txt"
     printf "%s" "$mounts" >> "$state_dir/all-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
+    printf "%s" "$platform" > "$host_dir/docker-platform.txt"
     if [ -n "$memory" ]; then
       printf "%s" "$memory" > "$state_dir/$name.memory"
       printf "%s" "$memory" > "$host_dir/docker-memory.txt"
@@ -63595,6 +67158,7 @@ tasks:
             "test",
             fixture.contract.tasks.get("test").unwrap(),
             Backend::Native,
+            current_os(),
             fixture.dir.path(),
             &outputs,
         )
@@ -63629,6 +67193,7 @@ tasks:
                 "setup",
                 fixture.contract.tasks.get("setup").unwrap(),
                 Backend::Native,
+                current_os(),
                 fixture.dir.path(),
                 &outputs,
             )
@@ -63894,6 +67459,7 @@ tasks:
             context_name: Some(String::from("app")),
             shared_local_backend: None,
             image: String::from("ghcr.io/ota/test:latest"),
+            platform: None,
             engine: String::from("docker"),
             lifecycle: Lifecycle::Ephemeral,
             memory_bytes: None,
@@ -68642,6 +72208,76 @@ tasks:
     }
 
     #[test]
+    fn native_host_port_override_reprojects_typed_launch_bind_args() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args: [exec, next, dev]
+      runtime_projection:
+        listener: web:http
+        adapter: nextjs
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let runtime = super::selected_native_direct_host_port_override(
+            "dev",
+            task.service_runtime_for_backend(Backend::Native),
+            Some(4000),
+        )
+        .unwrap()
+        .expect("native runtime override");
+        let projected = super::projected_command_launch_for_task_with_runtime(
+            task,
+            Backend::Native,
+            match task.launch.as_ref().unwrap() {
+                crate::schema::TaskLaunchSpec::Command(command) => command,
+                _ => unreachable!("expected command launch"),
+            },
+            Some(&runtime),
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("exec"),
+                String::from("next"),
+                String::from("dev"),
+                String::from("--hostname"),
+                String::from("127.0.0.1"),
+                String::from("--port"),
+                String::from("4000"),
+            ]
+        );
+    }
+
+    #[test]
     fn projected_compose_execution_uses_adapter_owned_cwd_and_flags() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -69531,6 +73167,7 @@ tasks:
             context_name: None,
             shared_local_backend: None,
             image: String::from("rust:1.94-bookworm"),
+            platform: None,
             engine: String::from("docker"),
             lifecycle: Lifecycle::Ephemeral,
             memory_bytes: None,
@@ -70604,6 +74241,7 @@ services:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-lock-test"),
                 memory_bytes: None,
@@ -70684,6 +74322,7 @@ services:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-success-test"),
                 memory_bytes: None,
@@ -70732,7 +74371,7 @@ services:
         );
         assert_eq!(
             log.matches("inspect ota-lifecycle-success-test").count(),
-            1,
+            2,
             "{log}"
         );
     }
@@ -70782,6 +74421,7 @@ services:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-removal-failure-test"),
                 memory_bytes: None,
@@ -70854,6 +74494,7 @@ project:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-partial-start-test"),
                 memory_bytes: None,
@@ -70917,6 +74558,7 @@ project:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-partial-start-still-present-test"),
                 memory_bytes: None,
@@ -70978,6 +74620,7 @@ services:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-begin-cleanup-failure-test"),
                 memory_bytes: None,
@@ -71047,6 +74690,7 @@ services:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-begin-cleanup-success-test"),
                 memory_bytes: None,
@@ -71108,6 +74752,7 @@ project:
                 context_name: None,
                 repo_ownership_token: String::from("ota-test"),
                 image: String::from("alpine:3.21"),
+                platform: None,
                 engine: String::from("docker"),
                 container_name: String::from("ota-lifecycle-network-failure-test"),
                 memory_bytes: None,
@@ -71138,7 +74783,7 @@ project:
         assert_eq!(
             log.matches("inspect ota-lifecycle-network-failure-test")
                 .count(),
-            1,
+            2,
             "{log}"
         );
     }
@@ -71306,6 +74951,23 @@ services:
             CommandInteractionPosture::Forbidden,
             true,
             true
+        ));
+    }
+
+    #[test]
+    fn typed_prepare_keeps_runner_owned_loader_when_later_task_is_interactive() {
+        let interaction = super::typed_prepare_command_interaction();
+
+        assert_eq!(interaction, Some(CommandInteractionPosture::Forbidden));
+        assert!(!super::stream_step_inherits_terminal(
+            true,
+            false,
+            interaction
+        ));
+        assert!(super::stream_step_inherits_terminal(
+            true,
+            false,
+            Some(CommandInteractionPosture::Auto)
         ));
     }
 

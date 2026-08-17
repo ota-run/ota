@@ -78,6 +78,337 @@
         "next": { "type": "string" }
       }
     },
+    "sha256Identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "sandboxRestrictionOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": { "type": "string", "minLength": 1 },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo_root_mode": { "enum": ["read_only", "read_write"] },
+            "writable_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "protected_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": { "enum": ["allow", "deny"] },
+            "outbound_targets": {
+              "type": "array",
+              "items": {
+                "$ref": "./contract.json#/$defs/runtimeBoundaryOutboundTarget"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sandboxTargetPlatform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "platform": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?$"
+        }
+      }
+    },
+    "sandboxPolicyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "source", "destination", "condition", "order"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "source": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "minLength": 1 },
+        "condition": {
+          "enum": ["unconditional", "on_success", "on_failure", "always"]
+        },
+        "order": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sandboxPolicySegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity",
+        "task",
+        "phase",
+        "order",
+        "target_platform",
+        "backend",
+        "interaction",
+        "execution_kind",
+        "runtime_boundary",
+        "effects"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "task": { "type": "string", "minLength": 1 },
+        "phase": {
+          "enum": ["prepare", "setup", "run", "attach", "dependency", "hook"]
+        },
+        "order": { "type": "integer", "minimum": 0 },
+        "target_platform": { "$ref": "#/$defs/sandboxTargetPlatform" },
+        "runtime_image": { "type": "string", "minLength": 1 },
+        "backend": { "enum": ["native", "container", "remote"] },
+        "context": { "type": "string", "minLength": 1 },
+        "lifecycle": { "enum": ["ephemeral", "persistent"] },
+        "interaction": { "enum": ["auto", "forbidden", "required"] },
+        "inherited_service_networks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "isolated_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "pre_boundary_actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "execution_kind": { "type": "string", "minLength": 1 },
+        "runtime_boundary": {
+          "$ref": "./contract.json#/$defs/runtimeBoundary"
+        },
+        "effects": { "$ref": "./contract.json#/$defs/taskEffects" }
+      }
+    },
+    "sandboxCanonicalPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "identity",
+        "contract_identity",
+        "lane",
+        "target_platform",
+        "segments",
+        "edges"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "#/$defs/sha256Identity" },
+        "lane": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "enum": ["task", "workflow"] },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        "target_platform": { "$ref": "#/$defs/sandboxTargetPlatform" },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sandboxPolicySegment" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sandboxPolicyEdge" }
+        }
+      }
+    },
+    "sandboxEffectivePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "canonical_identity",
+        "restriction_overlays",
+        "restriction_overlay_identities",
+        "segments",
+        "edges"
+      ],
+      "properties": {
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "canonical_identity": { "$ref": "#/$defs/sha256Identity" },
+        "restriction_overlays": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sandboxRestrictionOverlay" }
+        },
+        "restriction_overlay_identities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256Identity" }
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sandboxPolicySegment" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sandboxPolicyEdge" }
+        }
+      }
+    },
+    "sandboxProviderEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "admitted",
+        "identity",
+        "provider_target",
+        "canonical_policy_identity",
+        "effective_policy_identity",
+        "capability_identity",
+        "segment_applications",
+        "refusals"
+      ],
+      "properties": {
+        "admitted": { "const": true },
+        "identity": { "$ref": "#/$defs/sha256Identity" },
+        "provider_target": { "const": "oci_local" },
+        "canonical_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+        "effective_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+        "capability_identity": { "$ref": "#/$defs/sha256Identity" },
+        "segment_applications": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "segment_id",
+              "segment_policy_identity",
+              "filesystem",
+              "network"
+            ],
+            "properties": {
+              "segment_id": { "type": "string", "minLength": 1 },
+              "segment_policy_identity": { "$ref": "#/$defs/sha256Identity" },
+              "filesystem": { "enum": ["enforced", "advisory", "unsupported"] },
+              "network": { "enum": ["enforced", "advisory", "unsupported"] }
+            }
+          }
+        },
+        "refusals": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "sandboxAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "resolution",
+        "provider_target",
+        "canonical_policy",
+        "restriction_overlay_identities",
+        "effective_policy",
+        "provider_evaluation"
+      ],
+      "properties": {
+        "decision": { "const": "admitted" },
+        "resolution": { "enum": ["explicit", "automatic"] },
+        "provider_target": { "const": "oci_local" },
+        "canonical_policy": { "$ref": "#/$defs/sandboxCanonicalPolicy" },
+        "restriction_overlay_identities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "effective_policy": { "$ref": "#/$defs/sandboxEffectivePolicy" },
+        "provider_evaluation": { "$ref": "#/$defs/sandboxProviderEvaluation" },
+        "application_plan_identity": {
+          "$ref": "#/$defs/sha256Identity"
+        }
+      }
+    },
+    "sandboxAdmissionError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "requested_target",
+        "resolved_target",
+        "canonical_policy_identity",
+        "restriction_overlay_identities",
+        "effective_policy_identity",
+        "refusals",
+        "supported_alternatives",
+        "message"
+      ],
+      "properties": {
+        "kind": { "type": "string" },
+        "requested_target": { "type": ["string", "null"] },
+        "resolved_target": { "type": ["string", "null"] },
+        "canonical_policy_identity": {
+          "type": ["string", "null"],
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "restriction_overlay_identities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "effective_policy_identity": {
+          "type": ["string", "null"],
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "segment_id",
+              "control",
+              "required",
+              "capability",
+              "reason"
+            ],
+            "properties": {
+              "segment_id": { "type": "string" },
+              "control": { "type": "string" },
+              "required": { "type": "string" },
+              "capability": {
+                "enum": ["enforced", "advisory", "unsupported"]
+              },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "supported_alternatives": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "message": { "type": "string" }
+      }
+    },
     "plan": {
       "type": "object",
       "additionalProperties": false,
@@ -208,6 +539,12 @@
               "properties": {
                 "state": {
                   "enum": ["allowed", "refused", "blocked", "warning_only"]
+                },
+                "sandbox_admission": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/sandboxAdmission" },
+                    { "$ref": "#/$defs/sandboxAdmissionError" }
+                  ]
                 },
                 "review_required": { "type": "boolean" },
                 "declared_safe_for_agent": { "type": "boolean" },
@@ -342,6 +679,10 @@
         "provisioning": { "$ref": "./doctor.json#/properties/provisioning" },
         "provisioning_request": { "$ref": "./doctor.json#/properties/provisioning_request" },
         "governance": { "$ref": "#/$defs/governance" },
+        "sandbox_admission": { "$ref": "#/$defs/sandboxAdmission" },
+        "crossing_grant_admission": {
+          "$ref": "#/$defs/crossingGrantAdmission"
+        },
         "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" },
         "artifact_routing": {
           "type": "array",
@@ -379,6 +720,123 @@
         "code": { "type": "string" },
         "error": { "type": "string" },
         "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" }
+      }
+    },
+    "crossingGrantAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "authority_id",
+        "authority_binding_identity",
+        "scope_identity",
+        "contract_identity",
+        "boundary_family",
+        "classification",
+        "actor_mode"
+      ],
+      "properties": {
+        "decision": { "enum": ["admissible_not_consumed", "requires_live_authorization"] },
+        "authority_carrier": { "const": "authority_broker" },
+        "authority_id": { "type": "string", "minLength": 1 },
+        "authority_binding_identity": {
+          "$ref": "./receipt.json#/$defs/sha256Identity"
+        },
+        "issuer_id": { "type": "string", "minLength": 1 },
+        "key_id": { "type": "string", "minLength": 1 },
+        "key_fingerprint": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "bundle_id": { "type": "string", "minLength": 1 },
+        "bundle_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "bundle_sequence": { "type": "integer", "minimum": 0 },
+        "grant_id": { "type": "string", "minLength": 1 },
+        "grant_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "scope_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "contract_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+        "boundary_family": { "type": "string", "minLength": 1 },
+        "classification": { "type": "string", "minLength": 1 },
+        "actor_mode": { "enum": ["agent", "non_agent"] },
+        "environment_posture": { "type": "string", "minLength": 1 },
+        "expiry_kind": { "type": "string", "minLength": 1 },
+        "issued_at": { "type": "string", "format": "date-time" },
+        "not_before": { "type": "string", "format": "date-time" },
+        "next_update": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "clock_evidence": { "type": "string", "minLength": 1 },
+        "sequence_evidence": { "type": "string", "minLength": 1 },
+        "revocation_evidence": { "type": "string", "minLength": 1 },
+        "admitted_at": { "type": "string", "format": "date-time" }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "issuer_id", "key_id", "key_fingerprint", "bundle_id", "bundle_identity",
+            "bundle_sequence", "grant_id", "grant_identity", "environment_posture",
+            "expiry_kind", "issued_at", "not_before", "next_update", "expires_at",
+            "clock_evidence", "sequence_evidence", "revocation_evidence", "admitted_at"
+          ],
+          "properties": { "decision": { "const": "admissible_not_consumed" } },
+          "not": { "required": ["authority_carrier"] }
+        },
+        {
+          "required": ["authority_carrier"],
+          "properties": {
+            "decision": { "const": "requires_live_authorization" },
+            "authority_carrier": { "const": "authority_broker" }
+          },
+          "not": {
+            "anyOf": [
+              { "required": ["grant_id"] },
+              { "required": ["grant_identity"] },
+              { "required": ["bundle_identity"] },
+              { "required": ["admitted_at"] }
+            ]
+          }
+        }
+      ]
+    },
+    "crossingGrantAdmissionFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "member",
+        "task",
+        "dry_run",
+        "execution_started",
+        "crossing_grant_admission"
+      ],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": ["string", "null"] },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "execution_started": { "const": false },
+        "crossing_grant_admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "authority_source",
+            "reason_family",
+            "details",
+            "execution_started"
+          ],
+          "properties": {
+            "decision": { "const": "refused" },
+            "authority_source": { "enum": ["prebound_file", "authority_broker"] },
+            "authority_id": { "type": ["string", "null"] },
+            "requested_grant_id": { "type": ["string", "null"] },
+            "reason_family": { "type": "string", "minLength": 1 },
+            "details": { "type": "string", "minLength": 1 },
+            "scope_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+            "contract_identity": { "$ref": "./receipt.json#/$defs/sha256Identity" },
+            "boundary_family": { "type": "string", "minLength": 1 },
+            "classification": { "type": "string", "minLength": 1 },
+            "execution_started": { "const": false }
+          }
+        }
       }
     },
     "replayInputIdentityFailure": {
@@ -431,12 +889,37 @@
         },
         "replay_input_policy": { "$ref": "./doctor.json#/$defs/replayInputPolicy" }
       }
+    },
+    "sandboxAdmissionFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "command",
+        "path",
+        "task",
+        "dry_run",
+        "execution_started",
+        "sandbox_admission"
+      ],
+      "properties": {
+        "ok": { "const": false },
+        "command": { "const": "run --dry-run" },
+        "path": { "type": "string" },
+        "member": { "type": ["string", "null"] },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "execution_started": { "const": false },
+        "sandbox_admission": { "$ref": "#/$defs/sandboxAdmissionError" }
+      }
     }
   },
   "oneOf": [
     { "$ref": "#/$defs/singleTarget" },
     { "$ref": "#/$defs/aggregate" },
     { "$ref": "#/$defs/simpleFailure" },
-    { "$ref": "#/$defs/replayInputIdentityFailure" }
+    { "$ref": "#/$defs/crossingGrantAdmissionFailure" },
+    { "$ref": "#/$defs/replayInputIdentityFailure" },
+    { "$ref": "#/$defs/sandboxAdmissionFailure" }
   ]
 }

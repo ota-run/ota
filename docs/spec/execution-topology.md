@@ -417,7 +417,7 @@ This keeps the boundary honest:
 - `tasks.<name>.runtime.listeners` model app ingress like a dev server or Spring Boot API
 - with multiple projected listeners, mark exactly one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and the primary endpoint line
 - in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs reconcile named containers and then resolve the published mapping
-- `ota run <task> --host-port <port>` overrides one run's published host/public port when the selected projected listener is `project.host.port.mode: fixed`; app bind ports stay unchanged
+- `ota run <task> --host-port <port>` selects one run's host-facing port when the primary listener has fixed bind and fixed host-port truth; containers and native Compose keep the internal bind stable, while direct native execution changes bind and projection together because it has no publication boundary
 - native structured `docker compose up` listeners may also opt into `--host-port` by declaring `project.publication.compose.service`, which lets ota remap one service-owned publication without inventing compose ownership
 - `ota run <task> --memory <size>` overrides one run's requested container memory without changing task/runtime listener contract shape
 - `ota run dev` records the same resolved host endpoint ota injected into runtime env
@@ -430,7 +430,7 @@ Ingress troubleshooting:
 - `task <name> declares multiple listeners with project.host.primary: true`: keep one primary and remove the rest
 - `loopback-only container bind address`: change the bind address to `0.0.0.0` before projecting to host
 - `could not publish host port`: keep `project.host.port.mode: auto` and rerun; for ephemeral runs ota retries bounded times and then fails clearly when host publication still conflicts
-- ``--host-port`` rejected: use it only with container tasks or native structured `docker compose up` tasks that project exactly one selected listener (`project.host.primary: true` when multiple), keep that listener on `project.host.port.mode: fixed`, and for native compose declare `project.publication.compose.service`
+- ``--host-port`` rejected: use it only with direct native, container, or native structured `docker compose up` tasks that project exactly one selected listener (`project.host.primary: true` when multiple), keep that listener on fixed bind and fixed host-port truth, and for native compose declare `project.publication.compose.service`
 
 ### `services.<name>.manager`
 

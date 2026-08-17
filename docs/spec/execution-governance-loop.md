@@ -178,6 +178,8 @@ Use these commands by the boundary you are actually trying to inspect:
 
 ## Relationship to adjacent references
 
+- [execution-governance-capabilities.md](execution-governance-capabilities.md) maps the focused
+  safe-execution, CI, sandbox, proof, replay, assurance, crossing, and semantic-snapshot references
 - [contract-reference.md](contract-reference.md) defines repo contract field semantics
 - [workspace-reference.md](workspace-reference.md) defines workspace contract field semantics
 - [command-reference.md](command-reference.md) defines shipped CLI behavior

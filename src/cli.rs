@@ -185,6 +185,13 @@ enum Commands {
         #[command(subcommand)]
         command: ProofCommands,
     },
+    #[command(display_order = 14)]
+    /// Inspect the fixed prebound crossing-authority hardening profile without granting authority.
+    Authority {
+        #[command(subcommand)]
+        command: AuthorityCommands,
+    },
+    #[command(display_order = 12)]
     /// Render and validate provider projections from canonical contract truth.
     Ci {
         #[command(subcommand)]
@@ -204,7 +211,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--grant`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run publish --grant approved-publish\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -214,6 +221,9 @@ enum Commands {
         /// Enforce the declared agent-safe task boundary for this execution.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Apply the selected lane's authoritative runtime boundary through an enforcing provider.
+        #[arg(long = "sandbox-target", value_name = "TARGET")]
+        sandbox_target: Option<String>,
         /// Assert that the contract-declared task refusal canary is refused by agent execution.
         #[arg(long, action = ArgAction::SetTrue, requires = "agent", conflicts_with_all = ["dry_run", "stream", "receipt", "log"])]
         expect_refusal: bool,
@@ -241,7 +251,7 @@ enum Commands {
         /// Shorthand for `--lifecycle persistent`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
         persistent: bool,
-        /// Override the projected host/public port for this invocation.
+        /// Override the selected host-facing listener port for this invocation.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
         /// Override the container memory request for this invocation.
@@ -259,6 +269,9 @@ enum Commands {
         /// Attach operator intent when crossing a heavier audited execution boundary.
         #[arg(long)]
         reason: Option<String>,
+        /// Select one signed grant from the contract's pre-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
@@ -474,6 +487,17 @@ enum Commands {
             ]
         )]
         history: bool,
+        /// Select the local archive directory or the protected systemd Launcher history service.
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = ReceiptHistorySource::Local,
+            requires = "history"
+        )]
+        source: ReceiptHistorySource,
+        /// Select one exact protected receipt archive identity.
+        #[arg(long, value_name = "SHA256", requires = "history")]
+        archive_identity: Option<String>,
         /// Archive the receipt JSON to `.ota/receipts`.
         #[arg(long, action = ArgAction::SetTrue)]
         archive: bool,
@@ -539,6 +563,9 @@ enum Commands {
         /// Enforce the declared agent-safe task boundary for this workflow execution.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Apply the selected workflow's authoritative runtime boundaries through an enforcing provider.
+        #[arg(long = "sandbox-target", value_name = "TARGET")]
+        sandbox_target: Option<String>,
         /// Assert that the contract-declared workflow refusal canary is refused by agent execution.
         #[arg(long, action = ArgAction::SetTrue, requires = "agent", requires = "workflow", conflicts_with_all = ["dry_run", "stream", "attach", "detach", "receipt", "replay_baseline", "member"])]
         expect_refusal: bool,
@@ -578,7 +605,7 @@ enum Commands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
-        /// Override the selected projected host listener publication for this proof run.
+        /// Override the selected host-facing listener port for this invocation.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
         /// Include the execution receipt in text output.
@@ -593,6 +620,9 @@ enum Commands {
         /// Attach operator intent when crossing a heavier audited execution boundary.
         #[arg(long)]
         reason: Option<String>,
+        /// Select one signed grant from the contract's pre-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -722,6 +752,16 @@ enum Commands {
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommands,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum AuthorityCommands {
+    /// Inspect the fixed prebound-file authority boundary without mutating authority state.
+    Inspect {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
     },
 }
 
@@ -1026,7 +1066,7 @@ enum ProofCommands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
-        /// Override the selected projected host listener publication for this proof run.
+        /// Override the selected host-facing listener port for this proof run.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
         /// Inspect one merged monorepo member contract declared by the root contract.
@@ -1038,6 +1078,9 @@ enum ProofCommands {
         /// Execute one declared negative-control task and require it to fail.
         #[arg(long, value_name = "ID")]
         negative_control: Option<String>,
+        /// Select one signed grant from the contract-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -1049,6 +1092,9 @@ enum ProofCommands {
         /// Enforce the selected workflow's declared agent-safe closure before lifecycle ownership.
         #[arg(long, action = ArgAction::SetTrue)]
         agent: bool,
+        /// Select one signed grant from the contract-bound crossing authority.
+        #[arg(long, value_name = "ID")]
+        grant: Option<String>,
         /// Archive the terminal machine-readable proof record under `.ota/proof/archives`.
         #[arg(long, action = ArgAction::SetTrue, requires = "json")]
         archive: bool,
@@ -1457,6 +1503,29 @@ enum WorkspaceExecutionCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+pub(super) enum ReceiptHistorySource {
+    #[default]
+    Local,
+    #[value(name = "systemd_protected_launcher")]
+    SystemdProtectedLauncher,
+}
+
+impl ReceiptHistorySource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::SystemdProtectedLauncher => "systemd_protected_launcher",
+        }
+    }
+}
+
+impl std::fmt::Display for ReceiptHistorySource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -3308,6 +3377,10 @@ fn complete_repo_run_input_candidates(current: &std::ffi::OsStr) -> Vec<Completi
 }
 
 pub fn run() -> i32 {
+    if crate::broker_session::enter_systemd_launcher_startup_gate().is_err() {
+        eprintln!("systemd protected-launcher startup refused before command dispatch");
+        return 1;
+    }
     let output = run_with(std::env::args_os());
 
     if !output.stdout.is_empty() {
@@ -3713,9 +3786,12 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Enum(LIFECYCLES),
         }),
-        "--member" | "--file" => Some(RunFlagSpec {
+        "--member" | "--file" | "--sandbox-target" | "--reason" | "--grant" => Some(RunFlagSpec {
             canonical: match name {
                 "--member" => "member",
+                "--sandbox-target" => "sandbox-target",
+                "--reason" => "reason",
+                "--grant" => "grant",
                 _ => "file",
             },
             takes_value: true,
@@ -3726,28 +3802,31 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--agent" | "--json" | "--dry-run" | "--native" | "--container" | "--remote"
-        | "--ephemeral" | "--persistent" | "--skip-deps" | "--receipt" | "--stream" | "--log"
-        | "--debug" | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
-            canonical: match name {
-                "--agent" => "agent",
-                "--json" => "json",
-                "--dry-run" => "dry-run",
-                "--native" | "--container" | "--remote" => "mode",
-                "--ephemeral" | "--persistent" => "lifecycle",
-                "--skip-deps" => "skip-deps",
-                "--receipt" => "receipt",
-                "--stream" => "stream",
-                "--log" => "log",
-                "--debug" => "debug",
-                "--plain" => "plain",
-                "--concise" => "concise",
-                "--verbose" => "verbose",
-                _ => unreachable!("matched repo run switch"),
-            },
-            takes_value: false,
-            value_kind: RunFlagValueKind::Any,
-        }),
+        "--agent" | "--expect-refusal" | "--json" | "--dry-run" | "--native" | "--container"
+        | "--remote" | "--ephemeral" | "--persistent" | "--skip-deps" | "--receipt"
+        | "--stream" | "--log" | "--debug" | "--plain" | "--concise" | "--verbose" => {
+            Some(RunFlagSpec {
+                canonical: match name {
+                    "--agent" => "agent",
+                    "--expect-refusal" => "expect-refusal",
+                    "--json" => "json",
+                    "--dry-run" => "dry-run",
+                    "--native" | "--container" | "--remote" => "mode",
+                    "--ephemeral" | "--persistent" => "lifecycle",
+                    "--skip-deps" => "skip-deps",
+                    "--receipt" => "receipt",
+                    "--stream" => "stream",
+                    "--log" => "log",
+                    "--debug" => "debug",
+                    "--plain" => "plain",
+                    "--concise" => "concise",
+                    "--verbose" => "verbose",
+                    _ => unreachable!("matched repo run switch"),
+                },
+                takes_value: false,
+                value_kind: RunFlagValueKind::Any,
+            })
+        }
         _ => None,
     }
 }
@@ -4840,6 +4919,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Execution {
                 command: ExecutionCommands::Topology { json: true, .. },
             }
+            | Commands::Authority {
+                command: AuthorityCommands::Inspect { json: true },
+            }
             | Commands::Policy { json: true, .. }
             | Commands::Policy {
                 command: Some(PolicyCommands::Init { json: true, .. }),
@@ -4906,6 +4988,20 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Authority {
+            command: AuthorityCommands::Inspect { json },
+        } => {
+            if file.is_some() {
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`ota authority inspect` reads only the fixed prebound authority boundary and does not accept `--file`",
+                    ),
+                    2,
+                )
+            } else {
+                commands::authority_inspect(format_from_json(json))
+            }
+        }
         Commands::Env {
             json,
             member,
@@ -4977,14 +5073,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     member,
                     workflow,
                     negative_control,
+                    grant,
                     path,
                 },
-        } => commands::proof_runtime(
+        } => commands::proof_runtime_with_grant(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
             negative_control.as_deref(),
+            grant.as_deref(),
             archive,
             ready_timeout.as_deref(),
             ExecutionOverrides {
@@ -5002,6 +5100,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 ProofCommands::Lifecycle {
                     json,
                     agent,
+                    grant,
                     archive,
                     member,
                     backend,
@@ -5012,13 +5111,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     service,
                     path,
                 },
-        } => commands::proof_lifecycle(
+        } => commands::proof_lifecycle_with_grant(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
             service.as_deref(),
             agent,
+            grant.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: None,
@@ -5389,6 +5489,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Run {
             task,
             agent,
+            sandbox_target,
             expect_refusal,
             json,
             dry_run,
@@ -5404,6 +5505,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             skip_deps,
             effect_override,
             reason,
+            grant,
             receipt,
             stream,
             log,
@@ -5420,7 +5522,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps,
             };
             if agent {
-                commands::run_command_with_agent_reason(
+                commands::run_command_with_agent_reason_and_grant(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5432,6 +5534,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     reason.as_deref(),
+                    grant.as_deref(),
+                    sandbox_target.as_deref(),
                     dry_run,
                     debug,
                     receipt,
@@ -5439,7 +5543,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     log,
                 )
             } else {
-                commands::run_command_with_agent_reason(
+                commands::run_command_with_agent_reason_and_grant(
                     task.as_str(),
                     path.as_deref(),
                     file.as_deref(),
@@ -5451,6 +5555,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     false,
                     false,
                     reason.as_deref(),
+                    grant.as_deref(),
+                    sandbox_target.as_deref(),
                     dry_run,
                     debug,
                     receipt,
@@ -5523,6 +5629,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             baseline,
             fail_on_new_blockers,
             history,
+            source,
+            archive_identity,
             archive,
             promote_baseline,
             backend,
@@ -5551,6 +5659,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             baseline.as_deref(),
             fail_on_new_blockers,
             history,
+            source,
+            archive_identity.as_deref(),
             archive,
             promote_baseline,
             debug,
@@ -5579,6 +5689,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Up {
             json,
             agent,
+            sandbox_target,
             expect_refusal,
             dry_run,
             stream,
@@ -5597,6 +5708,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             replay_baseline,
             effect_override,
             reason,
+            grant,
             member,
             workflow,
             path,
@@ -5610,7 +5722,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps: false,
             };
             if agent {
-                commands::up_with_agent_reason(
+                commands::up_with_agent_reason_and_grant(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5620,6 +5732,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     true,
                     expect_refusal,
                     reason.as_deref(),
+                    grant.as_deref(),
+                    sandbox_target.as_deref(),
                     format,
                     debug,
                     dry_run,
@@ -5631,7 +5745,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     ready_timeout.as_deref(),
                 )
             } else {
-                commands::up_with_agent_reason(
+                commands::up_with_agent_reason_and_grant(
                     path.as_deref(),
                     file.as_deref(),
                     overrides,
@@ -5641,6 +5755,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     false,
                     false,
                     reason.as_deref(),
+                    grant.as_deref(),
+                    sandbox_target.as_deref(),
                     format,
                     debug,
                     dry_run,
@@ -6295,6 +6411,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Proof { .. } => {
             "run `ota doctor` to inspect blockers first, or rerun `ota proof runtime` with one explicit workflow"
         }
+        Commands::Authority { .. } => {
+            "have the runner administrator repair the fixed prebound-file boundary, then rerun `ota authority inspect --json`"
+        }
         Commands::Ci { .. } => {
             "run `ota ci github render --workflow <name>` to inspect the canonical managed projection"
         }
@@ -6525,6 +6644,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Proof {
             command: ProofCommands::Lifecycle { json, .. },
         }
+        | Commands::Authority {
+            command: AuthorityCommands::Inspect { json },
+        }
         | Commands::Ci {
             command:
                 CiCommands::Github {
@@ -6633,6 +6755,9 @@ fn command_where_label(command: &Commands) -> &'static str {
             ProofCommands::Runtime { .. } => "ota proof runtime",
             ProofCommands::Lifecycle { .. } => "ota proof lifecycle",
         },
+        Commands::Authority {
+            command: AuthorityCommands::Inspect { .. },
+        } => "ota authority inspect",
         Commands::Ci { command } => match command {
             CiCommands::Projection { .. } => "ota ci projection",
             CiCommands::Github { command } => match command {
@@ -10341,6 +10466,40 @@ tasks:
     }
 
     #[test]
+    fn protected_receipt_history_refuses_repository_path_overrides_before_connecting() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+"#,
+        );
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--history",
+            "--source",
+            "systemd_protected_launcher",
+            fixture.path(),
+        ]);
+        assert_eq!(output.exit_code, 1);
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        let normalized = strip_ansi(&rendered)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            normalized.contains("path and contract-file overrides are not allowed"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn receipt_history_json_lists_archived_receipts() {
         let fixture = ContractFixture::new(
             r#"
@@ -10423,7 +10582,7 @@ tasks:
     }
 
     #[test]
-    fn receipt_history_accepts_archives_missing_supported_execution_field() {
+    fn receipt_history_marks_snapshotless_archives_legacy_unverified() {
         let fixture = ContractFixture::new_dir();
 
         fixture.write(
@@ -10464,43 +10623,15 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["summary"]["archive_count"], 1);
-        assert_eq!(json["summary"]["invalid_archive_count"], 0);
-        assert_eq!(json["archives"].as_array().unwrap().len(), 1);
-        assert_eq!(json["archives"][0]["contract"], "./ota.yaml");
+        assert_eq!(json["summary"]["archive_count"], 0);
+        assert_eq!(json["summary"]["invalid_archive_count"], 1);
+        assert_eq!(json["invalid_archives"][0]["posture"], "legacy_unverified");
     }
 
     #[test]
     fn receipt_history_json_preserves_status_and_remote_execution_fields() {
         let fixture = ContractFixture::new_dir();
-
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
-            r#"
-{
-  "ok": false,
-  "mode": "receipt",
-  "summary": {
-    "error_count": 1,
-    "warn_count": 0,
-    "info_count": 0,
-    "step_count": 2
-  },
-  "receipt": {
-    "scope": "repo",
-    "contract": "./ota.yaml",
-    "status": "interrupted",
-    "backend": "remote",
-    "target": "sandbox-dev",
-    "provider": "daytona",
-    "context": "remote_app",
-    "lifecycle": "persistent",
-    "cwd": "/workspace/app"
-  },
-  "findings": []
-}
-"#,
-        );
+        write_remote_history_receipt(&fixture);
 
         let output = run_with(["ota", "receipt", "--json", "--history", fixture.path()]);
 
@@ -10518,34 +10649,7 @@ tasks:
     #[test]
     fn receipt_history_text_reports_status_context_and_target() {
         let fixture = ContractFixture::new_dir();
-
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
-            r#"
-{
-  "ok": false,
-  "mode": "receipt",
-  "summary": {
-    "error_count": 1,
-    "warn_count": 0,
-    "info_count": 0,
-    "step_count": 2
-  },
-  "receipt": {
-    "scope": "repo",
-    "contract": "./ota.yaml",
-    "status": "interrupted",
-    "backend": "remote",
-    "target": "sandbox-dev",
-    "provider": "daytona",
-    "context": "remote_app",
-    "lifecycle": "persistent",
-    "cwd": "/workspace/app"
-  },
-  "findings": []
-}
-"#,
-        );
+        write_remote_history_receipt(&fixture);
 
         let output = run_with(["ota", "receipt", "--history", fixture.path()]);
 
@@ -10570,6 +10674,15 @@ tasks:
   demo:
     run: echo ok
 "#,
+        );
+        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+            &fixture,
+            "receipt-baseline-missing-supported-execution",
+            serde_json::json!({
+                "version": 1,
+                "project": { "name": "receipt-demo" },
+                "tasks": { "demo": { "run": "echo ok" } }
+            }),
         );
 
         fixture.write(
@@ -10610,6 +10723,15 @@ tasks:
             .dir
             .path()
             .join(".ota/receipts/repo-receipt-20260414-183513-599Z.json");
+        let mut baseline: Value =
+            serde_json::from_str(&fs::read_to_string(&baseline_path).unwrap()).unwrap();
+        baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
+        baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
+        fs::write(
+            &baseline_path,
+            serde_json::to_string_pretty(&baseline).unwrap(),
+        )
+        .unwrap();
 
         let output = run_with([
             "ota",
@@ -10736,6 +10858,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-baseline",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 let baseline_payload = serde_json::json!({
                     "ok": false,
@@ -10752,6 +10882,8 @@ env:
                         "path": fixture.file_path().display().to_string(),
                         "scope": "repo",
                         "contract": fixture.file_path().display().to_string(),
+                        "contract_snapshot_hash": snapshot_hash,
+                        "contract_snapshot_ref": snapshot_ref,
                         "backend": "native",
                         "summary": {
                             "error_count": 2,
@@ -10846,14 +10978,13 @@ env:
                     .cloned()
                     .unwrap();
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
-  "version": 1,
-  "project": {
-    "name": "receipt-diff"
-  }
-}"#,
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "sha256-old",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -10872,8 +11003,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -10935,7 +11066,7 @@ env:
     }
 
     #[test]
-    fn receipt_json_diff_fails_when_baseline_snapshot_ref_is_broken() {
+    fn receipt_json_diff_latest_skips_broken_snapshot_archive() {
         let worker = std::thread::Builder::new()
             .name(String::from("receipt-json-diff-broken-snapshot"))
             .stack_size(8 * 1024 * 1024)
@@ -10948,7 +11079,6 @@ project:
   name: receipt-diff
 "#,
                 );
-
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
                     &serde_json::to_string_pretty(&serde_json::json!({
@@ -11003,7 +11133,7 @@ project:
                     json["errors"][0]
                         .as_str()
                         .unwrap()
-                        .contains("failed to load archived contract snapshot")
+                        .contains("no archived repo receipt found")
                 );
             })
             .expect("spawn broken snapshot receipt diff worker");
@@ -11039,9 +11169,11 @@ checks:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-check-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11053,6 +11185,8 @@ checks:
   },
   "version": 1
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11071,8 +11205,8 @@ checks:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11150,9 +11284,11 @@ agent:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-unrelated-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11162,7 +11298,7 @@ agent:
       "name": "api-health",
       "kind": "precondition",
       "severity": "error",
-      "run": false
+      "run": "false"
     }
   ],
   "agent": {
@@ -11171,6 +11307,8 @@ agent:
     ]
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11189,8 +11327,8 @@ agent:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11260,9 +11398,11 @@ env:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-same-family-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11278,6 +11418,8 @@ env:
     }
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11296,8 +11438,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11372,9 +11514,11 @@ execution:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-broad-execution-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11384,7 +11528,7 @@ execution:
       "name": "api-health",
       "kind": "precondition",
       "severity": "error",
-      "run": false
+      "run": "false"
     }
   ],
   "execution": {
@@ -11395,6 +11539,8 @@ execution:
     }
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11413,8 +11559,8 @@ execution:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11482,9 +11628,11 @@ env:
                 let current = run_with(["ota", "receipt", "--json", fixture.path()]);
                 assert_eq!(current.exit_code, 1);
 
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    r#"{
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-no-clear-correlation",
+                    serde_json::from_str(
+                        r#"{
   "version": 1,
   "project": {
     "name": "receipt-diff"
@@ -11497,6 +11645,8 @@ env:
     }
   }
 }"#,
+                    )
+                    .expect("historical snapshot"),
                 );
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11515,8 +11665,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
-                            "contract_snapshot_hash": "sha256:old",
-                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 0,
@@ -11591,6 +11741,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-gate-fail",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11609,6 +11767,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 2,
@@ -11686,8 +11846,24 @@ project:
         let current = run_with(["ota", "receipt", "--json", fixture.path()]);
         assert_eq!(current.exit_code, 1);
 
+        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+            &fixture,
+            "receipt-diff-gate-pass",
+            serde_json::json!({
+                "version": 1,
+                "project": { "name": "receipt-diff" }
+            }),
+        );
+        let mut baseline: Value = serde_json::from_str(&current.stdout).unwrap();
+        baseline["receipt"]["contract_snapshot_hash"] = Value::String(snapshot_hash);
+        baseline["receipt"]["contract_snapshot_ref"] = Value::String(snapshot_ref);
+
         let baseline_file = fixture.dir.path().join("baseline-receipt.json");
-        fs::write(&baseline_file, current.stdout).unwrap();
+        fs::write(
+            &baseline_file,
+            serde_json::to_string_pretty(&baseline).unwrap(),
+        )
+        .unwrap();
 
         let output = run_with([
             "ota",
@@ -11726,6 +11902,14 @@ project:
   name: receipt-diff
 "#,
                 );
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-moved",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11745,6 +11929,8 @@ project:
                             "path": "/old/location/ota.yaml",
                             "scope": "repo",
                             "contract": "/old/location/ota.yaml",
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -11819,9 +12005,17 @@ workflows:
 "#,
                 );
                 let fixture_root = Path::new(fixture.path());
-                let snapshot_path = fixture_root.join(".ota/contracts/sha256-old.json");
                 let archive_path =
                     fixture_root.join(".ota/receipts/repo-receipt-20260412-101010-123Z.json");
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-snapshot-lineage-fallback",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" },
+                        "tasks": { "build": { "run": "echo build" } }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -11841,8 +12035,8 @@ workflows:
                             "path": "/old/location/ota.yaml",
                             "scope": "repo",
                             "contract": "/old/location/ota.yaml",
-                            "contract_snapshot_ref": snapshot_path,
-                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "assumption_set_hash": "sha256:assumptions",
                             "backend": "native",
                             "summary": {
@@ -11870,22 +12064,6 @@ workflows:
                     }))
                     .unwrap(),
                 );
-                fixture.write(
-                    ".ota/contracts/sha256-old.json",
-                    &serde_json::to_string_pretty(&serde_json::json!({
-                        "version": 1,
-                        "project": {
-                            "name": "receipt-diff"
-                        },
-                        "tasks": {
-                            "build": {
-                                "run": "echo build"
-                            }
-                        }
-                    }))
-                    .unwrap(),
-                );
-
                 let output = run_with([
                     "ota",
                     "receipt",
@@ -12011,7 +12189,7 @@ env:
     }
 
     #[test]
-    fn receipt_json_diff_legacy_explicit_baseline_keeps_same_contract_identity() {
+    fn receipt_json_diff_rejects_legacy_explicit_baseline() {
         let worker = std::thread::Builder::new()
             .name(String::from("receipt-json-legacy-baseline"))
             .stack_size(8 * 1024 * 1024)
@@ -12080,17 +12258,12 @@ project:
                     fixture.path(),
                 ]);
 
-                assert_eq!(output.exit_code, 0);
+                assert_eq!(output.exit_code, 1);
                 let json: Value = serde_json::from_str(&output.stdout).unwrap();
-                assert_eq!(
-                    json["summary"]["comparison"]["baseline_identity_label"],
-                    "ota.yaml"
-                );
-                assert_eq!(
-                    json["summary"]["comparison"]["current_identity_label"],
-                    "ota.yaml"
-                );
-                assert_eq!(json["summary"]["comparison"]["identity_changed"], false);
+                assert!(json["errors"][0]
+                    .as_str()
+                    .unwrap()
+                    .contains("unverifiable because it omits immutable `receipt.contract_snapshot_ref`"));
             })
             .expect("spawn receipt legacy-baseline worker");
 
@@ -12286,6 +12459,14 @@ project:
   name: receipt-diff
 "#,
                 );
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-valid-baseline",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101011-123Z.json",
@@ -12349,6 +12530,8 @@ project:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -12432,6 +12615,14 @@ project:
                     .unwrap();
 
                 let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-explicit-file",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
                 fs::write(
                     &baseline_file,
                     serde_json::to_string_pretty(&serde_json::json!({
@@ -12449,6 +12640,8 @@ project:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "backend": "native",
                             "summary": {
                                 "error_count": 1,
@@ -12521,6 +12714,16 @@ tasks:
 "#,
                 );
 
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-diff-remote",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" },
+                        "tasks": { "setup": { "run": "echo ready" } }
+                    }),
+                );
+
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
                     &serde_json::to_string_pretty(&serde_json::json!({
@@ -12538,6 +12741,8 @@ tasks:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": snapshot_hash,
+                            "contract_snapshot_ref": snapshot_ref,
                             "status": "interrupted",
                             "backend": "remote",
                             "context": "remote_app",
@@ -12619,6 +12824,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-text-diff-changes",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -12637,6 +12850,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "backend": "native",
                             "summary": {
                                 "error_count": 2,
@@ -12667,7 +12882,11 @@ env:
 
                 let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
 
-                assert_eq!(output.exit_code, 0);
+                assert_eq!(
+                    output.exit_code, 0,
+                    "stdout:\n{}\nstderr:\n{:?}",
+                    output.stdout, output.stderr
+                );
                 let stdout = strip_ansi(&output.stdout);
                 assert!(stdout.contains("RECEIPT DIFF"));
                 assert!(stdout.contains("Compare:"));
@@ -12702,6 +12921,15 @@ tasks:
     run: echo ready
 "#,
                 );
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-text-diff-remote",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" },
+                        "tasks": { "setup": { "run": "echo ready" } }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -12720,6 +12948,8 @@ tasks:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "status": "interrupted",
                             "backend": "remote",
                             "context": "remote_app",
@@ -12748,7 +12978,11 @@ tasks:
 
                 let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
 
-                assert_eq!(output.exit_code, 0);
+                assert_eq!(
+                    output.exit_code, 0,
+                    "stdout:\n{}\nstderr:\n{:?}",
+                    output.stdout, output.stderr
+                );
                 let stdout = strip_ansi(&output.stdout);
                 assert!(stdout.contains("Baseline:"), "{stdout}");
                 assert!(stdout.contains("Current:"), "{stdout}");
@@ -12796,6 +13030,14 @@ env:
                     .find(|finding| finding["summary"] == "No tasks defined in contract")
                     .cloned()
                     .unwrap();
+                let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+                    &fixture,
+                    "receipt-text-gate-fail",
+                    serde_json::json!({
+                        "version": 1,
+                        "project": { "name": "receipt-diff" }
+                    }),
+                );
 
                 fixture.write(
                     ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
@@ -12814,6 +13056,8 @@ env:
                             "path": fixture.file_path().display().to_string(),
                             "scope": "repo",
                             "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_ref": snapshot_ref,
+                            "contract_snapshot_hash": snapshot_hash,
                             "backend": "native",
                             "summary": {
                                 "error_count": 2,
@@ -12853,7 +13097,11 @@ env:
 
                 assert_eq!(output.exit_code, 1);
                 let stdout = strip_ansi(&output.stdout);
-                assert!(stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"));
+                assert!(
+                    stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"),
+                    "stdout:\n{stdout}\nstderr:\n{:?}",
+                    output.stderr
+                );
                 assert!(stdout.contains("Blocker: Missing environment variable: OTA_BASELINE_REQUIRED"));
                 assert!(stdout.contains("Provenance: repo contract"));
                 assert!(stdout.contains(
@@ -16201,7 +16449,7 @@ tasks:
     }
 
     #[test]
-    fn run_text_rejects_host_port_override_for_native_execution() {
+    fn run_text_rejects_host_port_override_without_projected_native_listener() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16217,11 +16465,13 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("ERROR  Host port override requires container execution"));
+        assert!(stderr.contains("ERROR  Host port override is not applicable"));
         assert!(
-            stderr.contains("`--host-port` only applies to projected container host publication")
+            stderr.contains(
+                "task `dev` does not declare any projected host listener under `runtime.listeners.*.project.host`"
+            )
         );
-        assert!(stderr.contains("ota run dev --mode container"));
+        assert!(stderr.contains("rerun without `--host-port`"));
     }
 
     #[test]
@@ -18163,6 +18413,8 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
+                sandbox_target: None,
                 path: None,
                 inputs: Vec::new(),
             },
@@ -18205,6 +18457,8 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
+                sandbox_target: None,
                 path: None,
                 inputs: Vec::new(),
             },
@@ -19204,6 +19458,8 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
+            sandbox_target: None,
             workflow: None,
         }));
     }
@@ -19233,6 +19489,8 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
+            sandbox_target: None,
             workflow: None,
         }));
     }
@@ -19255,6 +19513,7 @@ tasks:
                 member: None,
                 workflow: None,
                 negative_control: None,
+                grant: None,
                 path: None,
             },
         }));
@@ -19294,6 +19553,8 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
+                sandbox_target: None,
                 workflow: None,
             },
         };
@@ -19329,6 +19590,8 @@ tasks:
                 member: Vec::new(),
                 effect_override: Vec::new(),
                 reason: None,
+                grant: None,
+                sandbox_target: None,
                 workflow: None,
             }),
             Some("Preparing environment...")
@@ -19372,6 +19635,7 @@ tasks:
                     member: None,
                     workflow: None,
                     negative_control: None,
+                    grant: None,
                     path: None,
                 },
             }),
@@ -19403,6 +19667,8 @@ tasks:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
+            sandbox_target: None,
             path: None,
             inputs: Vec::new(),
         }));
@@ -19527,6 +19793,7 @@ tasks:
                         member: None,
                         workflow: None,
                         negative_control: None,
+                        grant: None,
                         path: None,
                     },
                 },
@@ -19753,6 +20020,8 @@ tasks:
                     baseline: None,
                     fail_on_new_blockers: false,
                     history: false,
+                    source: super::ReceiptHistorySource::Local,
+                    archive_identity: None,
                     archive: false,
                     promote_baseline: false,
                     backend: None,
@@ -19790,6 +20059,8 @@ tasks:
                     member: Vec::new(),
                     effect_override: Vec::new(),
                     reason: None,
+                    grant: None,
+                    sandbox_target: None,
                     workflow: None,
                     path: None,
                 },
@@ -28243,6 +28514,8 @@ policies:
             "app",
             "--negative-control",
             "postgres-unavailable",
+            "--grant",
+            "approved-app",
             "--container",
             "--persistent",
             "--host-port",
@@ -28272,6 +28545,7 @@ policies:
                         member,
                         workflow,
                         negative_control,
+                        grant,
                         path,
                     },
             } => {
@@ -28288,6 +28562,7 @@ policies:
                 assert!(member.is_none());
                 assert_eq!(workflow.as_deref(), Some("app"));
                 assert_eq!(negative_control.as_deref(), Some("postgres-unavailable"));
+                assert_eq!(grant.as_deref(), Some("approved-app"));
                 assert_eq!(path.as_deref(), Some(Path::new("./ota.yaml")));
             }
             other => panic!("unexpected command parsed: {other:?}"),
@@ -28382,6 +28657,96 @@ policies:
     }
 
     #[test]
+    fn run_sandbox_flags_after_task_are_not_rewritten_as_task_inputs() {
+        let args = [
+            "ota",
+            "run",
+            "verify",
+            "--agent",
+            "--sandbox-target",
+            "oci_local",
+            "--dry-run",
+            "--json",
+            ".",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        let rewritten = super::rewrite_task_input_path_hint(args);
+        let cli = try_parse_cli_on_test_stack(
+            &rewritten
+                .iter()
+                .map(|value| value.to_str().expect("test argument should be UTF-8"))
+                .collect::<Vec<_>>(),
+        )
+        .expect("sandbox flags after the task should remain Ota command flags");
+
+        match cli.command {
+            Commands::Run {
+                task,
+                agent,
+                sandbox_target,
+                dry_run,
+                json,
+                path,
+                inputs,
+                ..
+            } => {
+                assert_eq!(task, "verify");
+                assert!(agent);
+                assert_eq!(sandbox_target.as_deref(), Some("oci_local"));
+                assert!(dry_run);
+                assert!(json);
+                assert_eq!(path.as_deref(), Some(Path::new(".")));
+                assert!(inputs.is_empty());
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_grant_after_task_remains_an_ota_command_flag() {
+        let args = [
+            "ota",
+            "run",
+            "publish",
+            "--grant",
+            "approved-publish",
+            "--receipt",
+            ".",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        let rewritten = super::rewrite_task_input_path_hint(args);
+        let cli = try_parse_cli_on_test_stack(
+            &rewritten
+                .iter()
+                .map(|value| value.to_str().expect("test argument should be UTF-8"))
+                .collect::<Vec<_>>(),
+        )
+        .expect("grant after the task should remain an Ota command flag");
+
+        match cli.command {
+            Commands::Run {
+                task,
+                grant,
+                receipt,
+                path,
+                inputs,
+                ..
+            } => {
+                assert_eq!(task, "publish");
+                assert_eq!(grant.as_deref(), Some("approved-publish"));
+                assert!(receipt);
+                assert_eq!(path.as_deref(), Some(Path::new(".")));
+                assert!(inputs.is_empty());
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
     fn run_effect_override_is_classified_as_repo_run_value_flag() {
         let occurrence = super::parse_run_flag_occurrence(
             &[
@@ -28428,6 +28793,8 @@ policies:
             member: Vec::new(),
             effect_override: Vec::new(),
             reason: None,
+            grant: None,
+            sandbox_target: None,
             path: None,
             inputs: Vec::new(),
         };
@@ -28593,6 +28960,39 @@ policies:
                 assert!(backend.is_none());
                 assert!(lifecycle.is_none());
                 assert_eq!(path.as_deref(), Some(Path::new(".")));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn receipt_protected_history_source_and_exact_archive_identity_parse() {
+        let identity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cli = try_parse_cli_on_test_stack(&[
+            "ota",
+            "receipt",
+            "--history",
+            "--source",
+            "systemd_protected_launcher",
+            "--archive-identity",
+            identity,
+        ])
+        .expect("protected receipt history flags should parse");
+        match cli.command {
+            Commands::Receipt {
+                history,
+                source,
+                archive_identity,
+                path,
+                ..
+            } => {
+                assert!(history);
+                assert_eq!(
+                    source,
+                    super::ReceiptHistorySource::SystemdProtectedLauncher
+                );
+                assert_eq!(archive_identity.as_deref(), Some(identity));
+                assert!(path.is_none());
             }
             other => panic!("unexpected command parsed: {other:?}"),
         }
@@ -37815,7 +38215,7 @@ workflows:
 
     #[cfg(not(windows))]
     #[test]
-    fn up_dry_run_container_preview_reports_image_and_preview_rerun() {
+    fn up_dry_run_container_preview_avoids_provider_probe_and_reports_plan() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -37857,25 +38257,31 @@ tools:
 
         let output = run_with(["ota", "up", "--dry-run", "--mode", "container", "."]);
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
         let stdout = strip_ansi(&output.stdout);
-        assert!(
-            stdout.contains("Primary Blocker Cargo is missing from the configured container image")
-        );
+        assert!(!stdout.contains("Primary Blocker"));
         assert!(!stdout.contains("Blocked by"));
         assert!(stdout.contains("Contract"));
         assert!(stdout.contains("Project: ota"));
         assert!(stdout.contains(
             "Execution: preferred=container, lifecycle=ephemeral, image=rust:1.94-bookworm"
         ));
-        assert!(stdout.contains("Why:\n  » `cargo` is declared in the contract"));
-        assert!(stdout.contains("  » it is not available in the configured container image"));
-        assert!(stdout.contains("  » `execution.backends.container.image = rust:1.94-bookworm`"));
-        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(stdout.contains("Dry run only"));
+        let probe_state = bin_dir.join(".ota-container-probe-state");
+        let created_probe = probe_state.is_dir()
+            && fs::read_dir(probe_state)
+                .expect("read fake container probe state")
+                .filter_map(Result::ok)
+                .any(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|value| value == "tool")
+                });
         assert!(
-            normalized.contains("rerun `ota up --dry-run --mode container --lifecycle ephemeral`")
+            !created_probe,
+            "dry-run must not create a provider-backed tool probe"
         );
-        assert!(!stdout.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
     }
 
     #[test]
@@ -40551,6 +40957,26 @@ edition = "2024"
                 .stderr
                 .as_deref()
                 .expect("help text should be present"),
+        );
+    }
+
+    #[test]
+    fn authority_inspect_rejects_contract_file_override() {
+        let output = run_with([
+            "ota",
+            "--file",
+            "ota.yaml",
+            "authority",
+            "inspect",
+            "--json",
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .is_some_and(|stderr| stderr.contains("does not accept `--file`"))
         );
     }
 
@@ -50128,6 +50554,63 @@ tasks:
             }
             fs::write(path, contents).unwrap();
         }
+    }
+
+    fn write_receipt_snapshot(
+        fixture: &ContractFixture,
+        name: &str,
+        snapshot: serde_json::Value,
+    ) -> (String, String) {
+        let bytes = serde_json::to_vec(&snapshot).expect("snapshot json");
+        let hash = crate::semantic_identity::contract_snapshot_hash(&bytes);
+        let relative = format!(".ota/contracts/{name}.json");
+        fixture.write(
+            relative.as_str(),
+            std::str::from_utf8(&bytes).expect("utf8 snapshot"),
+        );
+        (relative, hash)
+    }
+
+    fn write_remote_history_receipt(fixture: &ContractFixture) {
+        let (snapshot_ref, snapshot_hash) = write_receipt_snapshot(
+            fixture,
+            "remote-history",
+            serde_json::json!({
+                "version": 1,
+                "project": {"name": "receipt-demo"}
+            }),
+        );
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
+            &format!(
+                r#"
+{{
+  "ok": false,
+  "mode": "receipt",
+  "summary": {{
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  }},
+  "receipt": {{
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "contract_snapshot_ref": "{snapshot_ref}",
+    "contract_snapshot_hash": "{snapshot_hash}",
+    "status": "interrupted",
+    "backend": "remote",
+    "target": "sandbox-dev",
+    "provider": "daytona",
+    "context": "remote_app",
+    "lifecycle": "persistent",
+    "cwd": "/workspace/app"
+  }},
+  "findings": []
+}}
+"#
+            ),
+        );
     }
 
     #[test]

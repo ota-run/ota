@@ -623,6 +623,7 @@ or teardown shell commands into the workflow.
 ota proof lifecycle --workflow smoke [PATH]
 ota proof lifecycle --workflow smoke --service database [PATH]
 ota proof lifecycle --workflow smoke --mode container [PATH]
+ota proof lifecycle --workflow smoke --grant approved-smoke [PATH]
 ota proof lifecycle --json --workflow smoke [PATH]
 ota proof lifecycle --json --archive --workflow smoke [PATH]
 ```
@@ -637,6 +638,19 @@ Current behavior:
   `execution_started: false` plus the hard-pin and policy evidence
 - refuses with `replay_input_policy_unavailable` before lifecycle work when the active policy
   source cannot be loaded
+- when `governance.crossing_authority` governs the selected non-agent workflow closure, requires
+  `--grant <id>` and verifies it before creating a lifecycle transaction, starting a service, or
+  running a prerequisite/assertion. One proof-owned crossing transaction covers prerequisites,
+  selected services, cleanup, and the assertion. Ota passes authority to nested Ota children over
+  a bounded runner-private Unix descriptor that is closed before selected task code starts; task
+  environments never receive the capability. The terminal lifecycle archive embeds and
+  re-verifies the exact authority admission and transaction. Refusal JSON carries typed authority
+  evidence with `execution_started: false`; a grant never bypasses agent-safety admission
+- lifecycle grant scope binds the explicit `--service` selection and its resolved dependency
+  closure before authority evaluation; an invalid service selector refuses before any grant
+  admission evidence is produced
+- lifecycle assertions are authority roots too: an unsafe assertion makes the whole proof
+  transaction require grant admission before prerequisites or services can start
 - executes the selected workflow's prerequisite closure before acquiring lifecycle ownership
 - refuses a concurrent lifecycle transaction for the same repository before it can observe manager
   state or acquire a cleanup lease
@@ -684,6 +698,7 @@ ota proof runtime --member api --workflow backend [PATH]
 ota proof runtime --json --workflow app [PATH]
 ota proof runtime --json --archive --workflow app [PATH]
 ota proof runtime --workflow app --negative-control postgres-unavailable [PATH]
+ota proof runtime --workflow app --grant approved-app [PATH]
 ```
 
 Current behavior:
@@ -695,6 +710,16 @@ Current behavior:
   refusal carries `execution_started: false` plus the hard-pin and policy evidence
 - refuses with `replay_input_policy_unavailable` before proof artifacts or child execution when
   the active policy source cannot be loaded
+- when `governance.crossing_authority` governs the selected proof scope, requires `--grant <id>`
+  before creating `.ota/proof` or spawning `ota up`. Proof scope binds the runtime carrier plus
+  every seam/control invocation by role and declaration order plus the normalized
+  `--ready-timeout`, memory, dependency-selection, host-port, and target-platform choices. Archive
+  verification also distinguishes implicit backend/lifecycle defaults from explicit overrides. One
+  proof-owned crossing transaction covers the detached workflow, its nested task execution,
+  post-readiness observers, negative controls, and cleanup. Runner-private authority is delivered
+  only to the immediate Ota child over a bounded Unix descriptor with close-on-exec restored before
+  selected code runs. The terminal proof archive embeds and re-verifies the exact authority and
+  cannot borrow an ordinary workflow grant
 - when `--member` is set, proves the merged member contract from the monorepo root
 - when `--workflow` is set, proves that selected workflow path; otherwise it uses the effective
   default workflow or the default task path when the repo has no workflows
@@ -710,7 +735,8 @@ Current behavior:
 - supports `--archive` with `--json` to write an immutable, content-addressed terminal proof
   record under `.ota/proof/archives/`; it binds the terminal proof JSON to an archived semantic
   contract snapshot, clean Git source identity when available, the resolved execution scope
-  (`workflow`, primary task, backend, provider, lifecycle, and target), and explicit
+  (`workflow`, primary task, backend, provider, lifecycle, target, target platform, host-port
+  selection, and normalized readiness-timeout selection), and explicit
   `replay_posture: witness_only`; later assurance verifies the referenced snapshot's content
   identity before admitting the proof archive
 - treats `.ota/proof/<workflow>/` as a mutable working bundle only. Its topology, doctor, and log
@@ -773,6 +799,36 @@ JSON output:
   source-mismatched, or scope-mismatched evidence remains `unknown`
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
+
+## `ota authority inspect`
+
+Inspect the fixed `prebound_file` authority boundary without selecting a grant or creating
+execution authority.
+
+```bash
+ota authority inspect
+ota authority inspect --json
+```
+
+Current behavior:
+
+- reads the fixed platform trust store and every referenced binding, signed bundle, and sequence
+  state through the same canonical protected-file verifier used by grant admission
+- accepts no authority ID, path, contract, policy, environment, or repository override
+- performs no task, provisioning, receipt/archive, crossing-transaction, or authority-state write
+- reports required and informational observations as `passed`, `failed`, `unknown`, or
+  `unavailable`; it does not execute `sudo` merely to test whether privilege is available
+- exits `0` only for `matched_with_unknowns`, where every required observable check passed and the
+  unobservable capability boundaries remain explicit; `incomplete`, `failed`, and `unsupported`
+  remain schema-valid JSON and exit non-zero
+- always bounds a matched profile as
+  `authority_separation_posture: current_process_filesystem_guarded`; it is diagnostic evidence,
+  not a grant, crossing record, provider attestation, or hardened-runner identity
+- redacts protected paths, keys, fingerprints, signatures, bundle contents, grant identities, and
+  parser/filesystem details from public output
+
+Use it in a self-hosted-runner conformance check before grant pressure. Keep provider/launcher
+attestation, worktree mutation controls, execution receipts, and archive assertions separate.
 
 ## `ota ci projection` and `ota ci github`
 
@@ -1402,7 +1458,9 @@ ota run <task> --skip-deps [PATH]
 ota run <task> --effect-override network:broad=allow [PATH]
 ota run <task> --memory 4GiB [PATH]
 ota run <task> --agent [PATH]
+ota run <task> --agent --sandbox-target oci_local [PATH]
 ota run <task> --reason "release requested" [PATH]
+ota run <task> --grant approved-release [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
@@ -1423,9 +1481,74 @@ Current behavior:
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--agent` enforces the declared agent-safe boundary before execution starts: ota refuses the run when the requested task is outside the safe set or when a declared-safe task still reaches an unsafe dependency / aggregate / hook closure
+- when an agent-selected lane declares authoritative `runtime_boundary` controls, Ota
+  automatically resolves the compatible enforcing target or refuses before dependencies,
+  hydration, setup, or task startup. `--sandbox-target oci_local` makes the same provider request
+  explicit; it never converts a native or remote task into container execution
+- the first `oci_local` target requires an explicitly platform-pinned ephemeral container lane. It
+  enforces a read-only repository root, existing declared writable carve-outs, protected-path
+  isolation, bounded external-IP network denial, and cleanup ownership. Targeted host/domain or
+  destination egress remains unsupported without a cooperating network-policy adapter
+- `container.platform` is ordinary container execution truth, not a sandbox-only hint. The current
+  backend accepts Linux OCI targets only. Ota passes the pin to every ephemeral, persistent,
+  closure-session, fulfillment, and lifecycle-proof execution-backend container it creates;
+  persistent reuse is invalidated when the declared platform changes. Task variants, environment
+  files, inputs, requirements, and command selection also resolve against that target OS rather
+  than the host OS
+- the first target admits finite `run`, `script`, and `command` bodies only. It refuses typed
+  prepare/action/Compose/launch/attach bodies and any task closure whose requirements, services, or
+  conditional checks would execute before the OCI segment boundary
+- the first target also refuses `attachments.isolated_paths`. Their files or named volumes are
+  durable provider resources, and Ota will not create or reuse them under an enforced lane until
+  their lifecycle is registered and evidenced by the same pre-mutation transaction
+- provider-backed completion receipts are archived automatically under `.ota/receipts` with a
+  content-addressed normalized contract snapshot. Archive verification re-derives the selected
+  policy graph and reconciles completed segment invocations with archived task outcomes. When an
+  organization policy narrows the lane, the receipt carries its identified restriction-authority
+  snapshot and archive verification derives overlays from that snapshot instead of trusting
+  embedded overlay output
+- engine inspection admits only the exact repository-root mount plus declared host-backed writable
+  carve-outs. Managed isolated paths, image-declared volumes, runtime sockets, and any other
+  undeclared mount refuse even when the engine reports them read-only
+- when one task identity is reachable in multiple execution phases, such as both a dependency and
+  a success hook, enforcing admission refuses and asks the contract author to split the invocations
+  into distinct task identities; it never collapses both executions into one segment
+- `ota proof lifecycle --agent` refuses authoritative sandbox-controlled closures until lifecycle
+  proof can emit the same provider application evidence; it does not borrow a prior run's boundary
 - `--reason <text>` attaches operator intent when the selected task path crosses a heavier
   audited execution boundary; the current shipped slice records that reason only when ota derives
   `crossing_required` for the selected lane instead of attaching free-form narration to every run
+- when the contract declares `governance.crossing_authority`, a non-agent invocation of a heavier
+  task closure requires independently managed authority. The `prebound_file` carrier requires
+  `--grant <id>`. The Unix `authority_broker` carrier automatically selects the one protected
+  binding matching the contract's `authority_id`; optional `--grant <authority-id>` only confirms
+  or disambiguates that non-secret label and never supplies a lease. Ota derives the exact semantic
+  closure first. The selected workflow instance and its ordered prerequisite-instance closure are
+  scope-bound; ordinary workflow `--ready-timeout` also changes that authority scope. Receipts
+  include runner-derived breadth counts and hashed resource identities without publishing raw
+  resource values, and retain a public verification binding without the live launcher descriptor.
+  Ota refuses before provisioning, dependencies, setup, or child execution when
+  authority, attestation, signature, freshness, revocation, consumption, or scope evidence does not
+  reconcile. After admission, real execution creates a durable crossing transaction before
+  selected-lane side effects and finalizes it for every terminal outcome. Signed-file and legacy
+  broker transactions are `runner_local_content_addressed`: they are locked and internally
+  reconciled, but are not independent same-user tamper attestation. V3 systemd broker transactions
+  are `launcher_active_slot_content_addressed` and remain bound to the protected launcher's private
+  active slot; this still does not imply provider-attested separation. A grant never bypasses
+  `--agent` safety refusal
+- supplying `--grant` to a contract without a crossing authority, or to a selected closure that
+  does not require a crossing, is an input error rather than ignored intent
+- `--dry-run` uses the same semantic scope and carrier selection without consuming authority. A
+  successful prebound preview carries `decision: admissible_not_consumed`; a broker preview carries
+  `decision: requires_live_authorization` and does not contact the launcher or broker. Neither
+  creates a crossing transaction or crossing record. Refusal JSON and admission-produced refusal receipts carry the
+  fixed authority source, configured authority/requested grant when present, typed reason,
+  evaluation detail, and `execution_started: false`. When Ota derived an exact scope before
+  refusal, it also publishes its scope identity, contract identity, boundary family, and
+  classification so an external authority can issue a reviewable exact grant without
+  reconstructing Ota semantics. `ota up --dry-run --json` carries the same derived scope binding
+  under `receipt.refusal`, preserving its distinct refusal boundary family. Neither surface
+  publishes task-input values or authority material, and neither carries a crossing record
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
   `network:dependency_hydration`, `network:container_image_hydration`,
@@ -1442,6 +1565,13 @@ Current behavior:
 - `--dry-run` is the read-only repo run preview surface: it resolves the selected task path,
   env, toolchains, native prerequisites, dependencies, and execution plan without running setup,
   dependencies, task processes, or containers
+- container runtime/tool availability that requires starting a provider boundary is intentionally
+  deferred during dry-run. Real sandbox-enforced execution performs those probes only inside the
+  registered provider application transaction, where each probe has its own pre-mutation cleanup
+  lease, applied-policy evidence, terminal inspection, and confirmed cleanup. Receipt JSON labels
+  those boundaries `purpose: precondition_probe`, binds them to the exact admitted segment that
+  owns the requirement, and retains terminal evidence on a blocking refusal; they cannot satisfy a
+  selected `task_execution` outcome
 - dry-run also evaluates declared replay-input identity pins. A missing or mismatched
   `expected_identity` returns the typed `replay_input_identity_missing` or
   `replay_input_identity_mismatch` preflight result before Ota presents the lane as runnable; real
@@ -1499,9 +1629,13 @@ Current behavior:
 - Compose attachment namespace drift also counts as persistent execution-shape drift, so changing `attachments.compose` recreates the persistent backend instead of reusing a container bound to the old Compose network family
 - service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
 - active repo execution ownership is now tracked in `.ota/state/active-executions.json` instead of a single whole-run lock, so compatible runs can coexist when their execution ownership does not conflict
-- the current shipped conflict rule is ownership-shaped: duplicate long-running service-task ownership still blocks, and so do shared host-managed service ownership, shared Compose project ownership, shared persistent backend-family ownership, and shared deterministic env-file materialization ownership; finite task paths can still run alongside an active service owner when they do not claim the same owned resources
-- shared logical write paths are now compared on effective ownership namespace, not path text alone: when two container contexts declare the same repo-relative `attachments.isolated_paths` entry but resolve to different Ota-managed dependency-isolation volume families, ota allows them to coexist; raw repo-worktree writes or unresolved shared namespaces still conflict
-- execution-conflict reporting now carries typed reason identities such as `active_execution_present`, `host_service`, `compose_project`, `persistent_backend_family`, `env_materialization_path`, and `service_task` instead of reducing the failure to owner detail text alone
+- the current shipped conflict rule is ownership-shaped: shared host-managed services, Compose projects, persistent backend families, deterministic env-file materialization outputs, effective write namespaces, and runtime listeners block only when their resolved ownership overlaps; finite tasks and long-running services can coexist when they claim disjoint resources
+- runtime listener ownership covers the complete selected execution closure, including dependencies, aggregates, and outcome hooks; fixed listeners conflict by effective namespace, network protocol, canonical address, and port, Ota-managed dynamic host ports and internal-only isolated container listeners can coexist, and unresolved service ownership stays fail-closed
+- shared logical write paths are compared on effective ownership namespace and ancestor/descendant overlap, not exact path text alone: separate container isolation volumes can coexist, while `.next` and `.next/cache` still conflict in one shared worktree
+- active records written before runtime listener or write-namespace identity existed remain conservatively fail-closed for overlapping legacy claims; restart the active lane with the current Ota version to enable precise cross-mode admission
+- execution-conflict reporting now carries typed reason identities such as `active_execution_present`, `host_service`, `compose_project`, `persistent_backend_family`, `env_materialization_path`, `write_path`, `runtime_listener`, and `service_task` instead of reducing the failure to owner detail text alone
+- when a sole fixed `runtime_listener` conflict is established, text output reports `Host port already in use`, names the requested and active execution modes plus exact endpoint, and suggests a `--host-port <free port>` rerun only when the selected lane's normal option preflight admits host-port overrides; suggested commands preserve `--agent` when it was requested; native and container requests use the same diagnosis, while mixed ownership conflicts keep the broader `Active execution conflict` title, identify the port choice as resolving only `runtime_listener`, and name the other typed reasons that must be resolved before retrying
+- the trailing `RUN SUMMARY` keeps its existing field order and adds `Reason`/`Reasons` plus `Host port` immediately after `Contract` when exact conflict evidence exists; an explicitly requested port is never remapped silently
 - failure receipts now also publish an `execution_conflict.reasons[]` object derived from that same ownership truth while keeping the existing `blocked[]` compatibility lane
 - stale active-execution records are pruned by owner PID before conflict checks, so interrupted or crashed ota processes do not leave a permanent fake-active barrier behind
 - when `--skip-deps` is used, receipts and run summaries mark the override explicitly and point back to rerunning without it when you need to validate the full declared task flow
@@ -1588,8 +1722,17 @@ ota run build --skip-deps
 - `OTA_PUBLIC_URL_<LISTENER>`
 - when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
 - for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the reconciled container's published host mapping before exec
-- `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
-- `--host-port` is valid when the selected primary listener uses `project.host.port.mode: fixed` and the execution path is either container execution or native structured `docker compose up` with explicit `project.publication.compose.service` ownership
+- `--host-port <port>` overrides one run's selected primary host-facing listener; ota updates
+  runtime env, typed launch projection, conflict admission, summary output, and receipts to the
+  same effective endpoint
+- for container execution and native structured Docker Compose, the override changes only the host
+  publication and keeps the internal bind port stable
+- for direct native execution, no publication boundary exists, so the override changes both the
+  canonical bind and projected host port; the explicit option takes precedence over task-level
+  bind env, including `PORT`, for that invocation
+- `--host-port` is valid when the selected primary listener uses fixed bind and fixed
+  `project.host.port` truth and the execution path is direct native, container, or native
+  structured `docker compose up` with explicit `project.publication.compose.service` ownership
 - `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, ambiguous multi-listener projections without one primary listener, native compose publications without `project.publication.compose.service`, and native compose engines other than `docker`
 - stream-mode endpoint banners such as `External:` and `Internal:` are printed only after ota
   itself confirms the projected endpoint; workload logs like `ready` or framework-local URLs are
@@ -1641,9 +1784,9 @@ ota doctor --member api --member web --json [PATH]
 
 - when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `Repo Signals` across mainstream and long-tail detector-supported stacks, including repo type, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
-- `ota --version` now exposes build identity when available, including the git commit and dirty
-  marker for source builds, so released and unreleased binaries do not masquerade as the same
-  version string
+- `ota --version` now exposes build identity when available, including the full 40-character git
+  commit and dirty marker for source builds, so released and unreleased binaries do not masquerade
+  as the same version string and protected deployment evidence can require exact equality
 - `ota --version --json` exposes the same identity in machine-readable form (`semver`,
   `source_build`, `commit`, `dirty`) plus `schema_version` and additive
   `contract_capabilities[]` entries (`id`, `introduced_in`) for CI and contract-compatibility
@@ -2086,6 +2229,8 @@ ota receipt --snapshot promoted [PATH]
 ota receipt --snapshot ./.ota/contracts/sha256-....json [PATH]
 ota receipt --snapshot ./.ota/receipts/repo-receipt-....json [PATH]
 ota receipt --history [PATH]
+ota receipt --history --source systemd_protected_launcher
+ota receipt --history --source systemd_protected_launcher --archive-identity sha256:...
 ota receipt --member api [PATH]
 ```
 
@@ -2115,9 +2260,36 @@ Current behavior:
 - receipt JSON also includes an additive `receipt.assumption_set_hash` derived from the canonical
   extracted assumption map, so automation can fingerprint semantic contract meaning separately
   from whole-snapshot identity
-- `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
+- `--archive` writes the JSON receipt to `.ota/receipts` with both the normalized snapshot
+  reference and its content identity, and keeps the newest 50 archives. Receipt history verifies
+  only that archived pair; a snapshot-less or hash-mismatched archive is unverifiable rather than
+  falling back to the current `ota.yaml`
+- authority-bearing execution archives use archive-context schema v2. It carries the canonical
+  selected-invocation scope and identity: lane, ordered closure graph and hooks, target platform,
+  backend/lifecycle, workflow run behavior, sandbox target, and effect overrides. History
+  re-derives that scope from the archived contract before deciding whether a grant was required.
+  A changed lane label, mode, or scope identity therefore refuses instead of downgrading a
+  governed archive. This is local content-addressed integrity, not protection against a caller
+  who can rewrite both the archive and its local storage.
 - `--archive --promote-baseline` also writes `.ota/receipts/repo-baseline.json`, pointing at the archived receipt as the repo's explicit promoted baseline
-- `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- `--history` lists valid archived repo receipts from `.ota/receipts` newest first without loading
+  or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- `--history --source systemd_protected_launcher` is the Linux production history path for a
+  protected systemd Launcher deployment. It connects only to the fixed
+  `/run/ota/authority-history.sock`, derives repository and catalog selection from the live
+  least-privilege operator peer plus administrator-owned mapping, retrieves the receipt archive,
+  immutable contract snapshot, and launcher-finalization sidecar as one bounded content-addressed
+  catalog snapshot, then runs Core's existing semantic archive verifier over those exact bytes
+- protected history accepts optional `--archive-identity <sha256:...>` for one exact archive. It
+  accepts no repository path, `--file`, or `OTA_FILE` override, exposes no protected storage path,
+  and never falls back to `.ota/receipts` when the service, mapping, catalog, object, framing, or
+  verification path refuses. Each returned archive carries its content identity and protected
+  catalog-entry identity; ordinary local history omits those protected-selection fields
+- operator deployment, fixed Linux layout, ownership, and bounded trust claims are documented in
+  the public [Broker Crossing Authority reference](https://ota.run/docs/reference/broker-crossing-authority)
+- archives created before normalized snapshot references are retained under `invalid_archives[]`
+  with `posture: legacy_unverified`. They remain inspectable, but cannot be selected as a latest or
+  promoted baseline, proof input, or crossing-authority record
 - `--baseline promoted` compares the current receipt against the explicit promoted baseline pointer under `.ota/receipts/repo-baseline.json`
 - `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file
@@ -2145,7 +2317,10 @@ Text output:
 - header: `RECEIPT <path>`
 - prints the receipt steps, compact contract identity, summary, env sources, policy lines, and blocked items when present
 - `--archive --promote-baseline` adds `Baseline:` and `Promoted:` summary lines so the operator can see which archive became the explicit repo baseline
-- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, archived status, contract path, and any preserved execution identity fields such as context, backend, target, provider, lifecycle, and cwd; malformed archived files are skipped and surfaced under `Skipped Archives`
+- `--history` switches the text header to `RECEIPT HISTORY <path>`, reports the selected source and
+  completeness posture, and lists archived receipts with their archived time, status, contract,
+  and preserved execution identity fields; malformed or semantically invalid archives are surfaced
+  under `Skipped Archives`
 - `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
 - `--baseline` also preserves execution identity on both sides when present, including archived/current `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd`
 - `--baseline` includes the advisory correlation posture inside the `Drift:` overview line so
@@ -2167,7 +2342,11 @@ JSON output:
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, compact contract counts, and optional `receipt.workflow_env_artifacts` when the selected/default workflow owns rendered env artifacts
 - `findings`
-- `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
+- `--history` switches `mode` to `history` and returns `history_source`,
+  `completeness_posture`, `summary.archive_count`, `summary.invalid_archive_count`, an `archives`
+  array for valid archived receipts, and `invalid_archives` for malformed or semantically invalid
+  evidence. Protected history additionally returns its bounded operator-profile posture,
+  repository-binding identity, catalog-namespace identity, and complete catalog-snapshot identity
 - `--snapshot` switches `mode` to `snapshot` and returns additive `source`, `selection_kind`,
   `selection_path`, `archive_path`, `archived_at`, `promoted_at`, `snapshot_hash`,
   `snapshot_path`, `contract`, and the normalized archived `snapshot`
@@ -2199,12 +2378,15 @@ ota up --stream [PATH]
 ota up --dry-run [PATH]
 ota up --dry-run --json [PATH]
 ota up --mode container --ephemeral [PATH]
+ota up --workflow app --native --host-port 3002 [PATH]
 ota up --effect-override network:broad=allow [PATH]
 ota up --workflow verify --replay-baseline promoted [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ota up --agent [PATH]
+ota up --workflow verify --agent --sandbox-target oci_local [PATH]
 ota up --reason "release approved" [PATH]
+ota up --workflow release --grant approved-release [PATH]
 ```
 
 Current behavior:
@@ -2214,9 +2396,20 @@ Current behavior:
 - when `--member` is set, prepares the merged member contract
 - repeated `--member` values prepare those members in the provided order
 - `--agent` enforces the declared agent-safe task boundary before setup or workflow execution starts; ota refuses the selected workflow path when any selected prepare/setup/run/attach task sits outside the safe set or reaches an unsafe task closure
+- authoritative selected-workflow runtime boundaries use the same fail-closed sandbox admission as
+  `ota run`. Every reachable task and conditional hook is admitted before preparation; each
+  executed segment receives provider evidence, and differing segment policies use distinct
+  boundaries. A workflow-owned direct prepare action cannot be placed inside the task-scoped
+  `oci_local` boundary and is refused when authoritative sandbox enforcement is required
 - `--reason <text>` attaches operator intent when the selected workflow crosses a heavier audited
   execution boundary; repo-target `ota up --json` mirrors the resulting ota-authored crossing
   record at both `governance.crossing` and `receipt.crossing`
+- `--grant <id>` applies the same fixed-authority, exact-closure admission used by `ota run`.
+  Missing, stale, revoked, or out-of-scope authority refuses before workflow preparation,
+  provisioning, services, or task execution. Existing contracts retain their current behavior
+  until they declare `governance.crossing_authority`. Dry-run publishes only
+  `crossing_grant_admission: admissible_not_consumed`; it does not create a transaction or crossing
+  record
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`
@@ -2229,6 +2422,11 @@ Current behavior:
 - mixed-backend workflows now keep selected prerequisites on their own execution boundary during
   `ota up` preflight, so a native run task is diagnosed on the host while a container setup task is
   diagnosed in the selected container lane instead of flattening both into one doctor mode
+- `--host-port <port>` selects the primary host-facing listener for the workflow run or setup task
+  that owns it; dependencies, hooks, and interactive attach helpers do not inherit the option.
+  Direct native execution changes bind and projected host port together, while container and
+  native Compose execution remap only host publication. Dry-run JSON retains the admitted option
+  under `overrides.host_port`
 - selected toolchain preview lines stay toolchain-owned: when a declared toolchain owns the
   selected ecosystem path, `ota up --dry-run` describes that provider-owned toolchain requirement
   instead of pretending owned capabilities are standalone setup tools, and the preview now names

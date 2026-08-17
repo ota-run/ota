@@ -65,7 +65,7 @@ ota detect --dry-run .
 env COLUMNS=48 ota explain .
 ota up .
 ota agents .
-ota run install:from:source
+ota run install
 ota workspace doctor .
 ota workspace explain .
 ota workspace up .

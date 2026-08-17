@@ -33,7 +33,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", git_ref_path.display());
     }
 
-    if let Some(commit) = git_output(["rev-parse", "--short=9", "HEAD"]) {
+    if let Some(commit) = git_output(["rev-parse", "HEAD"]) {
         println!("cargo:rustc-env=OTA_BUILD_SOURCE=1");
         println!("cargo:rustc-env=OTA_BUILD_COMMIT={}", commit.trim());
     }
@@ -58,5 +58,27 @@ fn git_is_dirty() -> bool {
         .args(["status", "--porcelain"])
         .output()
         .ok()
-        .is_some_and(|output| output.status.success() && !output.stdout.is_empty())
+        .is_some_and(|output| {
+            output.status.success() && porcelain_has_source_changes(&output.stdout)
+        })
+}
+
+fn porcelain_has_source_changes(output: &[u8]) -> bool {
+    output
+        .split(|byte| *byte == b'\n')
+        .any(|line| !line.is_empty() && line != b"?? .cargo-ok")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::porcelain_has_source_changes;
+
+    #[test]
+    fn cargo_checkout_marker_does_not_dirty_source_identity() {
+        assert!(!porcelain_has_source_changes(b"?? .cargo-ok\n"));
+        assert!(porcelain_has_source_changes(
+            b"?? .cargo-ok\n M src/main.rs\n"
+        ));
+        assert!(porcelain_has_source_changes(b"?? src/new.rs\n"));
+    }
 }

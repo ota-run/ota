@@ -220,3 +220,47 @@
 - Pattern: Sharing one policy snapshot does not guarantee safe ordering if a mutating Doctor fix runs after that snapshot has already produced a refusal.
 - Correction: Admit the full selected replay-input closure before any repo-hygiene write or tool activation, and return a zero-applied typed fix summary on refusal.
 - Rule: Every mutating execution surface, including repair commands, must enforce command-scoped policy and hard-pin admission before its first side effect.
+- Pattern: A pressure workflow can be proven on a fork branch and then accidentally carry that branch-specific push filter or manual branch-source override into an upstream integration PR.
+- Correction: Before opening an upstream-facing PR, audit every active contract, workflow, and public instruction for pressure branches; replace push filters with the repository's real default branch and remove unreleased source selectors when the contract pins a released Ota version.
+- Rule: Fork branches are temporary evidence sources, never durable workflow or bootstrap authority; shipped governance must run after merge on the upstream default branch and consume contract-owned release truth.
+- Pattern: Pinning Ota's setup Action while leaving other changed workflow Actions on moving major tags or branches preserves a supply-chain drift path.
+- Correction: Resolve every Action reference introduced or modified by an upstream governance PR to its current full commit SHA and retain the human-readable release line as a comment.
+- Rule: Upstream-facing Ota governance changes must not add mutable GitHub Action references; full commit identities are the execution authority.
+
+## 2026-07-31
+
+- Pattern: An agent can validate an agent-safe Ota task through the ordinary human lane and thereby
+  skip the exact admission posture the contract advertises for agents.
+- Correction: Run every agent-safe `ota run` and `ota up` validation with `--agent`; use the human
+  lane only when the task is explicitly review-required and the user has approved that execution.
+- Rule: Codex must preserve its actor mode when invoking Ota. Agent-safe validation means
+  `--agent`, not merely a task that would also run successfully for a human.
+
+## 2026-08-11
+
+- Pattern: A later interactive task can transfer terminal ownership backward into typed hydration
+  or bootstrap, silently removing Ota's canonical loader from runner-owned preparation phases.
+- Correction: Resolve interaction per executed phase: typed preparation remains noninteractive and
+  loader-owned, while only the actual interactive command inherits the terminal.
+- Rule: Every runner-owned silent phase must retain Ota's loader and active task label; terminal
+  passthrough is an explicit exception for the command currently owning the user's terminal.
+- Pattern: Treating a task name as long-running service ownership blocks disjoint native/container
+  listeners while missing collisions between differently named tasks that bind the same endpoint.
+- Correction: Derive active ownership from the complete executable closure, effective runtime
+  namespace, projected listener, and normalized write-path ancestry; preserve unknown legacy or
+  unresolved ownership as fail-closed.
+- Rule: Execution conflicts follow actual shared resources, not task identity. Explicit host-port
+  remaps and isolated storage namespaces must permit coexistence only when Ota can prove separation.
+- Pattern: Treating `--host-port` as container-only makes a resource-shaped execution option vary
+  unnecessarily by backend and prevents truthful concurrent native/container development.
+- Correction: Define the flag around the selected host-facing listener. Remap only publication for
+  containers and Compose, but update both bind and projection for direct native execution where no
+  publication boundary exists.
+- Rule: Execution-option semantics should be uniform across capable backends, while backend-specific
+  mechanics remain explicit and fail closed when Ota cannot project the requested resource.
+- Pattern: Improving one conflict diagnosis can accidentally redesign the established run summary
+  instead of adding the minimum evidence needed to explain the refusal.
+- Correction: Preserve the canonical summary order and mode-specific fields; add only reason and
+  resource rows at the existing ownership boundary, while keeping detailed remediation above it.
+- Rule: Error-specific UX may enrich the shared summary, but it must not replace or reorder the
+  stable summary contract.

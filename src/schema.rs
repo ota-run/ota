@@ -181,10 +181,31 @@ pub struct Contract {
     pub exports: BTreeMap<String, serde_yaml::Value>,
     #[serde(default)]
     pub policies: BTreeMap<String, serde_yaml::Value>,
+    #[serde(default, skip_serializing_if = "GovernanceSpec::is_empty")]
+    pub governance: GovernanceSpec,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_yaml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentConfig>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GovernanceSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crossing_authority: Option<CrossingAuthoritySpec>,
+}
+
+impl GovernanceSpec {
+    pub fn is_empty(&self) -> bool {
+        self.crossing_authority.is_none()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CrossingAuthoritySpec {
+    pub authority_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -1871,6 +1892,8 @@ struct ContainerBackendWire {
     #[serde(default)]
     image: Option<String>,
     #[serde(default)]
+    platform: Option<String>,
+    #[serde(default)]
     engines: Option<Vec<String>>,
     #[serde(default)]
     resources: Option<ContainerResourceSpecWire>,
@@ -1931,6 +1954,7 @@ struct ExecutionContextMerged {
 #[derive(Debug, Default, Clone)]
 struct ContainerBackendMerged {
     image: Option<String>,
+    platform: Option<String>,
     engines: Option<Vec<String>>,
     resources: Option<ContainerResourceSpecMerged>,
 }
@@ -2160,6 +2184,9 @@ fn merge_container_backend(target: &mut ContainerBackendMerged, source: &Contain
     if let Some(image) = source.image.as_ref() {
         target.image = Some(image.clone());
     }
+    if let Some(platform) = source.platform.as_ref() {
+        target.platform = Some(platform.clone());
+    }
     if let Some(engines) = source.engines.as_ref() {
         target.engines = Some(engines.clone());
     }
@@ -2223,6 +2250,7 @@ fn finalize_execution_context(
 
     let container = merged.container.map(|container| ContainerBackend {
         image: container.image.unwrap_or_default(),
+        platform: container.platform,
         engines: container.engines.unwrap_or_default(),
         resources: container.resources.map(|resources| ContainerResourceSpec {
             memory: resources.memory.map(|memory| ContainerMemoryResourceSpec {
@@ -2627,7 +2655,23 @@ impl Contract {
         backend: Backend,
         context_name: Option<&str>,
     ) -> RequirementSurface {
-        let mut surface = task.scoped_requirement_surface_for_execution(backend, context_name);
+        self.resolved_task_requirement_surface_for_execution_for_os(
+            task,
+            backend,
+            context_name,
+            current_os(),
+        )
+    }
+
+    pub(crate) fn resolved_task_requirement_surface_for_execution_for_os(
+        &self,
+        task: &TaskSpec,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> RequirementSurface {
+        let mut surface =
+            task.scoped_requirement_surface_for_execution_for_os(backend, context_name, os);
         let Some(selection) = task.orchestrator_for_backend(backend) else {
             return surface;
         };
@@ -3229,6 +3273,8 @@ impl std::fmt::Display for ExtensionKind {
 #[serde(deny_unknown_fields)]
 pub struct ContainerBackend {
     pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
     #[serde(default)]
     pub engines: Vec<String>,
     #[serde(default)]

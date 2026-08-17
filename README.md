@@ -270,31 +270,20 @@ Use `ota detect --write .` when you want the detector-led authoring path instead
 
 If you want an explicit conventional starter instead of detector-led init, use a pack:
 
-```bash
-ota init --packs
-# or:
-ota init --pack node
-# or:
-ota init --pack node --package-manager npm --dry-run
-# or:
-ota init --pack python --dry-run
-# or:
-ota init --pack python --test-runner unittest --dry-run
-# or:
-ota init --pack ruby --dry-run
-# or:
-ota init --pack go --dry-run
-# or:
-ota init --pack rust --dry-run
-# or:
-ota init --pack dotnet --dry-run
-# or:
-ota init --pack php-composer --dry-run
-# or:
-ota init --pack java-maven --dry-run
-# or:
-ota init --pack java-gradle --dry-run
-```
+| Command | Description |
+|---|---|
+| `ota init --packs` | List all available packs |
+| `ota init --pack node` | Init with Node pack |
+| `ota init --pack node --package-manager npm --dry-run` | Node pack with npm, dry run |
+| `ota init --pack python --dry-run` | Python pack, dry run |
+| `ota init --pack python --test-runner unittest --dry-run` | Python pack with unittest, dry run |
+| `ota init --pack ruby --dry-run` | Ruby pack, dry run |
+| `ota init --pack go --dry-run` | Go pack, dry run |
+| `ota init --pack rust --dry-run` | Rust pack, dry run |
+| `ota init --pack dotnet --dry-run` | .NET pack, dry run |
+| `ota init --pack php-composer --dry-run` | PHP Composer pack, dry run |
+| `ota init --pack java-maven --dry-run` | Java Maven pack, dry run |
+| `ota init --pack java-gradle --dry-run` | Java Gradle pack, dry run |
 
 The Java packs prefer `./mvnw` or `./gradlew` when the repo already ships those wrappers. When no
 wrapper is present, they seed the global Maven or Gradle prerequisite explicitly.
@@ -374,6 +363,9 @@ directly instead of only consuming it through `ota diff` or receipt correlation.
 
 Public architecture guide:
 [Execution Governance Loop](https://ota.run/docs/reference/execution-governance-loop)
+
+Public capability map:
+[Execution Governance Capabilities](docs/spec/execution-governance-capabilities.md)
 
 Public operator guide:
 [Semantic Snapshots and Correlation](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
@@ -495,7 +487,7 @@ Use `--debug` when you want command traces for `ota up`, `ota run <task>`, `ota 
 Commands like `ota validate`, `ota tasks`, `ota workspace validate`, `ota workspace tasks`, and
 `ota workspace list` should usually stay quiet unless you are actively debugging.
 
-Current behavior:
+## Current behavior and command reference
 
 | Surface | Current behavior |
 | --- | --- |
@@ -542,14 +534,13 @@ ota completion check
 
 If auto-detection is not available or you want one explicit shell:
 
-```bash
-ota completion zsh --setup
-ota completion zsh --remove
-ota completion bash --setup
-ota completion fish --setup
-ota completion powershell --setup
-ota completion elvish --setup
-```
+| Shell | Setup | Remove |
+|---|---|---|
+| zsh | `ota completion zsh --setup` | `ota completion zsh --remove` |
+| bash | `ota completion bash --setup` | — |
+| fish | `ota completion fish --setup` | — |
+| powershell | `ota completion powershell --setup` | — |
+| elvish | `ota completion elvish --setup` | — |
 
 Once the shell has sourced that hook, ota keeps completion contract-aware instead of static: repo commands complete member names, task names, and task inputs from the active contract, while workspace commands complete declared repo names and only suggest workspace task names that remain runnable across the selected repo set.
 Receipt compare flows also complete `latest`, `promoted`, and archived receipt JSON files from `.ota/receipts` so baseline selection stays discoverable at the shell.
@@ -789,7 +780,8 @@ Current planning state:
 - V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
 - V6 archive: [docs/planning/v6/plan.md](docs/planning/v6/plan.md)
 - Active branch and implementation handoff: [docs/ai/current-state.md](docs/ai/current-state.md)
-- Next planned, inactive slice: [docs/planning/v11.21/plan.md](docs/planning/v11.21/plan.md)
+- Completed V11.21 sandbox-enforcement slice:
+  [docs/planning/v11.21/plan.md](docs/planning/v11.21/plan.md)
 - Each version plan retains its own explicit status; version order does not imply completion.
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
 - V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)
@@ -919,5 +911,5 @@ If you want the shortest “which example proves what?” guide, use
 
 ---
 <div align="center">
-    Ota 🦦
+    🦦
     </div>

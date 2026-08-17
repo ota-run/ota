@@ -25,11 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "7c8a5f5bc8887951f2e7feceeb1d5bc78ee62691"
-consumer_commit: "96c1c7ca87eb3d1c2431514a530c733938a32a0b"
+reviewed_ota_commit: "634a2c169e083da4e02abd72a7bf29ae388ddf3d"
+consumer_commit: "d05ddad304f8698df73b00a188be232076d00a97"
 waiver_reason: ""
 notes: >
-  Sync recorded after the workspace progress JSON lane widened again: live NDJSON workspace
-  progress now includes explicit `command` identity across doctor, check, diff, status, receipt,
-  run, up, and refresh, and the ota-site reference copy was updated to document that machine
-  boundary.
+  Synced immutable independently administered positive pressure evidence while preserving the
+  administrator-driven reboot-recovery and provider-attestation boundaries.

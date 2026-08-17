@@ -486,28 +486,6 @@ tasks:
             - -File
             - .\scripts\install.ps1
             - -FromSource
-  install:from:source:
-    description: Reinstall ota from the local workspace source
-    notes: |
-      Use this when you want a task name that makes the source-based reinstall path explicit.
-    category: dev
-    execution:
-      default_mode: native
-    command:
-      exe: ./scripts/install.sh
-      args:
-        - --from-source
-    variants:
-      - when:
-          os: windows
-        command:
-          exe: powershell
-          args:
-            - -ExecutionPolicy
-            - Bypass
-            - -File
-            - .\scripts\install.ps1
-            - -FromSource
 agent:
   entrypoint: setup
   default_task: ci

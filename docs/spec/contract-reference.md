@@ -505,6 +505,11 @@ Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 - `execution.preferred: container` requires `execution.backends.container.image`
+- `execution.backends.container.platform` may pin the Linux OCI target as `linux/arch` or
+  `linux/arch/variant` (for example `linux/amd64`). Ota applies the pin to every execution-backend
+  container it creates, and changing it invalidates persistent-container reuse. The current
+  container backend does not claim Windows-container execution. The `oci_local` enforcing target
+  requires this field instead of inferring the target from the runner host.
 - `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, ota falls back to `docker`
 - `execution.preferred: remote` requires `execution.backends.remote.provider`
 - `execution.preferred: remote` requires `execution.backends.remote.target`
@@ -2529,6 +2534,18 @@ tasks:
 - `execution.runtime_boundary` is the repo baseline for that task lane; task-local
   `runtime_boundary` can narrow or replace it for the selected task instead of leaving sandbox
   posture split across agent metadata and shell conventions
+- runtime-boundary declaration and runtime enforcement remain separate truths. In agent execution,
+  authoritative selected-lane controls must be applied by a compatible provider or Ota refuses
+  before preparation. The first enforcing provider, `oci_local`, only applies to already-declared
+  ephemeral container lanes with an explicit `container.platform`; provider selection cannot
+  change task mode, lifecycle, command, or context
+- `oci_local` requires writable carve-outs to exist before admission and rejects symlink, hardlink,
+  writable/protected overlap, inherited-network, runtime-socket, and targeted-egress shapes it
+  cannot prove safely. These are provider capability boundaries, not reasons to weaken the
+  contract declaration
+- its first implementation admits finite `run`, `script`, and `command` task bodies only. Typed
+  prepare/action/Compose/launch/attach bodies, task requirements, required services, and
+  conditional checks remain explicit unsupported pre-boundary work and cause refusal
 - `modes.<mode>.depends_on` replaces the task-level dependency list for that mode; omit it when the task-level `depends_on` already matches the selected execution plane
 - use `modes.<mode>.depends_on` when one task keeps the same identity but needs different preflight on host vs container instead of cloning tasks like `build:host`
 - use `env_files` for task-process dotenv overlays; use `adapter_inputs.overlays.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
@@ -3065,7 +3082,8 @@ Surface attachment rules:
 - `bind.port.mode: discover`: ota discovers the final listening port after the task starts; use this only for native tasks where the process may auto-bump to a free port
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
 - `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs reconcile the named container and then resolve the current published host mapping
-- `ota run <task> --host-port <port>` can override one run's published host/public port on the selected primary projected listener when that listener uses `project.host.port.mode: fixed`; the workload bind port stays unchanged
+- `ota run <task> --host-port <port>` can select one run's host-facing port on a primary listener with fixed bind and fixed `project.host.port` truth; containers and native Compose retain the internal bind, while direct native execution applies the selected port to bind and projection together
+- direct native host-port overrides reproject supported typed launch arguments and Ota's canonical bind/public runtime env; the explicit execution option takes precedence over conflicting task-level bind env for that invocation
 - for native structured `docker compose up` lanes, `--host-port` also requires explicit publication ownership through `project.publication.compose.service`; ota uses that declared compose service to render a temporary override stack instead of guessing service publication truth
 - `ota run <task> --memory <size>` can override one run's requested container memory for container execution while preserving contract/task intent
 - with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering
@@ -4493,6 +4511,67 @@ Authoring ergonomics:
 - use `bootstrap.ota` only when you want agents to self-install ota if missing; prefer
   `bootstrap.ota.source` over raw shell strings, keep deterministic proof on `version` or
   `git_rev`, and use `branch` only for active pressure lanes
+
+## `governance.crossing_authority`
+
+Optional. Use this only when a platform-installed authority must approve human execution of
+contract-derived heavier task or workflow closures.
+
+```yaml
+governance:
+  crossing_authority:
+    authority_id: platform-release-authority
+```
+
+The contract names an authority; it does not contain trust material. The first `prebound_file`
+adapter resolves that identifier from a fixed protected system store:
+
+- macOS: `/Library/Application Support/Ota/crossing-authorities.json`
+- Linux: `/etc/ota/crossing-authorities.json`
+
+The system binding owns the issuer, Ed25519 key, signed-bundle path, protected monotonic sequence
+state, accepted contract identities, and freshness bounds. Ota has no environment, CLI,
+repository, workspace, or `OTA_POLICY` override for these paths. The trust store, bundle, sequence
+state, and their parent directories must be root-owned and not group/world writable. This protects
+against Ota's current unprivileged process only; it does not prove that the invoking job lacks
+`sudo`, capabilities, or namespace control. `prebound_file` therefore emits
+`authority_separation_posture: current_process_filesystem_guarded` and is not a provider-attested
+privilege-separation claim. Windows refuses this carrier until Ota can verify an equivalent ACL
+boundary.
+The independently managed platform-authority process advances the signed bundle and sequence state;
+Ota reads and verifies them but does not run as root or mutate authority state.
+
+For version-matched operator specifications, see
+[Prebound crossing authority operations](crossing-authority-operations.md) and
+[Broker crossing authority operations](broker-crossing-authority-operations.md). Public operator
+references are [Prebound Crossing Authority](https://ota.run/docs/reference/prebound-crossing-authority)
+and [Broker Crossing Authority](https://ota.run/docs/reference/broker-crossing-authority).
+
+When configured:
+
+- routine agent-safe closures run normally without a grant;
+- non-agent execution of a derived heavier closure requires independently managed authority;
+- `prebound_file` requires `--grant <id>`; `authority_broker` resolves exactly one protected
+  binding and may accept `--grant <authority-id>` only as a non-secret label check;
+- every authorization must match the exact semantic contract and selected execution graph;
+- unresolved free-form task-input identity refuses instead of hashing or exposing secret values;
+- authority attribution is runner-observed as `agent` or `non_agent`; Core does not infer human
+  identity merely because `--agent` was omitted;
+- grant admission happens before provider, dependency, setup, service, or child-process mutation;
+- real execution persists a runner-owned per-scope crossing transaction before selected-lane
+  mutation, finalizes it on every terminal path, and uses that transaction identity as the fresh
+  crossing-record identity;
+- admitted authority and terminal transaction evidence are archived with the normalized contract
+  snapshot for later re-derivation;
+- a grant never weakens `ota run --agent` or `ota up --agent` refusal.
+
+The signed-file carrier uses short calendar validity and protected sequence/clock high-water
+evidence. It is bounded offline authority, not an online approval system. The Unix broker carrier
+uses a protected fixed binding and launcher-session descriptor to verify a challenge-bound
+attestation, signed exact-scope decision, prepared lease, and atomic one-use consumption before
+`ota run` or `ota up` starts selected work. Dry-run never contacts the launcher. Grant-required
+runtime and lifecycle proof remain unsupported until one terminal broker transaction can cover the
+complete proof invocation and cleanup set.
 
 ## `metadata`
 

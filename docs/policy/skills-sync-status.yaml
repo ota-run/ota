@@ -25,10 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "7832edf74331c77e60786c598720589ce4e7da51"
-consumer_commit: "d5851c7fffce2eae0ac42673daa06fbb32ea7fe7"
+reviewed_ota_commit: "634a2c169e083da4e02abd72a7bf29ae388ddf3d"
+consumer_commit: "b4819684862b2c349b0ff645b86bf3bafad9ee2d"
 waiver_reason: ""
 notes: >
-  Reviewed after completing the canonical build_container_image example. The canonical skill
-  already teaches explicit file, context, tag, Docker external-state, and network posture, so no
-  guidance change was needed.
+  Synced immutable independently administered positive pressure evidence while preserving the
+  administrator-driven reboot-recovery and provider-attestation boundaries.

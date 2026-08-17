@@ -1,0 +1,86 @@
+#
+#                 █████
+#                ░░███
+#        ██████  ███████    ██████
+#       ███░░███░░░███░    ░░░░░███
+#      ░███ ░███  ░███      ███████
+#      ░███ ░███  ░███ ███ ███░░███
+#      ░░██████   ░░█████ ░░████████
+#       ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#    Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#    DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#    Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#    You may not use this file except in compliance with that License.
+#    Unless required by applicable law or agreed to in writing, software distributed under the
+#    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#    either express or implied. See the License for the specific language governing permissions
+#    and limitations under the License.
+#
+#    If you need additional information or have any questions, please email: os@ota.run
+#
+
+version: 1
+project:
+  name: enforced-oci-sandbox
+  description: Reference contract for provider-enforced selected-lane runtime boundaries
+
+execution:
+  supported:
+    - container
+  default_context: verify
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: debian:bookworm-slim
+      platform: linux/amd64
+      engines:
+        - docker
+  contexts:
+    verify:
+      backend: container
+      lifecycle: ephemeral
+
+tasks:
+  verify:
+    description: Write only to the declared report boundary without external network access
+    context: verify
+    command:
+      exe: bash
+      args:
+        - -lc
+        - printf verified > reports/result.txt
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths:
+          - reports
+        protected_paths:
+          - ota.yaml
+          - .github/workflows
+      network:
+        default: deny
+    effects:
+      writes:
+        - reports
+    safe_for_agent: true
+
+workflows:
+  default: verify
+  verify:
+    intent: ci_validation
+    run:
+      task: verify
+
+agent:
+  safe_tasks:
+    - verify
+  writable_paths:
+    - reports
+  protected_paths:
+    - ota.yaml
+    - .github/workflows
+  verify_after_changes:
+    - verify

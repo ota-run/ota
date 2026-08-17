@@ -130,6 +130,7 @@ pub fn validate_contract_with_path(
     validate_duplicate_requirement_ownership(contract, &mut errors);
     validate_native_prerequisites(contract, &mut errors);
     validate_policies(contract, &mut errors);
+    validate_governance(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_readiness(contract, &mut errors);
     validate_surfaces(contract, &mut errors);
@@ -146,6 +147,25 @@ pub fn validate_contract_with_path(
         Ok(())
     } else {
         Err(ValidationErrors::from_vec(errors))
+    }
+}
+
+fn validate_governance(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(authority) = contract.governance.crossing_authority.as_ref() else {
+        return;
+    };
+    let authority_id = authority.authority_id.trim();
+    if authority_id.is_empty()
+        || authority_id.len() > 128
+        || !authority_id.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))
+        })
+    {
+        errors.push(ValidationError::new(
+            "`governance.crossing_authority.authority_id` must be a non-empty lowercase identifier of at most 128 ASCII characters using letters, digits, `.`, `_`, or `-`",
+        ));
     }
 }
 
@@ -654,6 +674,7 @@ fn validate_execution(
         .as_ref()
         .and_then(|backends| backends.container.as_ref())
     {
+        validate_container_platform("execution.backends.container", container, errors);
         validate_container_memory_resources("execution.backends.container", container, errors);
     }
 
@@ -867,6 +888,11 @@ fn validate_execution(
                     )));
                 }
                 if let Some(container) = context.container.as_ref() {
+                    validate_container_platform(
+                        format!("execution.contexts.{name}.container").as_str(),
+                        container,
+                        errors,
+                    );
                     validate_container_memory_resources(
                         format!("execution.contexts.{name}.container").as_str(),
                         container,
@@ -1217,6 +1243,31 @@ fn validate_container_memory_resources(
     {
         errors.push(ValidationError::new(format!(
             "`{default_path}` must be greater than or equal to `{minimum_path}`"
+        )));
+    }
+}
+
+fn validate_container_platform(
+    path_prefix: &str,
+    container: &ContainerBackend,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(platform) = container.platform.as_deref() else {
+        return;
+    };
+    let parts = platform.split('/').collect::<Vec<_>>();
+    let valid_token = |value: &str| {
+        !value.is_empty()
+            && value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+            })
+    };
+    if !(parts.len() == 2 || parts.len() == 3)
+        || !parts.iter().all(|part| valid_token(part))
+        || parts.first() != Some(&"linux")
+    {
+        errors.push(ValidationError::new(format!(
+            "`{path_prefix}.platform` value `{platform}` is invalid; the current container backend requires Linux OCI `linux/architecture` or `linux/architecture/variant` syntax such as `linux/amd64` or `linux/arm64/v8`"
         )));
     }
 }
@@ -36256,6 +36307,63 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "`execution.preferred: container` requires an explicit `execution.lifecycle`"
+        );
+    }
+
+    #[test]
+    fn accepts_linux_container_platform_pin() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+      platform: linux/arm64/v8
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("Linux OCI platform pins should validate");
+    }
+
+    #[test]
+    fn rejects_non_linux_container_platform_pin() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+      platform: windows/amd64
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(
+            errors.errors()[0]
+                .to_string()
+                .contains("current container backend requires Linux OCI"),
+            "{}",
+            errors.errors()[0]
         );
     }
 

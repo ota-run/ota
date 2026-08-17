@@ -23,7 +23,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::{env, fs};
 
 use jsonschema::{Draft, JSONSchema};
@@ -32,6 +32,194 @@ use tempfile::TempDir;
 
 fn run_ota(args: &[&str], cwd: &Path) -> Value {
     run_ota_with_env(args, cwd, &[], true)
+}
+
+fn install_preview_container_engine(bin_dir: &Path) {
+    #[cfg(unix)]
+    {
+        let engine = bin_dir.join("docker");
+        fs::write(&engine, "#!/bin/sh\nexit 0\n").expect("preview container engine");
+        let mut permissions = fs::metadata(&engine)
+            .expect("preview container engine metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(engine, permissions).expect("preview container engine permissions");
+    }
+
+    #[cfg(windows)]
+    fs::write(bin_dir.join("docker.cmd"), "@echo off\r\nexit /b 0\r\n")
+        .expect("preview container engine");
+}
+
+#[test]
+fn relocated_binary_validates_against_its_embedded_published_schema() {
+    let temporary = tempfile::tempdir().expect("relocated binary directory");
+    let source_binary = Path::new(env!("CARGO_BIN_EXE_ota"));
+    let relocated_binary = temporary.path().join(
+        source_binary
+            .file_name()
+            .expect("Ota binary filename must be present"),
+    );
+    fs::copy(source_binary, &relocated_binary).expect("copy Ota binary");
+
+    let version = Command::new(&relocated_binary)
+        .args(["--version", "--json"])
+        .current_dir(temporary.path())
+        .output()
+        .expect("relocated Ota version command");
+    assert!(version.status.success());
+    let input = temporary.path().join("version.json");
+    fs::write(&input, version.stdout).expect("version payload");
+
+    let validation = Command::new(&relocated_binary)
+        .args([
+            "json",
+            "validate",
+            "--schema",
+            "version.json",
+            "--input",
+            input.to_str().expect("UTF-8 input path"),
+        ])
+        .current_dir(temporary.path())
+        .output()
+        .expect("relocated Ota schema validation");
+    assert!(
+        validation.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&validation.stdout),
+        String::from_utf8_lossy(&validation.stderr)
+    );
+}
+
+#[test]
+fn crossing_grant_preview_refusal_matches_published_schema() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: crossing-grant-preview
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+"#,
+    )
+    .expect("contract");
+
+    let preview = run_ota_json_output(&["run", "publish", "--dry-run", "--json"], fixture.path());
+    assert_matches_schema("run-preview.json", &preview);
+    assert_eq!(preview["execution_started"], false);
+    assert_eq!(
+        preview["crossing_grant_admission"]["reason_family"],
+        "crossing_grant_required"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["authority_source"],
+        "prebound_file"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["authority_id"],
+        "release-authority"
+    );
+    assert!(
+        preview["crossing_grant_admission"]["scope_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(
+        preview["crossing_grant_admission"]["contract_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["boundary_family"],
+        "unsafe_task"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["classification"],
+        "escalated"
+    );
+    assert_eq!(
+        preview["crossing_grant_admission"]["execution_started"],
+        false
+    );
+}
+
+#[test]
+fn crossing_grant_up_refusal_receipt_carries_typed_authority_evidence() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: crossing-grant-up-refusal
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "printf publish"]
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+"#,
+    )
+    .expect("contract");
+
+    let refusal = run_ota_json_output(
+        &["up", "--workflow", "release", "--dry-run", "--json"],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &refusal);
+    assert_eq!(refusal["receipt"]["crossing"], Value::Null);
+    assert_eq!(
+        refusal["receipt"]["refusal"]["boundary_family"],
+        "crossing_grant_authority"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["authority_source"],
+        "prebound_file"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["authority_id"],
+        "release-authority"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["reason_family"],
+        "crossing_grant_required"
+    );
+    assert!(
+        refusal["receipt"]["refusal"]["scope_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(
+        refusal["receipt"]["refusal"]["contract_identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["scope_boundary_family"],
+        "heavier_workflow"
+    );
+    assert_eq!(
+        refusal["receipt"]["refusal"]["scope_classification"],
+        "escalated"
+    );
+    assert_eq!(refusal["receipt"]["refusal"]["execution_started"], false);
 }
 
 fn run_ota_with_env(
@@ -166,6 +354,48 @@ fn assert_rejects_schema(schema_name: &str, instance: &Value) {
         compiled.validate(instance).is_err(),
         "instance unexpectedly matched schema `{schema_name}`"
     );
+}
+
+#[test]
+fn authority_inspect_emits_bounded_schema_valid_diagnostics() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let output = run_ota_json_output(&["authority", "inspect", "--json"], fixture.path());
+
+    assert_matches_schema("authority-inspect.json", &output);
+    assert_eq!(output["kind"], "authority_inspect");
+    assert_eq!(output["authority_source"], "prebound_file");
+    assert_eq!(
+        output["authority_separation_posture"],
+        "current_process_filesystem_guarded"
+    );
+    let mut partial = output.clone();
+    partial["observations"] = serde_json::json!([output["observations"][3].clone()]);
+    partial["profile"]["verdict"] = serde_json::json!("matched_with_unknowns");
+    partial["ok"] = serde_json::json!(true);
+    assert_rejects_schema("authority-inspect.json", &partial);
+    let mut contradictory = output.clone();
+    contradictory["profile"]["verdict"] = serde_json::json!("matched_with_unknowns");
+    contradictory["ok"] = serde_json::json!(true);
+    contradictory["observations"][0]["status"] = serde_json::json!("failed");
+    assert_rejects_schema("authority-inspect.json", &contradictory);
+    assert!(
+        !fixture.path().join(".ota").exists(),
+        "authority inspection must not create receipt, archive, or transaction state"
+    );
+    let serialized = serde_json::to_string(&output).expect("diagnostic JSON");
+    for forbidden in [
+        "public_key",
+        "key_fingerprint",
+        "signature",
+        "bundle_path",
+        "sequence_state_path",
+        "grant_id",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "authority inspection must redact `{forbidden}`"
+        );
+    }
 }
 
 #[test]
@@ -388,7 +618,7 @@ fn lifecycle_proof_json_schema_rejects_manager_state_on_isolated_boundary() {
 fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
     let payload = serde_json::json!({
         "kind": "lifecycle_proof",
-        "version": 2,
+        "version": 3,
         "contract_identity": {
             "version": 1,
             "project": { "name": "archive" },
@@ -408,7 +638,9 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
             "provider": "docker",
             "lifecycle": "ephemeral",
             "target": "local",
-            "target_os": "linux"
+            "target_os": "linux",
+            "target_platform": { "os": "linux", "architecture": "amd64", "platform": "linux/amd64" },
+            "skip_dependencies": false
         },
         "proof": {
             "ok": true,
@@ -437,6 +669,38 @@ fn lifecycle_proof_archive_schema_accepts_scope_bound_record() {
         }
     });
     assert_matches_schema("proof-lifecycle-archive.json", &payload);
+    let mut explicit_overrides = payload.clone();
+    explicit_overrides["scope"]["backend_override"] = serde_json::json!("container");
+    explicit_overrides["scope"]["lifecycle_override"] = serde_json::json!("ephemeral");
+    assert_matches_schema("proof-lifecycle-archive.json", &explicit_overrides);
+    explicit_overrides["scope"]["backend_override"] = serde_json::json!("host");
+    assert_rejects_schema("proof-lifecycle-archive.json", &explicit_overrides);
+    let mut legacy_v2 = payload.clone();
+    legacy_v2["version"] = serde_json::json!(2);
+    legacy_v2["scope"]
+        .as_object_mut()
+        .expect("legacy lifecycle scope")
+        .remove("target_platform");
+    legacy_v2["scope"]
+        .as_object_mut()
+        .expect("legacy lifecycle scope")
+        .remove("skip_dependencies");
+    assert_matches_schema("proof-lifecycle-archive.json", &legacy_v2);
+    legacy_v2["scope"]["target_platform"] =
+        serde_json::json!({ "os": "linux", "architecture": "amd64", "platform": "linux/amd64" });
+    assert_rejects_schema("proof-lifecycle-archive.json", &legacy_v2);
+    legacy_v2["scope"]
+        .as_object_mut()
+        .expect("legacy lifecycle scope")
+        .remove("target_platform");
+    legacy_v2["scope"]["backend_override"] = serde_json::json!("native");
+    assert_rejects_schema("proof-lifecycle-archive.json", &legacy_v2);
+    let mut mode_mismatch = payload.clone();
+    mode_mismatch["scope"]["mode"] = serde_json::json!("native");
+    assert_rejects_schema("proof-lifecycle-archive.json", &mode_mismatch);
+    let mut target_os_mismatch = payload;
+    target_os_mismatch["scope"]["target_os"] = serde_json::json!("windows");
+    assert_rejects_schema("proof-lifecycle-archive.json", &target_os_mismatch);
 }
 
 #[test]
@@ -1484,6 +1748,125 @@ policies:
     );
     assert!(!fixture.path().join("build-ran").exists());
     assert!(!fixture.path().join("assertion-ran").exists());
+}
+
+#[test]
+fn proof_runtime_crossing_grant_refusal_starts_no_artifact_or_child() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: governed-runtime-proof
+governance:
+  crossing_authority:
+    authority_id: release-authority
+tasks:
+  publish:
+    command:
+      exe: sh
+      args: ["-c", "touch proof-ran"]
+    safe_for_agent: false
+workflows:
+  default: release
+  release:
+    run:
+      task: publish
+"#,
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "release",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "crossing_grant_required");
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(
+        json["crossing_grant_admission"]["reason_family"],
+        "crossing_grant_required"
+    );
+    assert!(!fixture.path().join("proof-ran").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
+}
+
+#[test]
+fn proof_runtime_refuses_unsafe_seam_observer_before_artifact_or_workflow_execution() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: governed-runtime-observer
+governance:
+  crossing_authority:
+    authority_id: release-authority
+services:
+  service:
+    manager:
+      kind: compose
+      name: governed-runtime-observer
+      file: compose.yaml
+      service: service
+tasks:
+  verify:
+    command:
+      exe: sh
+      args: ["-c", "touch workflow-ran"]
+    safe_for_agent: true
+    requires_services: [service]
+  observe-service:
+    command:
+      exe: sh
+      args: ["-c", "touch observer-ran"]
+    safe_for_agent: false
+    requires_services: [service]
+workflows:
+  default: smoke
+  smoke:
+    run:
+      task: verify
+    proof:
+      seam_observations:
+        - id: service-marker
+          dependency: service
+          producer_task: verify
+          task: observe-service
+          marker_env: OTA_PROOF_SERVICE_MARKER
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "smoke",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["code"], "crossing_grant_required");
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["crossing_grant_admission"]["requested_task"], "smoke");
+    assert!(!fixture.path().join("workflow-ran").exists());
+    assert!(!fixture.path().join("observer-ran").exists());
+    assert!(!fixture.path().join(".ota/proof").exists());
 }
 
 #[test]
@@ -2602,12 +2985,14 @@ fn receipt_json_schema_accepts_execution_conflict_metadata() {
             "status": "blocked",
             "blocked": [
                 "execution_conflict:host_service",
-                "execution_conflict:compose_project"
+                "execution_conflict:compose_project",
+                "execution_conflict:runtime_listener"
             ],
             "execution_conflict": {
                 "reasons": [
                     "host_service",
-                    "compose_project"
+                    "compose_project",
+                    "runtime_listener"
                 ]
             },
             "steps": [],
@@ -3076,6 +3461,126 @@ tasks:
     assert!(
         json.get("interaction").is_none(),
         "non-command task bodies must not publish a fabricated interaction posture"
+    );
+}
+
+#[test]
+fn sandbox_run_preview_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    fs::create_dir(fixture.path().join("reports")).expect("sandbox writable path");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir(&bin_dir).expect("preview container engine directory");
+    install_preview_container_engine(&bin_dir);
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: sandbox-preview
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: debian:bookworm-slim
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: bash, args: ["-c", "true"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [reports]
+      network:
+        default: deny
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+
+    let path = bin_dir.to_string_lossy().into_owned();
+    let json = run_ota_with_env(
+        &[
+            "run",
+            "verify",
+            "--agent",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+        &[("PATH", path.as_str())],
+        true,
+    );
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["sandbox_admission"]["decision"], "admitted");
+    assert_eq!(
+        json["sandbox_admission"]["canonical_policy"]["segments"][0]["execution_kind"],
+        "command"
+    );
+}
+
+#[test]
+fn sandbox_up_preview_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    fs::create_dir(fixture.path().join("reports")).expect("sandbox writable path");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir(&bin_dir).expect("preview container engine directory");
+    install_preview_container_engine(&bin_dir);
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: sandbox-up-preview
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: debian:bookworm-slim
+      platform: linux/amd64
+tasks:
+  verify:
+    safe_for_agent: true
+    command: { exe: bash, args: ["-c", "true"] }
+    runtime_boundary:
+      filesystem:
+        repo_root_mode: read_only
+        writable_paths: [reports]
+      network:
+        default: deny
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+agent:
+  safe_tasks: [verify]
+"#,
+    );
+
+    let path = bin_dir.to_string_lossy().into_owned();
+    let json = run_ota_with_env(
+        &[
+            "up",
+            "--workflow",
+            "verify",
+            "--agent",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+        &[("PATH", path.as_str())],
+        true,
+    );
+    assert_matches_schema("up.json", &json);
+    assert_eq!(json["sandbox_admission"]["decision"], "admitted");
+    assert_eq!(
+        json["governance"]["preflight"]["sandbox_admission"]["decision"],
+        "admitted"
     );
 }
 
@@ -3905,6 +4410,685 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_active_execution_conflict_publishes_runtime_owner_identity() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-active-runtime
+tasks:
+  dev:
+    run: echo dev
+"#,
+    );
+    let state_dir = fixture.path().join(".ota").join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        state_dir.join("active-executions.json"),
+        serde_json::to_vec_pretty(&serde_json::json!([{
+            "id": "active-runtime",
+            "task": "dev",
+            "execution_mode": "container",
+            "runtime_owners": [{
+                "task": "dev",
+                "listener": "site",
+                "namespace": "host",
+                "protocol": "tcp",
+                "address": "127.0.0.1",
+                "port": 3002,
+                "allocation": "fixed"
+            }],
+            "service_task": true,
+            "pid": std::process::id(),
+            "started_at": "2026-08-11T12:00:00Z"
+        }]))
+        .expect("active state"),
+    )
+    .expect("write active state");
+
+    let json = run_ota_with_env(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
+    assert_eq!(json["reason"], "active_execution_conflict");
+    assert_eq!(json["owners"][0]["runtime_owners"][0]["port"], 3002);
+    assert_eq!(
+        json["owners"][0]["runtime_owners"][0]["allocation"],
+        "fixed"
+    );
+}
+
+#[cfg(unix)]
+fn write_active_service_owner(fixture: &TempDir, port: u16) {
+    let state_dir = fixture.path().join(".ota").join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        state_dir.join("active-executions.json"),
+        serde_json::to_vec_pretty(&serde_json::json!([{
+            "id": "active-container-dev",
+            "task": "dev",
+            "requested_mode": "container",
+            "execution_mode": "container",
+            "lifecycle": "ephemeral",
+            "write_paths": ["sentinel"],
+            "write_owners": [{
+                "path": "sentinel",
+                "namespace": "container-isolated:test (sentinel)"
+            }],
+            "runtime_owners": [{
+                "task": "dev",
+                "listener": "site",
+                "namespace": "host",
+                "protocol": "tcp",
+                "address": "127.0.0.1",
+                "port": port,
+                "allocation": "fixed"
+            }],
+            "service_task": true,
+            "pid": std::process::id(),
+            "started_at": "2026-08-11T12:00:00Z"
+        }]))
+        .expect("active state"),
+    )
+    .expect("write active state");
+}
+
+#[cfg(unix)]
+fn write_legacy_active_service_owner(fixture: &TempDir, task: &str) {
+    let state_dir = fixture.path().join(".ota").join("state");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(
+        state_dir.join("active-executions.json"),
+        serde_json::to_vec_pretty(&serde_json::json!([{
+            "id": "legacy-active-container-dev",
+            "task": task,
+            "execution_mode": "container",
+            "lifecycle": "ephemeral",
+            "write_paths": ["sentinel"],
+            "write_owners": [{
+                "path": "sentinel",
+                "namespace": "container-isolated:legacy (sentinel)"
+            }],
+            "service_task": true,
+            "pid": std::process::id(),
+            "started_at": "2026-08-11T14:18:46Z"
+        }]))
+        .expect("active state"),
+    )
+    .expect("write active state");
+}
+
+#[cfg(unix)]
+fn write_native_service_contract(fixture: &TempDir) {
+    write_contract(
+        fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-admission
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dev]
+  writable_paths: [sentinel]
+tasks:
+  dev:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+"#,
+    );
+}
+
+#[cfg(unix)]
+fn write_native_projected_service_contract(fixture: &TempDir) {
+    write_contract(
+        fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-projected-admission
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dev]
+  writable_paths: [sentinel]
+tasks:
+  dev:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 43111 }
+              primary: true
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_admits_disjoint_native_and_container_service_ownership() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_active_service_owner(&fixture, 43112);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("sentinel")).expect("sentinel"),
+        "admitted"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_legacy_service_owner_explains_required_restart() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_legacy_active_service_owner(&fixture, "dev");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("active service record predates runtime-listener ownership"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("runtime ownership: `legacy_or_unresolved`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("restart it once with the current ota binary"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_differently_named_legacy_service_owner_still_fails_closed() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_legacy_active_service_owner(&fixture, "legacy-preview");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("active service record predates runtime-listener ownership"));
+    assert!(stderr.contains("restart it once with the current ota binary"));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_native_host_port_override_updates_effective_listener_and_bind_env() {
+    if !Command::new("sh")
+        .args(["-c", "command -v python3 >/dev/null 2>&1"])
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        return;
+    }
+    let declared_listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("declared listener");
+    let declared_port = declared_listener
+        .local_addr()
+        .expect("declared listener address")
+        .port();
+    drop(declared_listener);
+    let override_listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).expect("override listener");
+    let override_port = override_listener
+        .local_addr()
+        .expect("override listener address")
+        .port();
+    drop(override_listener);
+    assert_ne!(declared_port, override_port);
+    let fixture = TempDir::new().expect("fixture");
+    let contract = r#"
+version: 1
+project:
+  name: native-host-port-override
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dev, record-hook]
+  writable_paths: [ports.txt, server.pid, hook.txt]
+tasks:
+  dev:
+    context: host
+    after_success: [record-hook]
+    command:
+      exe: sh
+      args: [-c, "python3 - <<'PY'\nimport os\nimport socket\nimport time\nfrom pathlib import Path\n\nbind_port = int(os.environ['OTA_BIND_PORT'])\npublic_port = int(os.environ['OTA_PUBLIC_PORT'])\nPath('ports.txt').write_text(f\"{bind_port}|{bind_port}|{public_port}\")\nPath('server.pid').write_text(str(os.getpid()))\nsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\nsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsock.bind((\"127.0.0.1\", bind_port))\nsock.listen(1)\ntime.sleep(8)\nPY"]
+    effects:
+      writes: [ports.txt, server.pid]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 43111 }
+              primary: true
+  record-hook:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf hook-ran > hook.txt"]
+    effects:
+      writes: [hook.txt]
+    safe_for_agent: true
+"#
+    .replace("43111", &declared_port.to_string());
+    write_contract(&fixture, &contract);
+
+    let override_port_arg = override_port.to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "dev",
+            "--native",
+            "--host-port",
+            override_port_arg.as_str(),
+            "--agent",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    let projected_ports = fs::read_to_string(fixture.path().join("ports.txt"));
+    if let Ok(pid) = fs::read_to_string(fixture.path().join("server.pid")) {
+        let pid = pid.trim();
+        if Command::new("kill")
+            .arg("-0")
+            .arg(pid)
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            let _ = Command::new("kill").arg(pid).stderr(Stdio::null()).status();
+        }
+    }
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        projected_ports.expect("projected ports"),
+        format!("{override_port}|{override_port}|{override_port}")
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("hook.txt")).expect("hook output"),
+        "hook-ran"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_native_host_port_override_participates_in_listener_conflicts() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_projected_service_contract(&fixture);
+    write_active_service_owner(&fixture, 43112);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "dev",
+            "--native",
+            "--host-port",
+            "43112",
+            "--agent",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Host port already in use"), "{stderr}");
+    assert!(
+        stderr.contains("native task `dev` listener `site` requested `127.0.0.1:43112`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("active container execution `dev` already owns `127.0.0.1:43112`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "rerun `ota run dev --mode native --host-port <free port> --agent` to select a different host port"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Reason:      runtime_listener"), "{stderr}");
+    assert!(stderr.contains("Host port:   43112"), "{stderr}");
+    assert!(stderr.contains("Mode:        native"), "{stderr}");
+    assert!(stderr.contains("Task:        dev"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn run_native_host_port_override_reports_override_owned_bind_conflict() {
+    let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("occupied listener");
+    let occupied_port = occupied.local_addr().expect("occupied address").port();
+    let occupied_port_arg = occupied_port.to_string();
+    let fixture = TempDir::new().expect("fixture");
+    write_native_projected_service_contract(&fixture);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "dev",
+            "--native",
+            "--host-port",
+            occupied_port_arg.as_str(),
+            "--agent",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Field: execution.host_port"), "{stderr}");
+    assert!(
+        stderr.contains("or rerun with `--host-port <free port>`"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn up_native_host_port_override_targets_the_workflow_listener_owner() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: native-up-host-port-override
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "true"]
+  dev:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "true"]
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+          project:
+            host:
+              address: 127.0.0.1
+              port: { mode: fixed, value: 43111 }
+              primary: true
+workflows:
+  default: dev
+  dev:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+    );
+
+    let json = run_ota_json_output(
+        &[
+            "up",
+            "--workflow",
+            "dev",
+            "--native",
+            "--host-port",
+            "43112",
+            "--dry-run",
+            "--json",
+        ],
+        fixture.path(),
+    );
+
+    assert_matches_schema("up.json", &json);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["execution_started"], false);
+    assert_eq!(json["preview_status"], "RUNNABLE");
+    assert_eq!(json["overrides"]["host_port"], 43112);
+    assert_eq!(json["blockers"], Value::Null);
+}
+
+#[cfg(unix)]
+#[test]
+fn run_refuses_same_listener_before_selected_task_mutation() {
+    let fixture = TempDir::new().expect("fixture");
+    write_native_service_contract(&fixture);
+    write_active_service_owner(&fixture, 43111);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "dev", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Host port already in use"));
+    assert!(stderr.contains("runtime_listener"));
+    assert!(stderr.contains("host:site (127.0.0.1:43111; dev)"));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_refuses_different_task_name_on_same_listener() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-different-task
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [preview]
+  writable_paths: [sentinel]
+tasks:
+  preview:
+    context: host
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        preview:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port: { mode: fixed, value: 43111 }
+"#,
+    );
+    write_active_service_owner(&fixture, 43111);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "preview", "--native", "--agent", "--plain"])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("sentinel").exists());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("runtime_listener"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_skip_deps_does_not_claim_skipped_dependency_listener() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: active-runtime-skip-deps
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+agent:
+  safe_tasks: [dependency, verify]
+  writable_paths: [sentinel]
+tasks:
+  dependency:
+    context: host
+    run: sh -c "exit 99"
+    safe_for_agent: true
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port: { mode: fixed, value: 43111 }
+  verify:
+    context: host
+    depends_on: [dependency]
+    command:
+      exe: sh
+      args: [-c, "printf admitted > sentinel"]
+    effects:
+      writes: [sentinel]
+    safe_for_agent: true
+"#,
+    );
+    write_active_service_owner(&fixture, 43111);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args([
+            "run",
+            "verify",
+            "--native",
+            "--agent",
+            "--skip-deps",
+            "--plain",
+        ])
+        .current_dir(fixture.path())
+        .env_remove("OTA_POLICY")
+        .output()
+        .expect("run Ota");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("sentinel")).expect("sentinel"),
+        "admitted"
+    );
 }
 
 #[test]

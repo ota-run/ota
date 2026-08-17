@@ -30,6 +30,9 @@ use std::process::Command;
 use semver::{Comparator, Op, Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use crate::schema::{
+    RuntimeBoundaryNetworkDefault, RuntimeBoundaryOutboundTargetSpec, RuntimeBoundaryRepoRootMode,
+};
 use crate::semantic_identity::semantic_contract_identity;
 use crate::workspace::DEFAULT_WORKSPACE_FILE;
 
@@ -102,6 +105,38 @@ pub struct PolicyRules {
     pub effects: Option<PolicyEffectsRules>,
     #[serde(default)]
     pub replay_inputs: PolicyReplayInputRules,
+    #[serde(default)]
+    pub sandbox: Option<PolicySandboxRules>,
+}
+
+/// Organization-owned restrictions that may only narrow repo-declared runtime boundaries.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PolicySandboxRules {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<PolicySandboxFilesystemRules>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<PolicySandboxNetworkRules>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PolicySandboxFilesystemRules {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root_mode: Option<RuntimeBoundaryRepoRootMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writable_paths: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PolicySandboxNetworkRules {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<RuntimeBoundaryNetworkDefault>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_targets: Option<Vec<RuntimeBoundaryOutboundTargetSpec>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -708,6 +743,7 @@ impl OrgPolicyPack {
         validate_backend_environment_rules(&self.policies.backend_environment)?;
         validate_effect_rules(self.policies.effects.as_ref())?;
         validate_claim_assurance_rules(self.policies.agent.as_ref())?;
+        validate_sandbox_rules(self.policies.sandbox.as_ref())?;
 
         Ok(())
     }
@@ -2506,6 +2542,106 @@ fn is_valid_adapter_state_token(value: &str) -> bool {
     !state.contains(':')
         && is_valid_external_state_token(family)
         && is_valid_external_state_token(state)
+}
+
+fn validate_sandbox_rules(rules: Option<&PolicySandboxRules>) -> Result<(), String> {
+    let Some(rules) = rules else {
+        return Ok(());
+    };
+    if rules.filesystem.is_none() && rules.network.is_none() {
+        return Err(String::from(
+            "`policies.sandbox` must declare at least one filesystem or network restriction",
+        ));
+    }
+    if let Some(filesystem) = rules.filesystem.as_ref() {
+        if filesystem.repo_root_mode.is_none()
+            && filesystem.writable_paths.is_none()
+            && filesystem.protected_paths.is_none()
+        {
+            return Err(String::from(
+                "`policies.sandbox.filesystem` must declare at least one restriction",
+            ));
+        }
+        let writable = validate_sandbox_policy_paths(
+            filesystem.writable_paths.as_deref(),
+            "policies.sandbox.filesystem.writable_paths",
+        )?;
+        let protected = validate_sandbox_policy_paths(
+            filesystem.protected_paths.as_deref(),
+            "policies.sandbox.filesystem.protected_paths",
+        )?;
+        for writable_path in &writable {
+            if protected.iter().any(|protected_path| {
+                sandbox_policy_path_contains(writable_path, protected_path)
+                    || sandbox_policy_path_contains(protected_path, writable_path)
+            }) {
+                return Err(format!(
+                    "`policies.sandbox.filesystem` cannot declare overlapping writable and protected paths around `{writable_path}`"
+                ));
+            }
+        }
+    }
+    if let Some(network) = rules.network.as_ref() {
+        if network.default.is_none() && network.outbound_targets.is_none() {
+            return Err(String::from(
+                "`policies.sandbox.network` must declare at least one restriction",
+            ));
+        }
+        if let Some(targets) = network.outbound_targets.as_ref() {
+            let mut identities = BTreeSet::new();
+            for target in targets {
+                if target.value.trim().is_empty() {
+                    return Err(String::from(
+                        "`policies.sandbox.network.outbound_targets[].value` must not be empty",
+                    ));
+                }
+                let identity = semantic_contract_identity(target)?;
+                if !identities.insert(identity) {
+                    return Err(String::from(
+                        "`policies.sandbox.network.outbound_targets` must not contain duplicate targets",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_sandbox_policy_paths(
+    paths: Option<&[String]>,
+    label: &str,
+) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in paths.into_iter().flatten() {
+        let path = path.trim().trim_end_matches('/');
+        if path.is_empty()
+            || Path::new(path).is_absolute()
+            || Path::new(path).components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!(
+                "`{label}` entries must be normalized non-empty repository-relative paths without `..`"
+            ));
+        }
+        if !seen.insert(path.to_string()) {
+            return Err(format!(
+                "`{label}` must not contain duplicate path `{path}`"
+            ));
+        }
+        normalized.push(path.to_string());
+    }
+    Ok(normalized)
+}
+
+fn sandbox_policy_path_contains(parent: &str, child: &str) -> bool {
+    parent == child || child.starts_with(format!("{parent}/").as_str())
 }
 
 fn validate_backend_environment_rules(rules: &PolicyBackendEnvironmentRules) -> Result<(), String> {
@@ -4774,5 +4910,62 @@ policies:
 
         let error = policy.validate().expect_err("invalid token should fail");
         assert!(error.contains("safe-task external_state entry `Docker`"));
+    }
+
+    #[test]
+    fn validates_sandbox_restriction_shape_and_path_overlap() {
+        let empty: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  sandbox: {}
+"#,
+        )
+        .unwrap();
+        assert!(
+            empty
+                .validate()
+                .unwrap_err()
+                .contains("must declare at least one filesystem or network restriction")
+        );
+
+        let overlapping: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  sandbox:
+    filesystem:
+      writable_paths: [coverage]
+      protected_paths: [coverage/private]
+"#,
+        )
+        .unwrap();
+        assert!(
+            overlapping
+                .validate()
+                .unwrap_err()
+                .contains("overlapping writable and protected paths")
+        );
+    }
+
+    #[test]
+    fn sandbox_restriction_preserves_explicit_empty_writable_set() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  sandbox:
+    filesystem:
+      writable_paths: []
+"#,
+        )
+        .unwrap();
+        policy.validate().unwrap();
+        assert_eq!(
+            policy
+                .policies
+                .sandbox
+                .as_ref()
+                .and_then(|sandbox| sandbox.filesystem.as_ref())
+                .and_then(|filesystem| filesystem.writable_paths.as_ref()),
+            Some(&Vec::new())
+        );
     }
 }

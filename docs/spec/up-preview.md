@@ -170,6 +170,9 @@ Suggested shape:
     "target": "ota-a6be4471a4598386",
     "task": "setup"
   },
+  "overrides": {
+    "backend": "container"
+  },
   "plan": {
     "actions": [
       "provision `java` `21` via `sdkman`",
@@ -201,6 +204,7 @@ Required JSON fields:
 - `phase`
 - `summary`
 - `execution`
+- `overrides` when explicit execution options were requested
 - `plan.actions`
 - `plan.skipped`
 - `blockers`
@@ -212,6 +216,10 @@ Required JSON fields:
 - `image` when container execution is selected
 - `target` when present
 - `task` when `setup` would run
+
+`overrides` records admitted execution-affecting options such as `backend`, `lifecycle`, or
+`host_port`. This lets automation confirm that preview evaluated the requested option rather than
+silently dropping it.
 
 `plan.actions[]` is deterministic and ordered the same way the real `up` flow would attempt the
 next mutating work.

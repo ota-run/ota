@@ -23,6 +23,7 @@
 use std::fs;
 use std::path::Path;
 
+use jsonschema::{Draft, JSONSchema};
 use ota::published_contract_schemas::{generated_contract_schema, published_contract_schemas};
 use ota::published_docs_manifest::{generated_doc_manifest, published_doc_manifests};
 use serde_json::{Value, json};
@@ -31,6 +32,16 @@ fn load_schema(path: &str) -> Value {
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     let contents = fs::read_to_string(&schema_path).expect("schema file should be readable");
     serde_json::from_str(&contents).expect("schema file should be valid JSON")
+}
+
+fn receipt_definition_schema(definition: &str) -> JSONSchema {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let mut definition_schema = schema["$defs"][definition].clone();
+    definition_schema["$defs"] = schema["$defs"].clone();
+    JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&definition_schema)
+        .expect("receipt definition schema should compile")
 }
 
 #[test]
@@ -332,6 +343,18 @@ fn published_contract_schema_includes_container_image_hydration_network_kind() {
 }
 
 #[test]
+fn published_contract_schema_includes_crossing_authority_reference() {
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    let authority = &schema["$defs"]["governance"]["properties"]["crossing_authority"];
+
+    assert_eq!(authority["$ref"], json!("#/$defs/crossingAuthority"));
+    assert_eq!(
+        schema["$defs"]["crossingAuthority"]["required"],
+        json!(["authority_id"])
+    );
+}
+
+#[test]
 fn published_contract_schema_allows_replay_authority_on_generated_source() {
     let schema = load_schema("docs/spec/json-schemas/contract.json");
     let generated_source = schema["$defs"]["generatedArtifact"]["oneOf"]
@@ -391,6 +414,7 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     let artifacts = &success["artifacts"]["properties"];
 
     assert!(success.get("mode").is_some());
+    assert!(success.get("execution_id").is_some());
     assert!(success.get("workflow").is_some());
     assert!(success.get("phase").is_some());
     assert!(success.get("execution_boundary").is_some());
@@ -411,6 +435,18 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(not_proved.get("proof_obligation_id").is_some());
     assert!(not_proved.get("reason").is_some());
     let boundary = &schema["$defs"]["executionBoundary"];
+    let crossing = &schema["$defs"]["crossingEvidence"];
+    assert!(crossing["properties"].get("proof_execution_id").is_some());
+    assert!(
+        crossing["oneOf"][1]["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&serde_json::json!("proof_execution_id")))
+    );
+    assert!(
+        crossing["oneOf"][1]["properties"]["authority"]["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&serde_json::json!("transaction")))
+    );
     assert_eq!(boundary["properties"]["schema_version"]["const"], 1);
     assert_eq!(
         boundary["properties"]["target_freshness"]["enum"],
@@ -462,6 +498,11 @@ fn clean_schema_covers_repo_workspace_stale_and_nullable_stale_failure_resource(
     assert!(classified_failure.get("reasons").is_some());
     assert!(classified_failure.get("active_execution_count").is_some());
     assert!(classified_failure.get("owners").is_some());
+    assert!(
+        schema["$defs"]["classifiedFailure"]["allOf"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty())
+    );
     assert_eq!(
         classified_failure["resource_name"]["type"],
         serde_json::json!(["string", "null"])
@@ -889,6 +930,42 @@ fn version_schema_covers_build_identity_and_capability_fields() {
 }
 
 #[test]
+fn authority_inspect_schema_bounds_diagnostic_posture_and_verdicts() {
+    let schema = load_schema("docs/spec/json-schemas/authority-inspect.json");
+    let properties = &schema["properties"];
+    let observations = &properties["observations"];
+    let observation = &schema["$defs"]["observation"]["properties"];
+
+    assert_eq!(properties["kind"]["const"], json!("authority_inspect"));
+    assert_eq!(
+        properties["authority_source"]["const"],
+        json!("prebound_file")
+    );
+    assert_eq!(
+        properties["authority_separation_posture"]["const"],
+        json!("current_process_filesystem_guarded")
+    );
+    assert_eq!(
+        properties["profile"]["properties"]["verdict"]["enum"],
+        json!([
+            "matched_with_unknowns",
+            "incomplete",
+            "failed",
+            "unsupported"
+        ])
+    );
+    assert!(observation.get("required").is_some());
+    assert_eq!(
+        observation["status"]["enum"],
+        json!(["passed", "failed", "unknown", "unavailable"])
+    );
+    assert_eq!(observations["minItems"], json!(14));
+    assert_eq!(observations["maxItems"], json!(14));
+    assert_eq!(observations["items"], json!(false));
+    assert_eq!(observations["prefixItems"].as_array().unwrap().len(), 14);
+}
+
+#[test]
 fn run_preview_schema_keeps_member_aggregate_separate_from_single_target_preview() {
     let schema = load_schema("docs/spec/json-schemas/run-preview.json");
     let aggregate = &schema["$defs"]["aggregate"]["properties"];
@@ -1249,11 +1326,113 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff_summary.get("resolved").is_some());
     assert!(diff_summary.get("unchanged").is_some());
     assert!(history.get("archives").is_some());
+    assert!(history.get("history_source").is_some());
+    assert!(history.get("completeness_posture").is_some());
+    assert!(history.get("operator_profile_posture").is_some());
+    assert!(history.get("operator_profile_identity").is_some());
+    assert!(history.get("operator_peer_identity").is_some());
+    assert!(history.get("repository_binding_identity").is_some());
+    assert!(history.get("catalog_namespace_identity").is_some());
+    assert!(history.get("catalog_snapshot_identity").is_some());
     assert!(history_summary.get("archive_count").is_some());
     assert!(history_summary.get("invalid_archive_count").is_some());
     assert!(history.get("invalid_archives").is_some());
+    assert_eq!(
+        success["archive_context"]["oneOf"][0]["properties"]["kind"]["const"],
+        "readiness"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][1]["properties"]["kind"]["const"],
+        "execution"
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][2]["properties"]["schema_version"]["const"],
+        2
+    );
+    assert_eq!(
+        success["archive_context"]["oneOf"][2]["properties"]["semantic_scope"]["$ref"],
+        "#/$defs/crossingSemanticScope"
+    );
+    assert_eq!(
+        history["invalid_archives"]["items"]["properties"]["posture"]["enum"],
+        serde_json::json!(["legacy_unverified", "invalid"])
+    );
     assert!(failure.get("errors").is_some());
     assert!(failure.get("error").is_some());
+}
+
+#[test]
+fn receipt_history_schema_separates_local_and_protected_source_posture() {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("receipt schema should compile");
+    let mut local = json!({
+        "ok": true,
+        "path": ".",
+        "mode": "history",
+        "history_source": "local",
+        "completeness_posture": "local_archive_directory_observed",
+        "summary": {"archive_count": 0, "invalid_archive_count": 0},
+        "archives": []
+    });
+    assert!(compiled.validate(&local).is_ok());
+    local["catalog_snapshot_identity"] =
+        json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert!(compiled.validate(&local).is_err());
+    local
+        .as_object_mut()
+        .unwrap()
+        .remove("catalog_snapshot_identity");
+
+    let mut protected = json!({
+        "ok": true,
+        "path": ".",
+        "mode": "history",
+        "history_source": "systemd_protected_launcher",
+        "completeness_posture": "complete_selected_catalog_snapshot",
+        "operator_profile_posture": "least_privilege_operator_peer_verified",
+        "operator_profile_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "operator_peer_identity": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "repository_binding_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalog_namespace_identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "catalog_snapshot_identity": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "summary": {"archive_count": 1, "invalid_archive_count": 0},
+        "archives": [{
+            "archive_path": "systemd_protected_launcher:sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "archive_identity": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "catalog_identity": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "archived_at": "2026-08-14T12:00:00Z",
+            "ok": true,
+            "contract": "ota.yaml",
+            "summary": {"error_count": 0, "warn_count": 0, "info_count": 0, "step_count": 1}
+        }]
+    });
+    assert!(compiled.validate(&protected).is_ok());
+    let mut missing_entry_identity = protected.clone();
+    missing_entry_identity["archives"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("catalog_identity");
+    assert!(compiled.validate(&missing_entry_identity).is_err());
+    protected
+        .as_object_mut()
+        .unwrap()
+        .remove("catalog_snapshot_identity");
+    assert!(compiled.validate(&protected).is_err());
+
+    let mut local_with_protected_entry = local;
+    local_with_protected_entry["archives"] = json!([{
+        "archive_path": ".ota/receipts/receipt.json",
+        "archive_identity": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "catalog_identity": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "archived_at": "2026-08-14T12:00:00Z",
+        "ok": true,
+        "contract": "ota.yaml",
+        "summary": {"error_count": 0, "warn_count": 0, "info_count": 0, "step_count": 1}
+    }]);
+    assert!(compiled.validate(&local_with_protected_entry).is_err());
 }
 
 #[test]
@@ -1958,6 +2137,811 @@ fn receipt_schema_includes_execution_conflict_metadata() {
 }
 
 #[test]
+fn receipt_and_preview_schemas_publish_crossing_grant_admission() {
+    let receipt = load_schema("docs/spec/json-schemas/receipt.json");
+    let authority = &receipt["oneOf"][0]["properties"]["receipt"]["properties"]["crossing"]["properties"]
+        ["authority"];
+    let preview = load_schema("docs/spec/json-schemas/run-preview.json");
+
+    assert!(
+        authority["required"]
+            .as_array()
+            .is_some_and(|required| { required.iter().any(|field| field == "archive_evidence") })
+    );
+    assert_eq!(
+        authority["properties"]["actor_mode"]["enum"],
+        json!(["agent", "non_agent"])
+    );
+    assert_eq!(
+        authority["properties"]["decision"]["const"],
+        json!("allowed")
+    );
+    assert_eq!(
+        authority["properties"]["transaction"]["$ref"],
+        json!("#/$defs/crossingTransaction")
+    );
+    assert_eq!(
+        authority["properties"]["authority_separation_posture"]["enum"],
+        json!([
+            "current_process_filesystem_guarded",
+            "launcher_attested_one_use",
+            "protected_launcher_attested_one_use",
+            "systemd_protected_launcher_attested_one_use"
+        ])
+    );
+    assert_eq!(
+        authority["properties"]["archive_evidence"]["oneOf"][1]["$ref"],
+        json!("#/$defs/brokerArchiveEvidence")
+    );
+    assert_eq!(
+        authority["properties"]["broker"]["$ref"],
+        json!("#/$defs/executionBoundaryBrokerAuthority")
+    );
+    assert_eq!(
+        receipt["$defs"]["brokerPublicAuthorityBinding"]["properties"]["message_domains"]["required"],
+        json!([
+            "challenge_request",
+            "attestation_response",
+            "authorization_request",
+            "authorization_decision",
+            "lease_issuance",
+            "lease_consume",
+            "lease_consume_response"
+        ])
+    );
+    assert_eq!(
+        receipt["$defs"]["crossingGrantArchiveEvidence"]["additionalProperties"],
+        json!(false)
+    );
+    assert_eq!(
+        receipt["$defs"]["crossingTransaction"]["properties"]["state"]["enum"],
+        json!([
+            "pending",
+            "completed",
+            "failed",
+            "interrupted",
+            "incomplete"
+        ])
+    );
+    assert_eq!(
+        receipt["$defs"]["crossingTransaction"]["properties"]["authentication_posture"]["enum"],
+        json!([
+            "runner_local_content_addressed",
+            "launcher_active_slot_content_addressed"
+        ])
+    );
+    assert_eq!(
+        preview["$defs"]["singleTarget"]["properties"]["crossing_grant_admission"]["$ref"],
+        json!("#/$defs/crossingGrantAdmission")
+    );
+    assert_eq!(
+        preview["$defs"]["crossingGrantAdmission"]["properties"]["decision"]["enum"],
+        json!(["admissible_not_consumed", "requires_live_authorization"])
+    );
+    assert_eq!(
+        preview["$defs"]["crossingGrantAdmission"]["properties"]["authority_carrier"]["const"],
+        json!("authority_broker")
+    );
+    assert_eq!(
+        preview["$defs"]["crossingGrantAdmissionFailure"]["properties"]["crossing_grant_admission"]
+            ["properties"]["decision"]["const"],
+        json!("refused")
+    );
+
+    let up = load_schema("docs/spec/json-schemas/up.json");
+    assert_eq!(
+        up["oneOf"][0]["properties"]["crossing_grant_admission"]["$ref"],
+        json!("./run-preview.json#/$defs/crossingGrantAdmission")
+    );
+    assert_eq!(
+        up["oneOf"][0]["properties"]["members"]["items"]["properties"]["crossing_grant_admission"]
+            ["$ref"],
+        json!("./run-preview.json#/$defs/crossingGrantAdmission")
+    );
+}
+
+#[test]
+fn receipt_broker_domain_schema_preserves_legacy_archive_profile() {
+    let receipt = load_schema("docs/spec/json-schemas/receipt.json");
+    let mut schema =
+        receipt["$defs"]["brokerPublicAuthorityBinding"]["properties"]["message_domains"].clone();
+    schema["$defs"] = receipt["$defs"].clone();
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("broker domain schema");
+    let mut legacy = json!({
+        "challenge_request": "ota-crossing-broker/challenge-request/v1",
+        "attestation_response": "ota-crossing-broker/attestation-response/v1",
+        "authorization_request": "ota-crossing-broker/authorization-request/v1",
+        "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+        "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
+        "lease_consume": "ota-crossing-broker/lease-consume/v1",
+        "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1"
+    });
+    assert!(compiled.validate(&legacy).is_ok());
+    legacy["lease_consumption_query"] = json!("ota-crossing-broker/lease-consumption-query/v1");
+    assert!(compiled.validate(&legacy).is_err());
+    legacy["lease_consumption_status"] = json!("ota-crossing-broker/lease-consumption-status/v1");
+    assert!(compiled.validate(&legacy).is_ok());
+}
+
+#[test]
+fn receipt_runtime_boundary_attestation_schema_enforces_v2_profile_and_domain() {
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let specs = [
+        (
+            "job_principal_non_root",
+            "launcher_principal_binding",
+            false,
+        ),
+        (
+            "authority_binding_write_denied",
+            "target_principal_access_check",
+            false,
+        ),
+        (
+            "attestor_state_write_denied",
+            "target_principal_access_check",
+            false,
+        ),
+        (
+            "broker_credentials_absent_from_job",
+            "launcher_environment_exclusion",
+            false,
+        ),
+        (
+            "broker_credentials_absent_from_task",
+            "child_environment_exclusion",
+            false,
+        ),
+        (
+            "broker_session_non_inheritable",
+            "descriptor_cloexec_verification",
+            false,
+        ),
+        (
+            "broker_session_not_reacquirable",
+            "protected_session_lifetime",
+            false,
+        ),
+        (
+            "host_control_socket_unavailable",
+            "target_principal_access_check",
+            false,
+        ),
+        (
+            "privilege_escalation_unavailable",
+            "launcher_privilege_policy",
+            false,
+        ),
+        (
+            "launcher_binary_identity_bound",
+            "protected_binary_measurement",
+            true,
+        ),
+        (
+            "launcher_config_identity_bound",
+            "protected_config_measurement",
+            true,
+        ),
+    ];
+    let observations = specs
+        .iter()
+        .map(|(name, method, requires_identity)| {
+            let mut observation = json!({
+                "name": name,
+                "state": "verified",
+                "evidence_method": method,
+                "reason_code": "verified_by_protected_launcher"
+            });
+            if *requires_identity {
+                observation["semantic_identity"] = Value::String(identity.clone());
+            }
+            observation
+        })
+        .collect::<Vec<_>>();
+    let attestation = json!({
+        "payload": {
+            "message_kind": "attestation_response",
+            "attestation_protocol_version": "ota-runtime-boundary-attestation/v2",
+            "binding_identity": identity,
+            "challenge_nonce_commitment": identity,
+            "invocation_id": "launcher-invocation-2",
+            "work_unit_identity": identity,
+            "semantic_scope_identity": identity,
+            "runner_principal": "ota-runner",
+            "channel_delivery": "launcher_session_fd",
+            "authenticated_origin": "https://broker.example.internal",
+            "authority_mounts": ["authority-mount-profile:v2"],
+            "runtime_boundary": {
+                "schema_version": 1,
+                "profile_id": "ota.runtime-boundary.protected-launcher/v1",
+                "profile_identity": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8",
+                "attestor_kind": "protected_launcher",
+                "attestor_instance_identity": identity,
+                "launcher_session_binding_identity": identity,
+                "observations": observations
+            },
+            "issuer": "runner-launcher",
+            "audience": "ota-crossing-broker",
+            "issued_at": "2026-08-08T00:00:00Z",
+            "expires_at": "2026-08-08T00:02:00Z"
+        },
+        "key_id": "attestor-2026-01",
+        "algorithm": "ed25519",
+        "signature": "signature"
+    });
+    let attestation_schema = receipt_definition_schema("signedLauncherAttestation");
+    if let Err(errors) = attestation_schema.validate(&attestation) {
+        panic!(
+            "valid V3 attestation was rejected: {}",
+            errors
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+
+    let mut missing = attestation.clone();
+    missing["payload"]["runtime_boundary"]["observations"]
+        .as_array_mut()
+        .expect("observations")
+        .pop();
+    assert!(attestation_schema.validate(&missing).is_err());
+    let mut reordered = attestation.clone();
+    reordered["payload"]["runtime_boundary"]["observations"]
+        .as_array_mut()
+        .expect("observations")
+        .swap(0, 1);
+    assert!(attestation_schema.validate(&reordered).is_err());
+    let mut failed = attestation.clone();
+    failed["payload"]["runtime_boundary"]["observations"][0]["state"] = json!("failed");
+    assert!(attestation_schema.validate(&failed).is_err());
+    let mut missing_identity = attestation.clone();
+    missing_identity["payload"]["runtime_boundary"]["observations"][9]
+        .as_object_mut()
+        .expect("observation")
+        .remove("semantic_identity");
+    assert!(attestation_schema.validate(&missing_identity).is_err());
+
+    let binding = json!({
+        "schema_version": 2,
+        "identity": identity,
+        "authority_id": "platform-release-authority",
+        "broker_id": "platform-crossing-broker",
+        "origin": "https://broker.example.internal",
+        "server_name": "broker.example.internal",
+        "protocol_version": "ota-crossing-broker/v1",
+        "transport_authentication": {
+            "kind": "mtls",
+            "trust_bundle_identity": identity,
+            "credential_source_identity": "launcher:workload-session/v1"
+        },
+        "credential_delivery": {
+            "kind": "launcher_session_fd",
+            "session_audience": "ota-crossing-broker"
+        },
+        "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
+        "attestation": {
+            "protocol_version": "ota-runtime-boundary-attestation/v2",
+            "profile_id": "ota.runtime-boundary.protected-launcher/v1",
+            "profile_identity": "sha256:8a0c2b279b90840a038525f841f896016030a9f61a054fb759da4bb197faf4e8",
+            "attestor_kind": "protected_launcher",
+            "adapter": "launcher_session_peer/v1",
+            "launcher_session_binding_identity": identity,
+            "issuer": "runner-launcher",
+            "audience": "ota-crossing-broker",
+            "trust_bundle_identity": identity,
+            "verifiers": [{ "key_id": "attestor", "algorithm": "ed25519", "public_key": "key" }],
+            "maximum_age_seconds": 180,
+            "maximum_clock_skew_seconds": 5,
+            "key_rotation_overlap_seconds": 120
+        },
+        "message_domains": {
+            "challenge_request": "ota-crossing-broker/challenge-request/v1",
+            "attestation_response": "ota-crossing-broker/attestation-response/v2",
+            "authorization_request": "ota-crossing-broker/authorization-request/v1",
+            "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+            "lease_issuance": "ota-crossing-broker/lease-issuance/v1",
+            "lease_consume": "ota-crossing-broker/lease-consume/v1",
+            "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1",
+            "lease_consumption_query": "ota-crossing-broker/lease-consumption-query/v1",
+            "lease_consumption_status": "ota-crossing-broker/lease-consumption-status/v1"
+        },
+        "maximum_approval_wait_seconds": 120,
+        "minimum_post_approval_freshness_seconds": 30,
+        "maximum_lease_seconds": 300
+    });
+    let binding_schema = receipt_definition_schema("brokerPublicAuthorityBinding");
+    assert!(binding_schema.validate(&binding).is_ok());
+    let mut missing_version = binding.clone();
+    missing_version
+        .as_object_mut()
+        .expect("binding")
+        .remove("schema_version");
+    assert!(binding_schema.validate(&missing_version).is_err());
+    let mut downgraded_domain = binding.clone();
+    downgraded_domain["message_domains"]["attestation_response"] =
+        json!("ota-crossing-broker/attestation-response/v1");
+    assert!(binding_schema.validate(&downgraded_domain).is_err());
+    let mut downgraded_version = binding;
+    downgraded_version["schema_version"] = json!(1);
+    assert!(binding_schema.validate(&downgraded_version).is_err());
+}
+
+#[test]
+fn receipt_systemd_protected_launcher_attestation_schema_enforces_v3_profile_and_domain() {
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let launcher_observations = [
+        "protected_file_identity",
+        "systemd_manager_property",
+        "socket_peer_credentials",
+        "proc_process_status",
+        "proc_descriptor_inspection",
+        "protected_socket_identity",
+        "target_principal_access_probe",
+        "ota_process_posture",
+    ]
+    .into_iter()
+    .map(|source| json!({ "source": source, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher", "evidence_identity": identity }))
+    .collect::<Vec<_>>();
+    let job_observations = [
+        ("distinct_one_to_one_principals", json!(["protected_mapping_configuration", "proc_peer_status", "account_database_inspection"])),
+        ("peer_identity_matches_protected_mapping", json!(["protected_mapping_configuration", "proc_peer_status"])),
+        ("peer_no_new_privileges", json!(["proc_peer_status"])),
+        ("peer_capabilities_empty", json!(["proc_peer_status"])),
+        ("peer_supplementary_groups_limited_to_primary", json!(["proc_peer_status"])),
+        ("runner_service_identity_bound", json!(["protected_runner_service_identity"])),
+        ("all_principal_processes_contained", json!(["proc_principal_cgroup_enumeration"])),
+        ("accounts_locked", json!(["account_database_inspection"])),
+        ("non_login_shells", json!(["account_database_inspection"])),
+        ("sudo_policy_denied", json!(["sudo_policy_query"])),
+        ("systemd_policy_denied", json!(["systemd_manager_authorization_query"])),
+        ("polkit_policy_denied", json!(["polkit_authorization_query"])),
+        ("protected_paths_write_denied", json!(["target_principal_access_probe"])),
+        ("host_control_sockets_denied", json!(["target_principal_access_probe"])),
+        ("execution_launcher_socket_denied", json!(["target_principal_access_probe"])),
+        ("ota_process_non_dumpable", json!(["ota_process_posture", "process_access_probe"])),
+        ("ota_ptracer_cleared", json!(["ota_process_posture", "process_access_probe"])),
+        ("ota_process_inspection_denied", json!(["process_access_probe"])),
+    ]
+    .into_iter()
+    .map(|(requirement, evidence_methods)| json!({ "requirement": requirement, "evidence_methods": evidence_methods, "state": "verified", "reason_code": "verified_by_systemd_protected_launcher", "evidence_identity": identity }))
+    .collect::<Vec<_>>();
+    let job_principal = json!({
+        "real_uid": 1000, "effective_uid": 1000, "saved_uid": 1000, "filesystem_uid": 1000,
+        "real_gid": 1000, "effective_gid": 1000, "saved_gid": 1000, "filesystem_gid": 1000
+    });
+    let execution_principal = json!({
+        "real_uid": 1001, "effective_uid": 1001, "saved_uid": 1001, "filesystem_uid": 1001,
+        "real_gid": 1001, "effective_gid": 1001, "saved_gid": 1001, "filesystem_gid": 1001
+    });
+    let attestation = json!({
+        "payload": {
+            "message_kind": "attestation_response",
+            "attestation_protocol_version": "ota-systemd-protected-launcher-attestation/v3",
+            "binding_identity": identity,
+            "challenge_nonce_commitment": identity,
+            "invocation_id": "systemd-invocation-1",
+            "work_unit_identity": identity,
+            "semantic_scope_identity": identity,
+            "runner_principal": identity,
+            "channel_delivery": "launcher_session_fd",
+            "authenticated_origin": "https://broker.example.internal",
+            "authority_mounts": ["authority-mount-profile:v3"],
+            "systemd_protected_launcher": {
+                "schema_version": 3,
+                "identity": identity,
+                "instance_v1": {
+                    "schema_version": 1,
+                    "identity": identity,
+                    "adapter": "systemd_protected_launcher/v1",
+                    "principal_mapping": {
+                        "schema_version": 1, "identity": identity,
+                        "job_peer": job_principal, "execution": execution_principal,
+                        "job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
+                        "launcher_session_binding_identity": identity
+                    },
+                    "process_posture": {
+                        "schema_version": 1, "identity": identity, "message_kind": "ota_process_posture", "pid": 4242,
+                        "process_start_time_identity": identity, "ota_binary_identity": identity,
+                        "no_new_privs": true, "dumpable": 0, "ptracer_clear_applied": true,
+                        "principal_mapping_identity": identity
+                    },
+                    "systemd_launcher_profile_identity": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf",
+                    "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
+                    "launcher_session_binding_identity": identity,
+                    "systemd_invocation_identity": identity,
+                    "working_directory_identity": identity,
+                    "child_process_identity": identity
+                },
+                "launcher_observations": launcher_observations,
+                "job_principal_observations": job_observations
+            },
+            "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
+            "issued_at": "2026-08-08T00:00:00Z", "expires_at": "2026-08-08T00:02:00Z"
+        },
+        "key_id": "systemd-attestor-2026-01", "algorithm": "ed25519", "signature": "signature"
+    });
+    let attestation_schema = receipt_definition_schema("signedLauncherAttestation");
+    if let Err(errors) = attestation_schema.validate(&attestation) {
+        panic!(
+            "valid V3 attestation was rejected: {}",
+            errors
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+
+    let mut legacy_v2 = attestation.clone();
+    legacy_v2["payload"]["systemd_protected_launcher"]["schema_version"] = json!(2);
+    legacy_v2["payload"]["systemd_protected_launcher"]["instance_v1"]["principal_mapping"]["job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    legacy_v2["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
+        json!("sha256:c816a49e01120bf1f793aedcfec094ca0f23a8ee80f1c7e5bed4c2d9c797cb42");
+    legacy_v2["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    legacy_v2["payload"]["systemd_protected_launcher"]["launcher_observations"][5]["source"] =
+        json!("proc_unix_socket_inspection");
+    legacy_v2["payload"]["systemd_protected_launcher"]["job_principal_observations"][4]["requirement"] =
+        json!("peer_supplementary_groups_empty");
+    for observation in legacy_v2["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        .as_array_mut()
+        .expect("launcher observations")
+    {
+        observation
+            .as_object_mut()
+            .expect("launcher observation")
+            .remove("evidence_identity");
+    }
+    for observation in
+        legacy_v2["payload"]["systemd_protected_launcher"]["job_principal_observations"]
+            .as_array_mut()
+            .expect("job observations")
+    {
+        observation
+            .as_object_mut()
+            .expect("job observation")
+            .remove("evidence_identity");
+    }
+    assert!(attestation_schema.validate(&legacy_v2).is_err());
+
+    let mut missing_v3_evidence_identity = attestation.clone();
+    missing_v3_evidence_identity["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        [0]
+    .as_object_mut()
+    .expect("launcher observation")
+    .remove("evidence_identity");
+    assert!(
+        attestation_schema
+            .validate(&missing_v3_evidence_identity)
+            .is_err()
+    );
+    let mut legacy_socket_source = attestation.clone();
+    legacy_socket_source["payload"]["systemd_protected_launcher"]["launcher_observations"][5]["source"] =
+        json!("proc_unix_socket_inspection");
+    assert!(attestation_schema.validate(&legacy_socket_source).is_err());
+    let mut legacy_group_posture = attestation.clone();
+    legacy_group_posture["payload"]["systemd_protected_launcher"]["job_principal_observations"]
+        [4]["requirement"] = json!("peer_supplementary_groups_empty");
+    assert!(attestation_schema.validate(&legacy_group_posture).is_err());
+
+    let mut missing_observation = attestation.clone();
+    missing_observation["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        .as_array_mut()
+        .expect("launcher observations")
+        .pop();
+    assert!(attestation_schema.validate(&missing_observation).is_err());
+    let mut reordered_observation = attestation.clone();
+    reordered_observation["payload"]["systemd_protected_launcher"]["launcher_observations"]
+        .as_array_mut()
+        .expect("launcher observations")
+        .swap(0, 1);
+    assert!(attestation_schema.validate(&reordered_observation).is_err());
+    let mut missing_job_observation = attestation.clone();
+    missing_job_observation["payload"]["systemd_protected_launcher"]["job_principal_observations"]
+        .as_array_mut()
+        .expect("job observations")
+        .pop();
+    assert!(
+        attestation_schema
+            .validate(&missing_job_observation)
+            .is_err()
+    );
+    let mut reordered_job_observation = attestation.clone();
+    reordered_job_observation["payload"]["systemd_protected_launcher"]
+        ["job_principal_observations"]
+        .as_array_mut()
+        .expect("job observations")
+        .swap(0, 1);
+    assert!(
+        attestation_schema
+            .validate(&reordered_job_observation)
+            .is_err()
+    );
+    let mut wrong_job_methods = attestation.clone();
+    wrong_job_methods["payload"]["systemd_protected_launcher"]["job_principal_observations"][0]["evidence_methods"] =
+        json!(["process_access_probe"]);
+    assert!(attestation_schema.validate(&wrong_job_methods).is_err());
+    let mut legacy_launcher_profile = legacy_v2.clone();
+    legacy_launcher_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
+        json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
+    assert!(
+        attestation_schema
+            .validate(&legacy_launcher_profile)
+            .is_err()
+    );
+    let mut substituted_profile = attestation.clone();
+    substituted_profile["payload"]["systemd_protected_launcher"]["instance_v1"]["systemd_launcher_profile_identity"] =
+        format!("sha256:{}", "b".repeat(64)).into();
+    assert!(attestation_schema.validate(&substituted_profile).is_err());
+
+    let binding = json!({
+        "schema_version": 3, "identity": identity, "authority_id": "platform-release-authority",
+        "broker_id": "platform-crossing-broker", "origin": "https://broker.example.internal",
+        "server_name": "broker.example.internal", "protocol_version": "ota-crossing-broker/v1",
+        "transport_authentication": { "kind": "mtls", "trust_bundle_identity": identity, "credential_source_identity": "launcher:systemd-session/v1" },
+        "credential_delivery": { "kind": "launcher_session_fd", "session_audience": "ota-crossing-broker" },
+        "broker_verifiers": [{ "key_id": "broker", "algorithm": "ed25519", "public_key": "key" }],
+        "attestation": {
+            "protocol_version": "ota-systemd-protected-launcher-attestation/v3", "adapter": "systemd_protected_launcher/v1",
+            "systemd_launcher_profile_id": "ota.authority-launcher.systemd/v3",
+            "systemd_launcher_profile_identity": "sha256:1d0ef44c24b6ec21dc0c462edd52c5197ae35a4a1728a98cd93b92d6f106dfaf",
+            "systemd_job_principal_profile_id": "ota.authority-job-principal.systemd/v2",
+            "systemd_job_principal_profile_identity": "sha256:ee6ea951aff4a80f8a4f93c576a93e3b29245b87d162726c2401c124a7a78659",
+            "launcher_session_binding_identity": identity, "issuer": "systemd-launcher", "audience": "ota-crossing-broker",
+            "trust_bundle_identity": identity, "verifiers": [{ "key_id": "attestor", "algorithm": "ed25519", "public_key": "key" }],
+            "maximum_age_seconds": 180, "maximum_clock_skew_seconds": 5, "key_rotation_overlap_seconds": 120
+        },
+        "message_domains": {
+            "challenge_request": "ota-crossing-broker/challenge-request/v1", "attestation_response": "ota-crossing-broker/attestation-response/v3",
+            "authorization_request": "ota-crossing-broker/authorization-request/v1", "authorization_decision": "ota-crossing-broker/authorization-decision/v1",
+            "lease_issuance": "ota-crossing-broker/lease-issuance/v1", "lease_consume": "ota-crossing-broker/lease-consume/v1",
+            "lease_consume_response": "ota-crossing-broker/lease-consume-response/v1",
+            "lease_consumption_query": "ota-crossing-broker/lease-consumption-query/v1", "lease_consumption_status": "ota-crossing-broker/lease-consumption-status/v1"
+        },
+        "maximum_approval_wait_seconds": 120, "minimum_post_approval_freshness_seconds": 30, "maximum_lease_seconds": 300
+    });
+    let binding_schema = receipt_definition_schema("brokerPublicAuthorityBinding");
+    assert!(binding_schema.validate(&binding).is_ok());
+    let mut legacy_launcher_profile = binding.clone();
+    legacy_launcher_profile["attestation"]["systemd_launcher_profile_id"] =
+        json!("ota.authority-launcher.systemd/v1");
+    legacy_launcher_profile["attestation"]["systemd_launcher_profile_identity"] =
+        json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
+    legacy_launcher_profile["attestation"]["systemd_job_principal_profile_id"] =
+        json!("ota.authority-job-principal.systemd/v1");
+    legacy_launcher_profile["attestation"]["systemd_job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    assert!(binding_schema.validate(&legacy_launcher_profile).is_err());
+    let mut mismatched_job_profile = binding.clone();
+    mismatched_job_profile["attestation"]["systemd_job_principal_profile_id"] =
+        json!("ota.authority-job-principal.systemd/v1");
+    mismatched_job_profile["attestation"]["systemd_job_principal_profile_identity"] =
+        json!("sha256:e69ef375070bbb4f5616ba46b6f29b9a987372909016d1a1dfa40a5d4daae93d");
+    assert!(binding_schema.validate(&mismatched_job_profile).is_err());
+    let mut mismatched_launcher_profile = binding.clone();
+    mismatched_launcher_profile["attestation"]["systemd_launcher_profile_identity"] =
+        json!("sha256:32c49f19799e065d341c900a4ce0d7756669c0c0d4e990ffe81bbcda06291930");
+    assert!(
+        binding_schema
+            .validate(&mismatched_launcher_profile)
+            .is_err()
+    );
+    let mut wrong_domain = binding;
+    wrong_domain["message_domains"]["attestation_response"] =
+        json!("ota-crossing-broker/attestation-response/v2");
+    assert!(binding_schema.validate(&wrong_domain).is_err());
+}
+
+#[test]
+fn receipt_crossing_archive_schema_enforces_carrier_version_branches() {
+    let schema = receipt_definition_schema("crossingGrantArchiveEvidence");
+    let identity = format!("sha256:{}", "a".repeat(64));
+    let scope = json!({
+        "schema_version": 2,
+        "identity": identity,
+        "contract_identity": identity,
+        "lane": { "kind": "task", "name": "publish" },
+        "boundary_family": "unsafe_task",
+        "classification": "escalated",
+        "target_platform": { "os": "linux", "architecture": "amd64" },
+        "execution_graph_identity": identity,
+        "breadth": {
+            "schema_version": 1,
+            "identity": identity,
+            "closure_node_count": 1,
+            "closure_edge_count": 0,
+            "effect_categories": [],
+            "resource_count": 0,
+            "resource_identities": []
+        },
+        "segment_identities": [identity],
+        "edge_identities": [identity],
+        "execution_selection": { "skip_dependencies": false },
+        "input_identity_posture": "not_applicable"
+    });
+    let admission = json!({
+        "authority_id": "release-authority",
+        "authority_binding_identity": identity,
+        "issuer_id": "issuer",
+        "key_id": "key",
+        "key_fingerprint": identity,
+        "bundle_id": "bundle",
+        "bundle_identity": identity,
+        "bundle_sequence": 1,
+        "grant_id": "publish-once",
+        "grant_identity": identity,
+        "scope_identity": identity,
+        "contract_identity": identity,
+        "boundary_family": "unsafe_task",
+        "classification": "escalated",
+        "actor_mode": "non_agent",
+        "environment_posture": "unknown",
+        "expiry_kind": "calendar_ttl",
+        "issued_at": "2026-08-04T00:00:00Z",
+        "not_before": "2026-08-04T00:00:00Z",
+        "next_update": "2026-08-04T00:01:00Z",
+        "expires_at": "2026-08-04T00:02:00Z",
+        "clock_evidence": "system_non_root",
+        "sequence_evidence": "monotonic",
+        "revocation_evidence": "bundle",
+        "decision": "allowed",
+        "admitted_at": "2026-08-04T00:00:00Z",
+        "semantic_scope": scope,
+        "authority_binding_snapshot": {},
+        "signed_bundle_snapshot": {},
+        "sequence_state_snapshot": {}
+    });
+    let carrier_admission = json!({
+        "carrier": "prebound_file",
+        "authority_id": "release-authority",
+        "admission_identity": identity,
+        "authorization_identity": identity,
+        "scope_identity": identity,
+        "contract_identity": identity,
+        "boundary_family": "unsafe_task",
+        "classification": "escalated",
+        "actor_mode": "non_agent",
+        "decision": "allowed",
+        "admitted_at": "2026-08-04T00:00:00Z"
+    });
+    let transaction = |version, carrier: &str| {
+        let mut value = json!({
+            "schema_version": version,
+            "identity": identity,
+            "authentication_posture": "runner_local_content_addressed",
+            "transaction_id": format!("crossing-1-{}", "a".repeat(64)),
+            "authority_id": "release-authority",
+            "admission_identity": identity,
+            "scope_identity": identity,
+            "contract_identity": identity,
+            "state": "completed",
+            "created_at": "2026-08-04T00:00:00Z",
+            "finalized_at": "2026-08-04T00:00:01Z",
+            "receipt_status": "passed"
+        });
+        if version == 1 {
+            value["grant_identity"] = Value::String(identity.clone());
+        } else {
+            value["authority_carrier"] = Value::String(carrier.to_string());
+            value["authorization_identity"] = Value::String(identity.clone());
+        }
+        value
+    };
+    let archive = |transaction: Value, carrier: Option<Value>| {
+        let mut value = json!({
+            "admission": admission.clone(),
+            "transaction": transaction
+        });
+        if let Some(carrier) = carrier {
+            value["carrier_admission"] = carrier;
+        }
+        value
+    };
+
+    assert!(
+        schema
+            .validate(&archive(transaction(1, "prebound_file"), None))
+            .is_ok()
+    );
+    let mut legacy_launcher_owned = transaction(1, "prebound_file");
+    legacy_launcher_owned["authentication_posture"] =
+        Value::String(String::from("launcher_active_slot_content_addressed"));
+    assert!(
+        schema
+            .validate(&archive(legacy_launcher_owned, None))
+            .is_err()
+    );
+    let mut launcher_owned = transaction(2, "prebound_file");
+    launcher_owned["authentication_posture"] =
+        Value::String(String::from("launcher_active_slot_content_addressed"));
+    assert!(
+        schema
+            .validate(&archive(launcher_owned, Some(carrier_admission.clone()),))
+            .is_err()
+    );
+    assert!(
+        schema
+            .validate(&archive(
+                transaction(1, "prebound_file"),
+                Some(carrier_admission.clone()),
+            ))
+            .is_err()
+    );
+    assert!(
+        schema
+            .validate(&archive(transaction(2, "prebound_file"), None))
+            .is_err()
+    );
+    assert!(
+        schema
+            .validate(&archive(
+                transaction(2, "prebound_file"),
+                Some(carrier_admission.clone()),
+            ))
+            .is_ok()
+    );
+    let mut broker_carrier = carrier_admission;
+    broker_carrier["carrier"] = Value::String(String::from("authority_broker"));
+    assert!(
+        schema
+            .validate(&archive(
+                transaction(2, "authority_broker"),
+                Some(broker_carrier),
+            ))
+            .is_err()
+    );
+}
+
+#[test]
+fn receipt_broker_archive_schema_binds_transaction_persistence_to_attestation_version() {
+    let receipt = load_schema("docs/spec/json-schemas/receipt.json");
+    let schema = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "allOf": receipt["$defs"]["brokerArchiveEvidence"]["allOf"].clone()
+    });
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("broker archive persistence schema");
+    let archive = |binding_version, authentication_posture| {
+        json!({
+            "admission": {
+                "binding_snapshot": { "schema_version": binding_version }
+            },
+            "transaction": {
+                "authentication_posture": authentication_posture
+            }
+        })
+    };
+
+    assert!(
+        compiled
+            .validate(&archive(3, "launcher_active_slot_content_addressed"))
+            .is_ok()
+    );
+    assert!(
+        compiled
+            .validate(&archive(3, "runner_local_content_addressed"))
+            .is_err()
+    );
+    assert!(
+        compiled
+            .validate(&archive(2, "runner_local_content_addressed"))
+            .is_ok()
+    );
+    assert!(
+        compiled
+            .validate(&archive(2, "launcher_active_slot_content_addressed"))
+            .is_err()
+    );
+}
+
+#[test]
 fn receipt_schema_includes_native_prerequisite_activation_metadata() {
     let schema = load_schema("docs/spec/json-schemas/receipt.json");
     let receipt_properties = &schema["oneOf"][0]["properties"]["receipt"]["properties"];
@@ -2123,6 +3107,26 @@ fn canonical_docs_manifest_publishes_contract_reference_source_boundary() {
     assert_eq!(
         contract["public_url"],
         json!("https://ota.run/docs/reference/contract")
+    );
+}
+
+#[test]
+fn canonical_docs_manifest_publishes_execution_governance_capability_map() {
+    let manifest = load_schema("docs/spec/published-docs/canonical-docs.json");
+    let capabilities = manifest["docs"]
+        .as_array()
+        .expect("canonical docs manifest docs array")
+        .iter()
+        .find(|entry| entry["id"] == json!("execution-governance-capabilities"))
+        .expect("execution-governance-capabilities manifest entry");
+
+    assert_eq!(
+        capabilities["source_path"],
+        json!("docs/spec/execution-governance-capabilities.md")
+    );
+    assert_eq!(
+        capabilities["public_url"],
+        json!("https://ota.run/docs#execution-governance-capabilities")
     );
 }
 

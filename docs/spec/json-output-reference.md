@@ -22,6 +22,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
 - [json-schemas/proof-lifecycle.json](json-schemas/proof-lifecycle.json)
 - [json-schemas/refusal-canary.json](json-schemas/refusal-canary.json)
+- [json-schemas/authority-inspect.json](json-schemas/authority-inspect.json)
 - [json-schemas/replay-baseline.json](json-schemas/replay-baseline.json)
 - [json-schemas/replay-baseline-authority.json](json-schemas/replay-baseline-authority.json)
 - [json-schemas/services.json](json-schemas/services.json)
@@ -94,6 +95,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota policy init --json` when you want the starter org policy pack preview or write result
 - use `ota policy review --json` when you need policy-authority review over a repo contract
+- use `ota authority inspect --json` when a controlled runner must inspect the fixed prebound-file
+  hardening profile without selecting a grant or creating crossing authority
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
 - use `ota workspace list --json` when you want lightweight workspace inventory and readiness
@@ -148,10 +151,77 @@ human text output:
   attempted interrupt-driven host-managed service cleanup and whether each stop succeeded or failed
 - `ota up --json`: inspect additive `governance.crossing` and `receipt.crossing` when the
   selected workflow crossed a heavier audited execution boundary and the operator supplied intent
-  with `--reason`; the current shipped record keeps `requirement_source: derived` honest instead
-  of pretending contract-declared grant or approval truth, and `crossing.evidence_classes`
+  with `--reason`; the record keeps `requirement_source: derived` honest, and
+  `crossing.evidence_classes`
   distinguishes caller-asserted fields such as `reason` from runner-derived or runner-attested
-  fields
+  fields. When a contract-bound signed grant admitted the crossing, `crossing.authority` carries
+  the verified authority, exact semantic scope, carrier-specific admission, and archived signed
+  evidence. `prebound_file` carries bundle/grant freshness and revocation posture.
+  `authority_broker` carries launcher attestation, signed authorization, prepared lease, atomic
+  consume exchange, and broker revision. If consume acknowledgement is uncertain, internal
+  runner-owned state retains the exact consume intent and a separately domain-bound signed status;
+  recovery always closes the abandoned transaction as incomplete and never resumes work. A
+  consumed recovery retains its exact intent until the atomic terminal write. Pre-recovery broker
+  archives retain their original seven-domain binding identity, while live bindings require the
+  current nine-domain profile. These pending recovery fields are not successful receipt evidence.
+  Real execution also carries a terminal
+  `authority.transaction`; dry-run admission does not create one. Transaction schema v2 binds
+  `authority_carrier` and a carrier-neutral `authorization_identity`; broker transactions also
+  require `broker_consumption`. Its archive carries a matching carrier admission envelope.
+  The semantic scope binds the selected workflow instance and its ordered prerequisite-instance
+  closure. It also includes runner-derived `breadth`: selected closure node/edge counts, effect
+  categories, and content-addressed resource identities/counts. Archive verification re-derives
+  that breadth from the archived contract rather than trusting the summary. Ordinary workflow
+  `--ready-timeout` is also part of execution selection, so changing it changes authority scope.
+  The archived broker binding is a public verification snapshot that omits the protected live
+  launcher descriptor. Signed broker protocol payloads retained for re-verification accept only bounded public-safe
+  invocation, principal, and authority-mount labels. Raw nonce values, descriptors, credentials,
+  filesystem paths, and secret provider material are not public evidence.
+  Legacy v1 transaction history remains `prebound_file`-only and uses `grant_identity` instead.
+  Broker attestation protocol v1 retains `authority_separation_posture:
+  launcher_attested_one_use`. A strict v2 binding and signed payload instead carry one exact
+  protocol-published protected-launcher profile, its content identity, ordered required
+  observations, launcher/session identities, and a distinct attestor authority. Only a completely
+  verified v2 profile emits `protected_launcher_attested_one_use`; missing, reordered, failed,
+  unknown, downgraded, or substituted profile evidence refuses. Archive verification preserves the
+  original v1/v2 binding, payload, response-domain, and identity-domain branch and cannot upgrade
+  v1 by injecting defaults. The additive v3 systemd protected-launcher carrier instead binds
+  Core's process-posture preface to the complete ordered launcher and job-principal profile
+  observations; it emits `systemd_protected_launcher_attested_one_use` only when every required
+  observation verifies. Selected execution additionally requires atomic
+  lease consumption and one terminal Core crossing transaction before the outer launcher can emit
+  exact child/scope/cgroup/active-slot finalization. The portable archive-attachment candidate uses
+  a protected post-cleanup recovery journal plus separate producer signatures for cleanup and the
+  exact receipt-archive/crossing-transaction association. The signed consume exchange binds
+  launcher-owned transaction schema v3; that transaction requires broker-archive schema v2 and
+  portable finalization re-verification. The root launcher, not the job principal, verifies the
+  private archive through the execution-principal repository descriptor and atomically publishes
+  the root-owned sidecar before exact client acknowledgement. Core first uses atomic create-new
+  archive publication and file/directory sync; the launcher requires execution-principal-owned
+  `0700` archive directories and retains the exact terminal until its separate identity-bound
+  acknowledgement. Historical transaction v2 and
+  broker-archive v1 evidence are not upgraded. Immutable Linux/x64 PID 1 pressure proves the
+  production client, protected-history source, independently administered hardened-launcher path,
+  and administrator-driven reboot/fault recovery. Provider attestation remains optional stronger
+  hardening rather than a V11.7 completion gate.
+  Neither posture implies provider-attested separation.
+- `ota run <task> --dry-run --json` may include `crossing_grant_admission` after successful
+  fixed-authority admission with `decision: admissible_not_consumed`, or after protected broker
+  selection with `authority_carrier: authority_broker` and
+  `decision: requires_live_authorization`. Broker preview does not contact the launcher or consume
+  a lease. Neither form carries a transaction. A grant
+  refusal instead returns `execution_started: false` plus
+  `crossing_grant_admission.decision: refused`, `authority_source: prebound_file`, the configured
+  authority and requested grant when present, a stable `reason_family`, and evaluation details.
+  When the runner derived a complete scope before refusal, it also includes the scope identity,
+  contract identity, boundary family, and classification needed by an external issuer to create
+  an exact reviewable grant. It never includes task-input values or trust material.
+  Admission-produced `ota up --json` refusal receipts carry the same scope binding under
+  `receipt.refusal` and never carry `receipt.crossing`; its `boundary_family` remains the refusal
+  boundary, while `scope_boundary_family` and `scope_classification` describe the selected lane.
+  Mutating repo-level `ota run` remains a
+  text execution surface; `ota run --receipt` renders the same typed refusal fields rather than
+  inventing a mutating run JSON contract
 - `ota run <task> --dry-run --json` and `ota up --json`: inspect additive
   `governance.post_execution.not_run_reason` and `governance.post_execution.crossing_record_state`
   when you need phase-accurate non-run and crossing-evidence posture instead of inferring from
@@ -961,11 +1031,23 @@ read `proof_verdict` with required `not_proved[]` before treating it as applicat
   local record binds the semantic contract snapshot and source identity when available, selected
   member/workflow/services plus the snapshot-derived dependency closure and teardown authority,
   transaction, complete service records, terminal verdict and finalization, exact isolated-boundary identity when used, and
-  effective backend/mode/provider/lifecycle/target/target OS. Its content-addressed filename,
+  effective backend/mode/provider/lifecycle/target, requested backend/lifecycle overrides, target
+  platform, host-port, memory, and
+  dependency-selection posture. When authority is required, `crossing_evidence` embeds the exact
+  proof-owned terminal authority transaction; archive verification re-derives it from the archived
+  contract and selected service/assertion scope. Its content-addressed filename,
   content identity, contract identity, and archived
   semantic snapshot reference are verified before Ota accepts the record as locally well-formed.
   It does not establish application-output proof,
   CI eligibility, claim assurance, replay, or broader repo completion.
+- Runtime proof emits a fresh `execution_id` for the exact proof run. Direct
+  `crossing_evidence.proof_execution_id` must match it, and the terminal authority transaction
+  binds the same value in its finalized proof status. Semantic scope identity remains reusable
+  policy truth; execution identity prevents a different valid run with the same scope from being
+  substituted into a proof archive.
+- Lifecycle archive version `3` carries platform, execution-selection, and direct proof authority
+  bindings. Released version `2` archives remain inspectable only in their original ungoverned
+  shape; adding v3-only scope or crossing fields to a v2 record is rejected.
 - `--agent`, `--mode <native|container|remote>`, and `--member <name>` reuse the selected
   workflow's agent admission, task-mode resolution, and monorepo target loading. Service-manager
   commands retain their declared manager boundary; the mode applies to workflow prerequisite and
@@ -1028,6 +1110,12 @@ Notes:
   execution or readiness evaluation failed; parse/load failures do not enter this carrier
 - `proof_scope` is the first canonical machine-readable boundary for this carrier; it names the
   covered runtime-path lane and keeps narrow proof from being over-read as broader repo truth
+- `crossing_evidence` binds a governed runtime proof to one proof-owned terminal crossing
+  transaction across the detached workflow, nested task, ordered seam observers, negative
+  controls, and cleanup. New archives embed the complete carrier admission and terminal
+  transaction; legacy archives may retain a child-receipt link. Archive verification re-derives
+  the exact scope and refuses missing, borrowed, mismatched, or nonterminal authority. This never
+  widens proof to repository-wide safety or application correctness.
 - `execution_boundary` is additive runner-authored prerequisite provenance. Its `identity` binds
   the sorted asserted-target and derivation-input closures, declared artifact/producer ownership,
   prerequisite records (including a verified precondition identity when state is reused), and
@@ -1110,8 +1198,11 @@ Notes:
 - `ota proof runtime --json --archive` additionally writes one immutable proof-owned record under
   `.ota/proof/archives/` and returns additive `archive.identity` and `archive.path`. The archive
   is content-addressed and binds the terminal proof JSON to an archived semantic contract snapshot,
-  clean Git source identity when available, resolved workflow/task/backend/provider/lifecycle
-  scope, and explicit `replay_posture: witness_only`. The mutable `.ota/proof/<lane>/` working
+  clean Git source identity when available, resolved workflow/task/backend/provider/lifecycle,
+  target-platform, host-port, memory, dependency selection, and normalized readiness-timeout
+  selection scope, plus explicit
+  `replay_posture: witness_only`. The
+  mutable `.ota/proof/<lane>/` working
   bundle remains supporting evidence, not a replay-grade witness. Archive consumers also verify
   that `contract_snapshot_ref` resolves to the same content-addressed snapshot as
   `contract_snapshot_hash` before using the record as assurance evidence. The archive retains the
@@ -2316,12 +2407,28 @@ including post-readiness seam observers and the selected negative-control task, 
 before creating proof artifacts or spawning the child runtime. It then reuses that preflight across
 readiness diagnosis and the emitted Doctor artifact; the artifact does not re-read the checkout
 after runtime execution.
-`ota proof lifecycle` evaluates the exact workflow prerequisite-plus-assertion closure before
-creating its transaction or running any task, service command, readiness observation, or
-assertion. Both proof commands emit `execution_started: false` with typed hard-pin and policy
-evidence when admission refuses. Aggregate monorepo Doctor JSON carries the same canonical
-`replay_input_policy` record inside each applicable `members[]` result rather than dropping the
-member's policy identity and observed-input status.
+`ota proof lifecycle` resolves its explicit selected-service set and dependency closure, then
+evaluates the exact workflow prerequisite-plus-assertion closure before creating its transaction
+or running any task, service command, readiness observation, or assertion. Both proof commands
+emit `execution_started: false` with typed hard-pin and policy evidence when admission refuses.
+Aggregate monorepo Doctor JSON carries the same canonical `replay_input_policy` record inside each
+applicable `members[]` result rather than dropping the member's policy identity and observed-input
+status.
+
+When `governance.crossing_authority` governs a selected non-agent proof workflow, both proof
+commands require `--grant <id>` before any proof-owned side effect. Their refusal payloads carry
+`crossing_grant_admission` with a stable reason family, typed semantic scope, and
+`execution_started: false`; the public `error` and refusal detail are deliberately bounded and do
+not expose protected authority-store, bundle, or sequence-state paths. Runtime proof scope always
+includes its carrier, every selected seam/control invocation by role and declaration order, and the
+normalized `--ready-timeout` selection. Lifecycle proof scope includes its selected-service closure
+and lifecycle assertion. Both proof commands retain one proof-owned crossing transaction across
+their complete invocation sets. Runtime authority covers the detached workflow/task path, ordered
+seam observers, negative controls, and cleanup. Lifecycle authority covers prerequisites, selected
+services and dependency closure, assertion, and cleanup. Runner-private authority travels only
+between Ota processes over a bounded Unix descriptor and is removed before selected code executes.
+Their terminal archives embed and re-derive the exact carrier admission and transaction rather
+than inheriting an ordinary workflow grant or trusting a child-produced claim.
 When an active org policy pack participates in the selected lane, receipt capture also adds
 `kind: policy_ruleset_identity` with `input_class: policy_ruleset_identity` so replay can treat
 policy/ruleset drift as named input drift instead of leaving governance movement ambient.
@@ -2419,6 +2526,41 @@ Each task capability entry carries:
 - top-level `network.enforcement` still describes the broad compiled lane posture; per-target
   destination constraints can carry stronger app/runtime enforcement truth than the coarse lane
   default
+
+V11.21 adds execution admission and runner-authored application evidence without relabeling the
+older `codex_local` profile as enforcement:
+
+- task/workflow dry-run JSON carries `sandbox_admission` with the canonical policy, explicit
+  restriction-overlay identities, effective policy, provider capability decision, and typed
+  refusals
+- `oci_local` admission is valid only for an explicit ephemeral container platform whose
+  authoritative filesystem/network controls the provider can enforce without widening
+- canonical segments expose `execution_kind` and any `pre_boundary_actions`. The first OCI adapter
+  refuses typed bodies, requirements, services, or conditional checks that would run outside the
+  segment boundary instead of omitting them from the policy identity
+- completed execution receipts carry
+  `witnessed_observations.sandbox_application`, including the selected lane, execution selection,
+  admitted segment/edge graph, per-invocation purpose (`task_execution` or
+  `precondition_probe`), boundary identities, initial/terminal application identities, the
+  complete admitted mount-set identity, canonical writable-mount source identities, and cleanup
+  state. Provider-backed precondition probes are separate evidenced invocations of the exact
+  admitted segment that owns the requirement. Blocking probes retain terminal cleanup evidence in
+  the refusal receipt and cannot stand in for the matching task execution outcome.
+- when an organization policy narrows the lane, `restriction_authority` carries the identified
+  command-scoped policy source, the re-derivable semantic identity of its exact sandbox rules, and
+  those rules as an immutable snapshot. The
+  `restriction_overlays[]` projection must derive from that snapshot; an overlay without matching
+  authority is invalid
+- `enforced_through_completion` is derived only when every started boundary retained its admitted
+  controls through terminal engine inspection and engine-confirmed removal
+- provider-backed receipts are archived with their normalized contract snapshot. Receipt-history
+  loading re-derives canonical policy from that snapshot and restriction overlays from the
+  archived policy-authority snapshot, then rejects mismatched effective policy, segment order,
+  conditional edges, capability identity, application-plan identity, or completed segment
+  invocations that do not match archived task outcomes
+- this record proves only the selected cooperating runtime boundary. It does not prove application
+  output, merge eligibility, host-wide isolation, or execution performed through raw shell outside
+  Ota
 
 Refused task capability entries may also carry additive `blocked_task` and `closure_path` when a
 declared-safe task is refused because its reachable closure leaves the safe surface.
@@ -2619,6 +2761,9 @@ Notes:
     boundary, or classification
   - `attested` means ota recorded the field at the decision boundary itself, such as
     `reason_present`, `principal_attribution_state`, or attachment state
+  - optional `authority` means the selected signed grant was verified before execution against
+    the contract-bound fixed trust store. Its `archive_evidence` is re-verified with the archived
+    contract snapshot and current fixed trust binding; it is not reusable authorization
 - refused workflow entries may also carry additive `blocked_task` and `closure_path` when the
   selected workflow reaches a non-safe task in its prepare/setup/run/attach closure
 - each workflow entry includes additive fields only when declared or resolved:
@@ -3279,7 +3424,7 @@ filesystem or outbound boundary posture.
             "detail": "kind=task"
           },
           {
-            "id": "actor_mode:human",
+          "id": "actor_mode:non_agent",
             "family": "actor_mode",
             "evidence_class": "derived",
             "replay_class": "pinned"
@@ -3541,6 +3686,62 @@ Use this when a human or agent needs the selected run plan before execution:
   env, or execution-plan problems
 - blocked previews still use the full preview envelope on stdout so automation can read
   `summary.primary_blocker` without scraping stderr
+
+## `ota authority inspect --json`
+
+`ota authority inspect --json` is a diagnostic-only view over the fixed `prebound_file` authority
+boundary. It accepts no authority selector or path override, performs no execution or authority
+mutation, and always keeps its strongest claim at
+`current_process_filesystem_guarded`.
+
+```json
+{
+  "ok": true,
+  "kind": "authority_inspect",
+  "profile": {
+    "id": "prebound_file_hardening",
+    "version": 1,
+    "verdict": "matched_with_unknowns"
+  },
+  "authority_source": "prebound_file",
+  "authority_separation_posture": "current_process_filesystem_guarded",
+  "platform": {
+    "os": "linux",
+    "architecture": "x86_64"
+  },
+  "observations": [
+    {
+      "id": "trust_store",
+      "required": true,
+      "status": "passed",
+      "method": "canonical_protected_file_verifier",
+      "reason": "trust_store_verified"
+    },
+    {
+      "id": "passwordless_sudo",
+      "required": false,
+      "status": "unknown",
+      "method": "not_safely_observable",
+      "reason": "passwordless_sudo_not_probed"
+    }
+  ],
+  "summary": {
+    "passed": 9,
+    "failed": 0,
+    "unknown": 5,
+    "unavailable": 0,
+    "authority_bindings_observed": 1
+  }
+}
+```
+
+Observation statuses are `passed`, `failed`, `unknown`, or `unavailable`. Only
+`matched_with_unknowns` exits zero, and it requires every required check to pass. Required unknown
+or unavailable checks produce `incomplete`; explicit required failures produce `failed`; an
+unsupported fixed carrier produces `unsupported`. All verdicts use the same
+[authority-inspect.json](json-schemas/authority-inspect.json) schema. Public output contains only
+stable reason codes, never protected paths, keys, signatures, bundle contents, grant identities,
+or parser/filesystem details.
 
 ## `ota policy review --json`
 
@@ -4743,7 +4944,7 @@ runner-attested at the decision site itself.
           "detail": "kind=workflow"
         },
         {
-          "id": "actor_mode:human",
+          "id": "actor_mode:non_agent",
           "family": "actor_mode",
           "evidence_class": "derived",
           "replay_class": "pinned"
@@ -5071,6 +5272,9 @@ Example contract-validation failure (before `up` execution starts):
     "lifecycle": "ephemeral",
     "task": "setup"
   },
+  "overrides": {
+    "backend": "native"
+  },
   "plan": {
     "actions": [
       "run task `setup`",
@@ -5094,6 +5298,8 @@ Current preview JSON fields:
 - `execution.image` when container execution is selected
 - `execution.target` when the selected execution context has a real named target
 - `execution.task` when `up` would run `setup`
+- optional `overrides` with the explicit execution options admitted for the preview, including
+  `host_port` when selected
 - `plan.actions`
 - `plan.skipped`
 - `blockers`
@@ -5210,7 +5416,18 @@ The nested `receipt` object can also include:
 - `contract_snapshot_hash` with the normalized semantic contract snapshot identity used for this
   receipt; the hash is content-addressed and stable across formatting-only contract edits
 - `contract_snapshot_ref` when Ota archived the normalized snapshot under `.ota/contracts`; plain
-  read-only receipt JSON can still emit the hash without emitting a local archive ref
+  read-only receipt JSON can still emit the hash without emitting a local archive ref. A persisted
+  repo receipt archive requires both this reference and the matching `contract_snapshot_hash`;
+  receipt history does not load the current contract as a substitute
+- `archive_context` on a persisted repo receipt archive: `readiness` records a diagnosis-only
+  lane. Authority-bearing `execution` archives use schema v2 and carry a canonical
+  `semantic_scope` identity with the exact lane, closure graph, target platform, execution
+  selection, workflow run behavior, and effect overrides. History re-derives it from the archived
+  contract before deciding crossing necessity; it does not infer authority from global contract
+  configuration or trust an editable lane label
+- `invalid_archives[].posture: legacy_unverified` when an older archive lacks the immutable
+  snapshot pair. These entries are visible for operator inspection but are never valid baseline,
+  proof, or authority inputs
 - `assumption_set_hash` with the canonical extracted assumption-set identity used for this
   receipt; the hash is derived from the normalized semantic path/value map rather than the raw
   archived snapshot file
@@ -5256,7 +5473,18 @@ The nested `receipt` object can also include:
   declared activation with `applied: false`
 - `execution_conflict.reasons[]` when the recorded failure was blocked by active execution
   ownership; entries use typed identities such as `active_execution_present`, `host_service`,
-  `compose_project`, `persistent_backend_family`, `env_materialization_path`, and `service_task`
+  `compose_project`, `persistent_backend_family`, `env_materialization_path`, `write_path`,
+  `runtime_listener`, and `service_task`. Conflict owners can also expose additive
+  `runtime_owners[]` entries with task, listener, namespace, protocol, address, port, and allocation
+  posture (`fixed`, `managed_dynamic`, `isolated`, or `unresolved`). Internal-only container
+  listeners use `isolated`; they are recorded without claiming or conflicting on a host listener.
+  For a single fixed runtime-listener collision, receipt `next`/`next_steps` carries the same
+  `--host-port <free port>` remediation as human output only when the selected lane admits that
+  override; otherwise it points to the declared listener. Mixed conflicts identify that the port
+  choice resolves only `runtime_listener` and retain the remaining typed reasons. Suggested
+  commands preserve agent mode. The stable machine classification remains
+  `active_execution_conflict` with `runtime_listener`; Ota does not silently remap an explicitly
+  requested port.
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.
@@ -5559,6 +5787,8 @@ Current receipt diff JSON fields:
   "ok": true,
   "path": "/abs/path/to/repo",
   "mode": "history",
+  "history_source": "local",
+  "completeness_posture": "local_archive_directory_observed",
   "summary": {
     "archive_count": 2,
     "invalid_archive_count": 1
@@ -5581,6 +5811,7 @@ Current receipt diff JSON fields:
   "invalid_archives": [
     {
       "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260412-090000-000Z.json",
+      "posture": "invalid",
       "error": "failed to parse receipt archive `./.ota/receipts/repo-receipt-20260412-090000-000Z.json`: EOF while parsing a value at line 1 column 10"
     }
   ]
@@ -5592,10 +5823,19 @@ Current receipt history JSON fields:
 - `ok`
 - `path` (resolved repo boundary for the archive read)
 - `mode` (`history`)
+- `history_source` (`local | systemd_protected_launcher`)
+- `completeness_posture` (`local_archive_directory_observed` for the ordinary archive directory,
+  or `complete_selected_catalog_snapshot` for a fully returned protected manifest)
+- `operator_profile_posture`, `operator_profile_identity`, and `operator_peer_identity` for the
+  protected least-privilege `non_agent` operator session
+- `repository_binding_identity`, `catalog_namespace_identity`, and `catalog_snapshot_identity`
+  for protected history; these are bounded selection evidence, not human or CI identity
 - `summary.archive_count`
 - `summary.invalid_archive_count`
 - `archives[]`
 - `archives[].archive_path`
+- `archives[].archive_identity` and `archives[].catalog_identity` for protected history; local
+  history omits both because it has no protected catalog selection
 - `archives[].archived_at`
 - `archives[].ok`
 - `archives[].contract`
@@ -5606,7 +5846,14 @@ Current receipt history JSON fields:
 - `archives[].summary`
 - `invalid_archives[]` when malformed archive files were skipped
 - `invalid_archives[].archive_path`
+- `invalid_archives[].posture` (`legacy_unverified | invalid`)
 - `invalid_archives[].error`
+
+`ota receipt --json --history --source systemd_protected_launcher` is Linux-only and uses the
+fixed protected Launcher history socket. It accepts no path, `--file`, or `OTA_FILE` override and
+never falls back to local archives. Launcher proves protected acquisition, catalog, and object
+integrity; Core reconstructs the exact archive, immutable contract snapshot, and finalization
+sidecar bytes and remains the sole semantic receipt verifier.
 
 When `--member <name>` is set against a monorepo root, `receipt.contract` points at the selected
 member contract path while the readiness findings reflect the merged member target.

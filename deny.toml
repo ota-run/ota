@@ -28,6 +28,7 @@ ignore = []
 confidence-threshold = 0.8
 allow = [
   "Apache-2.0",
+  "BSD-3-Clause",
   "MIT",
   "Unicode-3.0",
   "Zlib",
@@ -46,4 +47,4 @@ skip-tree = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/ota-run/authority-protocol"]

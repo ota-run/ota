@@ -8,6 +8,7 @@
       "additionalProperties": false,
       "required": [
         "ok",
+        "execution_id",
         "proof_verdict",
         "path",
         "mode",
@@ -21,6 +22,7 @@
           "type": "boolean",
           "description": "Execution/readiness success only. Consumers must use proof_verdict together with not_proved to interpret proof breadth."
         },
+        "execution_id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "proof_verdict": {
           "type": "string",
           "enum": ["passed", "passed_with_unproven_boundaries", "failed"]
@@ -31,6 +33,7 @@
         "phase": { "type": "string" },
         "stage_family": { "const": "proof" },
         "proof_scope": { "$ref": "#/$defs/proofScope" },
+        "crossing_evidence": { "$ref": "#/$defs/crossingEvidence" },
         "execution_boundary": { "$ref": "#/$defs/executionBoundary" },
         "dependency_evidence": {
           "type": "array",
@@ -87,6 +90,9 @@
         "replay_input_policy": {
           "$ref": "./doctor.json#/$defs/replayInputPolicy"
         },
+        "crossing_grant_admission": {
+          "$ref": "./tasks.json#/$defs/governanceRefusalRecord"
+        },
         "summary": {
           "type": ["object", "null"]
         },
@@ -103,6 +109,42 @@
     }
   ],
   "$defs": {
+    "crossingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transaction_id",
+        "scope_identity"
+      ],
+      "properties": {
+        "receipt_archive_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "receipt_archive_path": { "type": "string" },
+        "transaction_id": { "type": "string" },
+        "proof_execution_id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "scope_identity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "authority": {
+          "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/crossing/properties/authority"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["receipt_archive_identity", "receipt_archive_path"],
+          "not": { "required": ["authority"] }
+        },
+        {
+          "required": ["authority", "proof_execution_id"],
+          "properties": {
+            "authority": { "required": ["transaction"] }
+          },
+          "not": {
+            "anyOf": [
+              { "required": ["receipt_archive_identity"] },
+              { "required": ["receipt_archive_path"] }
+            ]
+          }
+        }
+      ]
+    },
     "proofScope": {
       "type": "object",
       "additionalProperties": false,
@@ -475,6 +517,8 @@
               "compose_project",
               "persistent_backend_family",
               "env_materialization_path",
+              "write_path",
+              "runtime_listener",
               "service_task"
             ]
           }
@@ -516,7 +560,40 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
-              "service_task": { "type": ["string", "null"] },
+              "write_paths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "write_owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path", "namespace"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "namespace": { "type": "string" }
+                  }
+                }
+              },
+              "runtime_owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["task", "namespace", "allocation"],
+                  "properties": {
+                    "task": { "type": "string" },
+                    "listener": { "type": ["string", "null"] },
+                    "namespace": { "type": "string" },
+                    "protocol": { "type": ["string", "null"] },
+                    "address": { "type": ["string", "null"] },
+                    "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+                    "allocation": { "enum": ["fixed", "managed_dynamic", "isolated", "unresolved"] }
+                  }
+                }
+              },
+              "service_task": { "type": "boolean" },
               "pid": { "type": "integer", "minimum": 0 },
               "started_at": { "type": "string" }
             }

@@ -59,6 +59,7 @@ Source direction:
 - [V11.19 plan](../v11.19/plan.md)
 - [V11.20 plan](../v11.20/plan.md)
 - [V11.21 plan](../v11.21/plan.md)
+- [V11.22 plan](../v11.22/plan.md)
 
 V11 theme:
 
@@ -127,11 +128,18 @@ The implemented OSS governance slices after that are:
 - [V11.4: machine-readable governance evaluation output](../v11.4/plan.md)
 - [V11.6: harness and sandbox capability integration](../v11.6/plan.md)
 
-The following governance slice has open acceptance work and must not be represented as complete
-until its stated pressure or implementation bars close:
+The following governance continuation is complete for its bounded OSS slice:
 
-- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - crossing records are shipped;
-  reusable grant authority and crossing-time liveness remain open.
+- [V11.7: audited execution boundary crossings](../v11.7/plan.md) - completed continuation:
+  canonical semantic scope, the fixed-trust `prebound_file` signed carrier, and the Unix
+  launcher-session broker carrier are implemented. The systemd carrier now provides one-use
+  work-unit authority, selected execution, terminal cleanup, crossing receipt/archive evidence,
+  portable finalization, and immutable Linux/x64 PID 1 pressure for governed `run`/`up` and
+  proof-wide transactions. Its production invocation client, least-privilege protected-history
+  source, independently administered launcher installation, and administrator-driven reboot/fault
+  recovery are pressure-proven. Provider attestation remains optional stronger hardening, and
+  contract-authored crossing declarations are deferred follow-on authoring work. No later slice may
+  treat a crossing record as reusable approval authority.
 
 The completed trust/product follow-ons are:
 
@@ -140,33 +148,38 @@ The completed trust/product follow-ons are:
 - [V11.5: CI and merge-gate projection](../v11.5/plan.md) - required lanes, drift, and CI-owned
   refusal-canary checks complete through the V11.15 GitHub adapter.
 - [V11.9: governance truth reconciliation and evidence classes](../v11.9/plan.md)
-- [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md)
-- [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md)
+- [V11.10: replay-verified baseline trust and last-known-good posture](../v11.10/plan.md) - the
+  scoped first replay carrier and Bedrock pressure target are complete; broader provider-backed
+  replay and baseline-promotion policy remain outside that completed slice.
+- [V11.11: machine-readable proof boundaries and not-proved scope](../v11.11/plan.md) - the first
+  proof-boundary carrier and Athena seam-control pressure target are complete; proof evidence
+  remains execution-authored and cannot be inherited by a lane that did not execute it.
 - [V11.12: typed hydration input provenance](../v11.12/plan.md)
 - [V11.13: generated artifact lineage](../v11.13/plan.md)
 - [V11.8: sandbox policy compilation from the execution contract](../v11.8/plan.md) - completed at
-  the capability-profile compilation boundary; provider-enforced application is planned
+  the capability-profile compilation boundary; bounded provider-enforced application was delivered
   separately in V11.21.
-- [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation complete; release
-  reconciliation remains active.
+- [V11.14: contract-claim assurance](../v11.14/plan.md) - implementation and pressure complete.
 
 The completed provider-adapter slice is:
 
 - [V11.15: managed GitHub Actions governance projection](../v11.15/plan.md) - implementation and
-  real-repo pressure complete; release reconciliation remains active.
+  real-repo pressure complete.
 
 The completed execution-trust slice is:
 
-- [V11.16: fresh-boundary setup proof](../v11.16/plan.md) - implementation and declared
-  filesystem-boundary pressure complete; release reconciliation remains active.
+- [V11.16: fresh-boundary setup proof](../v11.16/plan.md) - scoped implementation and declared
+  filesystem-boundary pressure complete.
 
-The following planned replay-governance slice is:
+The completed replay-governance slice is:
 
-- [V11.17: trusted replay baseline regeneration](../v11.17/plan.md)
+- [V11.17: trusted replay baseline regeneration](../v11.17/plan.md) - implementation and independent
+  EventCatalog pressure complete, with explicit record, promotion, and detached replay consumption.
 
-The following planned lifecycle-proof slice is:
+The completed lifecycle-proof slice is:
 
-- [V11.18: managed lifecycle-sequence proof](../v11.18/plan.md)
+- [V11.18: managed lifecycle-sequence proof](../v11.18/plan.md) - implementation,
+  two-manager-family pressure, and independent review complete.
 
 The completed typed-hydration slice is:
 
@@ -180,12 +193,25 @@ The completed policy-governance slice is:
 - [V11.20: policy-governed replay input identity](../v11.20/plan.md) - implementation and
   Bedrock/Kylrix pressure complete.
 
-The next planned sandbox-enforcement slice is:
+The completed sandbox-enforcement slice is:
 
-- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - planned, unblocked, and
-  inactive until explicitly activated. It consumes V11.8's shipped `runtime_boundary` and
-  capability-profile foundation;
-  it does not reopen or replace that contract model.
+- [V11.21: enforced sandbox policy application](../v11.21/plan.md) - completed on
+  `1.6.26-implementation`. It applies the provider-neutral canonical policy envelope through the
+  bounded stock OCI subset and refuses unsupported authoritative controls before work begins.
+
+The subsequent planned OSS authoring slice is:
+
+- [V11.22: contract creation and quality UX](../v11.22/plan.md) - planned and inactive. It makes
+  deterministic, source-bound contract candidates and existing V11.14 assurance legible without
+  inventing a second claim model or hosted intelligence dependency.
+
+One deferred harness-integration follow-on is recorded in the completed
+[V11.6 plan](../v11.6/plan.md#deferred-integration-follow-on-agent-evaluation-disposition): an
+agent-evaluation disposition profile that prevents preflight policy refusal from being counted as
+agent capability failure while still allowing an expected refusal to pass an explicitly declared
+admission-compliance evaluation. It remains inactive until V11.7 closes and real
+evaluation-harness pressure validates the need; it must derive scoring eligibility from existing
+governance truth rather than introduce a parallel verdict taxonomy.
 
 Those slices make Ota higher in the stack without abandoning the open execution spec:
 
@@ -194,8 +220,8 @@ Those slices make Ota higher in the stack without abandoning the open execution 
 - V11.6 lets external harnesses enforce Ota’s callable boundary without guessing
 - V11.7 makes allowed-but-heavier execution explicit, classifiable, and auditable in OSS before
   enterprise approval layers build on top
-- V11.8 compiles contract-owned execution boundary truth into real runtime filesystem and egress
-  policy for cooperating sandbox targets
+- V11.8 compiles contract-owned execution boundary truth into a provider-neutral capability profile;
+  V11.21 applies the bounded first provider-enforced filesystem and network subset
 
 The completed trust-refinement sequence established:
 
