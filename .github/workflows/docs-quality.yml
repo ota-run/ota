@@ -59,6 +59,10 @@ jobs:
           args: >-
             --no-progress
             --verbose
+            --exclude-file .lycheeignore
+            --timeout 30
+            --retry-wait-time 5
+            --max-retries 3
             README.md
             docs/**/*.md
         env:

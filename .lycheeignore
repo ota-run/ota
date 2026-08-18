@@ -1,0 +1,7 @@
+# Ignore GitHub releases links which may timeout
+https://github.com/ota-run/ota/releases
+https://github.com/ota-run/ota/releases/
+
+# Ignore external redirects that lychee may have issues with
+https://discord.gg/45mBMzSkKC
+https://ota.run/blogs
