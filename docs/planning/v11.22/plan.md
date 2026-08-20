@@ -92,21 +92,73 @@ candidate change
   operation: add (detection candidates) | add | replace | remove (upgrade candidates)
   proposed value: canonical semantic value
   evidence: source kind, normalized repository path, source identity, and extraction location
+  execution closure (for runnable or agent-safety proposals): canonical closure identity, ordered
+    nodes and edges, working directory, platform, requirements, effects, classifications,
+    unresolved reasons, and attributable source evidence for every recorded element
   confidence: high | medium | low
   disposition: applicable | conflict | unknown | unsupported
 ```
 
 The candidate is not `ota.yaml`. It is a portable, versioned JSON review artifact. Its identity
 binds the logical root, discovery inventory, selected evidence manifest, detector version, proposed
-semantic changes, and existing contract snapshot so a later write cannot silently apply a result
-discovered against different source truth. Git provenance is carried beside that identity, not
-folded into it.
+semantic changes, complete closure records where applicable, and existing contract snapshot so a
+later write cannot silently apply a result discovered against different source truth. A closure
+digest is an address, not a substitute for its reviewable nodes, edges, classifications, unresolved
+reasons, and source evidence. Git provenance is carried beside that identity, not folded into it.
 
 Evidence must be deterministic and path-specific. Initial supported source families are manifests,
-lockfiles, toolchain files, Compose files, checked-in CI workflows, and existing Ota contracts.
-Opaque shell, uninspected helper scripts, live services, ambient environment variables, and
-provider-owned configuration remain `unknown` unless a shipped detector can identify a narrower
-fact without inference.
+lockfiles, toolchain files, Compose files, checked-in CI workflows, checked-in root or nested agent
+guidance consulted by the detector, and existing Ota contracts. Every consulted guidance path is
+included in both the discovery inventory and selected evidence manifest when it corroborates or
+contradicts a candidate; changing it must stale the candidate it influenced. Opaque shell,
+uninspected helper scripts, live services, ambient environment variables, and provider-owned
+configuration remain `unknown` unless a shipped detector can identify a narrower fact without
+inference.
+
+### Detection Safety and Source Limits
+
+Detection may propose a runnable or agent-safe task only from an exact, finite, repository-owned
+execution closure that it serializes in the candidate change and classifies node-by-node. The
+closure identity covers its ordered nodes and edges, working directory, platform, requirements,
+effects, and unresolved reasons. An agent-safe proposal requires every material node, requirement,
+and effect to have an affirmative result from an existing Ota safety semantic or registered
+conservative detector rule, with zero unknowns or conflicts. Absence of a detected effect is never
+an affirmative safety result. The candidate remains review input until a maintainer explicitly
+applies it. A verifier-like task name is not evidence of safe execution. The following remain
+`unknown` and must not produce `agent.safe_tasks` or `tasks.<name>.safe_for_agent: true` candidates
+until a shipped resolver proves their complete closure and requirements:
+
+- package-manager scripts, task-runner recipes, and other wrapper commands whose referenced body
+  or dependency closure is unresolved;
+- CI shell fragments containing shell-variable expansion, workflow expressions, matrix/context
+  substitution, working-directory indirection, conditional control flow, or multi-command
+  orchestration;
+- commands requiring unmodelled browsers, native desktop prerequisites, containers, services,
+  credentials, host integration, or external effects.
+
+Checked-in CI workflows and agent guidance are source evidence, not execution or safety authority.
+They may corroborate a resolved candidate, contradict a proposed candidate, or explain why Ota
+must retain `unknown`; they must never manufacture agent authorization or override a contradictory
+manifest, resolver, or existing contract. A repository's existing `agent.safe_tasks` remains
+maintainer-owned contract truth and is not inferred from prose.
+
+Safety precedence is fail-closed: an existing contract remains authoritative; resolved
+manifest/task-graph evidence supplies execution facts; CI and agent guidance can only corroborate
+or contradict those facts. Any material contradiction, unresolved requirement, unknown effect, or
+unsupported platform boundary prevents agent-safe promotion. Positive CI or prose evidence never
+offsets a conflict or unknown.
+
+Project identity is computed per resolved project root. Multiple applicable manifests at one root
+are composed only through a registered deterministic rule; otherwise their disagreement is a
+candidate conflict. A package or language manifest identity outranks an incidental shell script
+name; a script can supply a task candidate but cannot replace an equally or more authoritative
+manifest project identity. Lane identity binds the execution closure, working directory, platform,
+requirements, services, environment, and effects, so fast and integration lanes remain distinct
+even when their visible command text overlaps.
+
+When inspected evidence distinguishes finite fast verification from a service-backed, integration,
+or platform-specific lane, detection preserves those as separate candidates. It must not collapse
+them into a generic `test` task or imply that an unmodelled service dependency is admitted.
 
 ### Candidate Snapshot Identity
 
@@ -199,7 +251,9 @@ second write authority. They preserve documented selection and interaction seman
 identity, reproducibility, collision, and semantic-conflict refusals remain mandatory. Any changed
 exit behavior caused by those refusals is a documented compatibility tightening. Deprecation, if
 later chosen, must document the equivalent `apply-candidate` invocation and preserve an explicit
-write.
+write. Runnable and agent-safety promotion are explicitly excluded from that compatibility promise:
+they must use the shared fail-closed closure classifier and may downgrade prior inferred-safe output
+to ordinary runnable or `unknown` candidates.
 
 ## Contract Quality View
 
@@ -262,17 +316,22 @@ semantic change.
 
 ## Implementation Order
 
-1. Extract a shared candidate/evidence domain below CLI commands; do not embed rules in output
-   formatting.
-2. Route existing `init` and `detect` dry-run paths through canonical candidate creation without
-   changing their public write behavior yet.
-3. Publish the versioned candidate artifact, candidate schema, human review output, source
+1. Extract a shared candidate/evidence and execution-closure domain below CLI commands; do not
+   embed rules in output formatting.
+2. Implement the shared closure resolver and fail-closed runnable/agent-safety classifier before
+   candidate publication or legacy write migration. This is an intentional compatibility tightening:
+   previously inferred safe tasks may become ordinary runnable or `unknown` candidates when their
+   closure is unresolved, and the documented legacy detection-selection semantics do not override
+   that safety rule.
+3. Route existing `init` and `detect` dry-run paths through canonical candidate creation using that
+   resolver without changing their public write behavior yet.
+4. Publish the versioned candidate artifact, candidate schema, human review output, source
    identities, conflict detail, and snapshot binding.
-4. Add explicit dry-run/write admission for candidate application and deterministic schema
+5. Add explicit dry-run/write admission for candidate application and deterministic schema
    upgrades.
-5. Display V11.14 assurance only for its existing claim families; do not reload policy or
+6. Display V11.14 assurance only for its existing claim families; do not reload policy or
    re-observe sources independently within one command.
-6. Only then migrate legacy high-confidence writes internally to the candidate path while retaining
+7. Only then migrate legacy high-confidence writes internally to the candidate path while retaining
    their documented compatibility semantics.
 
 ## Acceptance Bar
@@ -280,6 +339,20 @@ semantic change.
 - unchanged repository evidence yields byte-stable normalized candidate JSON and the same
   candidate identity even when unrelated Git provenance changes;
 - every proposed field has named source evidence or is explicitly `unknown`/`unsupported`;
+- every runnable or agent-safety proposal serializes its canonical closure and attributable source
+  evidence for every material node, edge, requirement, effect, classification, and unresolved
+  reason; any unknown or conflict prevents agent-safe promotion;
+- agent-safe promotion requires an affirmative existing Ota safety semantic or registered
+  conservative detector rule for every material node and effect; absent effect detection is never
+  affirmative safety evidence;
+- verifier-like names alone never yield agent-safe candidates; unresolved wrapper, CI-context, and
+  shell-variable fixtures remain `unknown` with attributed source evidence;
+- CI and agent-guidance fixtures prove corroboration/contradiction without creating
+  `agent.safe_tasks` authority;
+- manifest project identity wins over incidental shell-script discovery, and separately evidenced
+  fast, service-backed, and platform-specific verification lanes remain distinct candidates;
+- fixtures with multiple applicable manifests at one project root prove registered deterministic
+  composition or an explicit project-identity conflict;
 - conflict fixtures prove Ota does not overwrite existing fields or choose a competing source;
 - stale source and stale contract snapshots refuse before a write;
 - added, removed, renamed, or newly higher-precedence supported sources invalidate the recorded
@@ -323,12 +396,47 @@ The first pressure set should be deliberately different:
 - a separately identified existing adopter that already carries a legacy flat toolchain fulfillment
   declaration, where the first upgrade is proven against committed historical truth. A synthetic
   Caddy history cannot close this migration pressure gate.
+- Atuin, after a manually reviewed local candidate models separate stable Rust verification,
+  nightly formatting, non-service Nextest, and PostgreSQL-backed integration lanes. Its detected
+  starter must not select `install.sh` as project identity or collapse service-backed integration
+  into generic `cargo test`.
+- GitButler, after package-script/Turbo/Tauri/Playwright closure resolution is available or the
+  affected tasks remain `unknown`. Its agent and CI files may explain the boundary but cannot
+  authorize desktop, browser, Docker, or E2E work.
+- BAML, only from a clean checkout with captured acquisition evidence. A reusable-workflow command
+  containing unresolved shell variables is a regression fixture for non-promotion, not a valid
+  generic task candidate.
+
+The next reviewed public-repository queue is intentionally staged rather than cloned or contacted
+all at once:
+
+- Pixi is the first V11.22 detection-safety pressure target after activation: its declared
+  environments, platforms, task dependencies, generated-schema work, and secret-backed slow tests
+  must remain separate candidates with explicit evidence boundaries.
+- Biome is the confirming task-closure target: Rust, pnpm, Just, WASM, code generation, and
+  Linux/macOS/Windows verification must not be flattened into familiar task-name heuristics.
+- Harper and Dioxus are later multi-runtime pressure targets. Browser-extension, Tauri, desktop,
+  mobile, and external-runtime behavior must be bounded rather than promoted through a broad
+  green check.
+- Lemma is a later wrapper-command and multi-toolchain target; its Rust task aliases and CI
+  toolchain setup must be resolved or retained as unknown.
+- Jujutsu is a later cross-platform Rust contract/CI-parity target, useful after the more novel
+  Pixi and Biome source-closure work is proven.
+- Berty is deferred until Ota is ready to model a deliberately narrow mobile/P2P slice. Its
+  device, network, protobuf, and multi-language behavior would otherwise dominate the pressure
+  result without proving the current V11.22 boundary.
+
+These are evidence-driven selection notes, not outreach commitments or claims that any repository
+is fully governed. Clone only the target currently needed to prove the next product boundary.
 
 The bar is not a generated `ota.yaml` that validates. The no-contract repository must prove
 candidate creation and explicit application; Caddy must prove conflict and non-overwrite behavior;
-the identified legacy adopter must prove upgrade behavior. All pressure evidence must carry source
-attribution, candidate identity, and truthful material-behavior classification before V11.22 is
-called complete.
+the identified legacy adopter must prove upgrade behavior. Atuin must exercise detector-produced
+output for its distinct lanes; GitButler must prove unresolved package/Turbo/Tauri/Playwright work
+does not become agent-safe; and BAML must use a clean revision-pinned checkout to prove an
+unresolved reusable-workflow variable is not promoted. All pressure evidence must carry source
+attribution, candidate identity, closure identity where applicable, and truthful material-behavior
+classification before V11.22 is called complete.
 
 ## Explicit Non-Goals
 
