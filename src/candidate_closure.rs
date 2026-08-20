@@ -45,6 +45,8 @@ pub(crate) struct CandidateClosureInput<'a> {
     pub package_manager: Option<&'a str>,
     pub package_scripts: Option<&'a BTreeMap<String, String>>,
     pub root_script_name: Option<&'a str>,
+    pub platform: &'a str,
+    pub requirements: Vec<ExecutionClosureNode>,
     pub source_is_execution_authoritative: bool,
     pub evidence: Vec<ClosureEvidence>,
 }
@@ -97,7 +99,7 @@ pub(crate) fn resolve_candidate_task_closure(
             closure: CandidateExecutionClosure {
                 identity: String::new(),
                 working_directory: String::from("."),
-                platform: String::from("host"),
+                platform: input.platform.to_string(),
                 nodes: vec![task_node("unknown")],
                 edges: Vec::new(),
                 requirements: Vec::new(),
@@ -117,7 +119,8 @@ pub(crate) fn resolve_candidate_task_closure(
     };
     let mut nodes = vec![task_node("runnable")];
     let mut edges = Vec::new();
-    let mut requirements = vec![executable_node.clone()];
+    let mut requirements = input.requirements;
+    requirements.push(executable_node.clone());
     let executable_parent = if let Some(package_manager) = input.package_manager {
         let Some(script_chain) = package_script_chain else {
             unreachable!("package script chain was required before executable resolution");
@@ -183,7 +186,7 @@ pub(crate) fn resolve_candidate_task_closure(
         closure: CandidateExecutionClosure {
             identity: String::new(),
             working_directory: String::from("."),
-            platform: String::from("host"),
+            platform: input.platform.to_string(),
             nodes,
             edges,
             requirements,
@@ -285,6 +288,8 @@ mod tests {
             package_manager: None,
             package_scripts: None,
             root_script_name: None,
+            platform: "unknown",
+            requirements: Vec::new(),
             source_is_execution_authoritative: true,
             evidence: Vec::new(),
         });
@@ -314,6 +319,8 @@ mod tests {
                 package_manager: None,
                 package_scripts: None,
                 root_script_name: None,
+                platform: "unknown",
+                requirements: Vec::new(),
                 source_is_execution_authoritative,
                 evidence: Vec::new(),
             });
@@ -341,6 +348,8 @@ mod tests {
             package_manager: Some("pnpm"),
             package_scripts: Some(&scripts),
             root_script_name: Some("test"),
+            platform: "unknown",
+            requirements: Vec::new(),
             source_is_execution_authoritative: true,
             evidence: Vec::new(),
         });
@@ -374,6 +383,8 @@ mod tests {
             package_manager: Some("pnpm"),
             package_scripts: Some(&cycle),
             root_script_name: Some("test"),
+            platform: "unknown",
+            requirements: Vec::new(),
             source_is_execution_authoritative: true,
             evidence: Vec::new(),
         });

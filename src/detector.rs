@@ -15,7 +15,7 @@ use crate::candidate_closure::{
 use crate::contract_candidate::{
     CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence, CandidateDisposition,
     CandidateEvidence, CandidateKind, CandidateOperation, ClosureEvidence, ContractCandidate,
-    DiscoveryInventoryEntry,
+    DiscoveryInventoryEntry, ExecutionClosureNode,
 };
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
@@ -896,6 +896,8 @@ fn source_bound_candidate_foundation(
                 package_manager: command.package_manager.as_deref(),
                 package_scripts: command.package_scripts.as_ref(),
                 root_script_name: command.root_script_name.as_deref(),
+                platform: "unknown",
+                requirements: closure_requirements(root, inferences, inference)?,
                 source_is_execution_authoritative: matches!(
                     inference.source_class,
                     InferenceSourceClass::TaskCommand
@@ -1129,6 +1131,63 @@ fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> Clo
         content_identity: evidence.content_identity.clone(),
         extraction: evidence.extraction.clone(),
     }
+}
+
+fn closure_requirements(
+    root: &Path,
+    inferences: &[Inference],
+    task: &Inference,
+) -> Result<Vec<ExecutionClosureNode>, DetectError> {
+    let task_source = task
+        .source
+        .split('#')
+        .next()
+        .unwrap_or(task.source.as_str());
+    let mut requirements = BTreeMap::new();
+    for inference in inferences {
+        let source = inference
+            .source
+            .split('#')
+            .next()
+            .unwrap_or(inference.source.as_str());
+        if source != task_source {
+            continue;
+        }
+        let Some((kind, name)) = inference
+            .field
+            .strip_prefix("runtimes.")
+            .map(|name| ("runtime", name))
+            .or_else(|| {
+                inference
+                    .field
+                    .strip_prefix("tools.")
+                    .map(|name| ("tool", name))
+            })
+            .or_else(|| {
+                inference
+                    .field
+                    .strip_prefix("toolchains.")
+                    .and_then(|field| field.strip_suffix(".version"))
+                    .map(|name| ("toolchain", name))
+            })
+        else {
+            continue;
+        };
+        let Some(evidence) = inference_source_evidence(root, inference)? else {
+            continue;
+        };
+        let id = format!("{kind}:{name}");
+        requirements
+            .entry(id.clone())
+            .or_insert_with(|| ExecutionClosureNode {
+                id,
+                kind: kind.to_string(),
+                value: inference.value.clone(),
+                classification: String::from("required"),
+                evidence: vec![closure_evidence_from_candidate_evidence(&evidence)],
+            });
+    }
+    Ok(requirements.into_values().collect())
 }
 
 struct CandidateTaskCommand {
@@ -11079,6 +11138,7 @@ jobs:
             r#"{
   "name": "candidate-fixture",
   "packageManager": "pnpm@10.0.0",
+  "engines": { "node": "22" },
   "scripts": { "test": "vitest run" }
 }"#,
         );
@@ -11111,6 +11171,18 @@ jobs:
                 .nodes
                 .iter()
                 .any(|node| node.id == "executable:vitest")
+        );
+        assert!(
+            closure
+                .requirements
+                .iter()
+                .any(|requirement| requirement.id == "toolchain:node" && requirement.value == "22")
+        );
+        assert!(
+            closure
+                .requirements
+                .iter()
+                .any(|requirement| requirement.id == "package_manager:pnpm")
         );
         assert!(
             closure
@@ -11188,6 +11260,13 @@ edition = "2024"
                 .iter()
                 .any(|node| node.id == "executable:cargo" && node.classification == "required")
         );
+        assert!(
+            closure
+                .requirements
+                .iter()
+                .any(|requirement| requirement.id == "tool:cargo")
+        );
+        assert_eq!(closure.platform, "unknown");
         assert!(
             closure
                 .effects

@@ -457,7 +457,9 @@ durable agent workflow belongs in the canonical Ota skill.
   exact manager invocation, script name, script body, and executable graph. It follows only
   same-manager, same-manifest script references and rejects cycles, missing hops, composed shell
   bodies, indirect package scripts, and CI-only commands as unresolved. It retains unknown effects
-  for every resolved graph. Candidate publication, candidate application, and agent-safe promotion remain
+  for every resolved graph. Resolved closures bind only runtime, tool, or toolchain requirements
+  detected from the same manifest and mark platform `unknown` until a task-scoped platform source
+  exists. Candidate publication, candidate application, and agent-safe promotion remain
   unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
