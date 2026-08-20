@@ -887,10 +887,13 @@ fn source_bound_candidate_foundation(
     for inference in inferences {
         let evidence = inference_source_evidence(root, inference)?;
         let is_task_command = is_task_command(inference);
-        let closure_resolution = is_task_command.then(|| {
-            resolve_candidate_task_closure(CandidateClosureInput {
+        let closure_resolution = if is_task_command {
+            let (command_body, package_manager) = candidate_task_command_body(root, inference)?;
+            Some(resolve_candidate_task_closure(CandidateClosureInput {
                 task_name: inference_task_name(&inference.field).unwrap_or("unknown"),
-                command: &inference.value,
+                task_command: &inference.value,
+                command_body: &command_body,
+                package_manager: package_manager.as_deref(),
                 source_is_execution_authoritative: matches!(
                     inference.source_class,
                     InferenceSourceClass::TaskCommand
@@ -900,8 +903,10 @@ fn source_bound_candidate_foundation(
                     .map(closure_evidence_from_candidate_evidence)
                     .into_iter()
                     .collect(),
-            })
-        });
+            }))
+        } else {
+            None
+        };
         let disposition = if let Some(resolution) = &closure_resolution {
             match resolution.classification {
                 CandidateTaskClassification::Runnable => CandidateDisposition::Applicable,
@@ -1122,6 +1127,38 @@ fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> Clo
         content_identity: evidence.content_identity.clone(),
         extraction: evidence.extraction.clone(),
     }
+}
+
+fn candidate_task_command_body(
+    root: &Path,
+    inference: &Inference,
+) -> Result<(String, Option<String>), DetectError> {
+    let Some(script_name) = inference.source.strip_prefix("package.json#scripts.") else {
+        return Ok((inference.value.clone(), None));
+    };
+    let contents = read_file(&root.join("package.json"))?;
+    let package: JsonValue =
+        serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: String::from("package.json"),
+            message: source.to_string(),
+        })?;
+    let Some(body) = package
+        .get("scripts")
+        .and_then(JsonValue::as_object)
+        .and_then(|scripts| scripts.get(script_name))
+        .and_then(JsonValue::as_str)
+    else {
+        return Ok((inference.value.clone(), None));
+    };
+    let Some(manager) = inference.value.split_ascii_whitespace().next() else {
+        return Ok((inference.value.clone(), None));
+    };
+    if !matches!(manager, "npm" | "pnpm" | "yarn" | "bun")
+        || task_command(manager, script_name).as_deref() != Some(inference.value.as_str())
+    {
+        return Ok((inference.value.clone(), None));
+    }
+    Ok((body.to_string(), Some(manager.to_string())))
 }
 
 fn candidate_confidence(confidence: Confidence) -> CandidateConfidence {
@@ -10962,7 +10999,7 @@ jobs:
             "package.json",
             r#"{
   "name": "candidate-fixture",
-  "scripts": { "test": "vitest run" }
+  "scripts": { "test": "vitest run && cargo test" }
 }"#,
         );
 
@@ -10990,6 +11027,55 @@ jobs:
                 .expect("task closure")
                 .unresolved_reasons,
             vec![String::from("execution_closure_unresolved")]
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_resolves_direct_package_script_graph_without_agent_safety() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let candidate = source_bound_candidate_foundation(fixture.path(), &report.inferences)
+            .expect("candidate foundation");
+
+        let change = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject == "tasks.test.run")
+            .expect("test task candidate");
+        assert_eq!(change.disposition, CandidateDisposition::Applicable);
+        let closure = change.execution_closure.as_ref().expect("task closure");
+        assert!(
+            closure
+                .nodes
+                .iter()
+                .any(|node| node.id == "package_manager:pnpm")
+        );
+        assert!(
+            closure
+                .nodes
+                .iter()
+                .any(|node| node.id == "script:test" && node.value == "vitest run")
+        );
+        assert!(
+            closure
+                .nodes
+                .iter()
+                .any(|node| node.id == "executable:vitest")
+        );
+        assert!(
+            closure
+                .effects
+                .iter()
+                .any(|effect| effect.classification == "unknown")
         );
     }
 

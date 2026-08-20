@@ -38,7 +38,9 @@ pub(crate) enum CandidateTaskClassification {
 #[derive(Debug, Clone)]
 pub(crate) struct CandidateClosureInput<'a> {
     pub task_name: &'a str,
-    pub command: &'a str,
+    pub task_command: &'a str,
+    pub command_body: &'a str,
+    pub package_manager: Option<&'a str>,
     pub source_is_execution_authoritative: bool,
     pub evidence: Vec<ClosureEvidence>,
 }
@@ -56,14 +58,14 @@ pub(crate) fn resolve_candidate_task_closure(
     let task_node = |classification: &str| ExecutionClosureNode {
         id: task_id.clone(),
         kind: String::from("task"),
-        value: input.command.to_string(),
+        value: input.task_command.to_string(),
         classification: classification.to_string(),
         evidence: input.evidence.clone(),
     };
 
     let Some(executable) = input
         .source_is_execution_authoritative
-        .then(|| direct_verifier_executable(input.command))
+        .then(|| direct_verifier_executable(input.command_body))
         .flatten()
     else {
         return CandidateClosureResolution {
@@ -89,6 +91,52 @@ pub(crate) fn resolve_candidate_task_closure(
         classification: String::from("required"),
         evidence: input.evidence.clone(),
     };
+    let mut nodes = vec![task_node("runnable")];
+    let mut edges = Vec::new();
+    let mut requirements = vec![executable_node.clone()];
+    let executable_parent = if let Some(package_manager) = input.package_manager {
+        let manager_id = format!("package_manager:{package_manager}");
+        let script_id = format!("script:{}", input.task_name);
+        let manager_node = ExecutionClosureNode {
+            id: manager_id.clone(),
+            kind: String::from("package_manager"),
+            value: package_manager.to_string(),
+            classification: String::from("required"),
+            evidence: input.evidence.clone(),
+        };
+        let script_node = ExecutionClosureNode {
+            id: script_id.clone(),
+            kind: String::from("package_script"),
+            value: input.command_body.to_string(),
+            classification: String::from("runnable"),
+            evidence: input.evidence.clone(),
+        };
+        edges.push(ExecutionClosureEdge {
+            from: task_id.clone(),
+            to: manager_id,
+            kind: String::from("invokes"),
+            evidence: input.evidence.clone(),
+        });
+        edges.push(ExecutionClosureEdge {
+            from: manager_node.id.clone(),
+            to: script_id.clone(),
+            kind: String::from("runs_script"),
+            evidence: input.evidence.clone(),
+        });
+        nodes.push(manager_node.clone());
+        nodes.push(script_node);
+        requirements.push(manager_node);
+        script_id
+    } else {
+        task_id.clone()
+    };
+    edges.push(ExecutionClosureEdge {
+        from: executable_parent,
+        to: executable_id,
+        kind: String::from("executes"),
+        evidence: input.evidence.clone(),
+    });
+    nodes.push(executable_node.clone());
     CandidateClosureResolution {
         classification: CandidateTaskClassification::Runnable,
         // A direct command body establishes execution shape, not effect safety. The unknown
@@ -97,14 +145,9 @@ pub(crate) fn resolve_candidate_task_closure(
             identity: String::new(),
             working_directory: String::from("."),
             platform: String::from("host"),
-            nodes: vec![task_node("runnable"), executable_node.clone()],
-            edges: vec![ExecutionClosureEdge {
-                from: task_id,
-                to: executable_id,
-                kind: String::from("executes"),
-                evidence: input.evidence.clone(),
-            }],
-            requirements: vec![executable_node],
+            nodes,
+            edges,
+            requirements,
             effects: vec![ExecutionClosureNode {
                 id: String::from("effect:unclassified"),
                 kind: String::from("effect"),
@@ -129,7 +172,20 @@ fn direct_verifier_executable(command: &str) -> Option<&str> {
     let executable = command.split_ascii_whitespace().next()?;
     matches!(
         executable,
-        "cabal" | "cargo" | "dotnet" | "go" | "mix" | "mvn" | "pytest" | "ruff"
+        "biome"
+            | "cabal"
+            | "cargo"
+            | "dotnet"
+            | "eslint"
+            | "go"
+            | "jest"
+            | "mix"
+            | "mvn"
+            | "prettier"
+            | "pytest"
+            | "ruff"
+            | "tsc"
+            | "vitest"
     )
     .then_some(executable)
 }
@@ -144,7 +200,9 @@ mod tests {
     fn resolves_direct_cargo_verifier_without_claiming_agent_safety() {
         let resolution = resolve_candidate_task_closure(CandidateClosureInput {
             task_name: "test",
-            command: "cargo test --workspace",
+            task_command: "cargo test --workspace",
+            command_body: "cargo test --workspace",
+            package_manager: None,
             source_is_execution_authoritative: true,
             evidence: Vec::new(),
         });
@@ -169,7 +227,9 @@ mod tests {
         ] {
             let resolution = resolve_candidate_task_closure(CandidateClosureInput {
                 task_name: "test",
-                command,
+                task_command: command,
+                command_body: command,
+                package_manager: None,
                 source_is_execution_authoritative,
                 evidence: Vec::new(),
             });
