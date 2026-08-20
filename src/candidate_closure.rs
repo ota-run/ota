@@ -1,0 +1,186 @@
+//                █████
+//               ░░███
+//       ██████  ███████    ██████
+//      ███░░███░░░███░    ░░░░░███
+//     ░███ ░███  ░███      ███████
+//     ░███ ░███  ░███ ███ ███░░███
+//     ░░██████   ░░█████ ░░████████
+//      ░░░░░░     ░░░░░   ░░░░░░░░
+//
+//   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+//
+//   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+//
+//   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+//   You may not use this file except in compliance with the License.
+//   Unless required by applicable law or agreed to in writing, software distributed under the
+//   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+//   either express or implied. See the License for the specific language governing permissions
+//   and limitations under the License.
+//
+//   If you need additional information or have any questions, please email: os@ota.run
+
+//! Conservative, source-bound closure resolution for contract candidates.
+//!
+//! This resolver recognizes only direct, finite verifier commands. It does not infer effects or
+//! agent safety from command names; unknown effects remain explicit and prevent safe promotion.
+
+use crate::contract_candidate::{
+    CandidateExecutionClosure, ClosureEvidence, ExecutionClosureEdge, ExecutionClosureNode,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CandidateTaskClassification {
+    Runnable,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CandidateClosureInput<'a> {
+    pub task_name: &'a str,
+    pub command: &'a str,
+    pub source_is_execution_authoritative: bool,
+    pub evidence: Vec<ClosureEvidence>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CandidateClosureResolution {
+    pub classification: CandidateTaskClassification,
+    pub closure: CandidateExecutionClosure,
+}
+
+pub(crate) fn resolve_candidate_task_closure(
+    input: CandidateClosureInput<'_>,
+) -> CandidateClosureResolution {
+    let task_id = format!("task:{}", input.task_name);
+    let task_node = |classification: &str| ExecutionClosureNode {
+        id: task_id.clone(),
+        kind: String::from("task"),
+        value: input.command.to_string(),
+        classification: classification.to_string(),
+        evidence: input.evidence.clone(),
+    };
+
+    let Some(executable) = input
+        .source_is_execution_authoritative
+        .then(|| direct_verifier_executable(input.command))
+        .flatten()
+    else {
+        return CandidateClosureResolution {
+            classification: CandidateTaskClassification::Unknown,
+            closure: CandidateExecutionClosure {
+                identity: String::new(),
+                working_directory: String::from("."),
+                platform: String::from("host"),
+                nodes: vec![task_node("unknown")],
+                edges: Vec::new(),
+                requirements: Vec::new(),
+                effects: Vec::new(),
+                unresolved_reasons: vec![String::from("execution_closure_unresolved")],
+            },
+        };
+    };
+
+    let executable_id = format!("executable:{executable}");
+    let executable_node = ExecutionClosureNode {
+        id: executable_id.clone(),
+        kind: String::from("executable"),
+        value: executable.to_string(),
+        classification: String::from("required"),
+        evidence: input.evidence.clone(),
+    };
+    CandidateClosureResolution {
+        classification: CandidateTaskClassification::Runnable,
+        // A direct command body establishes execution shape, not effect safety. The unknown
+        // effect below prevents the detector from emitting an agent-safe candidate.
+        closure: CandidateExecutionClosure {
+            identity: String::new(),
+            working_directory: String::from("."),
+            platform: String::from("host"),
+            nodes: vec![task_node("runnable"), executable_node.clone()],
+            edges: vec![ExecutionClosureEdge {
+                from: task_id,
+                to: executable_id,
+                kind: String::from("executes"),
+                evidence: input.evidence.clone(),
+            }],
+            requirements: vec![executable_node],
+            effects: vec![ExecutionClosureNode {
+                id: String::from("effect:unclassified"),
+                kind: String::from("effect"),
+                value: String::from("direct_command"),
+                classification: String::from("unknown"),
+                evidence: input.evidence,
+            }],
+            unresolved_reasons: vec![String::from("effect_classification_unresolved")],
+        },
+    }
+}
+
+fn direct_verifier_executable(command: &str) -> Option<&str> {
+    let command = command.trim();
+    if command.is_empty()
+        || command.contains([
+            '\n', '\r', ';', '|', '&', '$', '`', '<', '>', '\\', '"', '\'',
+        ])
+    {
+        return None;
+    }
+    let executable = command.split_ascii_whitespace().next()?;
+    matches!(
+        executable,
+        "cabal" | "cargo" | "dotnet" | "go" | "mix" | "mvn" | "pytest" | "ruff"
+    )
+    .then_some(executable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CandidateClosureInput, CandidateTaskClassification, resolve_candidate_task_closure,
+    };
+
+    #[test]
+    fn resolves_direct_cargo_verifier_without_claiming_agent_safety() {
+        let resolution = resolve_candidate_task_closure(CandidateClosureInput {
+            task_name: "test",
+            command: "cargo test --workspace",
+            source_is_execution_authoritative: true,
+            evidence: Vec::new(),
+        });
+
+        assert_eq!(
+            resolution.classification,
+            CandidateTaskClassification::Runnable
+        );
+        assert_eq!(resolution.closure.nodes[1].id, "executable:cargo");
+        assert_eq!(
+            resolution.closure.unresolved_reasons,
+            vec![String::from("effect_classification_unresolved")]
+        );
+    }
+
+    #[test]
+    fn refuses_wrapper_and_ci_only_commands_as_unresolved() {
+        for (command, source_is_execution_authoritative) in [
+            ("pnpm test", true),
+            ("cargo test && cargo clippy", true),
+            ("cargo test", false),
+        ] {
+            let resolution = resolve_candidate_task_closure(CandidateClosureInput {
+                task_name: "test",
+                command,
+                source_is_execution_authoritative,
+                evidence: Vec::new(),
+            });
+            assert_eq!(
+                resolution.classification,
+                CandidateTaskClassification::Unknown
+            );
+            assert_eq!(
+                resolution.closure.unresolved_reasons,
+                vec![String::from("execution_closure_unresolved")]
+            );
+        }
+    }
+}

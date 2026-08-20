@@ -9,10 +9,13 @@ use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
 use crate::agent_boundary_docs::parse_agent_boundary_doc;
+use crate::candidate_closure::{
+    CandidateClosureInput, CandidateTaskClassification, resolve_candidate_task_closure,
+};
 use crate::contract_candidate::{
     CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence, CandidateDisposition,
-    CandidateEvidence, CandidateExecutionClosure, CandidateKind, CandidateOperation,
-    ClosureEvidence, ContractCandidate, DiscoveryInventoryEntry, ExecutionClosureNode,
+    CandidateEvidence, CandidateKind, CandidateOperation, ClosureEvidence, ContractCandidate,
+    DiscoveryInventoryEntry,
 };
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
@@ -448,12 +451,15 @@ const DETECT_DISCOVERY_ROOT_PATHS: &[&str] = &[
     "DESCRIPTION",
     "Gemfile",
     "Makefile",
+    "GNUmakefile",
     "Makefile.PL",
     "Package.swift",
     "Pipfile",
     "Project.toml",
     "alire.toml",
     "build.sbt",
+    "build.gradle",
+    "build.gradle.kts",
     "build.zig",
     "composer.json",
     "cpanfile",
@@ -478,6 +484,7 @@ const DETECT_DISCOVERY_ROOT_PATHS: &[&str] = &[
     "main.sh",
     "main.ts",
     "mise.toml",
+    "makefile",
     "mix.exs",
     "mvnw",
     "package.json",
@@ -879,8 +886,27 @@ fn source_bound_candidate_foundation(
 
     for inference in inferences {
         let evidence = inference_source_evidence(root, inference)?;
-        let disposition = if is_task_command(inference) {
-            CandidateDisposition::Unknown
+        let is_task_command = is_task_command(inference);
+        let closure_resolution = is_task_command.then(|| {
+            resolve_candidate_task_closure(CandidateClosureInput {
+                task_name: inference_task_name(&inference.field).unwrap_or("unknown"),
+                command: &inference.value,
+                source_is_execution_authoritative: matches!(
+                    inference.source_class,
+                    InferenceSourceClass::TaskCommand
+                ),
+                evidence: evidence
+                    .as_ref()
+                    .map(closure_evidence_from_candidate_evidence)
+                    .into_iter()
+                    .collect(),
+            })
+        });
+        let disposition = if let Some(resolution) = &closure_resolution {
+            match resolution.classification {
+                CandidateTaskClassification::Runnable => CandidateDisposition::Applicable,
+                CandidateTaskClassification::Unknown => CandidateDisposition::Unknown,
+            }
         } else if evidence.is_some() {
             CandidateDisposition::Applicable
         } else {
@@ -892,9 +918,7 @@ fn source_bound_candidate_foundation(
                 .or_insert_with(|| evidence.clone());
         }
 
-        let is_task_command = is_task_command(inference);
-        let execution_closure = is_task_command
-            .then(|| unresolved_task_candidate_closure(inference, evidence.as_ref()));
+        let execution_closure = closure_resolution.map(|resolution| resolution.closure);
         changes.push(CandidateChange {
             subject: inference.field.clone(),
             field_family: inference.field_type.to_string(),
@@ -1034,7 +1058,7 @@ fn detector_discovery_inventory(root: &Path) -> Result<Vec<DiscoveryInventoryEnt
                 .is_some_and(|extension| {
                     matches!(
                         extension.to_ascii_lowercase().as_str(),
-                        "opam" | "nimble" | "hxml" | "sh" | "ps1"
+                        "cabal" | "hxml" | "nimble" | "opam" | "ps1" | "rockspec" | "sh"
                     )
                 })
             && let Ok(relative) = path.strip_prefix(root)
@@ -1091,38 +1115,12 @@ fn is_task_command(inference: &Inference) -> bool {
     inference.field.starts_with("tasks.") && inference.field.ends_with(".run")
 }
 
-fn unresolved_task_candidate_closure(
-    inference: &Inference,
-    evidence: Option<&CandidateEvidence>,
-) -> CandidateExecutionClosure {
-    let task_name = inference
-        .field
-        .strip_prefix("tasks.")
-        .and_then(|field| field.strip_suffix(".run"))
-        .unwrap_or("unknown");
-    CandidateExecutionClosure {
-        identity: String::new(),
-        working_directory: String::from("."),
-        platform: String::from("unknown"),
-        nodes: vec![ExecutionClosureNode {
-            id: format!("task:{task_name}"),
-            kind: String::from("task"),
-            value: inference.value.clone(),
-            classification: String::from("unknown"),
-            evidence: evidence
-                .into_iter()
-                .map(|evidence| ClosureEvidence {
-                    source_kind: evidence.source_kind.clone(),
-                    path: evidence.path.clone(),
-                    content_identity: evidence.content_identity.clone(),
-                    extraction: evidence.extraction.clone(),
-                })
-                .collect(),
-        }],
-        edges: Vec::new(),
-        requirements: Vec::new(),
-        effects: Vec::new(),
-        unresolved_reasons: vec![String::from("execution_closure_unresolved")],
+fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> ClosureEvidence {
+    ClosureEvidence {
+        source_kind: evidence.source_kind.clone(),
+        path: evidence.path.clone(),
+        content_identity: evidence.content_identity.clone(),
+        extraction: evidence.extraction.clone(),
     }
 }
 
@@ -10992,6 +10990,54 @@ jobs:
                 .expect("task closure")
                 .unresolved_reasons,
             vec![String::from("execution_closure_unresolved")]
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_resolves_direct_manifest_command_without_agent_safety() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "candidate-fixture"
+version = "0.1.0"
+edition = "2024"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let candidate = source_bound_candidate_foundation(fixture.path(), &report.inferences)
+            .expect("candidate foundation");
+
+        let change = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject == "tasks.test.run")
+            .expect("test task candidate");
+        assert_eq!(change.disposition, CandidateDisposition::Applicable);
+        let closure = change.execution_closure.as_ref().expect("task closure");
+        assert!(
+            closure
+                .nodes
+                .iter()
+                .any(|node| node.id == "executable:cargo" && node.classification == "required")
+        );
+        assert!(
+            closure
+                .effects
+                .iter()
+                .any(|effect| effect.classification == "unknown")
+        );
+        assert_eq!(
+            closure.unresolved_reasons,
+            vec![String::from("effect_classification_unresolved")]
+        );
+        assert!(
+            !candidate
+                .changes
+                .iter()
+                .any(|change| change.subject.ends_with(".safe_for_agent")),
+            "closure resolution must not manufacture agent-safe proposals"
         );
     }
 

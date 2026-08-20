@@ -452,10 +452,12 @@ durable agent workflow belongs in the canonical Ota skill.
   candidate now binds the registered detector source inventory: fixed root markers, supported
   environment files, package-manager locks, direct workflow files, bounded .NET project paths,
   and detector-owned root extension markers. Inventory sources cannot escape the repository
-  through symlinks. Candidate publication, resolved execution closures, candidate application,
-  and agent-safe promotion remain unimplemented; it does not consume crossing records as
-  approval authority. V12 effect-bound refusal assurance is also planning-only and inactive until
-  V11.22 completes; it does not widen the completed
+  through symlinks. Its shared closure resolver records direct finite manifest commands with their
+  executable requirement, but retains unknown effects and rejects package-manager wrappers, shell
+  bodies, and CI-only commands as unresolved. Candidate publication, candidate application, and
+  agent-safe promotion remain unimplemented; it does not consume crossing records as approval
+  authority. V12 effect-bound refusal assurance is also planning-only and inactive until V11.22
+  completes; it does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
   [V11.22](../planning/v11.22/plan.md), [V12](../planning/v12/plan.md), and the planned,
   inactive [V12.1 secret-delivery governance follow-on](../planning/v12.1/plan.md).

@@ -23,6 +23,7 @@
 pub(crate) mod adapter_inputs;
 pub(crate) mod agent_boundary_docs;
 pub(crate) mod broker_session;
+pub(crate) mod candidate_closure;
 pub(crate) mod capabilities;
 pub(crate) mod ci_projection;
 pub mod claim_assurance;
