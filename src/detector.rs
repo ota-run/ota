@@ -432,6 +432,96 @@ const DETECT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
     (EnvSourceKind::Json, "appsettings.Development.json"),
 ];
 
+const DETECT_DISCOVERY_ROOT_PATHS: &[&str] = &[
+    ".java-version",
+    ".node-version",
+    ".nvmrc",
+    ".ocaml-version",
+    ".python-version",
+    ".ruby-version",
+    ".sdkmanrc",
+    ".tool-versions",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "Cargo.toml",
+    "CMakeLists.txt",
+    "DESCRIPTION",
+    "Gemfile",
+    "Makefile",
+    "Makefile.PL",
+    "Package.swift",
+    "Pipfile",
+    "Project.toml",
+    "alire.toml",
+    "build.sbt",
+    "build.zig",
+    "composer.json",
+    "cpanfile",
+    "deno.json",
+    "deno.jsonc",
+    "deps.edn",
+    "devbox.json",
+    "devenv.nix",
+    "dub.json",
+    "dub.sdl",
+    "dune-project",
+    "elm.json",
+    "foundry.toml",
+    "fpm.toml",
+    "gleam.toml",
+    "global.json",
+    "go.mod",
+    "info.rkt",
+    "justfile",
+    "main.js",
+    "main.rkt",
+    "main.sh",
+    "main.ts",
+    "mise.toml",
+    "mix.exs",
+    "mvnw",
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "pkgIndex.tcl",
+    "pom.xml",
+    "project.clj",
+    "pubspec.yaml",
+    "pyproject.toml",
+    "rebar.config",
+    "requirements.txt",
+    "run.sh",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "setup.cfg",
+    "shard.yml",
+    "stack.yaml",
+    "tclapp.tcl",
+    "Taskfile.yml",
+    "Taskfile.yaml",
+    "uv.lock",
+    "v.mod",
+    "compose.yml",
+    "compose.yaml",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    ".devcontainer/devcontainer.json",
+    "scripts/release.ps1",
+    "scripts/release.sh",
+    ".env.local",
+    ".env",
+    "src/main/resources/application.properties",
+    "src/main/resources/application.yml",
+    "src/main/resources/application.yaml",
+    "appsettings.json",
+    "appsettings.Development.json",
+];
+
 fn task_notes(task_name: &str) -> Option<String> {
     if task_name.trim().is_empty() {
         return None;
@@ -784,7 +874,7 @@ fn source_bound_candidate_foundation(
     ))
     .map_err(DetectError::Candidate)?;
     let mut evidence_by_path = BTreeMap::<String, CandidateEvidence>::new();
-    let mut inventory_by_path = BTreeMap::<String, DiscoveryInventoryEntry>::new();
+    let discovery_inventory = detector_discovery_inventory(root)?;
     let mut changes = Vec::new();
 
     for inference in inferences {
@@ -797,13 +887,6 @@ fn source_bound_candidate_foundation(
             CandidateDisposition::Unknown
         };
         if let Some(evidence) = &evidence {
-            inventory_by_path
-                .entry(evidence.path.clone())
-                .or_insert_with(|| DiscoveryInventoryEntry {
-                    source_kind: evidence.source_kind.clone(),
-                    path: evidence.path.clone(),
-                    content_identity: Some(evidence.content_identity.clone()),
-                });
             evidence_by_path
                 .entry(evidence.path.clone())
                 .or_insert_with(|| evidence.clone());
@@ -830,7 +913,7 @@ fn source_bound_candidate_foundation(
         kind: CandidateKind::Detection,
         logical_root: String::from("."),
         discovery_inventory_identity: String::new(),
-        discovery_inventory: inventory_by_path.into_values().collect(),
+        discovery_inventory,
         evidence_manifest_identity: String::new(),
         evidence_manifest: evidence_by_path.into_values().collect(),
         existing_contract_snapshot_identity: None,
@@ -876,7 +959,11 @@ fn inference_source_evidence_path(
     if path.is_empty() || path.starts_with('/') || path.contains("..") {
         return Ok(None);
     }
-    let source_path = root.join(&path);
+    candidate_source_path(root, &path)
+}
+
+fn candidate_source_path(root: &Path, path: &str) -> Result<Option<String>, DetectError> {
+    let source_path = root.join(path);
     if !source_path.is_file() {
         return Ok(None);
     }
@@ -893,7 +980,111 @@ fn inference_source_evidence_path(
             "source `{path}` resolves outside the repository root"
         )));
     }
-    Ok(Some(path))
+    Ok(Some(path.to_string()))
+}
+
+fn detector_discovery_inventory(root: &Path) -> Result<Vec<DiscoveryInventoryEntry>, DetectError> {
+    let mut paths = BTreeSet::new();
+    paths.extend(
+        DETECT_DISCOVERY_ROOT_PATHS
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+
+    let workflows = root.join(".github/workflows");
+    if workflows.is_dir() {
+        for entry in fs::read_dir(&workflows).map_err(|source| DetectError::Read {
+            path: workflows.display().to_string(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| DetectError::Read {
+                path: workflows.display().to_string(),
+                source,
+            })?;
+            let path = entry.path();
+            if path.is_file()
+                && matches!(
+                    path.extension().and_then(|value| value.to_str()),
+                    Some("yml" | "yaml")
+                )
+                && let Ok(relative) = path.strip_prefix(root)
+            {
+                paths.insert(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    for path in find_files_with_extensions(root, &["sln", "csproj"], 4)? {
+        if let Ok(relative) = path.strip_prefix(root) {
+            paths.insert(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    matches!(
+                        extension.to_ascii_lowercase().as_str(),
+                        "opam" | "nimble" | "hxml" | "sh" | "ps1"
+                    )
+                })
+            && let Ok(relative) = path.strip_prefix(root)
+        {
+            paths.insert(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+
+    let mut inventory = Vec::new();
+    for path in paths {
+        let Some(path) = candidate_source_path(root, &path)? else {
+            continue;
+        };
+        let bytes = fs::read(root.join(&path)).map_err(|source| DetectError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        inventory.push(DiscoveryInventoryEntry {
+            source_kind: discovery_source_kind(&path).to_string(),
+            path,
+            content_identity: Some(contract_snapshot_hash(&bytes)),
+        });
+    }
+    Ok(inventory)
+}
+
+fn discovery_source_kind(path: &str) -> &'static str {
+    if matches!(path, "AGENTS.md" | "CLAUDE.md") {
+        "agent_guidance"
+    } else if path.starts_with(".github/workflows/") {
+        "ci_workflow"
+    } else if path.ends_with(".lock") || path == "uv.lock" {
+        "lockfile"
+    } else if path.ends_with(".sh") || path.ends_with(".ps1") || path == "mvnw" {
+        "script"
+    } else if path == ".devcontainer/devcontainer.json"
+        || path.ends_with("application.properties")
+        || path.ends_with("application.yml")
+        || path.ends_with("application.yaml")
+        || path.starts_with("appsettings")
+    {
+        "environment_config"
+    } else if path.ends_with(".tool-versions")
+        || path.starts_with('.')
+        || path.contains("toolchain")
+    {
+        "toolchain"
+    } else {
+        "manifest"
+    }
 }
 
 fn is_task_command(inference: &Inference) -> bool {
@@ -10836,6 +11027,45 @@ jobs:
         );
     }
 
+    #[test]
+    fn source_bound_candidate_identity_changes_with_inventory_only_guidance() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+        let first_report = detect_repo(fixture.path()).expect("first report");
+        let first = source_bound_candidate_foundation(fixture.path(), &first_report.inferences)
+            .expect("first candidate");
+
+        fixture.write("CLAUDE.md", "Repository guidance only.\n");
+        let second_report = detect_repo(fixture.path()).expect("second report");
+        let second = source_bound_candidate_foundation(fixture.path(), &second_report.inferences)
+            .expect("second candidate");
+
+        assert!(
+            first
+                .discovery_inventory
+                .iter()
+                .all(|entry| entry.path != "CLAUDE.md")
+        );
+        assert!(
+            second
+                .discovery_inventory
+                .iter()
+                .any(|entry| entry.path == "CLAUDE.md" && entry.source_kind == "agent_guidance")
+        );
+        assert_eq!(second.evidence_manifest, first.evidence_manifest);
+        assert_ne!(first.identity, second.identity);
+        assert_ne!(
+            first.discovery_inventory_identity,
+            second.discovery_inventory_identity
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn source_bound_candidate_refuses_detector_source_symlink_outside_root() {
@@ -10856,6 +11086,23 @@ jobs:
         .expect("source symlink");
 
         let error = detect_repo(fixture.path()).expect_err("escaped source must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("resolves outside the repository root")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_bound_candidate_refuses_inventory_source_symlink_outside_root() {
+        let fixture = Fixture::new();
+        let outside = TempDir::new().expect("outside fixture");
+        std::fs::write(outside.path().join(".nvmrc"), "22\n").expect("outside runtime marker");
+        std::os::unix::fs::symlink(outside.path().join(".nvmrc"), fixture.path().join(".nvmrc"))
+            .expect("source symlink");
+
+        let error = detect_repo(fixture.path()).expect_err("escaped inventory source must refuse");
         assert!(
             error
                 .to_string()
