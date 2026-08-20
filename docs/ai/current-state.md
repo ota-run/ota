@@ -447,8 +447,8 @@ durable agent workflow belongs in the canonical Ota skill.
   freshness refusing before authorization, and two executions of one broad three-task semantic
   scope consuming distinct work units with two valid archives. At that revision, V11.7 still
   required the hardened-launcher separation later proved by runs `31939777636` and `31953535665`.
-  Provider attestation is optional stronger follow-on hardening. V11.22 remains planning-only and
-  inactive; it does not
+  Provider attestation is optional stronger follow-on hardening. V11.22 is active for its
+  source-bound candidate and fail-closed closure-classification foundation; it does not
   consume crossing records as approval authority. V12 effect-bound refusal assurance is also
   planning-only and inactive until V11.22 completes; it does not widen the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
@@ -1119,9 +1119,14 @@ of the systemd carrier.
 Each terminal transaction is bound to a fresh runner-generated proof execution identity, and
 ordinary post-admission failures finalize explicitly; local content addressing remains integrity
 reconciliation rather than tamper-proof storage against the same host user.
-V11.22 remains planning-only and inactive. V12 effect-bound refusal assurance and V12.1
-secret-delivery governance are documented but also remain planning-only and inactive until their
-published prerequisites complete; do not widen the current authority implementation for either.
+V11.22 is active for its source-bound candidate and fail-closed closure-classification foundation.
+Its first implementation checkpoint demotes task-name, wrapper, opaque-shell, CI-fragment, and
+agent-guidance signals from agent authorization: they may remain review evidence, but cannot emit
+`safe_for_agent` or a starter executable agent boundary. Closure artifacts, candidate commands,
+contract writes, and external pressure remain open.
+V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
+inactive until their published prerequisites complete; do not widen the current authority
+implementation for either.
 The local real-OCI
 fixture plus create-chrome-extension run
 [30544809360](https://github.com/bobaikato/create-chrome-extension/actions/runs/30544809360)
@@ -1136,7 +1141,8 @@ Core broker-session, crossing, archive, schema, and JSON conformance tests plus 
 example/skill/site checks are green. Do not reopen V11.21 or widen its bounded claims. Provider
 attestation remains optional stronger follow-on hardening, and contract-authored
 `governance.crossing_requirements` remains explicit follow-on authoring work; neither is part of the
-completed V11.7 claim. V11.22 remains planned and inactive until it is explicitly activated.
+completed V11.7 claim. V11.22 is active only for its reviewed candidate and source-closure work;
+do not imply that a generated contract is approved, written, or pressure-proven.
 
 ## Working Rules
 

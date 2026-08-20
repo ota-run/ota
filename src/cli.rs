@@ -39663,8 +39663,8 @@ tasks:
         assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
         assert!(written.contains("tasks.dev.description: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
-        assert!(written.contains("protected_paths:"));
-        assert!(written.contains("- pnpm-lock.yaml"));
+        assert!(!written.contains("agent:"));
+        assert!(!written.contains("protected_paths:"));
         assert!(written.contains("metadata:"));
     }
 
@@ -40110,7 +40110,7 @@ tasks:
     }
 
     #[test]
-    fn detect_write_promotes_finite_node_script_tasks_only() {
+    fn detect_write_leaves_unresolved_node_package_scripts_out_of_the_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -40132,24 +40132,8 @@ tasks:
             json["config"]["tasks"]["setup"]["prepare"]["kind"],
             "dependency_hydration"
         );
-        assert_eq!(json["config"]["tasks"]["build"]["command"]["exe"], "npm");
-        assert_eq!(
-            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.build.run"],
-            "merged"
-        );
-        assert_eq!(
-            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.build.run"],
-            "promoted"
-        );
-        assert_eq!(json["config"]["tasks"]["check"]["command"]["exe"], "npm");
-        assert_eq!(
-            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.check.run"],
-            "merged"
-        );
-        assert_eq!(
-            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.check.run"],
-            "promoted"
-        );
+        assert!(json["config"]["tasks"]["build"].is_null());
+        assert!(json["config"]["tasks"]["check"].is_null());
         assert!(json["config"]["tasks"]["dev"].is_null());
     }
 
@@ -40202,7 +40186,7 @@ java {
     }
 
     #[test]
-    fn detect_write_marks_verifier_tasks_safe_for_agent() {
+    fn detect_write_does_not_mark_unresolved_package_scripts_safe_for_agent() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -40242,9 +40226,9 @@ java {
             .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
             .is_some();
 
-        assert_eq!(test_safe, Some(true));
-        assert_eq!(typecheck_safe, Some(true));
-        assert!(build_safe_present);
+        assert_eq!(test_safe, None);
+        assert_eq!(typecheck_safe, None);
+        assert!(!build_safe_present);
     }
 
     #[test]
@@ -40358,7 +40342,7 @@ project:
     }
 
     #[test]
-    fn detect_merge_adds_safe_for_agent_for_added_verifier_task() {
+    fn detect_merge_does_not_add_safe_for_agent_for_unresolved_package_script() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -40387,7 +40371,7 @@ project:
             .and_then(YamlValue::as_mapping)
             .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
             .and_then(YamlValue::as_bool);
-        assert_eq!(safe, Some(true));
+        assert_eq!(safe, None);
     }
 
     #[test]

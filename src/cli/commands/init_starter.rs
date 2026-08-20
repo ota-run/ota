@@ -1467,19 +1467,10 @@ fn starter_agent_safe_tasks(contract: &DetectContract) -> Vec<String> {
     }
 
     let mut safe_tasks = Vec::new();
-    for task_name in ["test"] {
-        if contract.tasks.contains_key(task_name) {
-            safe_tasks.push(task_name.to_string());
-        }
-    }
     for (task_name, task) in &contract.tasks {
         if task.safe_for_agent && !safe_tasks.iter().any(|safe| safe == task_name) {
             safe_tasks.push(task_name.clone());
         }
-    }
-
-    if safe_tasks.is_empty() && contract.tasks.contains_key("setup") {
-        safe_tasks.push(String::from("setup"));
     }
 
     safe_tasks
@@ -3625,7 +3616,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_contract_prefers_explicit_agent_doc_boundary_truth() {
+    fn bootstrap_contract_does_not_create_agent_boundary_from_guidance_alone() {
         let fixture = TempDir::new().expect("fixture");
         std::fs::write(
             fixture.path().join("package.json"),
@@ -3654,29 +3645,11 @@ mod tests {
 
         let report = crate::detector::detect_repo(fixture.path()).expect("detect report");
         let contract = bootstrap_init_contract(&report);
-        let agent = contract.agent.as_ref().expect("agent");
 
-        assert_eq!(agent.safe_tasks, vec![String::from("lint")]);
-        assert_eq!(agent.verify_after_changes, vec![String::from("lint")]);
-        assert_eq!(
-            agent.writable_paths,
-            vec![String::from("docs"), String::from("src")]
+        assert!(
+            contract.agent.is_none(),
+            "repository guidance cannot create an executable agent boundary without an affirmatively safe task"
         );
-        assert_eq!(
-            agent.protected_paths,
-            vec![
-                String::from(".github/workflows"),
-                String::from("package.json")
-            ]
-        );
-        assert_eq!(
-            agent
-                .inferred_boundary
-                .as_ref()
-                .map(|boundary| boundary.provenance.writable_paths.clone()),
-            Some(vec![String::from("detect:agent_boundary_doc")])
-        );
-        assert_eq!(agent.default_task.as_deref(), Some("lint"));
     }
 
     #[test]
@@ -4184,7 +4157,9 @@ java {
                 depends_on: Vec::new(),
                 notes: None,
                 internal: false,
-                safe_for_agent: false,
+                // This fixture represents a future closure-classified task; ordinary detection
+                // no longer supplies this affirmation from the task name alone.
+                safe_for_agent: true,
             },
         );
         let mut tools = BTreeMap::new();

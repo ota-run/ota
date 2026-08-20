@@ -24,9 +24,10 @@
 
 # V11.22: Contract Creation and Quality UX
 
-Status: planned and inactive. This is the next OSS planning slice after completed V11.21 and
-V11.7. It does not authorize implementation until this plan receives review and is explicitly
-activated.
+Status: active. This OSS authoring slice follows completed V11.21 and V11.7. Activation authorizes
+only the reviewed source-bound candidate and fail-closed execution-closure foundation; public
+candidate commands, contract writes, and external pressure claims remain gated by their own
+implementation and proof bars.
 
 ## Sequencing
 
@@ -40,8 +41,8 @@ follow-on authoring work.
 
 V11.22 neither authorizes execution nor consumes a crossing record as candidate authority, so its
 candidate model does not depend on a crossing record. V11.7 completion satisfies this sequencing
-prerequisite, but V11.22 remains inactive until explicit activation. It must not imply that a
-crossing record is approval or grant authority.
+prerequisite, and V11.22 is now active. It must not imply that a crossing record is approval or
+grant authority.
 
 ## Problem
 

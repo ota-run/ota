@@ -201,9 +201,9 @@ The completed sandbox-enforcement slice is:
 
 The subsequent planned OSS authoring slice is:
 
-- [V11.22: contract creation and quality UX](../v11.22/plan.md) - planned and inactive. It makes
-  deterministic, source-bound contract candidates and existing V11.14 assurance legible without
-  inventing a second claim model or hosted intelligence dependency.
+- [V11.22: contract creation and quality UX](../v11.22/plan.md) - active. It is implementing
+  deterministic, source-bound contract candidates and fail-closed execution-closure classification
+  without inventing a second claim model or hosted intelligence dependency.
 
 One deferred harness-integration follow-on is recorded in the completed
 [V11.6 plan](../v11.6/plan.md#deferred-integration-follow-on-agent-evaluation-disposition): an

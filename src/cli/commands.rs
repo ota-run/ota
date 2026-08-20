@@ -39422,36 +39422,7 @@ fn build_detect_write_candidate(report: &DetectReport) -> Option<DetectContract>
 }
 
 fn widen_detect_write_candidate(report: &DetectReport, candidate: &mut DetectContract) {
-    promote_detect_write_node_tasks(report, candidate);
     promote_detect_write_java_tasks(report, candidate);
-}
-
-fn promote_detect_write_node_tasks(report: &DetectReport, candidate: &mut DetectContract) {
-    if !report.root.join("package.json").exists() {
-        return;
-    }
-
-    for (name, task) in &report.contract.tasks {
-        if candidate.tasks.contains_key(name) || !is_promotable_node_detect_write_task(name, task) {
-            continue;
-        }
-        candidate.tasks.insert(name.clone(), task.clone());
-    }
-}
-
-fn is_promotable_node_detect_write_task(name: &str, task: &DetectTask) -> bool {
-    if name.eq_ignore_ascii_case("setup") || task.run.is_empty() {
-        return false;
-    }
-    let package_manager_script = task.run.starts_with("npm run ")
-        || task.run.starts_with("pnpm ")
-        || task.run.starts_with("yarn ")
-        || task.run.starts_with("bun run ");
-    if !package_manager_script {
-        return false;
-    }
-
-    task.safe_for_agent || name == "build"
 }
 
 fn promote_detect_write_java_tasks(report: &DetectReport, candidate: &mut DetectContract) {

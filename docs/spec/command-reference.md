@@ -1956,11 +1956,11 @@ Current behavior:
 - low-confidence fields remain excluded from plain `ota init` writes
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
-- when the detected tasks are confident enough, the starter contract now keeps a derived `agent` block and review notes even when writable-path inference is still partial; ota now combines broader common app/source directories with detector-backed nested project roots and a bounded stack-aware source-root scan so custom code roots can surface in `agent.writable_paths` without falling back to `.`, while detector-backed control files such as manifests and lockfiles now surface explicitly in `agent.protected_paths` and operational directories such as `config`, `database`, `migrations`, `manifests`, `deploy`, and `infra` stay out of the default starter allowlist
+- starter `agent` guidance requires an explicitly approved safe task from contract or pack truth; detector confidence, task names, wrappers, shell markers, CI snippets, and repository guidance never create that executable boundary. When an approved task exists, ota combines broader common app/source directories with detector-backed nested project roots and a bounded stack-aware source-root scan so custom code roots can surface in `agent.writable_paths` without falling back to `.`, while detector-backed control files such as manifests and lockfiles now surface explicitly in `agent.protected_paths` and operational directories such as `config`, `database`, `migrations`, `manifests`, `deploy`, and `infra` stay out of the default starter allowlist
 - starter contracts now also carry `agent.inferred_boundary.reviewed: false` plus provenance for the inferred writable and protected paths, so the boundary is visible as inferred state rather than silent starter magic; detector-led init uses `detect:...` provenance, while explicit pack mode uses `init:...` provenance for the starter defaults it owns
 - those starter `agent.notes` now explicitly tell authors to review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before trusting automation
 - starter contracts protect `ota.yaml` by default; if a future starter intentionally grants contract-authoring authority with writable `ota.yaml`, it should also carry `agent.exceptions.sensitive_writes: [ota.yaml]` instead of leaving that sensitivity implicit
-- detector-led `ota init --dry-run` now renders the same explicit `Agent boundary` outcome as detect preview, so repos without a safe inferred task see why the starter omits `agent` instead of having to infer that omission from the YAML alone
+- detector-led `ota init --dry-run` now renders the same explicit `Agent boundary` outcome as detect preview, so repos without an approved safe task see why the starter omits `agent` instead of having to infer that omission from the YAML alone
 
 Choosing an init path:
 
@@ -3102,7 +3102,7 @@ Dry-run behavior:
 - when `ota.yaml` already exists, text output leads with the existing-contract comparison and drift review before the inferred contract details
 - existing-contract add/update lines include the detector source and confidence for the proposed value
 - when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
-- text preview now renders an explicit `Agent boundary` outcome: `Inferred` when safe tasks were inferred, `Partially inferred` when only writable/protected boundary defaults were inferred, and `Omitted` when ota intentionally withholds the starter `agent` block because no safe task was inferred
+- text preview now renders an explicit `Agent boundary` outcome: `Inferred` only when safe task truth is contract-owned or affirmatively classified, `Partially inferred` when only writable/protected boundary defaults were inferred, and `Omitted` when ota intentionally withholds the starter `agent` block because no approved safe task was established
 - PowerShell-script detection now emits `runtimes.pwsh` for `pwsh`-based repos instead of the legacy `runtimes.powershell` key, so the inferred contract and later runtime probes stay aligned with the detected task/tool surface
 - does not write anything
 
@@ -3221,13 +3221,13 @@ Current precedence is conservative:
   `package.json#engines.node` is treated as high-confidence `toolchains.node` runtime truth;
   without a package manager signal, it stays conservative
 - when `package.json#packageManager` is absent, known repo-local Node package-manager markers such as workspace files and lockfiles can determine the tool and task command prefix conservatively
-- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`,
-  `fmt`) are marked with `safe_for_agent: true` only when the inferred lane still looks like a
-  bounded verification command; orchestration-flavored lanes such as `docker:test` stay
-  unsafe-by-default, watch/dev/serve variants stay unsafe-by-default because they are usually
-  long-running, and other inferred tasks stay unsafe-by-default
-- GitHub Actions `run:` lines that still contain `${{ ... }}` interpolation are excluded from
-  command-truth inference instead of being promoted into repo task bodies
+- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`, and
+  `fmt`) remain runnable review candidates, not agent-safe authorization. Ota does not infer
+  `safe_for_agent: true` from task names, package/task-runner wrappers, or opaque shell scripts;
+  maintainer-owned contract truth remains required until the V11.22 closure classifier can prove a
+  complete affirmative safety basis
+- GitHub Actions `run:` lines containing `${{ ... }}` interpolation or shell-variable expansion
+  are excluded from command-truth inference instead of being promoted into repo task bodies
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
 - `uv.lock` can contribute `uv` tool inference conservatively
 - `requirements.txt` can contribute `pip` tool inference conservatively

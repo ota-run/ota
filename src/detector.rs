@@ -794,10 +794,6 @@ fn detect_agent_boundary_docs(root: &Path, builder: &mut DetectBuilder) -> Resul
         }
 
         let confidence = Confidence::Medium;
-        let safe_tasks_source = format!("{file_name}#safe_tasks");
-        for task_name in parsed.safe_tasks.unwrap_or_default() {
-            builder.add_agent_safe_task(task_name, safe_tasks_source.clone(), confidence);
-        }
         let verify_source = format!("{file_name}#verify_after_changes");
         for task_name in parsed.verify_after_changes.unwrap_or_default() {
             builder.add_agent_verify_after_change(task_name, verify_source.clone(), confidence);
@@ -809,14 +805,6 @@ fn detect_agent_boundary_docs(root: &Path, builder: &mut DetectBuilder) -> Resul
         let protected_source = format!("{file_name}#protected_paths");
         for path_name in parsed.protected_paths.unwrap_or_default() {
             builder.add_agent_protected_path(path_name, protected_source.clone(), confidence);
-        }
-        for task_command in parsed.task_commands {
-            builder.set_task(
-                task_command.task_name.clone(),
-                task_command.command,
-                format!("{file_name}#commands.{}", task_command.source_key),
-                Confidence::Low,
-            );
         }
     }
 
@@ -1417,6 +1405,7 @@ pub(crate) fn ci_bounded_shell_command_line(raw_line: &str) -> Option<String> {
     if line.is_empty()
         || line.starts_with('#')
         || line.contains("${{")
+        || line.contains('$')
         || line.contains("&&")
         || line.contains("||")
     {
@@ -4541,9 +4530,9 @@ fn detect_bash_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
         })
     };
 
-    let Some(script) = script else {
+    if script.is_none() {
         return Ok(());
-    };
+    }
 
     builder.set_tool(
         "bash".to_string(),
@@ -4557,32 +4546,17 @@ fn detect_bash_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
         "bash-script".to_string(),
         Confidence::Medium,
     );
-    builder.set_project_name(
-        Path::new(&script)
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("shell-app")
-            .to_string(),
-        "bash-script".to_string(),
-        Confidence::Medium,
-    );
-    builder.set_task(
-        "run".to_string(),
-        format!("bash {script}"),
-        "bash-script".to_string(),
-        Confidence::High,
-    );
-
     Ok(())
 }
 
 fn detect_powershell_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
-    let Some(script) = find_extension_file(root, "ps1")?.and_then(|path| {
+    let script = find_extension_file(root, "ps1")?.and_then(|path| {
         path.file_name()
             .map(|name| name.to_string_lossy().to_string())
-    }) else {
+    });
+    if script.is_none() {
         return Ok(());
-    };
+    }
 
     builder.set_tool(
         "pwsh".to_string(),
@@ -4596,22 +4570,6 @@ fn detect_powershell_markers(root: &Path, builder: &mut DetectBuilder) -> Result
         "powershell-script".to_string(),
         Confidence::Medium,
     );
-    builder.set_project_name(
-        Path::new(&script)
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("powershell-app")
-            .to_string(),
-        "powershell-script".to_string(),
-        Confidence::Medium,
-    );
-    builder.set_task(
-        "run".to_string(),
-        format!("pwsh -File {script}"),
-        "powershell-script".to_string(),
-        Confidence::High,
-    );
-
     Ok(())
 }
 
@@ -5878,13 +5836,9 @@ impl DetectBuilder {
                     safe_for_agent: false,
                 },
             );
-            let inferred_safe_for_agent = is_agent_safe_verifier_task(name.as_str(), run.as_str());
             self.record(field, run, source.clone(), confidence);
             if internal {
                 self.set_task_internal(name.clone(), source.clone(), confidence);
-            }
-            if inferred_safe_for_agent {
-                self.set_task_safe_for_agent(name, source, confidence);
             }
         }
     }
@@ -5897,28 +5851,6 @@ impl DetectBuilder {
         if let Some(task) = self.contract.tasks.get_mut(&name) {
             task.internal = true;
             self.record(field, String::from("true"), source, confidence);
-        }
-    }
-
-    fn set_task_safe_for_agent(&mut self, name: String, source: String, confidence: Confidence) {
-        let field = format!("tasks.{name}.safe_for_agent");
-        if !self.should_replace(&field, &source, confidence) {
-            return;
-        }
-        if let Some(task) = self.contract.tasks.get_mut(&name) {
-            task.safe_for_agent = true;
-            self.record(field, String::from("true"), source, confidence);
-        }
-    }
-
-    fn add_agent_safe_task(&mut self, task_name: String, source: String, confidence: Confidence) {
-        let normalized = task_name.trim();
-        if normalized.is_empty() {
-            return;
-        }
-        let field = format!("agent.safe_tasks.{normalized}");
-        if self.should_replace(&field, &source, confidence) {
-            self.record(field, normalized.to_string(), source, confidence);
         }
     }
 
@@ -6691,16 +6623,13 @@ fn inference_task_name(field: &str) -> Option<&str> {
 }
 
 fn inference_agent_safe_for_field(field: &str, value: &str) -> Option<InferenceAgentSafe> {
-    let task_name = inference_task_name(field)?;
+    inference_task_name(field)?;
     if field.ends_with(".safe_for_agent") {
         return Some(if value == "true" {
             InferenceAgentSafe::Yes
         } else {
             InferenceAgentSafe::No
         });
-    }
-    if is_agent_safe_verifier_task_name(task_name) {
-        return Some(InferenceAgentSafe::Yes);
     }
     Some(InferenceAgentSafe::Unknown)
 }
@@ -7011,10 +6940,6 @@ fn is_verifier_task_name(name: &str) -> bool {
         })
 }
 
-fn is_agent_safe_verifier_task(name: &str, command: &str) -> bool {
-    is_agent_safe_verifier_task_name(name) && !has_obviously_effectful_boundary_tokens(command)
-}
-
 fn is_agent_safe_verifier_task_name(name: &str) -> bool {
     is_verifier_task_name(name)
         && !is_long_running_task_name(name)
@@ -7070,10 +6995,20 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{Confidence, InferenceSourceClass, detect_repo};
+    use super::{Confidence, DetectReport, InferenceSourceClass, detect_repo};
     use crate::schema::{
         EnvSource, EnvSourceKind, ServiceManagerKind, ServiceReadinessKind, ToolchainProvider,
     };
+
+    fn assert_agent_guidance_does_not_emit_task_truth(report: &DetectReport) {
+        assert!(
+            !report.inferences.iter().any(|inference| {
+                inference.source.starts_with("AGENTS.md#commands")
+                    || inference.source.starts_with("CLAUDE.md#commands")
+            }),
+            "agent guidance must not create runnable task truth"
+        );
+    }
 
     #[test]
     fn prefers_nvmrc_over_package_json_engines() {
@@ -7210,13 +7145,13 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "agent.safe_tasks.test"
-                && inference.value == "test"
-                && inference.source == "AGENTS.md#safe_tasks"
-                && inference.source_class == InferenceSourceClass::AgentBoundary
-                && inference.confidence == Confidence::Medium
-        }));
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.field.starts_with("agent.safe_tasks.")),
+            "repository guidance cannot authorize agent-safe execution"
+        );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "agent.verify_after_changes.test"
                 && inference.source == "AGENTS.md#verify_after_changes"
@@ -7235,7 +7170,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_structured_agent_doc_command_section_as_low_authority_task_guidance() {
+    fn does_not_promote_structured_agent_doc_command_sections_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "AGENTS.md",
@@ -7251,38 +7186,11 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.build.run"
-                && inference.value == "task build"
-                && inference.source == "AGENTS.md#commands.build"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "task test"
-                && inference.source == "AGENTS.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.lint.run"
-                && inference.value == "task lint"
-                && inference.source == "AGENTS.md#commands.lint"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.docs.run"
-                && inference.value == "task docs"
-                && inference.source == "AGENTS.md#commands.docs"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
-    fn detects_structured_claude_doc_command_table_as_low_authority_task_guidance() {
+    fn does_not_promote_structured_claude_doc_command_tables_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "CLAUDE.md",
@@ -7301,17 +7209,11 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.build.run"
-                && inference.value == "yaah generate"
-                && inference.source == "CLAUDE.md#commands.build"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
-    fn detects_structured_agent_doc_command_first_table_as_low_authority_task_guidance() {
+    fn does_not_promote_structured_agent_doc_command_first_tables_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "AGENTS.md",
@@ -7330,38 +7232,11 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.build.run"
-                && inference.value == "pnpm run build"
-                && inference.source == "AGENTS.md#commands.build"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.check.run"
-                && inference.value == "pnpm run check"
-                && inference.source == "AGENTS.md#commands.check"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "pnpm run test"
-                && inference.source == "AGENTS.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.typecheck.run"
-                && inference.value == "pnpm run typecheck"
-                && inference.source == "AGENTS.md#commands.typecheck"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
-    fn detects_structured_agent_doc_command_first_table_for_direct_tool_families() {
+    fn does_not_promote_agent_doc_direct_tool_commands_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "AGENTS.md",
@@ -7379,27 +7254,7 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "pytest tests/unit"
-                && inference.source == "AGENTS.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.lint.run"
-                && inference.value == "ruff check pynetbox/ tests/"
-                && inference.source == "AGENTS.md#commands.lint"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.build.run"
-                && inference.value == "python -m build"
-                && inference.source == "AGENTS.md#commands.build"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
@@ -7422,31 +7277,11 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "pytest tests/unit"
-                && inference.source == "AGENTS.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.lint.run"
-                && inference.value == "ruff check src/ tests/"
-                && inference.source == "AGENTS.md#commands.lint"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.build.run"
-                && inference.value == "python -m build"
-                && inference.source == "AGENTS.md#commands.build"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
-    fn detects_structured_agent_doc_command_first_table_for_wrapped_test_aliases() {
+    fn does_not_promote_agent_doc_wrapped_test_aliases_to_task_truth() {
         for command in [
             "python3 -m pytest tests/unit",
             "uv run pytest tests/integration",
@@ -7469,18 +7304,12 @@ mod tests {
 
             let report = detect_repo(fixture.path()).unwrap();
 
-            assert!(report.inferences.iter().any(|inference| {
-                inference.field == "tasks.test.run"
-                    && inference.value == command
-                    && inference.source == "AGENTS.md#commands.test"
-                    && inference.source_class == InferenceSourceClass::TaskCommand
-                    && inference.confidence == Confidence::Low
-            }));
+            assert_agent_guidance_does_not_emit_task_truth(&report);
         }
     }
 
     #[test]
-    fn detects_structured_agent_doc_task_table_for_natural_language_labels() {
+    fn does_not_promote_agent_doc_natural_language_task_tables_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "AGENTS.md",
@@ -7498,31 +7327,11 @@ mod tests {
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.fmt.run"
-                && inference.value == "./scripts/format.sh"
-                && inference.source == "AGENTS.md#commands.fmt"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "./scripts/run_tests.sh"
-                && inference.source == "AGENTS.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.typecheck.run"
-                && inference.value == "./scripts/run_mypy.sh"
-                && inference.source == "AGENTS.md#commands.typecheck"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
-    fn detects_structured_agent_doc_task_table_under_individual_commands_heading() {
+    fn does_not_promote_agent_doc_individual_command_tables_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "AGENTS.md",
@@ -7541,24 +7350,11 @@ Available scripts in the `scripts/` directory:
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "./scripts/run_tests.sh"
-                && inference.source == "AGENTS.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.typecheck.run"
-                && inference.value == "./scripts/run_mypy.sh"
-                && inference.source == "AGENTS.md#commands.typecheck"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
-    fn detects_structured_agent_doc_task_table_under_quick_reference_commands_heading() {
+    fn does_not_promote_agent_doc_quick_reference_tables_to_task_truth() {
         let fixture = Fixture::new();
         fixture.write(
             "CLAUDE.md",
@@ -7576,27 +7372,7 @@ Available scripts in the `scripts/` directory:
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.test.run"
-                && inference.value == "pnpm run test"
-                && inference.source == "CLAUDE.md#commands.test"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.format:diff.run"
-                && inference.value == "pnpm run format:diff"
-                && inference.source == "CLAUDE.md#commands.format:diff"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
-        assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tasks.build.run"
-                && inference.value == "pnpm run build"
-                && inference.source == "CLAUDE.md#commands.build"
-                && inference.source_class == InferenceSourceClass::TaskCommand
-                && inference.confidence == Confidence::Low
-        }));
+        assert_agent_guidance_does_not_emit_task_truth(&report);
     }
 
     #[test]
@@ -8134,7 +7910,7 @@ gem "rails"
                 .tasks
                 .get("test")
                 .map(|task| task.safe_for_agent),
-            Some(true)
+            Some(false)
         );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "toolchains.dotnet.version"
@@ -9029,7 +8805,7 @@ solc_version = "0.8.25"
     }
 
     #[test]
-    fn detects_bash_script_signals() {
+    fn treats_opaque_bash_scripts_as_toolchain_evidence_only() {
         let fixture = Fixture::new();
         fixture.write("main.sh", "#!/usr/bin/env bash\necho \"hello\"\n");
 
@@ -9039,22 +8815,39 @@ solc_version = "0.8.25"
             report.contract.runtimes.get("shell"),
             Some(&"*".to_string())
         );
-        assert_eq!(
+        assert!(!report.inferences.iter().any(
+            |inference| inference.field == "project.name" && inference.source == "bash-script"
+        ));
+        assert!(!report.contract.tasks.contains_key("run"));
+    }
+
+    #[test]
+    fn does_not_use_install_script_as_workspace_project_identity() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Cargo.toml",
+            r#"
+[workspace]
+members = ["crates/*"]
+"#,
+        );
+        fixture.write("install.sh", "#!/usr/bin/env bash\necho install\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_ne!(
             report
                 .contract
                 .project
                 .as_ref()
                 .map(|project| project.name.as_str()),
-            Some("main")
+            Some("install")
         );
-        assert_eq!(
-            report
-                .contract
-                .tasks
-                .get("run")
-                .map(|task| task.run.as_str()),
-            Some("bash main.sh")
-        );
+        assert!(!report.inferences.iter().any(
+            |inference| inference.field == "project.name" && inference.source == "bash-script"
+        ));
+        assert!(!report.contract.tasks.contains_key("run"));
+        assert_eq!(report.contract.tools.get("cargo"), Some(&String::from("*")));
     }
 
     #[test]
@@ -9066,22 +8859,10 @@ solc_version = "0.8.25"
         assert_eq!(report.contract.tools.get("pwsh"), Some(&"*".to_string()));
         assert_eq!(report.contract.runtimes.get("pwsh"), Some(&"*".to_string()));
         assert!(!report.contract.runtimes.contains_key("powershell"));
-        assert_eq!(
-            report
-                .contract
-                .project
-                .as_ref()
-                .map(|project| project.name.as_str()),
-            Some("bootstrap")
-        );
-        assert_eq!(
-            report
-                .contract
-                .tasks
-                .get("run")
-                .map(|task| task.run.as_str()),
-            Some("pwsh -File bootstrap.ps1")
-        );
+        assert!(!report.inferences.iter().any(|inference| {
+            inference.field == "project.name" && inference.source == "powershell-script"
+        }));
+        assert!(!report.contract.tasks.contains_key("run"));
     }
 
     #[test]
@@ -9124,7 +8905,7 @@ solc_version = "0.8.25"
                 .tasks
                 .get("lint")
                 .map(|task| task.safe_for_agent),
-            Some(true)
+            Some(false)
         );
     }
 
@@ -9865,7 +9646,7 @@ channel = "1.85.0"
                 .tasks
                 .get("test")
                 .map(|task| task.safe_for_agent),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             report
@@ -10517,7 +10298,7 @@ pnpm = "9.9.0"
                 .tasks
                 .get("test")
                 .map(|task| (task.run.as_str(), task.safe_for_agent)),
-            Some(("devbox run test", true))
+            Some(("devbox run test", false))
         );
         assert_eq!(
             report
@@ -10778,6 +10559,31 @@ jobs:
     }
 
     #[test]
+    fn does_not_promote_ci_commands_with_shell_variable_expansion() {
+        let fixture = Fixture::new();
+        fixture.write(
+            ".github/workflows/ci.yml",
+            r#"
+name: ci
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          project=src/app.csproj
+          dotnet build "$project" --configuration Release
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            !report.contract.tasks.contains_key("build"),
+            "CI shell-variable commands must remain unresolved rather than becoming task truth"
+        );
+    }
+
+    #[test]
     fn ignores_github_actions_node_package_manager_flag_invocations() {
         let fixture = Fixture::new();
         fixture.write(
@@ -10882,7 +10688,7 @@ jobs:
                 .tasks
                 .get("typecheck")
                 .map(|task| task.safe_for_agent),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             contract
@@ -10893,7 +10699,7 @@ jobs:
         );
         assert_eq!(
             contract.tasks.get("build").map(|task| task.safe_for_agent),
-            Some(true)
+            Some(false)
         );
 
         assert!(
@@ -10905,12 +10711,10 @@ jobs:
             "expected npm tool inference from package-lock.json with high confidence"
         );
         assert!(
-            report.inferences.iter().any(|inference| {
-                inference.field == "tasks.typecheck.safe_for_agent"
-                    && inference.value == "true"
-                    && inference.confidence == Confidence::High
+            !report.inferences.iter().any(|inference| {
+                inference.field == "tasks.typecheck.safe_for_agent" && inference.value == "true"
             }),
-            "expected typecheck verifier tasks to be marked safe_for_agent=true"
+            "name-only verifier detection must not infer agent safety"
         );
     }
 

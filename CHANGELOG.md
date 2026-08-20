@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Tighten `ota detect` agent-safety inference. Detected task names, package/task-runner wrappers,
+  opaque shell scripts, and CI `run:` fragments no longer emit `safe_for_agent: true` merely
+  because they resemble verification. Shell-variable and GitHub-expression CI commands remain
+  outside command-truth inference; shell markers contribute toolchain presence only. Detected
+  tasks remain reviewable runnable candidates until Ota ships the V11.22 closure classifier and a
+  maintainer explicitly applies a reviewed contract change.
+
 - Strengthen runtime-proof negative-control evidence for downstream consumers. A validated
   dependency-level projection now names its canonical `negative_control_id`; it is emitted only
   with same-obligation, expected-missing-effect, and failure-attestation evidence. Consumers can
