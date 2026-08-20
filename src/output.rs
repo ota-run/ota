@@ -807,6 +807,9 @@ pub struct ProofRuntimeDependencyNegativeControl {
     pub evidence_class: ExecutionEvidenceClass,
     pub status: ProofRuntimeNegativeControlStatus,
     pub same_obligation: bool,
+    /// Canonical top-level negative-control record referenced by a validated projection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negative_control_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_mode: Option<ProofRuntimeNegativeControlFailureMode>,
     #[serde(skip_serializing_if = "Option::is_none")]

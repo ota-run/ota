@@ -333,6 +333,65 @@ fn assert_matches_schema(schema_name: &str, instance: &Value) {
     }
 }
 
+fn assert_negative_control_projection_consistent(proof: &Value) -> Result<(), &'static str> {
+    let dependency_evidence = proof
+        .get("dependency_evidence")
+        .and_then(Value::as_array)
+        .ok_or("missing dependency evidence")?;
+    let canonical = proof.get("negative_control").and_then(Value::as_object);
+
+    for evidence in dependency_evidence {
+        let level = evidence.get("level").and_then(Value::as_str);
+        let projection = evidence.get("negative_control");
+        if level == Some("fault_tested") && projection.is_none() {
+            return Err("fault-tested evidence has no negative-control projection");
+        }
+        let Some(projection) = projection else {
+            continue;
+        };
+        let projection_validated =
+            projection.get("status").and_then(Value::as_str) == Some("validated");
+        if level == Some("fault_tested") && !projection_validated {
+            return Err("fault-tested evidence has an invalid negative-control projection");
+        }
+        if !projection_validated {
+            continue;
+        }
+        if level != Some("fault_tested") {
+            return Err("validated projection is not attached to fault-tested evidence");
+        }
+        let canonical =
+            canonical.ok_or("validated projection has no canonical negative control")?;
+        if canonical.get("status").and_then(Value::as_str) != Some("validated")
+            || canonical.get("outcome").and_then(Value::as_str)
+                != Some("expected_obligation_failed")
+            || canonical.get("failure_mode").and_then(Value::as_str)
+                != Some("expected_missing_effect")
+            || canonical.get("evidence_class").and_then(Value::as_str) != Some("attested")
+            || canonical.get("failure_attestation_digest").is_none()
+        {
+            return Err("canonical negative control is not a validated attestation");
+        }
+        if projection.get("same_obligation").and_then(Value::as_bool) != Some(true) {
+            return Err("validated projection does not claim the same obligation");
+        }
+        for (projection_field, canonical_field) in [
+            ("negative_control_id", "id"),
+            ("failure_attestation_digest", "failure_attestation_digest"),
+        ] {
+            if projection.get(projection_field) != canonical.get(canonical_field) {
+                return Err("projection does not match the canonical negative control");
+            }
+        }
+        if evidence.get("dependency_id") != canonical.get("dependency_id")
+            || evidence.get("proof_obligation_id") != canonical.get("obligation_id")
+        {
+            return Err("projection parent does not match the canonical negative control");
+        }
+    }
+    Ok(())
+}
+
 fn assert_rejects_schema(schema_name: &str, instance: &Value) {
     let schema_path = schema_dir().join(schema_name);
     let raw_schema = load_json(&schema_path);
@@ -1441,6 +1500,7 @@ workflows:
                 "evidence_class": "derived",
                 "status": "validated",
                 "same_obligation": true,
+                "negative_control_id": "postgres-down",
                 "failure_mode": "expected_missing_effect",
                 "failure_attestation_digest": "sha256:control"
             }
@@ -1491,6 +1551,52 @@ workflows:
         }
     ]);
     assert_matches_schema("proof-runtime.json", &seam_proof);
+    assert_negative_control_projection_consistent(&seam_proof)
+        .expect("validated projection must reconcile with its canonical negative control");
+
+    let mut changed_digest = seam_proof.clone();
+    changed_digest["dependency_evidence"][0]["negative_control"]["failure_attestation_digest"] =
+        serde_json::json!("sha256:substituted");
+    assert!(assert_negative_control_projection_consistent(&changed_digest).is_err());
+
+    let mut changed_control = seam_proof.clone();
+    changed_control["dependency_evidence"][0]["negative_control"]["negative_control_id"] =
+        serde_json::json!("substituted-control");
+    assert!(assert_negative_control_projection_consistent(&changed_control).is_err());
+
+    let mut changed_obligation = seam_proof.clone();
+    changed_obligation["dependency_evidence"][0]["proof_obligation_id"] =
+        serde_json::json!("substituted-obligation");
+    assert!(assert_negative_control_projection_consistent(&changed_obligation).is_err());
+
+    let mut changed_dependency = seam_proof.clone();
+    changed_dependency["dependency_evidence"][0]["dependency_id"] =
+        serde_json::json!("service:substituted");
+    assert!(assert_negative_control_projection_consistent(&changed_dependency).is_err());
+
+    let mut changed_status = seam_proof.clone();
+    changed_status["negative_control"]["status"] = serde_json::json!("invalid");
+    assert!(assert_negative_control_projection_consistent(&changed_status).is_err());
+
+    let mut changed_outcome = seam_proof.clone();
+    changed_outcome["negative_control"]["outcome"] = serde_json::json!("nonzero_exit_observed");
+    assert!(assert_negative_control_projection_consistent(&changed_outcome).is_err());
+
+    let mut changed_failure_mode = seam_proof.clone();
+    changed_failure_mode["negative_control"]["failure_mode"] = serde_json::json!("timeout");
+    assert!(assert_negative_control_projection_consistent(&changed_failure_mode).is_err());
+
+    let mut missing_projection = seam_proof.clone();
+    missing_projection["dependency_evidence"][0]
+        .as_object_mut()
+        .expect("dependency evidence object")
+        .remove("negative_control");
+    assert!(assert_negative_control_projection_consistent(&missing_projection).is_err());
+
+    let mut invalid_projection = seam_proof.clone();
+    invalid_projection["dependency_evidence"][0]["negative_control"]["status"] =
+        serde_json::json!("invalid");
+    assert!(assert_negative_control_projection_consistent(&invalid_projection).is_err());
 
     let up_log = fixture
         .path()

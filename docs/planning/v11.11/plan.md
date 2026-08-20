@@ -456,11 +456,12 @@ promotion.
 
 ```json
 {
-  "level": "exercised",
+  "level": "fault_tested",
   "negative_control": {
-    "status": "unrun | invalid | validated",
+    "status": "validated",
     "same_obligation": true,
-    "failure_mode": "expected_missing_effect | setup_failure | timeout | crash | transport_failure | wrong_assertion | unclassified_nonzero",
+    "negative_control_id": "postgres-unavailable",
+    "failure_mode": "expected_missing_effect",
     "failure_attestation_digest": "sha256:..."
   }
 }
@@ -475,7 +476,11 @@ Rules:
   must preserve `not_proved` for causal dependency necessity
 - `validated` requires runner-verified correlation to the selected green obligation and a
   non-secret digest of the structured failure attestation from that same control transaction, with
-  runner-derived `failure_mode: expected_missing_effect`
+  runner-derived `failure_mode: expected_missing_effect`. Its projection must include
+  `negative_control_id`, equal to the canonical top-level record's `id`; consumers reconcile that
+  ID, the parent dependency and obligation, and the two failure-attestation digests exactly.
+- `invalid` and `unrun` projections must set `same_obligation: false` and omit
+  `negative_control_id` and `failure_attestation_digest`
 - only `validated` may promote the record from `exercised` to `fault_tested`
 - every marker-bound seam obligation must retain a separate
   `dependency_output_shaping_not_proved` entry keyed to the same dependency and seam obligation,

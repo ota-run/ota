@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- Strengthen runtime-proof negative-control evidence for downstream consumers. A validated
+  dependency-level projection now names its canonical `negative_control_id`; it is emitted only
+  with same-obligation, expected-missing-effect, and failure-attestation evidence. Consumers can
+  reconcile that ID, the parent dependency/obligation, and exact digest with the canonical
+  top-level negative-control record. Invalid and unrun projections cannot carry the canonical ID
+  or attestation digest.
+
 ## 1.6.26
 
 - Close the bounded V11.7 OSS audited-crossing slice through the independently administered

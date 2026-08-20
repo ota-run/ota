@@ -351,7 +351,39 @@
           "items": { "type": "string" }
         },
         "negative_control": { "$ref": "#/$defs/dependencyNegativeControl" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "level": { "const": "fault_tested" } },
+            "required": ["level"]
+          },
+          "then": {
+            "properties": {
+              "negative_control": {
+                "properties": { "status": { "const": "validated" } },
+                "required": ["status"]
+              }
+            },
+            "required": ["negative_control"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "negative_control": {
+                "properties": { "status": { "const": "validated" } },
+                "required": ["status"]
+              }
+            },
+            "required": ["negative_control"]
+          },
+          "then": {
+            "properties": { "level": { "const": "fault_tested" } },
+            "required": ["level"]
+          }
+        }
+      ]
     },
     "dependencyObservation": {
       "type": "object",
@@ -379,9 +411,38 @@
         },
         "status": { "type": "string", "enum": ["unrun", "invalid", "validated"] },
         "same_obligation": { "type": "boolean" },
+        "negative_control_id": { "type": "string" },
         "failure_mode": { "$ref": "#/$defs/negativeControlFailureMode" },
         "failure_attestation_digest": { "type": "string" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "validated" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "same_obligation": { "const": true },
+              "failure_mode": { "const": "expected_missing_effect" }
+            },
+            "required": [
+              "negative_control_id",
+              "failure_mode",
+              "failure_attestation_digest"
+            ]
+          },
+          "else": {
+            "properties": { "same_obligation": { "const": false } },
+            "not": {
+              "anyOf": [
+                { "required": ["negative_control_id"] },
+                { "required": ["failure_attestation_digest"] }
+              ]
+            }
+          }
+        }
+      ]
     },
     "seamObservation": {
       "type": "object",
@@ -454,7 +515,23 @@
         "failure_attestation_digest": { "type": "string" },
         "exit_code": { "type": "integer" },
         "detail": { "type": "string" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "validated" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "outcome": { "const": "expected_obligation_failed" },
+              "failure_mode": { "const": "expected_missing_effect" },
+              "evidence_class": { "const": "attested" }
+            },
+            "required": ["failure_mode", "failure_attestation_digest"]
+          }
+        }
+      ]
     },
     "negativeControlIntervention": {
       "type": "object",

@@ -44,6 +44,16 @@ fn receipt_definition_schema(definition: &str) -> JSONSchema {
         .expect("receipt definition schema should compile")
 }
 
+fn proof_runtime_definition_schema(definition: &str) -> JSONSchema {
+    let schema = load_schema("docs/spec/json-schemas/proof-runtime.json");
+    let mut definition_schema = schema["$defs"][definition].clone();
+    definition_schema["$defs"] = schema["$defs"].clone();
+    JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&definition_schema)
+        .expect("proof-runtime definition schema should compile")
+}
+
 #[test]
 fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
@@ -474,6 +484,119 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
             .expect("negative-control required fields")
             .contains(&serde_json::json!("evidence_class"))
     );
+
+    let dependency_negative_control = proof_runtime_definition_schema("dependencyNegativeControl");
+    let valid = json!({
+        "evidence_class": "derived",
+        "status": "validated",
+        "same_obligation": true,
+        "negative_control_id": "postgres-down",
+        "failure_mode": "expected_missing_effect",
+        "failure_attestation_digest": "sha256:control"
+    });
+    assert!(dependency_negative_control.is_valid(&valid));
+    for invalid in [
+        json!({
+            "evidence_class": "derived",
+            "status": "validated",
+            "same_obligation": true,
+            "failure_mode": "expected_missing_effect",
+            "failure_attestation_digest": "sha256:control"
+        }),
+        json!({
+            "evidence_class": "derived",
+            "status": "validated",
+            "same_obligation": false,
+            "negative_control_id": "postgres-down",
+            "failure_mode": "expected_missing_effect",
+            "failure_attestation_digest": "sha256:control"
+        }),
+        json!({
+            "evidence_class": "derived",
+            "status": "invalid",
+            "same_obligation": true
+        }),
+        json!({
+            "evidence_class": "derived",
+            "status": "unrun",
+            "same_obligation": false,
+            "negative_control_id": "postgres-down"
+        }),
+    ] {
+        assert!(
+            !dependency_negative_control.is_valid(&invalid),
+            "schema accepted contradictory local negative-control state: {invalid}"
+        );
+    }
+
+    let dependency_evidence = proof_runtime_definition_schema("dependencyEvidence");
+    let base_evidence = json!({
+        "dependency_id": "service:postgres",
+        "proof_obligation_id": "proof:postgres-round-trip",
+        "level": "fault_tested",
+        "observation": {
+            "origin": "round_trip_effect",
+            "evidence_class": "attested"
+        },
+        "negative_control": valid
+    });
+    assert!(dependency_evidence.is_valid(&base_evidence));
+    let mut missing_projection = base_evidence.clone();
+    missing_projection
+        .as_object_mut()
+        .expect("dependency evidence object")
+        .remove("negative_control");
+    assert!(!dependency_evidence.is_valid(&missing_projection));
+    let mut validated_without_fault_tested = base_evidence.clone();
+    validated_without_fault_tested["level"] = json!("exercised");
+    assert!(!dependency_evidence.is_valid(&validated_without_fault_tested));
+    let mut fault_tested_invalid_projection = base_evidence.clone();
+    fault_tested_invalid_projection["negative_control"]["status"] = json!("invalid");
+    fault_tested_invalid_projection["negative_control"]["same_obligation"] = json!(false);
+    fault_tested_invalid_projection["negative_control"]["failure_mode"] = json!("timeout");
+    fault_tested_invalid_projection["negative_control"]
+        .as_object_mut()
+        .expect("negative-control projection object")
+        .remove("negative_control_id");
+    fault_tested_invalid_projection["negative_control"]
+        .as_object_mut()
+        .expect("negative-control projection object")
+        .remove("failure_attestation_digest");
+    assert!(
+        dependency_negative_control.is_valid(&fault_tested_invalid_projection["negative_control"]),
+        "invalid projection shape must be locally valid before the parent-level rule rejects it"
+    );
+    assert!(!dependency_evidence.is_valid(&fault_tested_invalid_projection));
+
+    let canonical_negative_control = proof_runtime_definition_schema("negativeControl");
+    let canonical_valid = json!({
+        "id": "postgres-down",
+        "dependency_id": "service:postgres",
+        "obligation_id": "proof:postgres-round-trip",
+        "control_task": "verify-with-postgres-down",
+        "intervention": { "kind": "service_unavailable", "id": "postgres" },
+        "expected_failure": "round_trip_missing",
+        "outcome": "expected_obligation_failed",
+        "status": "validated",
+        "failure_mode": "expected_missing_effect",
+        "proof_scope_ref": "workflow:app",
+        "evidence_class": "attested",
+        "failure_attestation_digest": "sha256:control"
+    });
+    assert!(canonical_negative_control.is_valid(&canonical_valid));
+    for field in ["outcome", "failure_mode", "evidence_class"] {
+        let mut invalid = canonical_valid.clone();
+        invalid[field] = match field {
+            "outcome" => json!("nonzero_exit_observed"),
+            "failure_mode" => json!("timeout"),
+            "evidence_class" => json!("derived"),
+            _ => unreachable!(),
+        };
+        assert!(
+            !canonical_negative_control.is_valid(&invalid),
+            "schema accepted invalid canonical negative-control state: {invalid}"
+        );
+    }
 }
 
 #[test]

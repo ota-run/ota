@@ -770,6 +770,10 @@ durable agent workflow belongs in the canonical Ota skill.
   this evidence because they did not execute the proof lane. The canonical runtime-proof example
   now demonstrates the same carrier end to end. Compose dependencies started by proof are cleaned
   on success and readiness failure, while services already running before proof are preserved.
+  Validated dependency projections now name their canonical negative-control record and bind its
+  exact failure-attestation digest; schema rules prevent `fault_tested` evidence from omitting or
+  downgrading that validated projection, while consumer reconciliation verifies the canonical ID,
+  dependency, obligation, and digest relationship.
 - completed V11.13 generated-artifact lineage: Dagger proves the generator path and EventCatalog
   proves an independent sibling-consumer closure. Contract-owned producer, output-path, and input
   lineage is validated, surfaced in task discovery, checked before consumer execution, and carried

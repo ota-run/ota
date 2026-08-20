@@ -67376,6 +67376,10 @@ tasks:
             projected_control.failure_attestation_digest.as_deref(),
             validated_control.failure_attestation_digest.as_deref()
         );
+        assert_eq!(
+            projected_control.negative_control_id.as_deref(),
+            Some(validated_control.id.as_str())
+        );
         assert!(projected_control.same_obligation);
         let mut fault_tested_boundaries = Vec::new();
         super::proof_runtime_append_dependency_scope_boundaries(
@@ -67444,9 +67448,10 @@ tasks:
         assert_eq!(
             invalid[0].negative_control.as_ref().map(|value| (
                 value.same_obligation,
+                value.negative_control_id.as_deref(),
                 value.failure_attestation_digest.as_deref()
             )),
-            Some((false, None))
+            Some((false, None, None))
         );
         let mut boundaries = Vec::new();
         super::proof_runtime_append_dependency_scope_boundaries(
@@ -67462,6 +67467,21 @@ tasks:
             entry.kind == "dependency_output_shaping_not_proved"
                 && entry.reason.as_deref() == Some("seam_evidence_scoped_to_declared_obligation")
         }));
+
+        let mut unrun = vec![evidence()];
+        super::proof_runtime_apply_negative_control_projection(
+            &mut unrun,
+            &control(crate::output::ProofRuntimeNegativeControlStatus::Unrun),
+        );
+        assert_eq!(unrun[0].level.as_deref(), Some("exercised"));
+        assert_eq!(
+            unrun[0].negative_control.as_ref().map(|value| (
+                value.same_obligation,
+                value.negative_control_id.as_deref(),
+                value.failure_attestation_digest.as_deref()
+            )),
+            Some((false, None, None))
+        );
 
         let mut malformed_validated =
             control(crate::output::ProofRuntimeNegativeControlStatus::Validated);
@@ -121682,6 +121702,7 @@ fn proof_runtime_apply_negative_control_projection(
             // existed. Invalid controls may carry a transaction id but did not verify the same
             // obligation and must not project that stronger statement.
             same_obligation: validated,
+            negative_control_id: validated.then(|| control.id.clone()),
             failure_mode: control.failure_mode,
             failure_attestation_digest: validated
                 .then(|| control.failure_attestation_digest.clone())
@@ -121705,6 +121726,7 @@ fn proof_runtime_dependency_negative_control_is_validated(
 ) -> bool {
     control.status == crate::output::ProofRuntimeNegativeControlStatus::Validated
         && control.same_obligation
+        && control.negative_control_id.is_some()
         && control.failure_mode
             == Some(crate::output::ProofRuntimeNegativeControlFailureMode::ExpectedMissingEffect)
         && control.failure_attestation_digest.is_some()
