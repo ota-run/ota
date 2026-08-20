@@ -1123,7 +1123,11 @@ V11.22 is active for its source-bound candidate and fail-closed closure-classifi
 Its first implementation checkpoint demotes task-name, wrapper, opaque-shell, CI-fragment, and
 agent-guidance signals from agent authorization: they may remain review evidence, but cannot emit
 `safe_for_agent` or a starter executable agent boundary. Closure artifacts, candidate commands,
-contract writes, and external pressure remain open.
+contract writes, and external pressure remain open. The next internal checkpoint derives and
+self-verifies a versioned candidate foundation from selected detector sources: it binds source
+content identities, normalized evidence/inventory records, proposed field changes, and explicit
+`execution_closure_unresolved` task closures. It is not yet a public artifact or a complete
+discovery inventory, and it cannot authorize a contract write or agent-safe task.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.

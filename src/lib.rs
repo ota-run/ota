@@ -27,6 +27,7 @@ pub(crate) mod capabilities;
 pub(crate) mod ci_projection;
 pub mod claim_assurance;
 pub mod cli;
+pub(crate) mod contract_candidate;
 pub(crate) mod contract_drift;
 pub(crate) mod crossing;
 pub(crate) mod crossing_authority;

@@ -9,11 +9,17 @@ use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
 use crate::agent_boundary_docs::parse_agent_boundary_doc;
+use crate::contract_candidate::{
+    CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence, CandidateDisposition,
+    CandidateEvidence, CandidateExecutionClosure, CandidateKind, CandidateOperation,
+    ClosureEvidence, ContractCandidate, DiscoveryInventoryEntry, ExecutionClosureNode,
+};
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
     ServiceReadinessKind, TaskActionSpec, TaskCommandSpec, TaskEffectsSpec, TaskPrepareSpec,
     TaskRequirementsSpec, ToolchainFulfillmentMode, ToolchainFulfillmentSpec, ToolchainProvider,
 };
+use crate::semantic_identity::{contract_snapshot_hash, semantic_contract_identity};
 use crate::toolchains::{
     COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
     PYTHON_TOOLCHAIN_NAME, RUBY_TOOLCHAIN_NAME, toolchain_repo_signals,
@@ -689,6 +695,8 @@ pub enum DetectError {
     },
     #[error("failed to parse `{path}`: {message}")]
     Parse { path: String, message: String },
+    #[error("failed to construct source-bound candidate foundation: {0}")]
+    Candidate(String),
 }
 
 pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
@@ -762,7 +770,177 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_env_sources(&root, &mut builder);
     detect_directory_name(&root, &mut builder);
 
-    Ok(builder.finish())
+    builder.finish()
+}
+
+fn source_bound_candidate_foundation(
+    root: &Path,
+    inferences: &[Inference],
+) -> Result<ContractCandidate, DetectError> {
+    let implementation_identity = semantic_contract_identity(&(
+        "ota.detect",
+        "source-bound-candidate-foundation-v1",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .map_err(DetectError::Candidate)?;
+    let mut evidence_by_path = BTreeMap::<String, CandidateEvidence>::new();
+    let mut inventory_by_path = BTreeMap::<String, DiscoveryInventoryEntry>::new();
+    let mut changes = Vec::new();
+
+    for inference in inferences {
+        let evidence = inference_source_evidence(root, inference)?;
+        let disposition = if is_task_command(inference) {
+            CandidateDisposition::Unknown
+        } else if evidence.is_some() {
+            CandidateDisposition::Applicable
+        } else {
+            CandidateDisposition::Unknown
+        };
+        if let Some(evidence) = &evidence {
+            inventory_by_path
+                .entry(evidence.path.clone())
+                .or_insert_with(|| DiscoveryInventoryEntry {
+                    source_kind: evidence.source_kind.clone(),
+                    path: evidence.path.clone(),
+                    content_identity: Some(evidence.content_identity.clone()),
+                });
+            evidence_by_path
+                .entry(evidence.path.clone())
+                .or_insert_with(|| evidence.clone());
+        }
+
+        let is_task_command = is_task_command(inference);
+        let execution_closure = is_task_command
+            .then(|| unresolved_task_candidate_closure(inference, evidence.as_ref()));
+        changes.push(CandidateChange {
+            subject: inference.field.clone(),
+            field_family: inference.field_type.to_string(),
+            operation: CandidateOperation::Add,
+            proposed_value: Some(JsonValue::String(inference.value.clone())),
+            evidence: evidence.into_iter().collect(),
+            execution_closure,
+            confidence: candidate_confidence(inference.confidence),
+            disposition,
+        });
+    }
+
+    let mut candidate = ContractCandidate {
+        schema_version: CONTRACT_CANDIDATE_SCHEMA_VERSION,
+        identity: String::new(),
+        kind: CandidateKind::Detection,
+        logical_root: String::from("."),
+        discovery_inventory_identity: String::new(),
+        discovery_inventory: inventory_by_path.into_values().collect(),
+        evidence_manifest_identity: String::new(),
+        evidence_manifest: evidence_by_path.into_values().collect(),
+        existing_contract_snapshot_identity: None,
+        implementation_identity,
+        changes,
+    };
+    candidate
+        .finalize_identities()
+        .map_err(|error| DetectError::Candidate(error.to_string()))?;
+    candidate
+        .verify_identities()
+        .map_err(|error| DetectError::Candidate(error.to_string()))?;
+    Ok(candidate)
+}
+
+fn inference_source_evidence(
+    root: &Path,
+    inference: &Inference,
+) -> Result<Option<CandidateEvidence>, DetectError> {
+    let Some(path) = inference_source_evidence_path(root, inference)? else {
+        return Ok(None);
+    };
+    let bytes = fs::read(root.join(&path)).map_err(|source| DetectError::Read {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(Some(CandidateEvidence {
+        source_kind: inference.signal.to_string(),
+        path,
+        content_identity: contract_snapshot_hash(&bytes),
+        extraction: inference.source.clone(),
+    }))
+}
+
+fn inference_source_evidence_path(
+    root: &Path,
+    inference: &Inference,
+) -> Result<Option<String>, DetectError> {
+    let Some(raw_path) = inference.source.split('#').next() else {
+        return Ok(None);
+    };
+    let path = raw_path.replace('\\', "/");
+    if path.is_empty() || path.starts_with('/') || path.contains("..") {
+        return Ok(None);
+    }
+    let source_path = root.join(&path);
+    if !source_path.is_file() {
+        return Ok(None);
+    }
+    let canonical_root = fs::canonicalize(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })?;
+    let canonical_source = fs::canonicalize(&source_path).map_err(|source| DetectError::Read {
+        path: source_path.display().to_string(),
+        source,
+    })?;
+    if !canonical_source.starts_with(&canonical_root) {
+        return Err(DetectError::Candidate(format!(
+            "source `{path}` resolves outside the repository root"
+        )));
+    }
+    Ok(Some(path))
+}
+
+fn is_task_command(inference: &Inference) -> bool {
+    inference.field.starts_with("tasks.") && inference.field.ends_with(".run")
+}
+
+fn unresolved_task_candidate_closure(
+    inference: &Inference,
+    evidence: Option<&CandidateEvidence>,
+) -> CandidateExecutionClosure {
+    let task_name = inference
+        .field
+        .strip_prefix("tasks.")
+        .and_then(|field| field.strip_suffix(".run"))
+        .unwrap_or("unknown");
+    CandidateExecutionClosure {
+        identity: String::new(),
+        working_directory: String::from("."),
+        platform: String::from("unknown"),
+        nodes: vec![ExecutionClosureNode {
+            id: format!("task:{task_name}"),
+            kind: String::from("task"),
+            value: inference.value.clone(),
+            classification: String::from("unknown"),
+            evidence: evidence
+                .into_iter()
+                .map(|evidence| ClosureEvidence {
+                    source_kind: evidence.source_kind.clone(),
+                    path: evidence.path.clone(),
+                    content_identity: evidence.content_identity.clone(),
+                    extraction: evidence.extraction.clone(),
+                })
+                .collect(),
+        }],
+        edges: Vec::new(),
+        requirements: Vec::new(),
+        effects: Vec::new(),
+        unresolved_reasons: vec![String::from("execution_closure_unresolved")],
+    }
+}
+
+fn candidate_confidence(confidence: Confidence) -> CandidateConfidence {
+    match confidence {
+        Confidence::High => CandidateConfidence::High,
+        Confidence::Medium => CandidateConfidence::Medium,
+        Confidence::Low => CandidateConfidence::Low,
+    }
 }
 
 fn detect_env_sources(root: &Path, builder: &mut DetectBuilder) {
@@ -5692,17 +5870,19 @@ impl DetectBuilder {
         }
     }
 
-    fn finish(mut self) -> DetectReport {
+    fn finish(mut self) -> Result<DetectReport, DetectError> {
         synthesize_detected_toolchain_inferences(
             &self.root,
             &mut self.contract,
             &mut self.inferences,
         );
-        DetectReport {
+        let inferences = self.inferences.into_values().collect::<Vec<_>>();
+        source_bound_candidate_foundation(&self.root, &inferences)?;
+        Ok(DetectReport {
             root: self.root,
             contract: self.contract,
-            inferences: self.inferences.into_values().collect(),
-        }
+            inferences,
+        })
     }
 
     fn set_project_name(&mut self, value: String, source: String, confidence: Confidence) {
@@ -6995,7 +7175,10 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{Confidence, DetectReport, InferenceSourceClass, detect_repo};
+    use super::{
+        CandidateDisposition, Confidence, DetectReport, InferenceSourceClass, detect_repo,
+        source_bound_candidate_foundation,
+    };
     use crate::schema::{
         EnvSource, EnvSourceKind, ServiceManagerKind, ServiceReadinessKind, ToolchainProvider,
     };
@@ -10580,6 +10763,103 @@ jobs:
         assert!(
             !report.contract.tasks.contains_key("build"),
             "CI shell-variable commands must remain unresolved rather than becoming task truth"
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_marks_package_scripts_as_unresolved_closures() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let candidate = source_bound_candidate_foundation(fixture.path(), &report.inferences)
+            .expect("candidate foundation");
+
+        candidate.verify_identities().expect("candidate verifies");
+        assert!(
+            candidate
+                .evidence_manifest
+                .iter()
+                .any(|evidence| evidence.path == "package.json")
+        );
+        let change = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject == "tasks.test.run")
+            .expect("test task candidate");
+        assert_eq!(change.disposition, CandidateDisposition::Unknown);
+        assert_eq!(
+            change
+                .execution_closure
+                .as_ref()
+                .expect("task closure")
+                .unresolved_reasons,
+            vec![String::from("execution_closure_unresolved")]
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_identity_changes_with_selected_source_content() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+        let first_report = detect_repo(fixture.path()).expect("first report");
+        let first = source_bound_candidate_foundation(fixture.path(), &first_report.inferences)
+            .expect("first candidate");
+
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run --coverage" }
+}"#,
+        );
+        let second_report = detect_repo(fixture.path()).expect("second report");
+        let second = source_bound_candidate_foundation(fixture.path(), &second_report.inferences)
+            .expect("second candidate");
+
+        assert_ne!(first.identity, second.identity);
+        assert_ne!(
+            first.evidence_manifest_identity,
+            second.evidence_manifest_identity
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_bound_candidate_refuses_detector_source_symlink_outside_root() {
+        let fixture = Fixture::new();
+        let outside = TempDir::new().expect("outside fixture");
+        std::fs::write(
+            outside.path().join("package.json"),
+            r#"{
+  "name": "outside-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        )
+        .expect("outside package manifest");
+        std::os::unix::fs::symlink(
+            outside.path().join("package.json"),
+            fixture.path().join("package.json"),
+        )
+        .expect("source symlink");
+
+        let error = detect_repo(fixture.path()).expect_err("escaped source must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("resolves outside the repository root")
         );
     }
 
