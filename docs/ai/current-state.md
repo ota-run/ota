@@ -454,9 +454,10 @@ durable agent workflow belongs in the canonical Ota skill.
   and detector-owned root extension markers. Inventory sources cannot escape the repository
   through symlinks. Its shared closure resolver records direct finite manifest commands with their
   executable requirement. It also resolves a finite declared package script only after binding the
-  exact manager invocation, script name, script body, and executable graph. It retains unknown
-  effects and rejects composed shell bodies, indirect package scripts, and CI-only commands as
-  unresolved. Candidate publication, candidate application, and agent-safe promotion remain
+  exact manager invocation, script name, script body, and executable graph. It follows only
+  same-manager, same-manifest script references and rejects cycles, missing hops, composed shell
+  bodies, indirect package scripts, and CI-only commands as unresolved. It retains unknown effects
+  for every resolved graph. Candidate publication, candidate application, and agent-safe promotion remain
   unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed

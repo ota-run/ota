@@ -888,12 +888,14 @@ fn source_bound_candidate_foundation(
         let evidence = inference_source_evidence(root, inference)?;
         let is_task_command = is_task_command(inference);
         let closure_resolution = if is_task_command {
-            let (command_body, package_manager) = candidate_task_command_body(root, inference)?;
+            let command = candidate_task_command_body(root, inference)?;
             Some(resolve_candidate_task_closure(CandidateClosureInput {
                 task_name: inference_task_name(&inference.field).unwrap_or("unknown"),
                 task_command: &inference.value,
-                command_body: &command_body,
-                package_manager: package_manager.as_deref(),
+                command_body: &command.body,
+                package_manager: command.package_manager.as_deref(),
+                package_scripts: command.package_scripts.as_ref(),
+                root_script_name: command.root_script_name.as_deref(),
                 source_is_execution_authoritative: matches!(
                     inference.source_class,
                     InferenceSourceClass::TaskCommand
@@ -1129,12 +1131,24 @@ fn closure_evidence_from_candidate_evidence(evidence: &CandidateEvidence) -> Clo
     }
 }
 
+struct CandidateTaskCommand {
+    body: String,
+    package_manager: Option<String>,
+    package_scripts: Option<BTreeMap<String, String>>,
+    root_script_name: Option<String>,
+}
+
 fn candidate_task_command_body(
     root: &Path,
     inference: &Inference,
-) -> Result<(String, Option<String>), DetectError> {
+) -> Result<CandidateTaskCommand, DetectError> {
     let Some(script_name) = inference.source.strip_prefix("package.json#scripts.") else {
-        return Ok((inference.value.clone(), None));
+        return Ok(CandidateTaskCommand {
+            body: inference.value.clone(),
+            package_manager: None,
+            package_scripts: None,
+            root_script_name: None,
+        });
     };
     let contents = read_file(&root.join("package.json"))?;
     let package: JsonValue =
@@ -1142,23 +1156,50 @@ fn candidate_task_command_body(
             path: String::from("package.json"),
             message: source.to_string(),
         })?;
-    let Some(body) = package
-        .get("scripts")
-        .and_then(JsonValue::as_object)
-        .and_then(|scripts| scripts.get(script_name))
-        .and_then(JsonValue::as_str)
-    else {
-        return Ok((inference.value.clone(), None));
+    let Some(scripts) = package.get("scripts").and_then(JsonValue::as_object) else {
+        return Ok(CandidateTaskCommand {
+            body: inference.value.clone(),
+            package_manager: None,
+            package_scripts: None,
+            root_script_name: None,
+        });
+    };
+    let package_scripts = scripts
+        .iter()
+        .filter_map(|(name, value)| value.as_str().map(|body| (name.clone(), body.to_string())))
+        .collect::<BTreeMap<_, _>>();
+    let Some(body) = package_scripts.get(script_name) else {
+        return Ok(CandidateTaskCommand {
+            body: inference.value.clone(),
+            package_manager: None,
+            package_scripts: None,
+            root_script_name: None,
+        });
     };
     let Some(manager) = inference.value.split_ascii_whitespace().next() else {
-        return Ok((inference.value.clone(), None));
+        return Ok(CandidateTaskCommand {
+            body: inference.value.clone(),
+            package_manager: None,
+            package_scripts: None,
+            root_script_name: None,
+        });
     };
     if !matches!(manager, "npm" | "pnpm" | "yarn" | "bun")
         || task_command(manager, script_name).as_deref() != Some(inference.value.as_str())
     {
-        return Ok((inference.value.clone(), None));
+        return Ok(CandidateTaskCommand {
+            body: inference.value.clone(),
+            package_manager: None,
+            package_scripts: None,
+            root_script_name: None,
+        });
     }
-    Ok((body.to_string(), Some(manager.to_string())))
+    Ok(CandidateTaskCommand {
+        body: body.clone(),
+        package_manager: Some(manager.to_string()),
+        package_scripts: Some(package_scripts),
+        root_script_name: Some(script_name.to_string()),
+    })
 }
 
 fn candidate_confidence(confidence: Confidence) -> CandidateConfidence {
@@ -11076,6 +11117,45 @@ jobs:
                 .effects
                 .iter()
                 .any(|effect| effect.classification == "unknown")
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_resolves_recursive_package_script_graph() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "test": "pnpm run verify",
+    "verify": "vitest run"
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let candidate = source_bound_candidate_foundation(fixture.path(), &report.inferences)
+            .expect("candidate foundation");
+
+        let closure = candidate
+            .changes
+            .iter()
+            .find(|change| change.subject == "tasks.test.run")
+            .and_then(|change| change.execution_closure.as_ref())
+            .expect("resolved test closure");
+        assert!(
+            closure
+                .edges
+                .iter()
+                .any(|edge| edge.from == "script:test" && edge.to == "script:verify")
+        );
+        assert!(
+            closure
+                .edges
+                .iter()
+                .any(|edge| edge.from == "script:verify" && edge.to == "executable:vitest")
         );
     }
 
