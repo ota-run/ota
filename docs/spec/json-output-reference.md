@@ -44,6 +44,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/run-preview.json](json-schemas/run-preview.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
+- [json-schemas/contract-candidate.json](json-schemas/contract-candidate.json)
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
@@ -6059,6 +6060,25 @@ shape used by `ota clean --json` instead of this success shape.
 - `toolchain_opportunities` appears only when repo signals strongly suggest a managed ecosystem
   that ota still models through lower-level `runtimes` / `tools` declarations because no shipped
   provider contract owns it yet
+
+`ota detect --candidate-out PATH --json` keeps `written: false` because it does not modify
+`ota.yaml`, and adds:
+
+- `candidate_path`: the written review-artifact path
+- `candidate`: the complete self-verifying `contract-candidate.json` artifact
+
+The candidate binds the observed discovery inventory with a required content identity for every
+selected regular file, every selected source-evidence tuple, existing `ota.yaml` bytes when
+present, implementation identity, proposed changes, and conservative task closure records. Ota
+derives every candidate field from one command-owned immutable snapshot of the selected discovery
+sources; it never emits a candidate assembled from mixed repository reads. Each change carries
+`subject.path` as ordered contract-path segments and a field-family-specific canonical semantic
+value. This preserves dotted map keys and lets consumers distinguish semantic task execution from
+its YAML spelling. Ota omits proposals already represented by equivalent existing truth and marks
+real disagreement as `conflict`, not `applicable`. Existing-truth traversal supports canonical
+array indices, and task-command comparison normalizes schema-equivalent defaults including
+`interaction: auto` and root `cwd: .`. A candidate is review input only; it does not establish
+agent safety or authorize a contract write.
 
 ```json
 {

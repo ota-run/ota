@@ -2998,6 +2998,8 @@ Infer a starting contract from repo state.
 ota detect --dry-run [PATH]
 ota detect --json --dry-run [PATH]
 ota detect --contract [PATH]
+ota detect --candidate-out PATH [PATH]
+ota detect --candidate-out PATH --json [PATH]
 ota detect --write [PATH]
 ota detect --json --write [PATH]
 ota detect --merge --dry-run [PATH]
@@ -3111,6 +3113,35 @@ Contract preview behavior:
 - `ota detect --contract` prints the exact starter contract that `ota init` would write
 - `ota detect --contract` omits annotations and comparison output
 - `ota detect --contract` is text output only
+
+Candidate review behavior:
+
+- `ota detect --candidate-out PATH` writes one source-bound JSON review artifact and never writes
+  or changes `ota.yaml`
+- `PATH` is relative to the selected repository and its parent must already exist inside that
+  repository; choose a dedicated non-evidence directory such as `.ota/candidates/`
+- Ota rejects a symlinked output parent and retains a no-follow directory handle through final
+  publication, so a checked parent cannot be swapped to redirect output onto `ota.yaml` or source
+  evidence
+- Ota copies its selected discovery sources into one command-owned immutable snapshot before
+  deriving candidate inference, evidence, and closures; it never assembles an artifact from mixed
+  live repository reads
+- the current durable publication implementation requires Unix no-follow directory-descriptor
+  support; on other platforms `--candidate-out` refuses rather than weakening alias protection
+- publication uses create-new semantics: an existing file, symlink, contract path, selected
+  evidence file, or selected evidence parent refuses rather than being replaced
+- every discovery inventory entry carries a required source-content identity; the artifact retains
+  every selected evidence tuple, exact existing contract byte identity when present, proposed
+  changes, and conservative execution-closure facts
+- every proposed subject is an ordered structured contract path, so map keys such as dotted task
+  names remain one identity-bearing segment rather than being interpreted as nested fields
+- Ota compares field-family-specific canonical semantic values. Equivalent existing truth is
+  omitted, including a typed command equivalent to a detected package-script invocation; a real
+  disagreement is emitted as `conflict`, never as an applicable additive change. Structured
+  traversal reconciles array-indexed fields such as `env.sources`, while schema-equivalent command
+  defaults such as omitted versus `interaction: auto` or root `cwd: .` compare equally
+- candidate changes remain review input. This command does not apply, replace, or remove contract
+  fields, and unresolved closure/effect facts never establish agent safety
 
 Current write behavior:
 

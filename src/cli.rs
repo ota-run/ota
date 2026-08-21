@@ -733,6 +733,13 @@ enum Commands {
         /// Confirm destructive rewrite mode.
         #[arg(long, action = ArgAction::SetTrue, requires = "rewrite")]
         yes: bool,
+        /// Write a source-bound review candidate without changing ota.yaml.
+        #[arg(
+            long,
+            value_name = "PATH",
+            conflicts_with_all = ["write", "dry_run", "contract", "merge", "rewrite"]
+        )]
+        candidate_out: Option<PathBuf>,
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
@@ -5980,6 +5987,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             apply_all,
             rewrite,
             yes,
+            candidate_out,
             path,
         } => {
             if file.is_some() {
@@ -6000,6 +6008,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 apply_all,
                 rewrite,
                 yes,
+                candidate_out.as_deref(),
                 format_from_json(json),
                 debug,
             )
@@ -20077,6 +20086,7 @@ tasks:
                     apply_all: false,
                     rewrite: false,
                     yes: false,
+                    candidate_out: None,
                     path: None,
                 },
             ),

@@ -33,8 +33,8 @@ durable agent workflow belongs in the canonical Ota skill.
 
 ## Active Work
 
-- branch: `1.6.26-implementation`
-- released baseline: `v1.6.25`
+- branch: `1.6.27-implementation`
+- released baseline: `v1.6.26`
 - completed V11.21 enforced sandbox policy application. Core now derives one
   provider-neutral, target-platform-bound segment graph from the selected task/workflow closure,
   applies only identified monotonic policy restrictions, and fails closed before preparation when
@@ -459,8 +459,11 @@ durable agent workflow belongs in the canonical Ota skill.
   bodies, indirect package scripts, and CI-only commands as unresolved. It retains unknown effects
   for every resolved graph. Resolved closures bind only runtime, tool, or toolchain requirements
   detected from the same manifest and mark platform `unknown` until a task-scoped platform source
-  exists. Candidate publication, candidate application, and agent-safe promotion remain
-  unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
+  exists. `ota detect --candidate-out <root-relative path>` now publishes that same
+  self-verifying review artifact from one command-owned immutable source snapshot, with
+  descriptor-safe create-new collision refusal and no `ota.yaml` mutation.
+  Candidate application and agent-safe promotion remain unimplemented; it does not consume
+  crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
@@ -1134,12 +1137,16 @@ reconciliation rather than tamper-proof storage against the same host user.
 V11.22 is active for its source-bound candidate and fail-closed closure-classification foundation.
 Its first implementation checkpoint demotes task-name, wrapper, opaque-shell, CI-fragment, and
 agent-guidance signals from agent authorization: they may remain review evidence, but cannot emit
-`safe_for_agent` or a starter executable agent boundary. Closure artifacts, candidate commands,
-contract writes, and external pressure remain open. The next internal checkpoint derives and
-self-verifies a versioned candidate foundation from selected detector sources: it binds source
-content identities, normalized evidence/inventory records, proposed field changes, and explicit
-`execution_closure_unresolved` task closures. It is not yet a public artifact or a complete
-discovery inventory, and it cannot authorize a contract write or agent-safe task.
+`safe_for_agent` or a starter executable agent boundary. `ota detect --candidate-out` now writes
+the self-verifying source-bound review artifact without writing `ota.yaml`; candidate application,
+contract writes through the candidate evaluator, and external pressure remain open. The artifact
+binds a required content identity for every inventory entry, every normalized evidence tuple,
+structured contract-path segments, canonical semantic proposal values, existing-contract
+conflicts, and explicit closure facts. Equivalent existing truth is omitted before publication;
+dotted task names remain exact map keys and typed commands reconcile against equivalent detected
+invocations. Indexed environment-source fields traverse arrays, and explicit schema-default command
+posture reconciles with omission. The artifact cannot authorize a contract write or agent-safe
+task. Skills and Examples need no additional authoring shape for these reconciliation-only rules.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.

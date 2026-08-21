@@ -141,6 +141,17 @@
         "signal": {
           "enum": ["config", "script", "lockfile", "file", "template", "convention"]
         },
+        "source_class": {
+          "enum": [
+            "environment_toolchain",
+            "task_command",
+            "runtime_service",
+            "ci_verification",
+            "agent_boundary",
+            "workspace_bootstrap",
+            "heuristic"
+          ]
+        },
         "confidence": { "enum": ["low", "medium", "high"] },
         "agent_safe": { "enum": ["yes", "no", "unknown"] },
         "agent_signal": { "enum": ["verification_candidate", "bootstrap_candidate"] }

@@ -64,8 +64,30 @@
         "toolchain_opportunities": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/toolchainOpportunity" }
+        },
+        "candidate_path": {
+          "type": "string"
+        },
+        "candidate": {
+          "$ref": "./contract-candidate.json"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["candidate"] },
+          "then": {
+            "required": ["candidate_path"],
+            "properties": { "written": { "const": false } }
+          }
+        },
+        {
+          "if": { "required": ["candidate_path"] },
+          "then": {
+            "required": ["candidate"],
+            "properties": { "written": { "const": false } }
+          }
+        }
+      ]
     },
     {
       "type": "object",

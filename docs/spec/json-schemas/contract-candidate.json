@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/contract-candidate.json",
+  "title": "Ota contract candidate artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "kind",
+    "logical_root",
+    "discovery_inventory_identity",
+    "discovery_inventory",
+    "evidence_manifest_identity",
+    "evidence_manifest",
+    "implementation_identity",
+    "changes"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "identity": { "$ref": "#/$defs/identity" },
+    "kind": { "const": "detection" },
+    "logical_root": { "const": "." },
+    "discovery_inventory_identity": { "$ref": "#/$defs/identity" },
+    "discovery_inventory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/inventoryEntry" }
+    },
+    "evidence_manifest_identity": { "$ref": "#/$defs/identity" },
+    "evidence_manifest": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "existing_contract_snapshot_identity": { "$ref": "#/$defs/identity" },
+    "implementation_identity": { "$ref": "#/$defs/identity" },
+    "changes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/change" }
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "rootRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "(^/)|(^\\./)|(^|/)\\.\\.?(/|$)|\\\\|:"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "path", "content_identity", "extraction"],
+      "properties": {
+        "source_kind": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/rootRelativePath" },
+        "content_identity": { "$ref": "#/$defs/identity" },
+        "extraction": { "type": "string", "minLength": 1 }
+      }
+    },
+    "inventoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "path", "content_identity"],
+      "properties": {
+        "source_kind": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/rootRelativePath" },
+        "content_identity": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "closureEvidence": { "$ref": "#/$defs/evidence" },
+    "closureNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "value", "classification", "evidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" },
+        "classification": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/closureEvidence" }
+        }
+      }
+    },
+    "closureEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "kind", "evidence"],
+      "properties": {
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/closureEvidence" }
+        }
+      }
+    },
+    "closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "working_directory", "platform"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identity" },
+        "working_directory": { "enum": ["."] },
+        "platform": { "type": "string", "minLength": 1 },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/closureNode" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/closureEdge" } },
+        "requirements": { "type": "array", "items": { "$ref": "#/$defs/closureNode" } },
+        "effects": { "type": "array", "items": { "$ref": "#/$defs/closureNode" } },
+        "unresolved_reasons": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "field_family", "operation", "confidence", "disposition"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/subject" },
+        "field_family": { "type": "string", "minLength": 1 },
+        "operation": { "enum": ["add", "replace", "remove"] },
+        "proposed_value": {},
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "execution_closure": { "$ref": "#/$defs/closure" },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "disposition": { "enum": ["applicable", "conflict", "unknown", "unsupported"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "disposition": { "const": "applicable" } }, "required": ["disposition"] },
+          "then": { "properties": { "evidence": { "minItems": 1 } }, "required": ["evidence"] }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "detection" } }, "required": ["kind"] },
+      "then": {
+        "properties": {
+          "changes": {
+            "items": {
+              "properties": { "operation": { "const": "add" } },
+              "required": ["operation"]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1319,6 +1319,7 @@ fn assist_normalize_schema_covers_preview_and_failure_contract() {
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let shared = load_schema("docs/spec/json-schemas/shared.json");
+    let candidate = load_schema("docs/spec/json-schemas/contract-candidate.json");
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
     let comparison = &success["comparison"]["properties"];
@@ -1340,12 +1341,103 @@ fn detect_schema_includes_comparison_preview() {
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(success.get("toolchain_opportunities").is_some());
+    assert!(success.get("candidate_path").is_some());
+    assert!(success.get("candidate").is_some());
+    assert_eq!(candidate["properties"]["schema_version"]["const"], json!(1));
+    assert!(candidate["properties"].get("identity").is_some());
+    assert!(candidate["properties"].get("evidence_manifest").is_some());
+    assert!(candidate["properties"].get("changes").is_some());
+    assert!(
+        shared["$defs"]["inference"]["properties"]
+            .get("source_class")
+            .is_some()
+    );
     assert!(
         shared["$defs"]["toolchainOpportunity"]["properties"]
             .get("candidate_providers")
             .is_some()
     );
     assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn contract_candidate_schema_rejects_noncanonical_detection_artifacts() {
+    let schema = load_schema("docs/spec/json-schemas/contract-candidate.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("candidate schema should compile");
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let mut candidate = json!({
+        "schema_version": 1,
+        "identity": digest,
+        "kind": "detection",
+        "logical_root": ".",
+        "discovery_inventory_identity": format!("sha256:{}", "b".repeat(64)),
+        "discovery_inventory": [{
+            "source_kind": "manifest",
+            "path": "package.json",
+            "content_identity": format!("sha256:{}", "c".repeat(64))
+        }],
+        "evidence_manifest_identity": format!("sha256:{}", "d".repeat(64)),
+        "evidence_manifest": [{
+            "source_kind": "manifest",
+            "path": "package.json",
+            "content_identity": format!("sha256:{}", "c".repeat(64)),
+            "extraction": "scripts.test"
+        }],
+        "implementation_identity": format!("sha256:{}", "e".repeat(64)),
+        "changes": [{
+            "subject": { "path": ["tasks", "test", "command"] },
+            "field_family": "task_command",
+            "operation": "add",
+            "proposed_value": "npm test",
+            "evidence": [{
+                "source_kind": "manifest",
+                "path": "package.json",
+                "content_identity": format!("sha256:{}", "c".repeat(64)),
+                "extraction": "scripts.test"
+            }],
+            "confidence": "high",
+            "disposition": "applicable"
+        }]
+    });
+    assert!(compiled.is_valid(&candidate));
+
+    candidate["changes"][0]["subject"] = json!("tasks.test.run");
+    assert!(!compiled.is_valid(&candidate));
+    candidate["changes"][0]["subject"] = json!({ "path": ["tasks", "test", "command"] });
+
+    candidate["discovery_inventory"][0]
+        .as_object_mut()
+        .expect("inventory entry")
+        .remove("content_identity");
+    assert!(!compiled.is_valid(&candidate));
+    candidate["discovery_inventory"][0]["content_identity"] =
+        json!(format!("sha256:{}", "c".repeat(64)));
+
+    candidate["evidence_manifest"][0]["path"] = json!("../package.json");
+    assert!(!compiled.is_valid(&candidate));
+    candidate["evidence_manifest"][0]["path"] = json!("package.json");
+
+    candidate["evidence_manifest"][0]["path"] = json!("C:/outside");
+    assert!(!compiled.is_valid(&candidate));
+    candidate["evidence_manifest"][0]["path"] = json!("package.json");
+
+    candidate["identity"] = json!(format!("sha256:{}", "A".repeat(64)));
+    assert!(!compiled.is_valid(&candidate));
+    candidate["identity"] = json!(format!("sha256:{}", "a".repeat(64)));
+
+    candidate["changes"][0]["operation"] = json!("replace");
+    assert!(!compiled.is_valid(&candidate));
+    candidate["changes"][0]["operation"] = json!("add");
+
+    candidate["kind"] = json!("upgrade");
+    assert!(!compiled.is_valid(&candidate));
+    candidate["kind"] = json!("detection");
+
+    candidate["changes"][0]["evidence"] = json!([]);
+    assert!(!compiled.is_valid(&candidate));
 }
 
 #[test]

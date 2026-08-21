@@ -57,6 +57,7 @@ use crate::ci_projection::{
     CiProjection, CiProjectionProofAssurance, CiProjectionReplayInputPolicyRequirement,
     build_ci_projection, refresh_ci_projection_identity,
 };
+use crate::contract_candidate::write_candidate_create_new;
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
@@ -35488,6 +35489,7 @@ pub fn detect(
     apply_all: bool,
     rewrite: bool,
     yes: bool,
+    candidate_out: Option<&Path>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -35505,8 +35507,16 @@ pub fn detect(
         format!("DEBUG apply={}", apply.join(",")),
         format!("DEBUG rewrite={rewrite}"),
         format!("DEBUG yes={yes}"),
+        format!(
+            "DEBUG candidate_out={}",
+            candidate_out
+                .map(|candidate_out| candidate_out.display().to_string())
+                .unwrap_or_else(|| String::from("none"))
+        ),
     ];
-    let dry_run = if contract {
+    let dry_run = if candidate_out.is_some() {
+        false
+    } else if contract {
         true
     } else if merge || rewrite {
         dry_run
@@ -35630,6 +35640,9 @@ pub fn detect(
     }
     finalize_debug(
         match detect_repo(&root) {
+            Ok(report) if let Some(candidate_out) = candidate_out => {
+                write_detect_candidate_artifact(report, candidate_out, format)
+            }
             Ok(report) if dry_run => {
                 let compact_root_display = compact_repo_path(&report.root);
                 if contract {
@@ -35722,6 +35735,8 @@ pub fn detect(
                             .map(|opportunity| opportunity.advisory.clone())
                             .collect(),
                         comparison: comparison.as_ref(),
+                        candidate_path: None,
+                        candidate: None,
                     })),
                 }
             }
@@ -35754,6 +35769,113 @@ pub fn detect(
         debug,
         debug_lines,
     )
+}
+
+fn write_detect_candidate_artifact(
+    report: DetectReport,
+    requested_path: &Path,
+    format: OutputFormat,
+) -> CommandOutput {
+    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
+    let contract_path_display = contract_path.display().to_string();
+    let candidate_capture = match report.source_bound_candidate() {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            let error = format!("failed to construct source-bound candidate: {error}");
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "DETECT CANDIDATE",
+                    &compact_repo_path(&report.root),
+                    "Candidate could not be constructed",
+                    &error,
+                    &[],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &contract_path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
+    let candidate = candidate_capture.candidate;
+    let candidate_report = DetectReport {
+        root: report.root.clone(),
+        contract: candidate_capture.contract,
+        inferences: candidate_capture.inferences,
+    };
+    let output = match write_candidate_create_new(&report.root, requested_path, &candidate) {
+        Ok(output) => output,
+        Err(error) => {
+            let next = "choose a new root-relative path below an existing non-evidence directory";
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "DETECT CANDIDATE",
+                    &compact_repo_path(&report.root),
+                    "Candidate was not written",
+                    &error,
+                    &[next.to_string()],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &contract_path_display,
+                    written: false,
+                    error: &error,
+                    next: Some(next),
+                })),
+            };
+        }
+    };
+    let output_display = compact_path(&output, ".");
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format!(
+                "{}\n\n{}\n{}\n{}",
+                format_command_header("DETECT CANDIDATE", &compact_repo_path(&report.root)),
+                format_result_line(&format!("wrote {}", paint_code(&output_display))),
+                format_result_line(&format!("identity {}", paint_code(&candidate.identity))),
+                "Review this artifact before any future candidate-application command. It does not modify ota.yaml."
+            );
+            let dispositions =
+                candidate
+                    .changes
+                    .iter()
+                    .fold(BTreeMap::new(), |mut counts, change| {
+                        *counts
+                            .entry(format!("{:?}", change.disposition).to_lowercase())
+                            .or_insert(0_usize) += 1;
+                        counts
+                    });
+            if !dispositions.is_empty() {
+                stdout.push_str("\n\n");
+                stdout.push_str(&paint_section_title("Review summary"));
+                for (disposition, count) in dispositions {
+                    stdout.push_str(&format!("\n- {count} {disposition}"));
+                }
+            }
+            CommandOutput::success(stdout)
+        }
+        OutputFormat::Json => {
+            let candidate = serde_json::to_value(&candidate)
+                .expect("serializing verified candidate should not fail");
+            CommandOutput::success(to_json(&DetectSuccess {
+                ok: true,
+                path: &contract_path_display,
+                written: false,
+                config: detect_json_config_value(&candidate_report.contract),
+                inferred: &candidate_report.inferences,
+                toolchain_opportunities: detect_toolchain_opportunities(&candidate_report)
+                    .into_iter()
+                    .map(|opportunity| opportunity.advisory)
+                    .collect(),
+                comparison: None,
+                candidate_path: Some(&output_display),
+                candidate: Some(candidate),
+            }))
+        }
+    }
 }
 
 fn render_detect_contract_preview(
@@ -39394,6 +39516,8 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     .map(|opportunity| opportunity.advisory.clone())
                     .collect(),
                 comparison: None,
+                candidate_path: None,
+                candidate: None,
             })),
         },
         Err(error) => {
@@ -39641,6 +39765,8 @@ fn write_detected_merge(
                     .map(|opportunity| opportunity.advisory.clone())
                     .collect(),
                 comparison: Some(&comparison),
+                candidate_path: None,
+                candidate: None,
             })),
         };
     }
@@ -39884,6 +40010,8 @@ fn write_detected_merge(
                         .map(|opportunity| opportunity.advisory.clone())
                         .collect(),
                     comparison: post_write_comparison.as_ref(),
+                    candidate_path: None,
+                    candidate: None,
                 }))
             }
         },
@@ -40091,6 +40219,8 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     .map(|opportunity| opportunity.advisory.clone())
                     .collect(),
                 comparison: comparison.as_ref(),
+                candidate_path: None,
+                candidate: None,
             })),
         },
         Err(error) => {
@@ -72302,6 +72432,7 @@ env:
             false,
             false,
             false,
+            None,
             OutputFormat::Json,
             false,
         );
@@ -72322,6 +72453,122 @@ env:
         assert!(
             json["toolchain_opportunities"].as_array().is_none(),
             "{json}"
+        );
+    }
+
+    #[test]
+    fn detect_candidate_out_writes_review_artifact_without_modifying_contract() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{
+  "name": "candidate-demo",
+  "scripts": { "test": "cargo test" }
+}"#,
+        )
+        .expect("write package manifest");
+        fs::create_dir_all(repo.path().join(".ota/candidates"))
+            .expect("candidate output directory");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            false,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            Some(Path::new(".ota/candidates/detect.json")),
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        assert!(!repo.path().join("ota.yaml").exists());
+        let candidate_path = repo.path().join(".ota/candidates/detect.json");
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&fs::read(&candidate_path).expect("candidate artifact"))
+                .expect("candidate JSON");
+        assert_eq!(artifact["kind"], "detection");
+        assert!(artifact["identity"].as_str().is_some());
+        assert!(artifact["changes"].as_array().is_some_and(|changes| {
+            changes.iter().any(|change| {
+                change["subject"]["path"] == serde_json::json!(["tasks", "test", "command"])
+                    && change["field_family"] == "task_execution"
+                    && change["proposed_value"]
+                        == serde_json::json!({
+                            "kind": "command",
+                            "exe": "npm",
+                            "args": ["run", "test"]
+                        })
+            })
+        }));
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("detect JSON");
+        assert_eq!(json["written"], false);
+        assert_eq!(json["candidate"]["identity"], artifact["identity"]);
+        assert!(json["candidate_path"].as_str().is_some());
+
+        let collision = super::detect(
+            Some(repo.path()),
+            false,
+            false,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            Some(Path::new("candidate.json")),
+            OutputFormat::Json,
+            false,
+        );
+        assert_ne!(collision.exit_code, 0);
+        assert!(!repo.path().join("candidate.json").exists());
+    }
+
+    #[test]
+    fn detect_candidate_out_binds_existing_contract_bytes_without_applying_changes() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{ "name": "candidate-existing", "scripts": { "test": "cargo test" } }"#,
+        )
+        .expect("write package manifest");
+        let contract = "version: 1\nproject:\n  name: existing\n";
+        fs::write(repo.path().join("ota.yaml"), contract).expect("existing contract");
+        fs::create_dir_all(repo.path().join(".ota/candidates"))
+            .expect("candidate output directory");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            false,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            Some(Path::new(".ota/candidates/existing.json")),
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        assert_eq!(
+            fs::read_to_string(repo.path().join("ota.yaml")).expect("contract after candidate"),
+            contract
+        );
+        let artifact: serde_json::Value = serde_json::from_slice(
+            &fs::read(repo.path().join(".ota/candidates/existing.json"))
+                .expect("candidate artifact"),
+        )
+        .expect("candidate JSON");
+        assert_eq!(
+            artifact["existing_contract_snapshot_identity"],
+            crate::semantic_identity::contract_snapshot_hash(contract.as_bytes())
         );
     }
 
@@ -72353,6 +72600,7 @@ env:
             false,
             false,
             false,
+            None,
             OutputFormat::Json,
             false,
         );
@@ -72404,6 +72652,7 @@ env:
             false,
             false,
             false,
+            None,
             OutputFormat::Json,
             false,
         );
@@ -72457,6 +72706,7 @@ project:
             false,
             false,
             false,
+            None,
             OutputFormat::Json,
             false,
         );

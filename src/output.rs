@@ -3311,6 +3311,10 @@ pub struct DetectSuccess<'a> {
     pub toolchain_opportunities: Vec<ToolchainOpportunityAdvisory>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<&'a DetectComparison>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<JsonValue>,
 }
 
 #[derive(Debug, Serialize)]

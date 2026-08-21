@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- Added `ota detect --candidate-out <path>` for a durable, source-bound contract-candidate review
+  artifact. It derives from a command-owned immutable source snapshot, uses canonical create-new
+  publication, refuses contract/evidence collisions and output aliases, and never modifies
+  `ota.yaml`. Discovery inventory entries carry required content identities, every selected
+  evidence tuple is retained, and each change binds a structured contract path plus a canonical
+  semantic value. Equivalent existing truth is omitted, including typed commands equivalent to a
+  detected package-script invocation, schema-default command fields, and indexed environment-source
+  fields; disagreements are emitted as `conflict`. Candidate application remains unshipped.
+
 - Tighten `ota detect` agent-safety inference. Detected task names, package/task-runner wrappers,
   opaque shell scripts, and CI `run:` fragments no longer emit `safe_for_agent: true` merely
   because they resemble verification. Shell-variable and GitHub-expression CI commands remain

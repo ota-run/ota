@@ -92,6 +92,36 @@ fn relocated_binary_validates_against_its_embedded_published_schema() {
 }
 
 #[test]
+fn detect_candidate_artifact_matches_published_schemas_without_writing_a_contract() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-schema\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+
+    let output = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("detect.json", &output);
+    assert_eq!(output["written"], false);
+    assert!(output["candidate_path"].as_str().is_some());
+    assert!(!fixture.path().join("ota.yaml").exists());
+
+    let artifact = load_json(&fixture.path().join(".ota/candidates/detect.json"));
+    assert_matches_schema("contract-candidate.json", &artifact);
+    assert_eq!(artifact["identity"], output["candidate"]["identity"]);
+}
+
+#[test]
 fn crossing_grant_preview_refusal_matches_published_schema() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(

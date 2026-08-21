@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
+use tempfile::TempDir;
 use toml::Value as TomlValue;
 
 use crate::agent_boundary_docs::parse_agent_boundary_doc;
@@ -14,8 +15,8 @@ use crate::candidate_closure::{
 };
 use crate::contract_candidate::{
     CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence, CandidateDisposition,
-    CandidateEvidence, CandidateKind, CandidateOperation, ClosureEvidence, ContractCandidate,
-    DiscoveryInventoryEntry, ExecutionClosureNode,
+    CandidateEvidence, CandidateKind, CandidateOperation, CandidateSubject, ClosureEvidence,
+    ContractCandidate, DiscoveryInventoryEntry, ExecutionClosureNode,
 };
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
@@ -422,6 +423,29 @@ pub struct DetectReport {
     pub inferences: Vec<Inference>,
 }
 
+#[derive(Debug)]
+pub(crate) struct SourceBoundCandidateCapture {
+    pub candidate: ContractCandidate,
+    pub contract: DetectContract,
+    pub inferences: Vec<Inference>,
+}
+
+struct CandidateSourceSnapshot {
+    _storage: TempDir,
+    root: PathBuf,
+}
+
+impl CandidateSourceSnapshot {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+struct ExistingContractSnapshot {
+    identity: String,
+    value: JsonValue,
+}
+
 const DETECT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
     (EnvSourceKind::Dotenv, ".env.local"),
     (EnvSourceKind::Dotenv, ".env"),
@@ -583,6 +607,37 @@ fn setup_task_is_internal(task_name: &str) -> bool {
 }
 
 impl DetectReport {
+    /// Rebuilds the versioned review artifact from this command's observed source set.
+    ///
+    /// This is deliberately separate from contract writing: the result is review input only.
+    /// Captures candidate inputs into a command-owned immutable file snapshot before deriving any
+    /// candidate inference or closure. Normal detection remains live and compatibility-preserving.
+    pub(crate) fn source_bound_candidate(
+        &self,
+    ) -> Result<SourceBoundCandidateCapture, DetectError> {
+        let snapshot = capture_candidate_source_snapshot(&self.root)?;
+        let existing_contract = existing_contract_snapshot(&self.root)?;
+        let report = detect_repo(snapshot.root())?;
+        let mut candidate = source_bound_candidate_foundation_with_existing_contract(
+            snapshot.root(),
+            &report.inferences,
+            existing_contract.as_ref().map(|snapshot| &snapshot.value),
+        )?;
+        candidate.existing_contract_snapshot_identity =
+            existing_contract.map(|snapshot| snapshot.identity);
+        candidate
+            .finalize_identities()
+            .map_err(|error| DetectError::Candidate(error.to_string()))?;
+        candidate
+            .verify_identities()
+            .map_err(|error| DetectError::Candidate(error.to_string()))?;
+        Ok(SourceBoundCandidateCapture {
+            candidate,
+            contract: report.contract,
+            inferences: report.inferences,
+        })
+    }
+
     pub fn high_confidence_contract(&self) -> DetectContract {
         self.contract_with_min_confidence(Confidence::High)
     }
@@ -870,9 +925,18 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     builder.finish()
 }
 
+#[cfg(test)]
 fn source_bound_candidate_foundation(
     root: &Path,
     inferences: &[Inference],
+) -> Result<ContractCandidate, DetectError> {
+    source_bound_candidate_foundation_with_existing_contract(root, inferences, None)
+}
+
+fn source_bound_candidate_foundation_with_existing_contract(
+    root: &Path,
+    inferences: &[Inference],
+    existing_contract: Option<&JsonValue>,
 ) -> Result<ContractCandidate, DetectError> {
     let implementation_identity = semantic_contract_identity(&(
         "ota.detect",
@@ -880,15 +944,20 @@ fn source_bound_candidate_foundation(
         env!("CARGO_PKG_VERSION"),
     ))
     .map_err(DetectError::Candidate)?;
-    let mut evidence_by_path = BTreeMap::<String, CandidateEvidence>::new();
+    let mut evidence_by_identity =
+        BTreeMap::<(String, String, String, String), CandidateEvidence>::new();
     let discovery_inventory = detector_discovery_inventory(root)?;
     let mut changes = Vec::new();
 
     for inference in inferences {
         let evidence = inference_source_evidence(root, inference)?;
         let is_task_command = is_task_command(inference);
-        let closure_resolution = if is_task_command {
-            let command = candidate_task_command_body(root, inference)?;
+        let command = if is_task_command {
+            Some(candidate_task_command_body(root, inference)?)
+        } else {
+            None
+        };
+        let closure_resolution = if let Some(command) = command.as_ref() {
             Some(resolve_candidate_task_closure(CandidateClosureInput {
                 task_name: inference_task_name(&inference.field).unwrap_or("unknown"),
                 task_command: &inference.value,
@@ -911,7 +980,13 @@ fn source_bound_candidate_foundation(
         } else {
             None
         };
-        let disposition = if let Some(resolution) = &closure_resolution {
+        let proposed_value = candidate_semantic_value(inference);
+        let subject = candidate_subject(inference, &proposed_value)?;
+        let existing_value = existing_contract_semantic_value(existing_contract, &subject);
+        if existing_value.as_ref() == Some(&proposed_value) {
+            continue;
+        }
+        let mut disposition = if let Some(resolution) = &closure_resolution {
             match resolution.classification {
                 CandidateTaskClassification::Runnable => CandidateDisposition::Applicable,
                 CandidateTaskClassification::Unknown => CandidateDisposition::Unknown,
@@ -921,18 +996,26 @@ fn source_bound_candidate_foundation(
         } else {
             CandidateDisposition::Unknown
         };
+        if existing_value.is_some() {
+            disposition = CandidateDisposition::Conflict;
+        }
         if let Some(evidence) = &evidence {
-            evidence_by_path
-                .entry(evidence.path.clone())
+            evidence_by_identity
+                .entry((
+                    evidence.source_kind.clone(),
+                    evidence.path.clone(),
+                    evidence.content_identity.clone(),
+                    evidence.extraction.clone(),
+                ))
                 .or_insert_with(|| evidence.clone());
         }
 
         let execution_closure = closure_resolution.map(|resolution| resolution.closure);
         changes.push(CandidateChange {
-            subject: inference.field.clone(),
-            field_family: inference.field_type.to_string(),
+            subject,
+            field_family: candidate_field_family(inference).to_string(),
             operation: CandidateOperation::Add,
-            proposed_value: Some(JsonValue::String(inference.value.clone())),
+            proposed_value: Some(proposed_value),
             evidence: evidence.into_iter().collect(),
             execution_closure,
             confidence: candidate_confidence(inference.confidence),
@@ -948,7 +1031,7 @@ fn source_bound_candidate_foundation(
         discovery_inventory_identity: String::new(),
         discovery_inventory,
         evidence_manifest_identity: String::new(),
-        evidence_manifest: evidence_by_path.into_values().collect(),
+        evidence_manifest: evidence_by_identity.into_values().collect(),
         existing_contract_snapshot_identity: None,
         implementation_identity,
         changes,
@@ -960,6 +1043,254 @@ fn source_bound_candidate_foundation(
         .verify_identities()
         .map_err(|error| DetectError::Candidate(error.to_string()))?;
     Ok(candidate)
+}
+
+fn existing_contract_snapshot(
+    root: &Path,
+) -> Result<Option<ExistingContractSnapshot>, DetectError> {
+    let path = root.join("ota.yaml");
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(DetectError::Candidate(String::from(
+                "existing ota.yaml must not be a symlink when creating a source-bound candidate",
+            )))
+        }
+        Ok(metadata) if metadata.is_file() => {
+            let bytes = fs::read(&path).map_err(|source| DetectError::Read {
+                path: String::from("ota.yaml"),
+                source,
+            })?;
+            let contents = std::str::from_utf8(&bytes).map_err(|error| {
+                DetectError::Candidate(format!(
+                    "existing ota.yaml must be UTF-8 when creating a source-bound candidate: {error}"
+                ))
+            })?;
+            let contract = crate::parser::parse_contract_str(&path, contents).map_err(|error| {
+                DetectError::Candidate(format!(
+                    "failed to parse existing ota.yaml when creating a source-bound candidate: {error}"
+                ))
+            })?;
+            let value = serde_json::to_value(contract).map_err(|error| {
+                DetectError::Candidate(format!(
+                    "failed to normalize existing ota.yaml when creating a source-bound candidate: {error}"
+                ))
+            })?;
+            Ok(Some(ExistingContractSnapshot {
+                identity: contract_snapshot_hash(&bytes),
+                value,
+            }))
+        }
+        Ok(_) => Err(DetectError::Candidate(String::from(
+            "existing ota.yaml must be a regular file when creating a source-bound candidate",
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(DetectError::Read {
+            path: String::from("ota.yaml"),
+            source,
+        }),
+    }
+}
+
+fn candidate_subject(
+    inference: &Inference,
+    proposed_value: &JsonValue,
+) -> Result<CandidateSubject, DetectError> {
+    let path = if inference.field_type == InferenceFieldType::Task {
+        let (task_name, field_name) = task_field_parts(&inference.field).ok_or_else(|| {
+            DetectError::Candidate(format!(
+                "task inference `{}` has no structured contract path",
+                inference.field
+            ))
+        })?;
+        vec![
+            String::from("tasks"),
+            task_name.to_string(),
+            if field_name == "run"
+                && proposed_value.get("kind").and_then(JsonValue::as_str) == Some("command")
+            {
+                String::from("command")
+            } else {
+                field_name.to_string()
+            },
+        ]
+    } else {
+        inference.field.split('.').map(String::from).collect()
+    };
+    if path.len() < 2 || path.iter().any(|segment| segment.is_empty()) {
+        return Err(DetectError::Candidate(format!(
+            "inference `{}` has no structured contract path",
+            inference.field
+        )));
+    }
+    Ok(CandidateSubject::new(path))
+}
+
+fn candidate_field_family(inference: &Inference) -> &'static str {
+    if is_task_command(inference) {
+        "task_execution"
+    } else {
+        inference.field_type.as_str()
+    }
+}
+
+fn candidate_semantic_value(inference: &Inference) -> JsonValue {
+    if is_task_command(inference) {
+        return canonical_task_execution(&inference.value);
+    }
+    if inference.field.ends_with(".safe_for_agent")
+        || inference.field.ends_with(".internal")
+        || inference.field.ends_with(".must_exist")
+    {
+        return inference
+            .value
+            .parse::<bool>()
+            .map(JsonValue::Bool)
+            .unwrap_or_else(|_| JsonValue::String(inference.value.clone()));
+    }
+    if inference.field.ends_with(".port") {
+        return inference
+            .value
+            .parse::<u64>()
+            .map(serde_json::Number::from)
+            .map(JsonValue::Number)
+            .unwrap_or_else(|_| JsonValue::String(inference.value.clone()));
+    }
+    JsonValue::String(inference.value.clone())
+}
+
+fn canonical_task_execution(command: &str) -> JsonValue {
+    let trimmed = command.trim();
+    if let Some(tokens) = simple_command_tokens(trimmed) {
+        return serde_json::json!({
+            "kind": "command",
+            "exe": tokens[0],
+            "args": &tokens[1..],
+        });
+    }
+    serde_json::json!({
+        "kind": "run",
+        "body": trimmed,
+    })
+}
+
+fn simple_command_tokens(command: &str) -> Option<Vec<&str>> {
+    if command.is_empty()
+        || command.chars().any(|character| {
+            matches!(
+                character,
+                '\n' | '\r'
+                    | '\\'
+                    | '\''
+                    | '"'
+                    | '`'
+                    | '$'
+                    | '|'
+                    | '&'
+                    | ';'
+                    | '<'
+                    | '>'
+                    | '('
+                    | ')'
+                    | '{'
+                    | '}'
+                    | '['
+                    | ']'
+                    | '*'
+                    | '?'
+                    | '~'
+            )
+        })
+    {
+        return None;
+    }
+    let tokens = command.split_ascii_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens[0].contains('=') {
+        None
+    } else {
+        Some(tokens)
+    }
+}
+
+fn existing_contract_semantic_value(
+    existing_contract: Option<&JsonValue>,
+    subject: &CandidateSubject,
+) -> Option<JsonValue> {
+    let existing_contract = existing_contract?;
+    if let [tasks, task_name, execution] = subject.path.as_slice()
+        && tasks == "tasks"
+        && matches!(execution.as_str(), "run" | "command")
+    {
+        let task = existing_contract
+            .get("tasks")?
+            .as_object()?
+            .get(task_name)?;
+        return canonical_existing_task_execution(task);
+    }
+    subject
+        .path
+        .iter()
+        .try_fold(existing_contract, existing_contract_path_segment)
+        .cloned()
+}
+
+fn existing_contract_path_segment<'a>(value: &'a JsonValue, key: &String) -> Option<&'a JsonValue> {
+    match value {
+        JsonValue::Object(object) => object.get(key),
+        JsonValue::Array(array) => key.parse::<usize>().ok().and_then(|index| array.get(index)),
+        _ => None,
+    }
+}
+
+fn canonical_existing_task_execution(task: &JsonValue) -> Option<JsonValue> {
+    if let Some(run) = task.get("run").and_then(JsonValue::as_str) {
+        return Some(canonical_task_execution(run));
+    }
+    if let Some(command) = task.get("command").and_then(JsonValue::as_object) {
+        let exe = command.get("exe")?.as_str()?;
+        let args = command
+            .get("args")
+            .and_then(JsonValue::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut value = serde_json::json!({
+            "kind": "command",
+            "exe": exe,
+            "args": args,
+        });
+        let object = value.as_object_mut().expect("command semantic value");
+        if let Some(cwd) = command.get("cwd").filter(|cwd| cwd.as_str() != Some(".")) {
+            object.insert(String::from("cwd"), cwd.clone());
+        }
+        if let Some(runtime_projection) = command.get("runtime_projection") {
+            object.insert(
+                String::from("runtime_projection"),
+                runtime_projection.clone(),
+            );
+        }
+        if let Some(interaction) = command
+            .get("interaction")
+            .filter(|interaction| interaction.as_str() != Some("auto"))
+        {
+            object.insert(String::from("interaction"), interaction.clone());
+        }
+        return Some(value);
+    }
+    for field in [
+        "script",
+        "compose",
+        "prepare",
+        "launch",
+        "action",
+        "aggregate",
+    ] {
+        if let Some(value) = task.get(field).filter(|value| !value.is_null()) {
+            return Some(serde_json::json!({
+                "kind": field,
+                "value": value,
+            }));
+        }
+    }
+    None
 }
 
 fn inference_source_evidence(
@@ -1088,10 +1419,62 @@ fn detector_discovery_inventory(root: &Path) -> Result<Vec<DiscoveryInventoryEnt
         inventory.push(DiscoveryInventoryEntry {
             source_kind: discovery_source_kind(&path).to_string(),
             path,
-            content_identity: Some(contract_snapshot_hash(&bytes)),
+            content_identity: contract_snapshot_hash(&bytes),
         });
     }
     Ok(inventory)
+}
+
+fn capture_candidate_source_snapshot(root: &Path) -> Result<CandidateSourceSnapshot, DetectError> {
+    let root = fs::canonicalize(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })?;
+    let inventory = detector_discovery_inventory(&root)?;
+    let storage = tempfile::tempdir().map_err(|source| DetectError::Read {
+        path: String::from("candidate source snapshot"),
+        source,
+    })?;
+    let logical_root_name = root.file_name().ok_or_else(|| {
+        DetectError::Candidate(String::from(
+            "candidate source root must have a stable logical directory name",
+        ))
+    })?;
+    let snapshot_root = storage.path().join(logical_root_name);
+    fs::create_dir(&snapshot_root).map_err(|source| DetectError::Read {
+        path: String::from("candidate source snapshot root"),
+        source,
+    })?;
+    for entry in inventory {
+        let source_path = root.join(&entry.path);
+        let bytes = fs::read(&source_path).map_err(|source| DetectError::Read {
+            path: entry.path.clone(),
+            source,
+        })?;
+        let observed_identity = contract_snapshot_hash(&bytes);
+        if entry.content_identity != observed_identity {
+            return Err(DetectError::Candidate(format!(
+                "repository source `{}` changed while capturing the candidate observation; rerun detection",
+                entry.path
+            )));
+        }
+        let target = snapshot_root.join(&entry.path);
+        let parent = target
+            .parent()
+            .expect("root-relative snapshot path has a parent");
+        fs::create_dir_all(parent).map_err(|source| DetectError::Read {
+            path: entry.path.clone(),
+            source,
+        })?;
+        fs::write(&target, bytes).map_err(|source| DetectError::Read {
+            path: entry.path,
+            source,
+        })?;
+    }
+    Ok(CandidateSourceSnapshot {
+        _storage: storage,
+        root: snapshot_root,
+    })
 }
 
 fn discovery_source_kind(path: &str) -> &'static str {
@@ -6203,7 +6586,6 @@ impl DetectBuilder {
             &mut self.inferences,
         );
         let inferences = self.inferences.into_values().collect::<Vec<_>>();
-        source_bound_candidate_foundation(&self.root, &inferences)?;
         Ok(DetectReport {
             root: self.root,
             contract: self.contract,
@@ -7121,10 +7503,16 @@ fn is_task_command_source(source: &str, source_file: &str, field: &str) -> bool 
 }
 
 fn inference_task_name(field: &str) -> Option<&str> {
-    let mut segments = field.split('.');
-    match (segments.next(), segments.next()) {
-        (Some("tasks"), Some(task_name)) if !task_name.is_empty() => Some(task_name),
-        _ => None,
+    task_field_parts(field).map(|(task_name, _)| task_name)
+}
+
+fn task_field_parts(field: &str) -> Option<(&str, &str)> {
+    let task_field = field.strip_prefix("tasks.")?;
+    let (task_name, field_name) = task_field.rsplit_once('.')?;
+    if task_name.is_empty() || field_name.is_empty() {
+        None
+    } else {
+        Some((task_name, field_name))
     }
 }
 
@@ -11117,7 +11505,7 @@ jobs:
         let change = candidate
             .changes
             .iter()
-            .find(|change| change.subject == "tasks.test.run")
+            .find(|change| change.subject.is_path(&["tasks", "test", "command"]))
             .expect("test task candidate");
         assert_eq!(change.disposition, CandidateDisposition::Unknown);
         assert_eq!(
@@ -11150,7 +11538,7 @@ jobs:
         let change = candidate
             .changes
             .iter()
-            .find(|change| change.subject == "tasks.test.run")
+            .find(|change| change.subject.is_path(&["tasks", "test", "command"]))
             .expect("test task candidate");
         assert_eq!(change.disposition, CandidateDisposition::Applicable);
         let closure = change.execution_closure.as_ref().expect("task closure");
@@ -11214,7 +11602,7 @@ jobs:
         let closure = candidate
             .changes
             .iter()
-            .find(|change| change.subject == "tasks.test.run")
+            .find(|change| change.subject.is_path(&["tasks", "test", "command"]))
             .and_then(|change| change.execution_closure.as_ref())
             .expect("resolved test closure");
         assert!(
@@ -11250,7 +11638,7 @@ edition = "2024"
         let change = candidate
             .changes
             .iter()
-            .find(|change| change.subject == "tasks.test.run")
+            .find(|change| change.subject.is_path(&["tasks", "test", "command"]))
             .expect("test task candidate");
         assert_eq!(change.disposition, CandidateDisposition::Applicable);
         let closure = change.execution_closure.as_ref().expect("task closure");
@@ -11278,10 +11666,11 @@ edition = "2024"
             vec![String::from("effect_classification_unresolved")]
         );
         assert!(
-            !candidate
-                .changes
-                .iter()
-                .any(|change| change.subject.ends_with(".safe_for_agent")),
+            !candidate.changes.iter().any(|change| change
+                .subject
+                .path
+                .last()
+                .is_some_and(|field| field == "safe_for_agent")),
             "closure resolution must not manufacture agent-safe proposals"
         );
     }
@@ -11316,6 +11705,264 @@ edition = "2024"
             first.evidence_manifest_identity,
             second.evidence_manifest_identity
         );
+    }
+
+    #[test]
+    fn source_bound_candidate_derives_from_its_immutable_snapshot() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+        let report = detect_repo(fixture.path()).expect("initial report");
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "verify": "vitest run --coverage" }
+}"#,
+        );
+
+        let capture = report.source_bound_candidate().expect("candidate snapshot");
+        assert!(
+            capture
+                .candidate
+                .changes
+                .iter()
+                .any(|change| change.subject.is_path(&["tasks", "verify", "command"]))
+        );
+        assert!(
+            !capture
+                .candidate
+                .changes
+                .iter()
+                .any(|change| change.subject.is_path(&["tasks", "test", "command"]))
+        );
+        assert!(
+            capture
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "tasks.verify.run")
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_preserves_directory_fallback_identity() {
+        let fixture = Fixture::new();
+        let report = detect_repo(fixture.path()).expect("detect report");
+
+        let first = report.source_bound_candidate().expect("first candidate");
+        let second = report.source_bound_candidate().expect("second candidate");
+
+        assert_eq!(first.candidate.identity, second.candidate.identity);
+        assert!(first.candidate.changes.iter().any(|change| {
+            change.subject.is_path(&["project", "name"])
+                && change.proposed_value
+                    == Some(serde_json::Value::String(
+                        fixture
+                            .path()
+                            .file_name()
+                            .expect("fixture directory name")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ))
+        }));
+    }
+
+    #[test]
+    fn source_bound_candidate_marks_existing_contract_disagreement_as_conflict() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "detected-name"
+}"#,
+        );
+        fixture.write(
+            "ota.yaml",
+            r#"version: 1
+project:
+  name: existing-name
+"#,
+        );
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report.source_bound_candidate().expect("candidate capture");
+
+        let project_name = capture
+            .candidate
+            .changes
+            .iter()
+            .find(|change| change.subject.is_path(&["project", "name"]))
+            .expect("project-name candidate");
+        assert_eq!(project_name.disposition, CandidateDisposition::Conflict);
+        assert!(
+            capture
+                .candidate
+                .existing_contract_snapshot_identity
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_omits_semantically_equivalent_typed_task_command() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+        fixture.write(
+            "ota.yaml",
+            r#"version: 1
+project:
+  name: candidate-fixture
+tasks:
+  test:
+    command:
+      exe: npm
+      args: [run, test]
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report.source_bound_candidate().expect("candidate capture");
+
+        assert!(
+            !capture
+                .candidate
+                .changes
+                .iter()
+                .any(|change| { change.subject.is_path(&["tasks", "test", "command"]) })
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_normalizes_default_typed_command_fields() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+        fixture.write(
+            "ota.yaml",
+            r#"version: 1
+project:
+  name: candidate-fixture
+tasks:
+  test:
+    command:
+      exe: npm
+      args: [run, test]
+      cwd: .
+      interaction: auto
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report.source_bound_candidate().expect("candidate capture");
+
+        assert!(
+            !capture
+                .candidate
+                .changes
+                .iter()
+                .any(|change| { change.subject.is_path(&["tasks", "test", "command"]) })
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_reconciles_dotted_task_name_as_one_path_segment() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture",
+  "scripts": { "test.unit": "vitest run" }
+}"#,
+        );
+        fixture.write(
+            "ota.yaml",
+            r#"version: 1
+project:
+  name: candidate-fixture
+tasks:
+  test.unit:
+    run: npm run test.unit
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report.source_bound_candidate().expect("candidate capture");
+
+        assert!(
+            !capture
+                .candidate
+                .changes
+                .iter()
+                .any(|change| { change.subject.is_path(&["tasks", "test.unit", "command"]) })
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_omits_unchanged_project_name() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "candidate-fixture"
+}"#,
+        );
+        fixture.write(
+            "ota.yaml",
+            r#"version: 1
+project:
+  name: candidate-fixture
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report.source_bound_candidate().expect("candidate capture");
+
+        assert!(
+            !capture
+                .candidate
+                .changes
+                .iter()
+                .any(|change| change.subject.is_path(&["project", "name"]))
+        );
+    }
+
+    #[test]
+    fn source_bound_candidate_reconciles_indexed_env_source_paths() {
+        let fixture = Fixture::new();
+        fixture.write(".env", "APP_PORT=3000\n");
+        fixture.write(
+            "ota.yaml",
+            r#"version: 1
+project:
+  name: existing
+env:
+  sources:
+    - kind: dotenv
+      path: .env
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).expect("detect report");
+        let capture = report.source_bound_candidate().expect("candidate capture");
+
+        assert!(!capture.candidate.changes.iter().any(|change| {
+            change.subject.is_path(&["env", "sources", "0", "kind"])
+                || change.subject.is_path(&["env", "sources", "0", "path"])
+        }));
     }
 
     #[test]
@@ -11376,7 +12023,10 @@ edition = "2024"
         )
         .expect("source symlink");
 
-        let error = detect_repo(fixture.path()).expect_err("escaped source must refuse");
+        let report = detect_repo(fixture.path()).expect("ordinary detect remains compatible");
+        let error = report
+            .source_bound_candidate()
+            .expect_err("escaped source must refuse candidate publication");
         assert!(
             error
                 .to_string()
@@ -11393,7 +12043,10 @@ edition = "2024"
         std::os::unix::fs::symlink(outside.path().join(".nvmrc"), fixture.path().join(".nvmrc"))
             .expect("source symlink");
 
-        let error = detect_repo(fixture.path()).expect_err("escaped inventory source must refuse");
+        let report = detect_repo(fixture.path()).expect("ordinary detect remains compatible");
+        let error = report
+            .source_bound_candidate()
+            .expect_err("escaped inventory source must refuse candidate publication");
         assert!(
             error
                 .to_string()
