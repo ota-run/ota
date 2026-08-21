@@ -4607,6 +4607,23 @@ pub fn proof_runtime_with_grant(
                         control,
                     );
                 }
+                let negative_control_selection = negative_control.as_ref().map(|control| {
+                    crate::proof_assurance::NegativeControlSelection {
+                        id: control.id.clone(),
+                        dependency_id: control.dependency_id.clone(),
+                        obligation_id: control.obligation_id.clone(),
+                    }
+                });
+                if let Err(error) = crate::proof_assurance::reconcile_negative_control_projection(
+                    &dependency_evidence,
+                    negative_control.as_ref(),
+                    negative_control_selection.as_ref(),
+                ) {
+                    return fail_active_proof_crossing_transaction(
+                        format!("negative-control evidence reconciliation failed: {error}"),
+                        proof_execution_id.as_str(),
+                    );
+                }
                 let mut not_proved = proof_runtime_not_proved(
                     &target.contract,
                     &target.contract_path,
@@ -104612,6 +104629,185 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_archive_rejects_tampered_negative_control_projection() {
+        let fixture = TempDir::new().expect("archive fixture");
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: archive-negative-control
+tasks:
+  verify:
+    run: echo verify
+  observe:
+    run: echo observe
+  postgres-down:
+    run: echo control
+workflows:
+  default: app
+  app:
+    run:
+      task: verify
+    proof:
+      seam_observations:
+        - id: postgres-marker
+          dependency: postgres
+          producer_task: verify
+          task: observe
+          marker_env: OTA_PROOF_POSTGRES_MARKER
+      negative_controls:
+        - id: postgres-unavailable
+          dependency: postgres
+          obligation: postgres-marker
+          task: postgres-down
+          intervention:
+            kind: dependency_disruption
+          expected_failure: dependency_unavailable
+"#,
+        )
+        .expect("write contract");
+        let contract = parse_contract_str(
+            &contract_path,
+            &fs::read_to_string(&contract_path).expect("read contract"),
+        )
+        .expect("parse contract");
+        let snapshot = super::build_contract_snapshot_artifact(fixture.path(), &contract, true)
+            .expect("archive snapshot");
+        let scope = super::proof_runtime_archive_scope(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            vec![
+                CrossingProofInvocation {
+                    id: String::from("seam_observation:postgres-marker"),
+                    kind: String::from("seam_observation"),
+                    task: String::from("observe"),
+                    order: 0,
+                },
+                CrossingProofInvocation {
+                    id: String::from("negative_control:postgres-unavailable"),
+                    kind: String::from("negative_control"),
+                    task: String::from("postgres-down"),
+                    order: 1,
+                },
+            ],
+            None,
+        );
+        let archive_path = fixture.path().join("runtime-proof.json");
+        let record = serde_json::json!({
+            "kind": "runtime_proof",
+            "version": 6,
+            "contract_snapshot_hash": snapshot.hash,
+            "contract_snapshot_ref": super::receipt_storage_path_display(
+                snapshot.archive_path.as_deref().expect("snapshot path")
+            ),
+            "replay_posture": "witness_only",
+            "scope": scope,
+            "proof": {
+                "ok": true,
+                "proof_verdict": "passed_with_unproven_boundaries",
+                "negative_control": {
+                    "id": "postgres-unavailable",
+                    "dependency_id": "service:postgres",
+                    "obligation_id": "postgres-marker",
+                    "control_task": "test:without-postgres",
+                    "intervention": { "kind": "environment", "id": "postgres-url" },
+                    "expected_failure": "postgres marker fails",
+                    "outcome": "expected_obligation_failed",
+                    "status": "validated",
+                    "failure_mode": "expected_missing_effect",
+                    "proof_scope_ref": "workflow:app",
+                    "evidence_class": "attested",
+                    "failure_attestation_digest": "sha256:canonical"
+                },
+                "dependency_evidence": [{
+                    "dependency_id": "service:postgres",
+                    "proof_obligation_id": "postgres-marker",
+                    "level": "fault_tested",
+                    "observation": { "origin": "negative_control", "evidence_class": "derived" },
+                    "negative_control": {
+                        "evidence_class": "derived",
+                        "status": "validated",
+                        "same_obligation": true,
+                        "negative_control_id": "postgres-unavailable",
+                        "failure_mode": "expected_missing_effect",
+                        "failure_attestation_digest": "sha256:canonical"
+                    }
+                }]
+            }
+        });
+        let assert_refused = |record: serde_json::Value, case: &str| {
+            let bytes = serde_json::to_vec(&record).expect("archive json");
+            let identity = super::contract_snapshot_hash(&bytes);
+            fs::write(&archive_path, bytes).expect("archive write");
+            let error = super::verify_emitted_proof_runtime_archive(
+                fixture.path(),
+                &archive_path,
+                &identity,
+            )
+            .expect_err("tampered negative-control archive must refuse");
+            assert!(
+                error.contains("negative-control evidence is invalid"),
+                "{case}: {error}"
+            );
+        };
+
+        let mut changed_digest = record.clone();
+        changed_digest["proof"]["dependency_evidence"][0]["negative_control"]["failure_attestation_digest"] =
+            serde_json::json!("sha256:substituted");
+        assert_refused(changed_digest, "digest");
+
+        let mut changed_id = record.clone();
+        changed_id["proof"]["dependency_evidence"][0]["negative_control"]["negative_control_id"] =
+            serde_json::json!("other-control");
+        assert_refused(changed_id, "control id");
+
+        let mut changed_dependency = record.clone();
+        changed_dependency["proof"]["dependency_evidence"][0]["dependency_id"] =
+            serde_json::json!("service:other");
+        assert_refused(changed_dependency, "dependency");
+
+        let mut changed_obligation = record.clone();
+        changed_obligation["proof"]["dependency_evidence"][0]["proof_obligation_id"] =
+            serde_json::json!("other-obligation");
+        assert_refused(changed_obligation, "obligation");
+
+        let mut changed_status = record.clone();
+        changed_status["proof"]["negative_control"]["status"] = serde_json::json!("invalid");
+        assert_refused(changed_status, "canonical status");
+
+        let mut changed_outcome = record.clone();
+        changed_outcome["proof"]["negative_control"]["outcome"] =
+            serde_json::json!("unexpected_success");
+        assert_refused(changed_outcome, "canonical outcome");
+
+        let mut changed_failure_mode = record.clone();
+        changed_failure_mode["proof"]["negative_control"]["failure_mode"] =
+            serde_json::json!("timeout");
+        assert_refused(changed_failure_mode, "canonical failure mode");
+
+        let mut missing_projection = record.clone();
+        missing_projection["proof"]["dependency_evidence"] = serde_json::json!([]);
+        assert_refused(missing_projection, "missing projection");
+
+        let mut duplicate_projection = record.clone();
+        let projection = duplicate_projection["proof"]["dependency_evidence"][0].clone();
+        duplicate_projection["proof"]["dependency_evidence"]
+            .as_array_mut()
+            .expect("dependency evidence array")
+            .push(projection);
+        assert_refused(duplicate_projection, "duplicate projection");
+
+        let mut stripped_evidence = record;
+        stripped_evidence["proof"]["dependency_evidence"] = serde_json::json!([]);
+        stripped_evidence["proof"]["negative_control"] = serde_json::Value::Null;
+        assert_refused(stripped_evidence, "stripped canonical and projection");
+    }
+
+    #[test]
     fn proof_archive_v6_with_unsafe_seam_requires_direct_crossing_evidence() {
         let repo = TempDir::new().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -119164,6 +119360,10 @@ struct ProofRuntimeArchiveReadProof {
     execution_id: Option<String>,
     proof_verdict: String,
     #[serde(default)]
+    dependency_evidence: Vec<ProofRuntimeDependencyEvidence>,
+    #[serde(default)]
+    negative_control: Option<ProofRuntimeNegativeControl>,
+    #[serde(default)]
     crossing_evidence: Option<ProofRuntimeCrossingEvidence>,
 }
 
@@ -119490,6 +119690,51 @@ fn proof_runtime_archive_policy(
     ))
 }
 
+fn proof_runtime_archive_negative_control_selection(
+    contract: &Contract,
+    scope: &ProofRuntimeArchiveScope,
+) -> Result<Option<crate::proof_assurance::NegativeControlSelection>, String> {
+    let controls = scope
+        .proof_invocations
+        .iter()
+        .filter(|invocation| invocation.kind == "negative_control")
+        .collect::<Vec<_>>();
+    if controls.is_empty() {
+        return Ok(None);
+    }
+    if controls.len() != 1 {
+        return Err(String::from(
+            "runtime proof archive selects multiple negative controls",
+        ));
+    }
+    let (_, workflow) = contract
+        .selected_workflow(scope.workflow.as_deref())
+        .ok_or_else(|| {
+            String::from("runtime proof archive selects a control without a workflow")
+        })?;
+    let invocation = controls[0];
+    let control_id = invocation
+        .id
+        .strip_prefix("negative_control:")
+        .ok_or_else(|| String::from("runtime proof archive control invocation is malformed"))?;
+    let control = workflow
+        .proof
+        .negative_controls
+        .iter()
+        .find(|control| control.id == control_id)
+        .ok_or_else(|| String::from("runtime proof archive control is absent from its contract"))?;
+    if invocation.task != control.task {
+        return Err(String::from(
+            "runtime proof archive control invocation does not match its contract",
+        ));
+    }
+    Ok(Some(crate::proof_assurance::NegativeControlSelection {
+        id: control.id.clone(),
+        dependency_id: format!("service:{}", control.dependency),
+        obligation_id: control.obligation.clone(),
+    }))
+}
+
 /// Re-derive the complete selected proof scope from the archived contract. Archive-authored
 /// safety and a different child receipt scope cannot establish crossing authority.
 fn proof_runtime_archive_crossing_scope(
@@ -119677,6 +119922,17 @@ fn load_proof_runtime_archive_candidates(
                     &archive.scope,
                     archive.version,
                 )?;
+            let negative_control_selection = proof_runtime_archive_negative_control_selection(
+                &snapshot_contract,
+                &archive.scope,
+            )
+            .ok()?;
+            crate::proof_assurance::reconcile_negative_control_projection(
+                &archive.proof.dependency_evidence,
+                archive.proof.negative_control.as_ref(),
+                negative_control_selection.as_ref(),
+            )
+            .ok()?;
             if crossing_required && archive.proof.crossing_evidence.is_none() {
                 // A governed archived runtime lane cannot become assurance evidence after its
                 // crossing link is removed and the local file is re-hashed.
@@ -120476,6 +120732,18 @@ fn verify_emitted_proof_runtime_archive(
     let (crossing_required, expected_scope) =
         proof_runtime_archive_crossing_scope(&contract, &archive.scope, archive.version)
             .ok_or_else(|| String::from("emitted proof archive scope does not re-derive"))?;
+    let negative_control_selection =
+        proof_runtime_archive_negative_control_selection(&contract, &archive.scope).map_err(
+            |error| format!("emitted proof archive control selection is invalid: {error}"),
+        )?;
+    crate::proof_assurance::reconcile_negative_control_projection(
+        &archive.proof.dependency_evidence,
+        archive.proof.negative_control.as_ref(),
+        negative_control_selection.as_ref(),
+    )
+    .map_err(|error| {
+        format!("emitted proof archive negative-control evidence is invalid: {error}")
+    })?;
     let crossing = archive.proof.crossing_evidence.as_ref();
     if crossing_required && crossing.is_none() {
         return Err(String::from(

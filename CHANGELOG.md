@@ -46,8 +46,10 @@
   dependency-level projection now names its canonical `negative_control_id`; it is emitted only
   with same-obligation, expected-missing-effect, and failure-attestation evidence. Consumers can
   reconcile that ID, the parent dependency/obligation, and exact digest with the canonical
-  top-level negative-control record. Invalid and unrun projections cannot carry the canonical ID
-  or attestation digest.
+  top-level negative-control record. Core performs that semantic reconciliation before emission
+  and when loading runtime-proof archives; archive readers re-derive the selected control from
+  the archived contract and scope, requiring exactly one canonical record and projection. Invalid
+  and unrun projections cannot carry the canonical ID or attestation digest.
 
 ## 1.6.26
 

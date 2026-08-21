@@ -787,8 +787,11 @@ durable agent workflow belongs in the canonical Ota skill.
   on success and readiness failure, while services already running before proof are preserved.
   Validated dependency projections now name their canonical negative-control record and bind its
   exact failure-attestation digest; schema rules prevent `fault_tested` evidence from omitting or
-  downgrading that validated projection, while consumer reconciliation verifies the canonical ID,
-  dependency, obligation, and digest relationship.
+  downgrading that validated projection, while Core now reconciles the canonical ID, dependency,
+  obligation, and digest relationship before emission and archive loading. Archive reads derive a
+  selected control from archived contract/scope truth and require exactly one canonical record and
+  matching projection; other consumers must apply that same rule because JSON Schema cannot
+  compare sibling values.
 - completed V11.13 generated-artifact lineage: Dagger proves the generator path and EventCatalog
   proves an independent sibling-consumer closure. Contract-owned producer, output-path, and input
   lineage is validated, surfaced in task discovery, checked before consumer execution, and carried

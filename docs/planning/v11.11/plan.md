@@ -479,6 +479,12 @@ Rules:
   runner-derived `failure_mode: expected_missing_effect`. Its projection must include
   `negative_control_id`, equal to the canonical top-level record's `id`; consumers reconcile that
   ID, the parent dependency and obligation, and the two failure-attestation digests exactly.
+- Core performs that reconciliation before it emits runtime-proof output and whenever it loads a
+  runtime-proof archive. JSON Schema enforces the local shape but cannot compare sibling records;
+  non-Ota consumers must apply the same semantic rule before treating a projection as witnessed.
+- When an archived scope selects a negative control, Core re-derives that selection from the
+  archived contract and requires exactly one canonical control record and one matching dependency
+  projection. Archives that selected no control remain compatible without either carrier.
 - `invalid` and `unrun` projections must set `same_obligation: false` and omit
   `negative_control_id` and `failure_attestation_digest`
 - only `validated` may promote the record from `exercised` to `fault_tested`

@@ -773,13 +773,13 @@ pub enum ExecutionEvidenceClass {
     Derived,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeDependencyObservation {
     pub origin: String,
     pub evidence_class: ExecutionEvidenceClass,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeDependencyEvidence {
     pub dependency_id: String,
     /// Runner-owned identity of the marker-bound seam obligation when this evidence came from one.
@@ -787,12 +787,12 @@ pub struct ProofRuntimeDependencyEvidence {
     pub proof_obligation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interaction_attempted: bool,
     pub observation: ProofRuntimeDependencyObservation,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declared_by_tasks: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declared_by_workflows: Vec<String>,
     /// Derived projection of the canonical standalone negative-control record.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -800,7 +800,7 @@ pub struct ProofRuntimeDependencyEvidence {
 }
 
 /// Derived dependency-level projection of a canonical negative-control execution record.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeDependencyNegativeControl {
     /// This is a runner-derived projection of the canonical control record, not a second
     /// attestation authority.
@@ -847,7 +847,7 @@ pub enum ProofRuntimeSeamObservationOutcome {
 }
 
 /// Boundary-attested result of one workflow-declared negative-control task.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeNegativeControl {
     pub id: String,
     pub dependency_id: String,
@@ -873,13 +873,13 @@ pub struct ProofRuntimeNegativeControl {
 }
 
 /// Stable identity for the declared lane that performs a negative-control intervention.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofRuntimeNegativeControlIntervention {
     pub kind: String,
     pub id: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofRuntimeNegativeControlOutcome {
     ExpectedObligationFailed,
@@ -892,7 +892,7 @@ pub enum ProofRuntimeNegativeControlOutcome {
 ///
 /// Ota emits only classifications it can establish from the control transaction. Unknown non-zero
 /// exits stay explicitly unclassified and cannot promote dependency evidence.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofRuntimeNegativeControlFailureMode {
     ExpectedMissingEffect,
@@ -905,7 +905,7 @@ pub enum ProofRuntimeNegativeControlFailureMode {
 }
 
 /// Whether Ota could validate a selected negative control against its declared green obligation.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofRuntimeNegativeControlStatus {
     Unrun,
