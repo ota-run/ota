@@ -46,6 +46,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/detect.json](json-schemas/detect.json)
 - [json-schemas/contract-candidate.json](json-schemas/contract-candidate.json)
 - [json-schemas/contract-candidate-application.json](json-schemas/contract-candidate-application.json)
+- [json-schemas/contract-upgrade.json](json-schemas/contract-upgrade.json)
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
@@ -6108,6 +6109,30 @@ dispositions remain visible as review state and become a refusal only with `--re
 The create-new writer currently requires Linux `renameat2(RENAME_NOREPLACE)` or macOS
 `renameatx_np(RENAME_EXCL)`; other platforms refuse rather than weaken no-replace publication.
 Legacy mutation commands have not yet migrated to this writer.
+
+Candidate artifact publication uses the same platform boundary: Linux
+`renameat2(RENAME_NOREPLACE)` or macOS `renameatx_np(RENAME_EXCL)` through a retained no-follow
+directory descriptor. It never uses a temporary hardlink alias; other platforms refuse. Candidate
+publication output is deliberately separate from contract mutation: `candidate_published` states
+whether the artifact became visible, `candidate_publication` is `durable`, `not_published`, or
+`durability_uncertain`, and `written` remains false because `ota.yaml` was not changed. A
+`durability_uncertain` result means the candidate may exist but its directory-entry durability
+was not proved; failure output retains `candidate_path` so automation can inspect the exact path
+before retrying.
+
+`ota contract upgrade --candidate-out PATH --json [PATH]` produces the schema-v2 upgrade branch of
+`contract-candidate.json` and never changes `ota.yaml`. Its first registered migration is
+`legacy_flat_toolchain_fulfillment_v1`, which replaces only legacy flat
+`toolchains.<name>.fulfillment: run|none` values with the structured `fulfillment.mode` spelling.
+The candidate binds the exact source bytes, registered migration implementation, semantic identity
+before and after migration, canonical resulting-content identity, ordered replacement operations,
+and application projection. A success uses `contract-upgrade.json`, returns `written: false`,
+`candidate_published: true`, and `candidate_publication: "durable"`, and embeds the full
+candidate. Failure output preserves the same publication distinction and returns
+`upgrade_unsupported`, `upgrade_failed`, or `upgrade_write_failed`. `ota contract
+apply-candidate` re-derives the exact migration for dry-run admission; its `--write` form
+currently refuses upgrade candidates because the create-new contract writer cannot safely replace
+an existing externally mutable file.
 
 ```json
 {

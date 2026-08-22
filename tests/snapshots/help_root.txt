@@ -12,6 +12,7 @@ Commands:
   run          Run a validated task from an Ota contract
   assist       Propose reviewed contract mutations from bounded Ota intents
   init         Create a starter Ota contract for a repo that does not yet have one
+  contract     Review and admit source-bound contract candidates without changing the contract by default
   detect       Infer a starting contract from repo state
   validate     Validate an Ota contract
   tasks        List validated tasks from an Ota contract

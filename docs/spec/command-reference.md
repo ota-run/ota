@@ -3126,8 +3126,9 @@ Candidate review behavior:
 - Ota copies its selected discovery sources into one command-owned immutable snapshot before
   deriving candidate inference, evidence, and closures; it never assembles an artifact from mixed
   live repository reads
-- the current durable publication implementation requires Unix no-follow directory-descriptor
-  support; on other platforms `--candidate-out` refuses rather than weakening alias protection
+- the current durable publication implementation requires Linux `renameat2(RENAME_NOREPLACE)` or
+  macOS `renameatx_np(RENAME_EXCL)` plus no-follow directory-descriptor support; other platforms
+  refuse rather than weakening alias or create-new protection
 - publication uses create-new semantics: an existing file, symlink, contract path, selected
   evidence file, or selected evidence parent refuses rather than being replaced
 - every discovery inventory entry carries a required source-content identity; the artifact retains
@@ -3143,6 +3144,38 @@ Candidate review behavior:
 - candidate changes remain review input. This command does not apply, replace, or remove contract
   fields, and unresolved closure/effect facts never establish agent safety
 
+## `ota contract upgrade`
+
+Produce a versioned, lossless upgrade candidate for an existing contract without changing
+`ota.yaml`.
+
+```bash
+ota contract upgrade --candidate-out .ota/candidates/upgrade.json [PATH]
+ota contract upgrade --candidate-out .ota/candidates/upgrade.json --json [PATH]
+```
+
+Use this when Ota recognizes an older contract representation and can prove a deterministic,
+semantic-preserving migration. The first registered migration converts legacy flat
+`toolchains.<name>.fulfillment: run|none` values into structured `fulfillment.mode` values.
+
+Current behavior:
+
+- reads one bounded regular, non-symlink `ota.yaml` snapshot through its registered compatibility
+  reader
+- emits a schema-v2 `kind: upgrade` candidate with exact source-byte, migration implementation,
+  before/after semantic, resulting-content, operation, and application-projection identities
+- uses durable create-new candidate publication and never modifies `ota.yaml`
+- in JSON, reports candidate-file publication separately from contract mutation:
+  `candidate_published: true`, `candidate_publication: "durable"`, and `written: false`
+- reports `candidate_publication: "durability_uncertain"` if publication occurred but the final
+  directory sync could not be proved; failure JSON retains `candidate_path` for inspection before
+  retrying
+- returns `upgrade_unsupported` when the contract has no registered lossless migration
+- requires `ota contract apply-candidate CANDIDATE --json` to independently re-derive the exact
+  migration before admission
+- keeps upgrade `--write` disabled until Ota has an owned existing-contract update carrier; the
+  create-new writer is intentionally not reused to overwrite a contract
+
 ## `ota contract apply-candidate`
 
 Re-derive and review one source-bound candidate against the repository's current evidence.
@@ -3154,7 +3187,8 @@ ota contract apply-candidate CANDIDATE --require-complete --json [PATH]
 ota contract apply-candidate CANDIDATE --write --json [PATH]
 ```
 
-Use this after a maintainer has reviewed an artifact from `ota detect --candidate-out`. It verifies
+Use this after a maintainer has reviewed an artifact from `ota detect --candidate-out` or
+`ota contract upgrade --candidate-out`. It verifies
 the artifact's identities, requires the current Ota detector implementation to match, rebuilds the
 candidate from current repository and existing-contract truth, and refuses if source inventory,
 selected evidence, contract snapshot, derived semantic candidate, or its normalized application
@@ -3186,7 +3220,13 @@ Current behavior:
   `candidate_unsupported`, `candidate_write_failed`, and
   `candidate_write_durability_uncertain`
 - does not grant agent-safe status or authorize unreviewed candidate application; legacy detect
-  mutation paths have not yet migrated to this writer
+  mutation paths have not yet migrated to this evaluator
+- admits upgrade candidates in dry-run mode only; `--write` refuses until an owned
+  existing-contract update carrier is available
+
+Candidate artifact output from `ota detect --candidate-out` uses the same separate publication
+posture. `candidate_published` describes the review artifact; `written` continues to describe
+whether `ota.yaml` changed.
 
 Current write behavior:
 

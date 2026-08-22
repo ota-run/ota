@@ -47,6 +47,34 @@ use crate::semantic_identity::semantic_contract_identity;
 use crate::validator::validate_contract_with_path;
 
 pub(crate) const CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION: u32 = 2;
+pub(crate) const LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1: &str =
+    "legacy_flat_toolchain_fulfillment_v1";
+
+#[derive(Debug)]
+pub(crate) enum CandidateArtifactPublicationError {
+    NotPublished(String),
+    DurabilityUncertain(String),
+}
+
+impl CandidateArtifactPublicationError {
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::NotPublished(message) | Self::DurabilityUncertain(message) => message,
+        }
+    }
+
+    pub(crate) fn candidate_published(&self) -> bool {
+        matches!(self, Self::DurabilityUncertain(_))
+    }
+
+    pub(crate) fn posture(&self) -> &'static str {
+        match self {
+            Self::NotPublished(_) => "not_published",
+            Self::DurabilityUncertain(_) => "durability_uncertain",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +106,22 @@ pub(crate) enum CandidateConfidence {
     High,
     Medium,
     Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CandidateFormattingImpact {
+    RepresentationOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CandidateMigration {
+    pub id: String,
+    pub from_version: u32,
+    pub before_semantic_identity: String,
+    pub after_semantic_identity: String,
+    pub resulting_content_identity: String,
+    pub formatting_impact: CandidateFormattingImpact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +250,8 @@ pub(crate) struct ContractCandidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_contract_snapshot_identity: Option<String>,
     pub implementation_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<CandidateMigration>,
     pub changes: Vec<CandidateChange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_projection: Option<CandidateApplicationProjection>,
@@ -416,15 +462,59 @@ impl ContractCandidate {
     }
 
     fn validate_shape(&self) -> Result<(), CandidateError> {
-        if self.schema_version != CONTRACT_CANDIDATE_SCHEMA_VERSION {
-            return Err(CandidateError::InvalidPath(String::from(
-                "candidate schema version",
-            )));
+        match (self.schema_version, self.kind, self.migration.as_ref()) {
+            (CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateKind::Detection, None) => {}
+            (
+                CONTRACT_UPGRADE_CANDIDATE_SCHEMA_VERSION,
+                CandidateKind::Upgrade,
+                Some(migration),
+            ) => {
+                if migration.id != LEGACY_FLAT_TOOLCHAIN_FULFILLMENT_V1
+                    || migration.from_version != 1
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "candidate migration",
+                    )));
+                }
+                validate_identity(
+                    &migration.before_semantic_identity,
+                    "migration before semantic identity",
+                )?;
+                validate_identity(
+                    &migration.after_semantic_identity,
+                    "migration after semantic identity",
+                )?;
+                validate_identity(
+                    &migration.resulting_content_identity,
+                    "migration resulting content identity",
+                )?;
+                if migration.before_semantic_identity != migration.after_semantic_identity {
+                    return Err(CandidateError::IdentityMismatch);
+                }
+                if self.discovery_inventory.len() != 1
+                    || self.discovery_inventory[0].source_kind != "ota_contract"
+                    || self.discovery_inventory[0].path != "ota.yaml"
+                    || self.existing_contract_snapshot_identity.as_ref()
+                        != Some(&self.discovery_inventory[0].content_identity)
+                    || self.changes.is_empty()
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "upgrade candidate source binding",
+                    )));
+                }
+            }
+            _ => {
+                return Err(CandidateError::InvalidPath(String::from(
+                    "candidate schema, kind, and migration branch",
+                )));
+            }
         }
-        if self.kind != CandidateKind::Detection {
-            return Err(CandidateError::InvalidPath(String::from(
-                "candidate kind is not implemented by this schema version",
-            )));
+        if let (Some(migration), Some(projection)) = (
+            self.migration.as_ref(),
+            self.application_projection.as_ref(),
+        ) && migration.after_semantic_identity != projection.resulting_contract_identity
+        {
+            return Err(CandidateError::IdentityMismatch);
         }
         validate_root_relative_path(&self.logical_root)?;
         validate_identity(&self.implementation_identity, "implementation identity")?;
@@ -447,17 +537,53 @@ impl ContractCandidate {
             }
             validate_evidence(&change.evidence)?;
             validate_referenced_evidence(&change.evidence, &self.evidence_manifest)?;
-            if self.kind == CandidateKind::Detection && change.operation != CandidateOperation::Add
-            {
-                return Err(CandidateError::InvalidPath(String::from(
-                    "detection candidate operation",
-                )));
+            match self.kind {
+                CandidateKind::Detection if change.operation != CandidateOperation::Add => {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "detection candidate operation",
+                    )));
+                }
+                CandidateKind::Upgrade if change.operation != CandidateOperation::Replace => {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "upgrade candidate operation",
+                    )));
+                }
+                CandidateKind::Detection | CandidateKind::Upgrade => {}
             }
             if change.disposition == CandidateDisposition::Applicable && change.evidence.is_empty()
             {
                 return Err(CandidateError::InvalidPath(String::from(
                     "applicable candidate evidence",
                 )));
+            }
+            if self.kind == CandidateKind::Upgrade {
+                let valid_path = change.subject.path.len() == 3
+                    && change.subject.path[0] == "toolchains"
+                    && change.subject.path[2] == "fulfillment";
+                let valid_value = change
+                    .proposed_value
+                    .as_ref()
+                    .and_then(JsonValue::as_object)
+                    .is_some_and(|value| {
+                        value.len() == 1
+                            && matches!(
+                                value.get("mode").and_then(JsonValue::as_str),
+                                Some("none" | "run")
+                            )
+                    });
+                let valid_evidence = change.evidence.len() == 1
+                    && change.evidence[0].source_kind == "ota_contract"
+                    && change.evidence[0].path == "ota.yaml";
+                if change.field_family != "toolchain_fulfillment"
+                    || change.disposition != CandidateDisposition::Applicable
+                    || !valid_path
+                    || !valid_value
+                    || !valid_evidence
+                {
+                    return Err(CandidateError::InvalidPath(String::from(
+                        "registered upgrade candidate change",
+                    )));
+                }
             }
             if let Some(closure) = &change.execution_closure {
                 validate_closure_reconciliation(closure, &self.evidence_manifest)?;
@@ -530,15 +656,16 @@ fn apply_candidate_application_operation(
     document: &mut JsonValue,
     operation: &CandidateApplicationOperation,
 ) -> Result<(), CandidateError> {
-    if operation.operation != CandidateOperation::Add {
-        return Err(CandidateError::Application(String::from(
-            "detection application projection contains a non-add operation",
-        )));
-    }
     let value = operation.value.clone().ok_or_else(|| {
-        CandidateError::Application(String::from("candidate add operation has no value"))
+        CandidateError::Application(String::from("candidate operation has no value"))
     })?;
-    set_candidate_application_path(document, &operation.subject.path, &[], value)
+    set_candidate_application_path(
+        document,
+        &operation.subject.path,
+        &[],
+        value,
+        operation.operation,
+    )
 }
 
 fn set_candidate_application_path(
@@ -546,6 +673,7 @@ fn set_candidate_application_path(
     path: &[String],
     parent_path: &[String],
     value: JsonValue,
+    operation: CandidateOperation,
 ) -> Result<(), CandidateError> {
     let Some((segment, remaining)) = path.split_first() else {
         return Err(CandidateError::Application(String::from(
@@ -554,29 +682,56 @@ fn set_candidate_application_path(
     };
     if remaining.is_empty() {
         return match current {
-            JsonValue::Object(object) => {
-                if object.insert(segment.clone(), value).is_some() {
-                    Err(CandidateError::Application(format!(
-                        "candidate add operation targets existing field `{}`",
-                        path.join(".")
-                    )))
-                } else {
+            JsonValue::Object(object) => match operation {
+                CandidateOperation::Add => {
+                    if object.insert(segment.clone(), value).is_some() {
+                        Err(CandidateError::Application(format!(
+                            "candidate add operation targets existing field `{}`",
+                            path.join(".")
+                        )))
+                    } else {
+                        Ok(())
+                    }
+                }
+                CandidateOperation::Replace => {
+                    let target = object.get_mut(segment).ok_or_else(|| {
+                        CandidateError::Application(format!(
+                            "candidate replace operation targets missing field `{}`",
+                            path.join(".")
+                        ))
+                    })?;
+                    *target = value;
                     Ok(())
                 }
-            }
+                CandidateOperation::Remove => Err(CandidateError::Application(String::from(
+                    "candidate remove operation is not implemented",
+                ))),
+            },
             JsonValue::Array(array) => {
                 let index = segment.parse::<usize>().map_err(|_| {
                     CandidateError::Application(format!(
                         "candidate array path segment `{segment}` is not an index"
                     ))
                 })?;
-                if index != array.len() {
-                    return Err(CandidateError::Application(format!(
+                match operation {
+                    CandidateOperation::Add if index == array.len() => {
+                        array.push(value);
+                        Ok(())
+                    }
+                    CandidateOperation::Replace if index < array.len() => {
+                        array[index] = value;
+                        Ok(())
+                    }
+                    CandidateOperation::Add => Err(CandidateError::Application(format!(
                         "candidate array add index `{index}` is not the next position"
-                    )));
+                    ))),
+                    CandidateOperation::Replace => Err(CandidateError::Application(format!(
+                        "candidate array replace index `{index}` does not exist"
+                    ))),
+                    CandidateOperation::Remove => Err(CandidateError::Application(String::from(
+                        "candidate remove operation is not implemented",
+                    ))),
                 }
-                array.push(value);
-                Ok(())
             }
             _ => Err(CandidateError::Application(format!(
                 "candidate subject `{}` crosses a scalar contract value",
@@ -596,7 +751,7 @@ fn set_candidate_application_path(
                     JsonValue::Object(serde_json::Map::new())
                 }
             });
-            set_candidate_application_path(child, remaining, &next_parent, value)
+            set_candidate_application_path(child, remaining, &next_parent, value, operation)
         }
         JsonValue::Array(array) => {
             let index = segment.parse::<usize>().map_err(|_| {
@@ -612,7 +767,13 @@ fn set_candidate_application_path(
             if index == array.len() {
                 array.push(JsonValue::Object(serde_json::Map::new()));
             }
-            set_candidate_application_path(&mut array[index], remaining, &next_parent, value)
+            set_candidate_application_path(
+                &mut array[index],
+                remaining,
+                &next_parent,
+                value,
+                operation,
+            )
         }
         _ => Err(CandidateError::Application(format!(
             "candidate subject `{}` crosses a scalar contract value",
@@ -636,39 +797,44 @@ pub(crate) fn write_candidate_create_new(
     root: &Path,
     requested_path: &Path,
     candidate: &ContractCandidate,
-) -> Result<PathBuf, String> {
-    candidate
-        .verify_identities()
-        .map_err(|error| format!("candidate is not self-verifying: {error}"))?;
+) -> Result<PathBuf, CandidateArtifactPublicationError> {
+    candidate.verify_identities().map_err(|error| {
+        CandidateArtifactPublicationError::NotPublished(format!(
+            "candidate is not self-verifying: {error}"
+        ))
+    })?;
 
-    let relative = normalized_candidate_output_path(requested_path)?;
+    let relative = normalized_candidate_output_path(requested_path)
+        .map_err(CandidateArtifactPublicationError::NotPublished)?;
     let root = fs::canonicalize(root).map_err(|error| {
-        format!(
+        CandidateArtifactPublicationError::NotPublished(format!(
             "failed to resolve candidate root `{}`: {error}",
             root.display()
-        )
+        ))
     })?;
     let requested_output = root.join(&relative);
     let parent = requested_output.parent().ok_or_else(|| {
-        format!(
+        CandidateArtifactPublicationError::NotPublished(format!(
             "candidate output `{}` has no parent directory",
             requested_path.display()
-        )
+        ))
     })?;
-    verify_candidate_output_parent_chain(&root, &relative)?;
+    verify_candidate_output_parent_chain(&root, &relative)
+        .map_err(CandidateArtifactPublicationError::NotPublished)?;
     let canonical_parent = fs::canonicalize(parent).map_err(|error| {
-        format!(
+        CandidateArtifactPublicationError::NotPublished(format!(
             "candidate output parent `{}` must already exist as a directory: {error}",
             parent.display()
-        )
+        ))
     })?;
     if !canonical_parent.starts_with(&root) || !canonical_parent.is_dir() {
-        return Err(format!(
+        return Err(CandidateArtifactPublicationError::NotPublished(format!(
             "candidate output parent `{}` must resolve inside the selected repository",
             requested_path.display()
-        ));
+        )));
     }
-    let parent_directory = open_candidate_output_parent(&root, &relative)?;
+    let parent_directory = open_candidate_output_parent(&root, &relative)
+        .map_err(CandidateArtifactPublicationError::NotPublished)?;
     let output = canonical_parent.join(
         relative
             .file_name()
@@ -676,24 +842,24 @@ pub(crate) fn write_candidate_create_new(
     );
     match fs::symlink_metadata(&output) {
         Ok(_) => {
-            return Err(format!(
+            return Err(CandidateArtifactPublicationError::NotPublished(format!(
                 "candidate output `{}` already exists; refusing to replace it",
                 requested_path.display()
-            ));
+            )));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
-            return Err(format!(
+            return Err(CandidateArtifactPublicationError::NotPublished(format!(
                 "failed to inspect candidate output `{}`: {error}",
                 requested_path.display()
-            ));
+            )));
         }
     }
 
     let contract_path = root.join("ota.yaml");
     if output == contract_path {
-        return Err(String::from(
-            "candidate output must not alias the repository `ota.yaml` contract",
+        return Err(CandidateArtifactPublicationError::NotPublished(
+            String::from("candidate output must not alias the repository `ota.yaml` contract"),
         ));
     }
     for evidence in &candidate.evidence_manifest {
@@ -702,27 +868,33 @@ pub(crate) fn write_candidate_create_new(
             .parent()
             .expect("root-relative evidence has a parent");
         let canonical_evidence_parent = fs::canonicalize(evidence_parent).map_err(|error| {
-            format!(
+            CandidateArtifactPublicationError::NotPublished(format!(
                 "failed to resolve selected evidence parent `{}`: {error}",
                 evidence.path
-            )
+            ))
         })?;
         let same_evidence_file = canonical_parent == canonical_evidence_parent
             && output.file_name() == evidence_path.file_name();
         if same_evidence_file || canonical_parent == canonical_evidence_parent {
-            return Err(format!(
+            return Err(CandidateArtifactPublicationError::NotPublished(format!(
                 "candidate output `{}` collides with selected evidence `{}` or its parent",
                 requested_path.display(),
                 evidence.path
-            ));
+            )));
         }
     }
 
-    let payload = serde_json::to_vec_pretty(candidate)
-        .map_err(|error| format!("failed to serialize candidate artifact: {error}"))?;
+    let payload = serde_json::to_vec_pretty(candidate).map_err(|error| {
+        CandidateArtifactPublicationError::NotPublished(format!(
+            "failed to serialize candidate artifact: {error}"
+        ))
+    })?;
     let mut suffix = [0_u8; 16];
-    getrandom::getrandom(&mut suffix)
-        .map_err(|_| String::from("failed to derive a candidate temporary name"))?;
+    getrandom::getrandom(&mut suffix).map_err(|_| {
+        CandidateArtifactPublicationError::NotPublished(String::from(
+            "failed to derive a candidate temporary name",
+        ))
+    })?;
     let temporary = canonical_parent.join(format!(
         ".{}.{}.tmp",
         output
@@ -734,57 +906,101 @@ pub(crate) fn write_candidate_create_new(
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     ));
-    let mut file = open_candidate_temporary_file(&parent_directory, &temporary)?;
-    let mut published = false;
-    let result: Result<PathBuf, String> = (|| {
-        file.write_all(&payload)
-            .and_then(|()| file.write_all(b"\n"))
-            .and_then(|()| file.sync_all())
-            .map_err(|error| {
-                format!(
-                    "failed to persist candidate temporary file `{}`: {error}",
-                    temporary.display()
-                )
-            })?;
-        publish_candidate_create_new(&parent_directory, &temporary, &output, requested_path)?;
-        published = true;
-        parent_directory.sync_all().map_err(|error| {
-            format!(
-                "failed to sync candidate output directory `{}`: {error}",
-                canonical_parent.display()
-            )
-        })?;
-        // Publication is complete once the final link and its directory entry are durable. A
-        // best-effort temporary cleanup must not turn that successful publication into a false
-        // command failure that leaves the review artifact behind.
-        let _ = remove_candidate_directory_entry(&parent_directory, &temporary);
-        Ok(output.clone())
-    })();
-    match result {
-        Ok(output) => Ok(output),
-        Err(mut error) => {
-            if published {
-                match remove_candidate_directory_entry(&parent_directory, &output) {
-                    Ok(()) => {
-                        if let Err(sync_error) = parent_directory.sync_all() {
-                            error.push_str(&format!(
-                                "; removed the incomplete candidate but could not sync rollback in `{}`: {sync_error}",
-                                canonical_parent.display()
-                            ));
-                        }
-                    }
-                    Err(rollback_error) => {
-                        error.push_str(&format!(
-                            "; candidate publication outcome is uncertain because rollback of `{}` failed: {rollback_error}",
-                            requested_path.display()
-                        ));
-                    }
+    let mut file = open_candidate_temporary_file(&parent_directory, &temporary)
+        .map_err(CandidateArtifactPublicationError::NotPublished)?;
+    if let Err(error) = file
+        .write_all(&payload)
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all())
+    {
+        let cleanup = remove_candidate_artifact_entry(&parent_directory, &temporary, "temporary")
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(CandidateArtifactPublicationError::NotPublished(format!(
+            "failed to persist candidate temporary file `{}`: {error}{cleanup}",
+            temporary.display()
+        )));
+    }
+    if candidate_artifact_publication_fault("artifact_before_publish") {
+        let cleanup = remove_candidate_artifact_entry(&parent_directory, &temporary, "temporary")
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(CandidateArtifactPublicationError::NotPublished(format!(
+            "test fault injected before candidate artifact publication{cleanup}"
+        )));
+    }
+    if let Err(mut error) =
+        publish_candidate_create_new(&parent_directory, &temporary, &output, requested_path)
+    {
+        if let Err(cleanup) =
+            remove_candidate_artifact_entry(&parent_directory, &temporary, "temporary")
+        {
+            error.push_str(&format!("; temporary cleanup failed: {cleanup}"));
+        }
+        return Err(CandidateArtifactPublicationError::NotPublished(error));
+    }
+    let directory_sync = if candidate_artifact_publication_fault("artifact_directory_sync") {
+        Err(std::io::Error::other(
+            "test fault injected before candidate artifact directory sync",
+        ))
+    } else {
+        parent_directory.sync_all()
+    };
+    if let Err(sync_error) = directory_sync {
+        let message = format!(
+            "candidate artifact `{}` was published but its directory durability is uncertain: {sync_error}",
+            requested_path.display()
+        );
+        match remove_candidate_artifact_entry(&parent_directory, &output, "rollback") {
+            Ok(()) => match parent_directory.sync_all() {
+                Ok(()) => {
+                    return Err(CandidateArtifactPublicationError::NotPublished(format!(
+                        "{message}; publication was rolled back"
+                    )));
                 }
+                Err(rollback_sync_error) => {
+                    return Err(CandidateArtifactPublicationError::DurabilityUncertain(
+                        format!("{message}; rollback directory sync failed: {rollback_sync_error}"),
+                    ));
+                }
+            },
+            Err(rollback_error) => {
+                return Err(CandidateArtifactPublicationError::DurabilityUncertain(
+                    format!("{message}; rollback failed: {rollback_error}"),
+                ));
             }
-            let _ = remove_candidate_directory_entry(&parent_directory, &temporary);
-            Err(error)
         }
     }
+    Ok(output)
+}
+
+fn candidate_artifact_publication_fault(stage: &str) -> bool {
+    #[cfg(feature = "test-candidate-publication-faults")]
+    {
+        std::env::var("OTA_TEST_CANDIDATE_PUBLICATION_FAULT")
+            .ok()
+            .is_some_and(|configured| configured.split(',').any(|value| value == stage))
+    }
+    #[cfg(not(feature = "test-candidate-publication-faults"))]
+    {
+        let _ = stage;
+        false
+    }
+}
+
+fn remove_candidate_artifact_entry(
+    parent: &File,
+    path: &Path,
+    stage: &str,
+) -> Result<(), std::io::Error> {
+    if candidate_artifact_publication_fault(&format!("artifact_{stage}_cleanup")) {
+        return Err(std::io::Error::other(format!(
+            "test fault injected before candidate artifact {stage} cleanup"
+        )));
+    }
+    remove_candidate_directory_entry(parent, path)
 }
 
 fn verify_candidate_output_parent_chain(root: &Path, relative: &Path) -> Result<(), String> {
@@ -895,7 +1111,7 @@ fn open_candidate_temporary_file(parent: &File, path: &Path) -> Result<File, Str
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn publish_candidate_create_new(
     parent: &File,
     temporary: &Path,
@@ -905,12 +1121,12 @@ fn publish_candidate_create_new(
     let temporary_name = candidate_entry_name(temporary)?;
     let output_name = candidate_entry_name(output)?;
     let result = unsafe {
-        libc::linkat(
+        libc::renameat2(
             parent.as_raw_fd(),
             temporary_name.as_ptr(),
             parent.as_raw_fd(),
             output_name.as_ptr(),
-            0,
+            libc::RENAME_NOREPLACE,
         )
     };
     if result != 0 {
@@ -921,6 +1137,46 @@ fn publish_candidate_create_new(
         ));
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn publish_candidate_create_new(
+    parent: &File,
+    temporary: &Path,
+    output: &Path,
+    requested_path: &Path,
+) -> Result<(), String> {
+    let temporary_name = candidate_entry_name(temporary)?;
+    let output_name = candidate_entry_name(output)?;
+    let result = unsafe {
+        libc::renameatx_np(
+            parent.as_raw_fd(),
+            temporary_name.as_ptr(),
+            parent.as_raw_fd(),
+            output_name.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    if result != 0 {
+        return Err(format!(
+            "failed to publish candidate `{}` with create-new semantics: {}",
+            requested_path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn publish_candidate_create_new(
+    _parent: &File,
+    _temporary: &Path,
+    _output: &Path,
+    _requested_path: &Path,
+) -> Result<(), String> {
+    Err(String::from(
+        "candidate publication requires Linux or macOS atomic no-replace rename support",
+    ))
 }
 
 #[cfg(unix)]
@@ -1211,6 +1467,7 @@ mod tests {
             }],
             existing_contract_snapshot_identity: None,
             implementation_identity: identity('b'),
+            migration: None,
             changes: vec![CandidateChange {
                 subject: CandidateSubject::new(["tasks", "test", "command"]),
                 field_family: String::from("task_command"),
@@ -1538,6 +1795,15 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&output).expect("candidate bytes"))
                 .expect("candidate JSON");
         persisted.verify_identities().expect("persisted identity");
+        assert!(
+            std::fs::read_dir(root.path().join(".ota/candidates"))
+                .expect("candidate directory")
+                .all(|entry| !entry
+                    .expect("candidate entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp"))
+        );
         assert!(
             write_candidate_create_new(
                 root.path(),

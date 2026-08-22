@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- Added `ota contract upgrade --candidate-out <path>` as the first versioned, lossless contract
+  migration review surface. It recognizes legacy flat toolchain fulfillment, emits a schema-v2
+  source-bound upgrade candidate with before/after semantic and resulting-content evidence, and
+  never changes `ota.yaml`. `ota contract apply-candidate` independently re-derives the migration
+  for dry-run admission; upgrade writes remain disabled until Ota has a safe owned carrier for
+  replacing an existing contract. Detection and upgrade candidate JSON distinguish
+  `candidate_published`/`candidate_publication` from contract mutation: durable publication is
+  explicit, while a post-publication sync failure reports `durability_uncertain` without
+  incorrectly claiming that the candidate was absent.
+
 - Added `ota contract apply-candidate` as the dry-run admission surface for reviewed
   source-bound detection candidates. It verifies self-identity, detector compatibility, current
   contract/sources/evidence, exact re-derivation, and an identity-bound application projection
@@ -42,8 +52,9 @@
 
 - Added `ota detect --candidate-out <path>` for a durable, source-bound contract-candidate review
   artifact. It derives from a command-owned immutable source snapshot, uses canonical create-new
-  publication, refuses contract/evidence collisions and output aliases, and never modifies
-  `ota.yaml`. Discovery inventory entries carry required content identities, every selected
+  atomic no-replace publication on Linux and macOS, refuses contract/evidence collisions and
+  output aliases, and never modifies `ota.yaml`. Discovery inventory entries carry required
+  content identities, every selected
   evidence tuple is retained, and each change binds a structured contract path plus a canonical
   semantic value. Equivalent existing truth is omitted, including typed commands equivalent to a
   detected package-script invocation, schema-default command fields, and indexed environment-source

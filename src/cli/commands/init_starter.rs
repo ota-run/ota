@@ -3452,8 +3452,8 @@ fn node_root_package_json_has_script(root: &Path, script: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        StarterPack, StarterPackConfig, StarterPackOptions, bootstrap_init_contract,
-        starter_agent_exceptions_for_boundary, starter_pack_contract,
+        StarterPack, StarterPackConfig, StarterPackOptions, apply_starter_contract_defaults,
+        bootstrap_init_contract, starter_agent_exceptions_for_boundary, starter_pack_contract,
     };
     use crate::detector::{DetectContract, DetectReport, DetectTask};
     use crate::schema::{
@@ -3835,7 +3835,7 @@ java {
     }
 
     #[test]
-    fn starter_pack_contract_marks_setup_internal_by_default() {
+    fn starter_pack_contract_marks_setup_internal_without_inventing_agent_authority() {
         let fixture = TempDir::new().expect("fixture");
         let contract = starter_pack_contract(
             StarterPackConfig {
@@ -3849,22 +3849,9 @@ java {
             contract.tasks.get("setup").map(|task| task.internal),
             Some(true)
         );
-        let agent = contract.agent.expect("starter pack agent");
         assert!(
-            agent.protected_paths.contains(&String::from("ota.yaml")),
-            "starter init contracts should protect ota.yaml by default"
-        );
-        assert!(
-            agent.exceptions.sensitive_writes.is_empty(),
-            "readiness-strict starter contracts should not emit sensitive write exceptions without broader authority"
-        );
-        let inferred_boundary = agent
-            .inferred_boundary
-            .expect("starter pack inferred boundary");
-        assert!(!inferred_boundary.reviewed);
-        assert_eq!(
-            inferred_boundary.provenance.protected_paths,
-            vec![String::from("init:contract_file_default")]
+            contract.agent.is_none(),
+            "unsafe-by-default starter tasks must not manufacture an executable agent boundary"
         );
     }
 
@@ -3939,7 +3926,7 @@ java {
     }
 
     #[test]
-    fn starter_pack_protects_ci_workflows_and_avoids_github_writable_root() {
+    fn starter_pack_with_explicit_safe_task_protects_ci_workflows() {
         let fixture = TempDir::new().expect("fixture");
         std::fs::create_dir_all(fixture.path().join(".github/workflows"))
             .expect("create workflows dir");
@@ -3959,13 +3946,19 @@ java {
         )
         .expect("write package.json");
 
-        let contract = starter_pack_contract(
+        let mut contract = starter_pack_contract(
             StarterPackConfig {
                 pack: StarterPack::Node,
                 options: StarterPackOptions::default(),
             },
             fixture.path(),
         );
+        contract
+            .tasks
+            .get_mut("test")
+            .expect("starter test task")
+            .safe_for_agent = true;
+        apply_starter_contract_defaults(&mut contract, fixture.path());
         let agent = contract.agent.expect("starter pack agent");
         assert!(
             agent
@@ -3991,19 +3984,25 @@ java {
     }
 
     #[test]
-    fn starter_pack_contract_uses_toolchain_stacks_for_agent_boundaries() {
+    fn starter_pack_with_explicit_safe_task_uses_toolchain_agent_boundaries() {
         let fixture = TempDir::new().expect("fixture");
         std::fs::create_dir_all(fixture.path().join("cmd")).unwrap();
         std::fs::write(fixture.path().join("cmd").join("main.go"), "package main\n").unwrap();
         std::fs::write(fixture.path().join("go.sum"), "").unwrap();
 
-        let contract = starter_pack_contract(
+        let mut contract = starter_pack_contract(
             StarterPackConfig {
                 pack: StarterPack::Go,
                 options: StarterPackOptions::default(),
             },
             fixture.path(),
         );
+        contract
+            .tasks
+            .get_mut("test")
+            .expect("starter test task")
+            .safe_for_agent = true;
+        apply_starter_contract_defaults(&mut contract, fixture.path());
 
         assert!(
             contract.toolchains.contains_key("go"),

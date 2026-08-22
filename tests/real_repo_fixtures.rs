@@ -97,6 +97,28 @@ fn env_mutex_lock() -> EnvLockGuard {
     }
 }
 
+#[cfg(unix)]
+fn run_ota_in_pseudo_terminal(ota: &str, args: &[&str], cwd: &Path) -> Output {
+    let mut command = Command::new("script");
+    #[cfg(target_os = "linux")]
+    {
+        let shell_command = std::iter::once(ota)
+            .chain(args.iter().copied())
+            .map(|argument| format!("'{}'", argument.replace('\'', "'\"'\"'")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        command.args(["-q", "-c", shell_command.as_str(), "/dev/null"]);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        command.args(["-q", "/dev/null", ota]).args(args);
+    }
+    command
+        .current_dir(cwd)
+        .output()
+        .expect("script-wrapped ota run should execute")
+}
+
 fn real_fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -4353,8 +4375,8 @@ tasks:
     let mut env_path = std::env::var("PATH").unwrap_or_default();
     env_path = format!("{}:{}", bin_dir.display(), env_path);
 
-    let _output = Command::new("ota")
-        .args(&["run", "test-shim", fixture.path().to_str().unwrap()])
+    let _output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(["run", "test-shim", fixture.path().to_str().unwrap()])
         .env("PATH", &env_path)
         .output()
         .expect("ota run should execute");
@@ -4408,11 +4430,7 @@ tasks:
 
     let ota = env!("CARGO_BIN_EXE_ota");
 
-    let tty_output = Command::new("script")
-        .args(["-q", "/dev/null", ota, "run", "detect-tty"])
-        .current_dir(fixture.path())
-        .output()
-        .expect("script-wrapped ota run should execute");
+    let tty_output = run_ota_in_pseudo_terminal(ota, &["run", "detect-tty"], fixture.path());
     let tty_combined = format!(
         "{}{}",
         String::from_utf8_lossy(&tty_output.stdout),
@@ -4425,11 +4443,8 @@ tasks:
         String::from_utf8_lossy(&tty_output.stderr),
     );
 
-    let stream_output = Command::new("script")
-        .args(["-q", "/dev/null", ota, "run", "detect-tty", "--stream"])
-        .current_dir(fixture.path())
-        .output()
-        .expect("script-wrapped ota run --stream should execute");
+    let stream_output =
+        run_ota_in_pseudo_terminal(ota, &["run", "detect-tty", "--stream"], fixture.path());
     let stream_combined = format!(
         "{}{}",
         String::from_utf8_lossy(&stream_output.stdout),
@@ -4442,11 +4457,7 @@ tasks:
         String::from_utf8_lossy(&stream_output.stderr),
     );
 
-    let required_output = Command::new("script")
-        .args(["-q", "/dev/null", ota, "run", "require-tty"])
-        .current_dir(fixture.path())
-        .output()
-        .expect("required interaction should execute inside a real pseudo-terminal");
+    let required_output = run_ota_in_pseudo_terminal(ota, &["run", "require-tty"], fixture.path());
     let required_combined = format!(
         "{}{}",
         String::from_utf8_lossy(&required_output.stdout),
@@ -4501,11 +4512,7 @@ tasks:
     );
 
     let ota = env!("CARGO_BIN_EXE_ota");
-    let output = Command::new("script")
-        .args(["-q", "/dev/null", ota, "run", "interactive-request"])
-        .current_dir(fixture.path())
-        .output()
-        .expect("script-wrapped ota run should execute");
+    let output = run_ota_in_pseudo_terminal(ota, &["run", "interactive-request"], fixture.path());
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -4547,11 +4554,7 @@ tasks:
     );
 
     let ota = env!("CARGO_BIN_EXE_ota");
-    let output = Command::new("script")
-        .args(["-q", "/dev/null", ota, "run", "detect-tty"])
-        .current_dir(fixture.path())
-        .output()
-        .expect("script-wrapped ota run should execute");
+    let output = run_ota_in_pseudo_terminal(ota, &["run", "detect-tty"], fixture.path());
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -4583,11 +4586,7 @@ tasks:
     );
 
     let ota = env!("CARGO_BIN_EXE_ota");
-    let output = Command::new("script")
-        .args(["-q", "/dev/null", ota, "run", "legacy"])
-        .current_dir(fixture.path())
-        .output()
-        .expect("script-wrapped ota run should execute");
+    let output = run_ota_in_pseudo_terminal(ota, &["run", "legacy"], fixture.path());
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

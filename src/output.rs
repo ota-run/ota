@@ -3314,7 +3314,23 @@ pub struct DetectSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_path: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_published: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_publication: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate: Option<JsonValue>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectCandidatePublicationFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub candidate_path: &'a str,
+    pub candidate_published: bool,
+    pub candidate_publication: &'static str,
+    pub error: &'a str,
+    pub next: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -3350,6 +3366,32 @@ pub struct ContractCandidateApplicationFailure<'a> {
     pub mode: &'static str,
     pub candidate_path: &'a str,
     pub written: bool,
+    pub code: &'static str,
+    pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContractUpgradeSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub candidate_path: &'a str,
+    pub candidate_published: bool,
+    pub candidate_publication: &'static str,
+    pub migration_id: &'a str,
+    pub candidate: JsonValue,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContractUpgradeFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub candidate_path: &'a str,
+    pub candidate_published: bool,
+    pub candidate_publication: &'static str,
     pub code: &'static str,
     pub error: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]

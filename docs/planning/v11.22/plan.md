@@ -219,7 +219,8 @@ ota contract apply-candidate <path> --write --require-complete --json
 ```
 
 Creation writes only the caller-selected candidate artifact, never `ota.yaml`; it uses create-new
-semantics by default and refuses an existing path. `--replace-candidate` may replace only a regular,
+atomic no-replace semantics on Linux and macOS and refuses elsewhere or for an existing path.
+`--replace-candidate` may replace only a regular,
 schema-valid Ota candidate after canonical path and hardlink-alias checks; it never overwrites an
 arbitrary file. A successful inspection exits zero even when its artifact contains conflicts,
 unknowns, or unsupported facts.
@@ -267,6 +268,12 @@ Detection candidates are `kind: detection` and never replace or remove contract 
 absence is not authority to delete maintainer truth. Only `kind: upgrade` may use replacement or
 removal operations, with a `migration_id`, before/after semantic proof, and the same explicit
 reviewed write admission.
+
+The first implementation checkpoint publishes and dry-run admits schema-v2 upgrade candidates.
+It deliberately refuses upgrade `--write`: the create-new contract writer cannot provide atomic
+compare-and-swap against a non-cooperating external writer of an existing `ota.yaml`. A later
+owned update carrier must satisfy the write and reapplication acceptance bar before legacy
+mutation commands can route through it.
 
 Shipped `detect --merge --apply`, `--apply-all`, and `--rewrite --yes` retain their existing
 semantics during a compatibility window, but every contract-writing path must construct, validate,
@@ -332,6 +339,10 @@ registry is version-aware and reads a bounded raw YAML document before current-s
 dispatching only a registered `from_version`/representation pair. A document with no registered
 reader or lossless migration returns a typed `upgrade_unsupported` candidate; it is never coerced
 through a current parser or rewritten speculatively.
+
+The initial shipped carrier stops after candidate publication and reproducible dry-run admission.
+It does not overwrite the existing contract. That bounded checkpoint proves migration discovery,
+identity, semantics, and review UX without weakening the separate existing-file publication gate.
 
 An upgrade may normalize a deprecated representation only when the new representation has the same
 published semantics. Any narrower, broader, or uncertain interpretation is a review-required

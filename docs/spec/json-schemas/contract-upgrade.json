@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/contract-upgrade.json",
+  "title": "ota contract upgrade --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "candidate_path", "candidate_published", "candidate_publication", "migration_id", "candidate"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string", "minLength": 1 },
+        "written": { "const": false },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "candidate_published": { "const": true },
+        "candidate_publication": { "const": "durable" },
+        "migration_id": { "const": "legacy_flat_toolchain_fulfillment_v1" },
+        "candidate": {
+          "allOf": [
+            { "$ref": "./contract-candidate.json" },
+            {
+              "properties": {
+                "schema_version": { "const": 2 },
+                "kind": { "const": "upgrade" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "candidate_path", "candidate_published", "candidate_publication", "code", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string", "minLength": 1 },
+        "written": { "const": false },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "candidate_published": { "type": "boolean" },
+        "candidate_publication": { "enum": ["not_published", "durability_uncertain"] },
+        "code": { "enum": ["upgrade_unsupported", "upgrade_failed", "upgrade_write_failed"] },
+        "error": { "type": "string", "minLength": 1 },
+        "next": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "candidate_publication": { "const": "not_published" } } },
+          "then": { "properties": { "candidate_published": { "const": false } } }
+        },
+        {
+          "if": { "properties": { "candidate_publication": { "const": "durability_uncertain" } } },
+          "then": { "properties": { "candidate_published": { "const": true } } }
+        }
+      ]
+    }
+  ]
+}

@@ -25,10 +25,9 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "dced3a7cb7d2453b4d737e924692ba86402e2ab7"
-consumer_commit: "1aff98949635236478fa096161f8212d47e363b0"
+reviewed_ota_commit: "6641237021a4b974674d745de5055ce6c4bee48f"
+consumer_commit: "678f8b282ee28bd5a417914b20e2c4cac90c8537"
 waiver_reason: ""
 notes: >
-  Synced the explicit reviewed-candidate writer reference: source/evidence revalidation,
-  no-follow repository locking, atomic no-replace first-contract publication, semantic no-op,
-  and durability-uncertain output.
+  Synced the lossless contract-upgrade candidate command, artifact and application schemas,
+  publication-versus-contract-write posture, and dry-run-only upgrade application boundary.

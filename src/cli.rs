@@ -780,6 +780,17 @@ enum AuthorityCommands {
 
 #[derive(Debug, Clone, Subcommand)]
 enum ContractCommands {
+    /// Produce a versioned, lossless contract-upgrade review candidate.
+    Upgrade {
+        /// Write the upgrade candidate artifact without changing ota.yaml.
+        #[arg(long, value_name = "PATH")]
+        candidate_out: PathBuf,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to the repository root containing ota.yaml.
+        path: Option<PathBuf>,
+    },
     /// Re-derive a source-bound candidate; --write creates only a missing ota.yaml.
     ApplyCandidate {
         /// Candidate artifact to verify and re-derive.
@@ -4939,7 +4950,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 command: AssistCommands::DeclareReadiness { json: true, .. },
             }
             | Commands::Contract {
-                command: ContractCommands::ApplyCandidate { json: true, .. },
+                command: ContractCommands::ApplyCandidate { json: true, .. }
+                    | ContractCommands::Upgrade { json: true, .. },
             }
             | Commands::Doctor { json: true, .. }
             | Commands::Explain { json: true, .. }
@@ -5036,6 +5048,30 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 )
             } else {
                 commands::authority_inspect(format_from_json(json))
+            }
+        }
+        Commands::Contract {
+            command:
+                ContractCommands::Upgrade {
+                    candidate_out,
+                    json,
+                    path,
+                },
+        } => {
+            if file.is_some() {
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`ota contract upgrade` reads only repository ota.yaml and does not accept `--file`",
+                    ),
+                    2,
+                )
+            } else {
+                commands::upgrade_contract_candidate(
+                    path.as_deref(),
+                    &candidate_out,
+                    format_from_json(json),
+                    debug,
+                )
             }
         }
         Commands::Contract {
@@ -6480,7 +6516,14 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Authority { .. } => {
             "have the runner administrator repair the fixed prebound-file boundary, then rerun `ota authority inspect --json`"
         }
-        Commands::Contract { .. } => {
+        Commands::Contract {
+            command: ContractCommands::Upgrade { .. },
+        } => {
+            "review the candidate, then run `ota contract apply-candidate <path> --json` to re-derive the lossless migration"
+        }
+        Commands::Contract {
+            command: ContractCommands::ApplyCandidate { .. },
+        } => {
             "regenerate the candidate with `ota detect --candidate-out <path>`, review it, then rerun `ota contract apply-candidate <path>`"
         }
         Commands::Ci { .. } => {
@@ -6707,7 +6750,8 @@ fn command_requests_json(command: &Commands) -> bool {
             command: AssistCommands::Normalize { json, .. },
         }
         | Commands::Contract {
-            command: ContractCommands::ApplyCandidate { json, .. },
+            command:
+                ContractCommands::ApplyCandidate { json, .. } | ContractCommands::Upgrade { json, .. },
         }
         | Commands::Env { json, .. }
         | Commands::Proof {
@@ -6831,6 +6875,7 @@ fn command_where_label(command: &Commands) -> &'static str {
             command: AuthorityCommands::Inspect { .. },
         } => "ota authority inspect",
         Commands::Contract { command } => match command {
+            ContractCommands::Upgrade { .. } => "ota contract upgrade",
             ContractCommands::ApplyCandidate { .. } => "ota contract apply-candidate",
         },
         Commands::Ci { command } => match command {
@@ -8494,6 +8539,28 @@ exec /bin/sh -lc "$1"
             entries.push(PathBuf::from("/bin"));
         }
         std::env::join_paths(entries).expect("join PATH")
+    }
+
+    fn install_fake_yarn_on_path(root: &Path) -> EnvVarGuard {
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake yarn directory");
+        #[cfg(unix)]
+        let body = "#!/bin/sh\necho 1.22.22\n";
+        #[cfg(windows)]
+        let body = "@echo off\r\necho 1.22.22\r\n";
+        write_fake_command(&bin_dir, "yarn", body);
+        EnvVarGuard::set("PATH", prepend_path(&bin_dir))
+    }
+
+    fn install_fake_npm_on_path(root: &Path) -> EnvVarGuard {
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake npm directory");
+        #[cfg(unix)]
+        let body = "#!/bin/sh\necho 10.9.0\n";
+        #[cfg(windows)]
+        let body = "@echo off\r\necho 10.9.0\r\n";
+        write_fake_command(&bin_dir, "npm", body);
+        EnvVarGuard::set("PATH", prepend_path(&bin_dir))
     }
 
     fn assert_text_snapshot(name: &str, actual: &str) {
@@ -14524,7 +14591,6 @@ project:
   name: api
 "#,
         );
-
         let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
@@ -20403,6 +20469,16 @@ tasks:
                 },
             ),
             (
+                "contract upgrade",
+                super::Commands::Contract {
+                    command: super::ContractCommands::Upgrade {
+                        candidate_out: PathBuf::from(".ota/candidates/upgrade.json"),
+                        json: true,
+                        path: None,
+                    },
+                },
+            ),
+            (
                 "contract apply-candidate",
                 super::Commands::Contract {
                     command: super::ContractCommands::ApplyCandidate {
@@ -25059,6 +25135,8 @@ tasks:
 
     #[test]
     fn doctor_recovers_exact_ci_command_to_more_specific_verifier_task() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -25102,10 +25180,15 @@ workflows:
         )
         .expect("write ota.yaml");
 
+        let _path_guard = install_fake_yarn_on_path(dir.path());
         let _guard = CurrentDirGuard::enter(dir.path());
         let output = run_with(["ota", "doctor", "--json"]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code, 0,
+            "{}\n{:?}",
+            output.stdout, output.stderr
+        );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let ci_drift_findings = json["findings"]
             .as_array()
@@ -25203,7 +25286,10 @@ tasks:
 
     #[test]
     fn doctor_reports_aggregate_verification_drift_from_ci_workflow_verification_source() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
+        let _path_guard = install_fake_npm_on_path(dir.path());
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
             dir.path().join(".github/workflows/ci.yml"),
@@ -25294,7 +25380,10 @@ workflows:
 
     #[test]
     fn doctor_treats_aggregate_verification_member_order_as_equivalent_for_ci_lane_projection() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
+        let _path_guard = install_fake_npm_on_path(dir.path());
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
             dir.path().join(".github/workflows/ci.yml"),
@@ -27644,6 +27733,8 @@ tasks:
 
     #[test]
     fn doctor_skips_ci_verification_drift_for_non_ci_workflow_intent() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -27687,10 +27778,15 @@ workflows:
         )
         .expect("write ota.yaml");
 
+        let _path_guard = install_fake_yarn_on_path(dir.path());
         let _guard = CurrentDirGuard::enter(dir.path());
         let output = run_with(["ota", "doctor", "--json"]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code, 0,
+            "{}\n{:?}",
+            output.stdout, output.stderr
+        );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let ci_drift_findings = json["findings"]
             .as_array()
@@ -27717,6 +27813,8 @@ workflows:
 
     #[test]
     fn doctor_projects_required_ci_verification_lanes_from_ci_verification_workflow() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".github/workflows")).expect("create workflows dir");
         fs::write(
@@ -27759,10 +27857,15 @@ workflows:
         )
         .expect("write ota.yaml");
 
+        let _path_guard = install_fake_yarn_on_path(dir.path());
         let _guard = CurrentDirGuard::enter(dir.path());
         let output = run_with(["ota", "doctor", "--json"]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code, 0,
+            "{}\n{:?}",
+            output.stdout, output.stderr
+        );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(
             json["governance"]["required_verification_lanes"][0]["merge_check_id"],
@@ -30768,10 +30871,8 @@ project:
         assert!(stdout.contains("Detected repo type: Node"));
         assert!(stdout.contains("Detected package manager: npm"));
         assert!(stdout.contains("Detected likely runnable tasks: dev, build, typecheck, start"));
-        assert!(stdout.contains("Inferred starter writable paths: app, lib"));
-        assert!(stdout.contains("Inferred protected paths:"));
-        assert!(stdout.contains("ota.yaml"));
-        assert!(stdout.contains("package-lock.json"));
+        assert!(!stdout.contains("Inferred starter writable paths:"));
+        assert!(!stdout.contains("Inferred protected paths:"));
         assert!(!stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
         assert!(!stdout.contains("Suggested next commands:"));
         assert!(!stdout.contains("# AGENTS.md"));
@@ -31798,7 +31899,7 @@ policies:
     }
 
     #[test]
-    fn init_writes_agent_block_for_setup_and_test_repos() {
+    fn init_does_not_infer_agent_authority_from_setup_and_test_names() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -31817,36 +31918,15 @@ policies:
 
         assert_eq!(output.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(written.contains("agent:"));
-        assert!(written.contains("posture: readiness_strict"));
-        assert!(written.contains("entrypoint: setup"));
-        assert!(written.contains("default_task: test"));
-        assert!(written.contains("safe_tasks:"));
-        assert!(written.contains("verify_after_changes:"));
-        assert!(written.contains("- test"));
-        assert!(written.contains("protected_paths:"));
-        assert!(written.contains("- ota.yaml"));
-        assert!(written.contains("inferred_boundary:"));
-        assert!(written.contains("reviewed: false"));
-        assert!(written.contains("provenance:"));
-        assert!(written.contains("contract_file_default"));
+        assert!(!written.contains("\nagent:\n"));
+        assert!(written.contains("\n  setup:\n"));
+        assert!(written.contains("\n  test:\n"));
         assert!(written.contains("notes: |"));
-        assert!(written.contains(
-            "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
-        ));
-        assert!(written.contains("Use `ota run test` to verify changes."));
-        assert!(!written.contains("entrypoint: null"));
-        let agent_index = written.find("agent:").unwrap();
-        let tasks_index = written.find("tasks:").unwrap();
-        let tools_index = written.find("tools:");
-        assert!(agent_index > tasks_index);
-        if let Some(tools_index) = tools_index {
-            assert!(agent_index > tools_index);
-        }
+        assert!(written.contains("Run `ota run test` to execute this task."));
     }
 
     #[test]
-    fn init_keeps_agent_block_even_when_writable_paths_are_not_inferred_yet() {
+    fn init_omits_agent_block_when_no_safe_task_is_proved() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -31864,17 +31944,9 @@ policies:
 
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(preview_stdout.contains("\nagent:\n"));
-        assert!(preview_stdout.contains("posture: readiness_strict"));
-        assert!(preview_stdout.contains("safe_tasks:"));
-        assert!(preview_stdout.contains("protected_paths:"));
-        assert!(preview_stdout.contains("inferred_boundary:"));
-        assert!(preview_stdout.contains("reviewed: false"));
-        assert!(preview_stdout.contains("provenance:"));
-        assert!(preview_stdout.contains("contract_file_default"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
         assert!(preview_stdout.contains("Agent boundary"));
-        assert!(preview_stdout.contains("Inferred"));
-        assert!(preview_stdout.contains("safe_tasks: `test`"));
+        assert!(preview_stdout.contains("Omitted"));
         assert!(!preview_stdout.contains("writable_paths:"));
         assert!(!preview_stdout.contains("\n  - .\n"));
 
@@ -31882,14 +31954,9 @@ policies:
 
         assert_eq!(write.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(written.contains("\nagent:\n"));
-        assert!(written.contains("posture: readiness_strict"));
-        assert!(written.contains("safe_tasks:"));
-        assert!(written.contains("protected_paths:"));
-        assert!(written.contains("inferred_boundary:"));
-        assert!(written.contains("reviewed: false"));
-        assert!(written.contains("provenance:"));
-        assert!(written.contains("contract_file_default"));
+        assert!(!written.contains("\nagent:\n"));
+        assert!(written.contains("\n  setup:\n"));
+        assert!(written.contains("\n  test:\n"));
         assert!(!written.contains("writable_paths:"));
         assert!(!written.contains("\n- .\n"));
     }
@@ -31913,11 +31980,6 @@ name = "fastapi"
         assert!(preview_stdout.contains("Agent boundary"));
         assert!(preview_stdout.contains("Omitted"));
         assert!(preview_stdout.contains("no safe task was inferred for this repo"));
-        assert!(
-            preview_stdout.contains("detected task `run` is not treated as agent-safe by default")
-        );
-        assert!(preview_stdout.contains("Ota cannot prove what"));
-        assert!(preview_stdout.contains("confirm the inferred agent boundary"));
         assert!(!preview_stdout.contains("\nagent:\n"));
     }
 
@@ -31933,11 +31995,13 @@ name = "fastapi"
         assert!(preview_stdout.contains("runtimes:"));
         assert!(preview_stdout.contains("\n  pwsh: '*'"));
         assert!(!preview_stdout.contains("\n  powershell:"));
-        assert!(preview_stdout.contains("pwsh -File bootstrap.ps1"));
+        assert!(!preview_stdout.contains("pwsh -File bootstrap.ps1"));
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Omitted"));
     }
 
     #[test]
-    fn init_writes_pwsh_runtime_for_powershell_script_repos() {
+    fn init_writes_pwsh_runtime_without_inventing_a_script_task() {
         let fixture = ContractFixture::new_dir();
         fixture.write("bootstrap.ps1", "Write-Host 'ready'\n");
 
@@ -31948,10 +32012,8 @@ name = "fastapi"
         assert!(written.contains("runtimes:"));
         assert!(written.contains("\n  pwsh: '*'"));
         assert!(!written.contains("\n  powershell:"));
-        assert!(written.contains("command:"));
-        assert!(written.contains("exe: pwsh"));
-        assert!(written.contains("- -File"));
-        assert!(written.contains("- bootstrap.ps1"));
+        assert!(!written.contains("command:"));
+        assert!(!written.contains("bootstrap.ps1"));
     }
 
     #[test]
@@ -32000,7 +32062,6 @@ name = "fastapi"
         assert!(preview_stdout.contains(
             "Ota only writes an inferred `agent` block when at least one safe task is present"
         ));
-        assert!(preview_stdout.contains("detected task `run` is not treated as safe by default"));
         assert!(preview_stdout.contains("run `ota agents --write"));
         assert!(!preview_stdout.contains("\nagent:\n"));
     }
@@ -32031,7 +32092,7 @@ name = "fastapi"
     }
 
     #[test]
-    fn detect_surfaces_agent_block_for_node_app_repos() {
+    fn detect_surfaces_partial_boundary_without_inventing_agent_authority() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -32053,34 +32114,15 @@ name = "fastapi"
         let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(preview_stdout.contains("\nagent:\n"));
-        assert!(preview_stdout.contains("posture: readiness_strict"));
-        assert!(preview_stdout.contains("default_task: typecheck"));
-        assert!(preview_stdout.contains("verify_after_changes:"));
-        assert!(preview_stdout.contains("- typecheck"));
-        assert!(preview_stdout.contains("writable_paths:"));
-        assert!(preview_stdout.contains("- app"));
-        assert!(preview_stdout.contains("- components"));
-        assert!(preview_stdout.contains("- lib"));
-        assert!(preview_stdout.contains("- public"));
-        assert!(preview_stdout.contains("protected_paths:"));
-        assert!(preview_stdout.contains("- ota.yaml"));
-        assert!(preview_stdout.contains("- ota.yaml"));
-        assert!(preview_stdout.contains("- package-lock.json"));
-        assert!(preview_stdout.contains("inferred_boundary:"));
-        assert!(preview_stdout.contains("reviewed: false"));
-        assert!(preview_stdout.contains("provenance:"));
-        assert!(preview_stdout.contains("common_source_roots"));
-        assert!(preview_stdout.contains("stack_companion_control_files"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
         assert!(preview_stdout.contains("Agent boundary"));
-        assert!(preview_stdout.contains("Inferred"));
-        assert!(preview_stdout.contains("safe_tasks:"));
-        assert!(preview_stdout.contains("`typecheck`"));
-        assert!(preview_stdout.contains("writable_paths:"));
-        assert!(preview_stdout.contains("protected_paths:"));
-        assert!(preview_stdout.contains(
-            "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
-        ));
+        assert!(preview_stdout.contains("Partially inferred"));
+        assert!(preview_stdout.contains("writable_paths: `app`, `components`, `lib`, `public`"));
+        assert!(
+            preview_stdout
+                .contains("protected_paths: `ota.yaml`, `package-lock.json`, `package.json`")
+        );
+        assert!(preview_stdout.contains("Agent Safe: unknown"));
 
         let exact = run_with(["ota", "detect", "--contract", fixture.path()]);
         assert_eq!(exact.exit_code, 0);
@@ -32113,13 +32155,10 @@ name = "fastapi"
 
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("Partially inferred"));
         assert!(preview_stdout.contains("writable_paths:"));
         assert!(preview_stdout.contains("`ota.yaml`, `package-lock.json`, `package.json`"));
-        assert!(preview_stdout.contains("inferred_boundary:"));
-        assert!(preview_stdout.contains("reviewed: false"));
-        assert!(preview_stdout.contains("contract_file_default"));
-        assert!(preview_stdout.contains("stack_companion_control_files"));
     }
 
     #[test]
@@ -32152,7 +32191,7 @@ name = "fastapi"
 
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
         assert!(!preview_stdout.contains("- config"));
         assert!(!preview_stdout.contains("- database"));
         assert!(!preview_stdout.contains("- migrations"));
@@ -32184,8 +32223,8 @@ name = "fastapi"
 
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(preview_stdout.contains("\nagent:\n"));
-        assert!(preview_stdout.contains("- ui-shell"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("`ui-shell`"));
         assert!(!preview_stdout.contains("- queries"));
     }
 
@@ -32201,7 +32240,8 @@ name = "fastapi"
 
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("Partially inferred"));
         assert!(preview_stdout.contains("writable_paths:"));
         assert!(preview_stdout.contains("`src/Ota.App`"));
         assert!(preview_stdout.contains("protected_paths:"));
@@ -33768,19 +33808,9 @@ requires-python = ">=3.12"
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["config"]["agent"]["entrypoint"], "setup");
-        assert_eq!(json["config"]["agent"]["default_task"], "test");
-        assert_eq!(json["config"]["agent"]["safe_tasks"][0], "test");
-        assert_eq!(json["config"]["agent"]["verify_after_changes"][0], "test");
-        let ota_version = format!("v{}", env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            json["config"]["agent"]["bootstrap"]["ota"]["source"]["kind"],
-            "version"
-        );
-        assert_eq!(
-            json["config"]["agent"]["bootstrap"]["ota"]["source"]["version"],
-            ota_version
-        );
+        assert!(json["config"]["agent"].is_null());
+        assert!(json["config"]["tasks"]["setup"].is_object());
+        assert!(json["config"]["tasks"]["test"].is_object());
     }
 
     #[test]
@@ -33811,13 +33841,7 @@ requires-python = ">=3.12"
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["config"]["agent"]["entrypoint"], "setup");
-        assert_eq!(json["config"]["agent"]["default_task"], "test");
-        assert_eq!(json["config"]["agent"]["safe_tasks"], json!(["test"]));
-        assert_eq!(
-            json["config"]["agent"]["verify_after_changes"],
-            json!(["test"])
-        );
+        assert!(json["config"]["agent"].is_null());
         assert_eq!(
             json["config"]["tasks"]["setup"]["prepare"]["kind"],
             "dependency_hydration"
@@ -33862,20 +33886,11 @@ requires-python = ">=3.12"
         assert_eq!(project_name["source"], "package.json#name");
         assert_eq!(project_name["confidence"], "high");
 
-        let starter_bootstrap = provenance
-            .iter()
-            .find(|entry| entry["field"] == "agent.bootstrap.ota.source")
-            .expect("starter bootstrap provenance");
-        assert_eq!(starter_bootstrap["provenance"], "template-derived");
-        assert_eq!(starter_bootstrap["provenance_key"], "template_derived");
-        assert_eq!(
-            starter_bootstrap["source"],
-            "ota.init#starter_agent_bootstrap"
-        );
-        assert!(
-            starter_bootstrap.get("confidence").is_none()
-                || starter_bootstrap["confidence"].is_null()
-        );
+        assert!(!provenance.iter().any(|entry| {
+            entry["field"]
+                .as_str()
+                .is_some_and(|field| field.starts_with("agent."))
+        }));
     }
 
     #[test]
@@ -34079,14 +34094,7 @@ requires-python = ">=3.12"
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert!(
-            json["config"].get("agent").is_some(),
-            "starter preview should keep agent guidance even when writable paths cannot be inferred"
-        );
-        assert!(
-            json["config"]["agent"].get("writable_paths").is_none(),
-            "writable_paths should be omitted when safe inference is unavailable"
-        );
+        assert!(json["config"]["agent"].is_null());
     }
 
     #[test]
@@ -37708,6 +37716,7 @@ tasks:
               path: /
 "#,
         );
+        let _path_guard = install_fake_npm_on_path(fixture.dir.path());
 
         let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
 
@@ -38721,7 +38730,7 @@ edition = "2024"
         assert!(stdout.contains("Field: tasks.test.run"));
         assert!(stdout.contains("Type: task"));
         assert!(stdout.contains("Signal: config"));
-        assert!(stdout.contains("Agent Safe: yes"));
+        assert!(stdout.contains("Agent Safe: unknown"));
         assert!(stdout.contains("Agent Signal: verification_candidate"));
     }
 
@@ -47779,10 +47788,8 @@ repos:
         assert!(stderr.contains("Detected repo type: Node"));
         assert!(stderr.contains("Detected package manager: npm"));
         assert!(stderr.contains("Detected likely runnable tasks: dev, build, typecheck, start"));
-        assert!(stderr.contains("Inferred starter writable paths: app, lib"));
-        assert!(stderr.contains("Inferred protected paths:"));
-        assert!(stderr.contains("ota.yaml"));
-        assert!(stderr.contains("package-lock.json"));
+        assert!(!stderr.contains("Inferred starter writable paths:"));
+        assert!(!stderr.contains("Inferred protected paths:"));
         assert!(stderr.contains("ota detect --dry-run ."));
         assert!(stderr.contains("ota detect --contract ."));
         assert!(stderr.contains("ota init --dry-run ."));

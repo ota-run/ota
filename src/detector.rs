@@ -1044,6 +1044,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
         evidence_manifest: evidence_by_identity.into_values().collect(),
         existing_contract_snapshot_identity: None,
         implementation_identity,
+        migration: None,
         changes,
         application_projection: None,
     };

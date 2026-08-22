@@ -891,9 +891,9 @@ mod tests {
 
         let journal_path = fs::read_dir(root.path().join(".ota/state/crossings"))
             .expect("crossing state directory")
-            .next()
+            .filter_map(Result::ok)
+            .find(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
             .expect("scope directory")
-            .expect("scope directory entry")
             .path();
         let journal_path = fs::read_dir(journal_path)
             .expect("transaction state directory")

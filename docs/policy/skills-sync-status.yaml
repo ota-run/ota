@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "dced3a7cb7d2453b4d737e924692ba86402e2ab7"
-consumer_commit: "b02a4080edd8e849bccd9bd4f0f14faf16b1499c"
+reviewed_ota_commit: "6641237021a4b974674d745de5055ce6c4bee48f"
+consumer_commit: "59a9d6540a95a40320abb35685b1f67f1e63e2ce"
 waiver_reason: ""
 notes: >
-  Synced reviewed-candidate application guidance. The independently edited partner-facing
-  pressure-testing protocol remains outside this sync record.
+  Synced lossless contract-upgrade candidate review and dry-run application guidance. The
+  independently edited partner-facing pressure-testing protocol remains outside this sync record.

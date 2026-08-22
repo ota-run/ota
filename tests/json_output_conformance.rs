@@ -51,6 +51,22 @@ fn install_preview_container_engine(bin_dir: &Path) {
         .expect("preview container engine");
 }
 
+fn install_preview_npm(bin_dir: &Path) {
+    #[cfg(unix)]
+    {
+        let npm = bin_dir.join("npm");
+        fs::write(&npm, "#!/bin/sh\nprintf '10.0.0\\n'\n").expect("preview npm");
+        let mut permissions = fs::metadata(&npm)
+            .expect("preview npm metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(npm, permissions).expect("preview npm permissions");
+    }
+
+    #[cfg(windows)]
+    fs::write(bin_dir.join("npm.cmd"), "@echo off\r\necho 10.0.0\r\n").expect("preview npm");
+}
+
 #[test]
 fn relocated_binary_validates_against_its_embedded_published_schema() {
     let temporary = tempfile::tempdir().expect("relocated binary directory");
@@ -113,12 +129,186 @@ fn detect_candidate_artifact_matches_published_schemas_without_writing_a_contrac
     );
     assert_matches_schema("detect.json", &output);
     assert_eq!(output["written"], false);
+    assert_eq!(output["candidate_published"], true);
+    assert_eq!(output["candidate_publication"], "durable");
     assert!(output["candidate_path"].as_str().is_some());
     assert!(!fixture.path().join("ota.yaml").exists());
+
+    let mut orphan_publication = output.clone();
+    orphan_publication
+        .as_object_mut()
+        .expect("detect output object")
+        .remove("candidate");
+    orphan_publication
+        .as_object_mut()
+        .expect("detect output object")
+        .remove("candidate_path");
+    assert_rejected_by_schema("detect.json", &orphan_publication);
 
     let artifact = load_json(&fixture.path().join(".ota/candidates/detect.json"));
     assert_matches_schema("contract-candidate.json", &artifact);
     assert_eq!(artifact["identity"], output["candidate"]["identity"]);
+}
+
+#[test]
+fn contract_upgrade_candidate_is_lossless_reproducible_and_never_writes() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let legacy = "version: 1\nproject:\n  name: legacy-upgrade\ntoolchains:\n  rust:\n    version: '1.95'\n    fulfillment: run\n";
+    fs::write(fixture.path().join("ota.yaml"), legacy).expect("legacy contract");
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+
+    let upgraded = run_ota(
+        &[
+            "contract",
+            "upgrade",
+            "--candidate-out",
+            ".ota/candidates/upgrade.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-upgrade.json", &upgraded);
+    assert_eq!(upgraded["written"], false);
+    assert_eq!(upgraded["candidate_published"], true);
+    assert_eq!(upgraded["candidate_publication"], "durable");
+    assert_eq!(upgraded["candidate"]["schema_version"], 2);
+    assert_eq!(upgraded["candidate"]["kind"], "upgrade");
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("ota.yaml")).expect("unchanged contract"),
+        legacy
+    );
+
+    let artifact_path = fixture.path().join(".ota/candidates/upgrade.json");
+    let artifact = load_json(&artifact_path);
+    assert_matches_schema("contract-candidate.json", &artifact);
+    let admitted = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/upgrade.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &admitted);
+    assert_eq!(admitted["ok"], true);
+    assert_eq!(admitted["mode"], "dry_run");
+    assert_eq!(admitted["written"], false);
+
+    let refused_write = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/upgrade.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &refused_write);
+    assert_eq!(refused_write["code"], "candidate_unsupported");
+    assert_eq!(refused_write["written"], false);
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("ota.yaml")).expect("unchanged contract"),
+        legacy
+    );
+
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        legacy.replace("fulfillment: run", "fulfillment: none"),
+    )
+    .expect("drifted contract");
+    let stale = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/upgrade.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &stale);
+    assert_eq!(stale["code"], "candidate_stale");
+}
+
+#[test]
+fn contract_upgrade_refuses_unregistered_and_tampered_migrations() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: current\ntoolchains:\n  rust:\n    version: '1.95'\n    fulfillment:\n      mode: run\n",
+    )
+    .expect("current contract");
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+    let unsupported = run_ota_with_env(
+        &[
+            "contract",
+            "upgrade",
+            "--candidate-out",
+            ".ota/candidates/unsupported.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-upgrade.json", &unsupported);
+    assert_eq!(unsupported["code"], "upgrade_unsupported");
+    assert!(
+        !fixture
+            .path()
+            .join(".ota/candidates/unsupported.json")
+            .exists()
+    );
+
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: tampered\ntoolchains:\n  rust:\n    version: '1.95'\n    fulfillment: run\n",
+    )
+    .expect("legacy contract");
+    let upgraded = run_ota(
+        &[
+            "contract",
+            "upgrade",
+            "--candidate-out",
+            ".ota/candidates/tampered.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_eq!(upgraded["ok"], true);
+    let candidate_path = fixture.path().join(".ota/candidates/tampered.json");
+    let mut candidate = load_json(&candidate_path);
+    candidate["migration"]["id"] = Value::String(String::from("unregistered_migration"));
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&candidate).expect("tampered candidate"),
+    )
+    .expect("write tampered candidate");
+    let tampered = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/tampered.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &tampered);
+    assert_eq!(tampered["code"], "candidate_malformed");
 }
 
 #[test]
@@ -142,6 +332,8 @@ fn contract_candidate_application_rederives_or_refuses_review_artifacts() {
         fixture.path(),
     );
     assert!(detected["ok"].as_bool().expect("detect result"));
+    assert_eq!(detected["candidate_published"], true);
+    assert_eq!(detected["candidate_publication"], "durable");
     let admitted = run_ota(
         &[
             "contract",
@@ -180,7 +372,7 @@ fn contract_candidate_application_rederives_or_refuses_review_artifacts() {
     );
     assert_matches_schema("contract-candidate-application.json", &unsupported);
     assert_eq!(unsupported["ok"], false);
-    assert_eq!(unsupported["code"], "candidate_unsupported");
+    assert_eq!(unsupported["code"], "candidate_malformed");
 
     fs::remove_file(&candidate_path).expect("remove unsupported candidate");
     let detected = run_ota(
@@ -637,6 +829,125 @@ fn contract_candidate_write_faults_report_publication_truthfully() {
                 .to_string_lossy()
                 .starts_with(".ota.yaml.candidate-apply-")),
         "pre-publication cleanup failure must be reported with the retained temporary file"
+    );
+
+    let artifact_cleanup = tempfile::tempdir().expect("artifact cleanup tempdir");
+    fs::write(
+        artifact_cleanup.path().join("Cargo.toml"),
+        "[package]\nname = \"artifact-cleanup\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("artifact cleanup manifest");
+    fs::create_dir_all(artifact_cleanup.path().join(".ota/candidates"))
+        .expect("artifact cleanup candidate directory");
+    let artifact_not_published = run_ota_with_env(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/fault.json",
+            "--json",
+            ".",
+        ],
+        artifact_cleanup.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "artifact_before_publish,artifact_temporary_cleanup",
+        )],
+        false,
+    );
+    assert_matches_schema("detect.json", &artifact_not_published);
+    assert_eq!(artifact_not_published["candidate_published"], false);
+    assert_eq!(
+        artifact_not_published["candidate_publication"],
+        "not_published"
+    );
+    assert!(
+        !artifact_cleanup
+            .path()
+            .join(".ota/candidates/fault.json")
+            .exists()
+    );
+    assert!(
+        fs::read_dir(artifact_cleanup.path().join(".ota/candidates"))
+            .expect("artifact cleanup entries")
+            .any(|entry| entry
+                .expect("artifact cleanup entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp"))
+    );
+
+    let artifact_uncertain = tempfile::tempdir().expect("artifact uncertain tempdir");
+    fs::write(
+        artifact_uncertain.path().join("Cargo.toml"),
+        "[package]\nname = \"artifact-uncertain\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("artifact uncertain manifest");
+    fs::create_dir_all(artifact_uncertain.path().join(".ota/candidates"))
+        .expect("artifact uncertain candidate directory");
+    let uncertain_artifact = run_ota_with_env(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/fault.json",
+            "--json",
+            ".",
+        ],
+        artifact_uncertain.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "artifact_directory_sync,artifact_rollback_cleanup",
+        )],
+        false,
+    );
+    assert_matches_schema("detect.json", &uncertain_artifact);
+    assert_eq!(uncertain_artifact["candidate_published"], true);
+    assert_eq!(
+        uncertain_artifact["candidate_publication"],
+        "durability_uncertain"
+    );
+    assert!(
+        artifact_uncertain
+            .path()
+            .join(".ota/candidates/fault.json")
+            .is_file()
+    );
+    let mut contradictory_artifact = uncertain_artifact.clone();
+    contradictory_artifact["candidate_published"] = Value::Bool(false);
+    assert_rejected_by_schema("detect.json", &contradictory_artifact);
+
+    let upgrade_uncertain = tempfile::tempdir().expect("upgrade uncertain tempdir");
+    fs::write(
+        upgrade_uncertain.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: upgrade-uncertain\ntoolchains:\n  rust:\n    version: '1.95'\n    fulfillment: run\n",
+    )
+    .expect("legacy contract");
+    fs::create_dir_all(upgrade_uncertain.path().join(".ota/candidates"))
+        .expect("upgrade uncertain candidate directory");
+    let uncertain_upgrade = run_ota_with_env(
+        &[
+            "contract",
+            "upgrade",
+            "--candidate-out",
+            ".ota/candidates/upgrade.json",
+            "--json",
+            ".",
+        ],
+        upgrade_uncertain.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "artifact_directory_sync,artifact_rollback_cleanup",
+        )],
+        false,
+    );
+    assert_matches_schema("contract-upgrade.json", &uncertain_upgrade);
+    assert_eq!(uncertain_upgrade["candidate_published"], true);
+    assert_eq!(
+        uncertain_upgrade["candidate_publication"],
+        "durability_uncertain"
+    );
+    assert_eq!(
+        uncertain_upgrade["candidate_path"],
+        ".ota/candidates/upgrade.json"
     );
 }
 
@@ -4102,6 +4413,9 @@ workflows:
 #[test]
 fn run_dry_run_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir(&bin_dir).expect("preview npm directory");
+    install_preview_npm(&bin_dir);
     write_contract(
         &fixture,
         r#"
@@ -4114,7 +4428,15 @@ tasks:
 "#,
     );
 
-    let json = run_ota(
+    let mut path_entries = vec![bin_dir];
+    if let Some(current_path) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&current_path));
+    }
+    let path = env::join_paths(path_entries)
+        .expect("joined preview PATH")
+        .to_string_lossy()
+        .into_owned();
+    let json = run_ota_with_env(
         &[
             "run",
             "ci",
@@ -4123,6 +4445,8 @@ tasks:
             fixture.path().to_str().unwrap(),
         ],
         fixture.path(),
+        &[("PATH", path.as_str())],
+        true,
     );
     assert_matches_schema("run-preview.json", &json);
     assert!(

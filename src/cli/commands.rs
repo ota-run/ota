@@ -72,6 +72,7 @@ use crate::contract_drift::{
     collect_detect_drift_removals, collect_detect_removals,
     doctor_required_verification_governance,
 };
+use crate::contract_upgrade::{ContractUpgradeError, build_contract_upgrade_candidate};
 use crate::detector::{
     Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
 };
@@ -111,15 +112,16 @@ use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
     ContractCandidateApplicationFailure, ContractCandidateApplicationSuccess,
     ContractFieldProvenance, ContractIdentity, ContractIdentityCounts, ContractIdentityExecution,
-    ContractIdentityMetadata, ContractIdentityProject, DetectComparison, DetectComparisonChange,
-    DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
-    DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary,
-    DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind,
-    EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus,
-    EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionEvidenceClass,
-    ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
-    ExecutionReceipt, ExecutionReceiptArtifactLineage, ExecutionReceiptEnvSource,
-    ExecutionReceiptEvaluatedInput, ExecutionReceiptHydrationProvenance,
+    ContractIdentityMetadata, ContractIdentityProject, ContractUpgradeFailure,
+    ContractUpgradeSuccess, DetectCandidatePublicationFailure, DetectComparison,
+    DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange,
+    DiffFailure, DiffSuccess, DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary,
+    DoctorFixSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry,
+    EnvEntryKind, EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry,
+    EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary,
+    ExecutionEvidenceClass, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
+    ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptArtifactLineage,
+    ExecutionReceiptEnvSource, ExecutionReceiptEvaluatedInput, ExecutionReceiptHydrationProvenance,
     ExecutionReceiptHydrationSourceIdentity, ExecutionReceiptHydrationSourcePosture,
     ExecutionReceiptLogs, ExecutionReceiptQueryTraceDivergence,
     ExecutionReceiptQueryTraceObservation, ExecutionReceiptQueryTraceRecord,
@@ -35763,6 +35765,8 @@ pub fn detect(
                             .collect(),
                         comparison: comparison.as_ref(),
                         candidate_path: None,
+                        candidate_published: None,
+                        candidate_publication: None,
                         candidate: None,
                     })),
                 }
@@ -35805,6 +35809,7 @@ fn write_detect_candidate_artifact(
 ) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let contract_path_display = contract_path.display().to_string();
+    let requested_path_display = requested_path.display().to_string();
     let candidate_capture = match report.source_bound_candidate() {
         Ok(candidate) => candidate,
         Err(error) => {
@@ -35837,21 +35842,33 @@ fn write_detect_candidate_artifact(
         Ok(output) => output,
         Err(error) => {
             let next = "choose a new root-relative path below an existing non-evidence directory";
+            let message = error.message();
+            let candidate_published = error.candidate_published();
+            let candidate_publication = error.posture();
             return match format {
                 OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
                     "DETECT CANDIDATE",
                     &compact_repo_path(&report.root),
-                    "Candidate was not written",
-                    &error,
+                    if candidate_published {
+                        "Candidate publication durability is uncertain"
+                    } else {
+                        "Candidate was not published"
+                    },
+                    message,
                     &[next.to_string()],
                 )),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &contract_path_display,
-                    written: false,
-                    error: &error,
-                    next: Some(next),
-                })),
+                OutputFormat::Json => {
+                    CommandOutput::failure(to_json(&DetectCandidatePublicationFailure {
+                        ok: false,
+                        path: &contract_path_display,
+                        written: false,
+                        candidate_path: &requested_path_display,
+                        candidate_published,
+                        candidate_publication,
+                        error: message,
+                        next,
+                    }))
+                }
             };
         }
     };
@@ -35899,10 +35916,134 @@ fn write_detect_candidate_artifact(
                     .collect(),
                 comparison: None,
                 candidate_path: Some(&output_display),
+                candidate_published: Some(true),
+                candidate_publication: Some("durable"),
                 candidate: Some(candidate),
             }))
         }
     }
+}
+
+/// Produces one registered, lossless contract-upgrade review artifact without changing ota.yaml.
+pub fn upgrade_contract_candidate(
+    path: Option<&Path>,
+    candidate_out: &Path,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let root = resolve_repo_path(path);
+    let root_display = compact_repo_path(&root);
+    let candidate_path_display = candidate_out.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=contract upgrade"),
+        format!("DEBUG repo_root={}", root.display()),
+        format!("DEBUG candidate_out={candidate_path_display}"),
+    ];
+    let failure = |code: &'static str,
+                   error: String,
+                   next: Option<&str>,
+                   candidate_published: bool,
+                   candidate_publication: &'static str| {
+        let output = match format {
+            OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                "CONTRACT UPGRADE",
+                &root_display,
+                if candidate_published {
+                    "Upgrade candidate publication durability is uncertain"
+                } else {
+                    "Upgrade candidate was not published"
+                },
+                &format!("{code}: {error}"),
+                &next.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            )),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ContractUpgradeFailure {
+                ok: false,
+                path: &root_display,
+                written: false,
+                candidate_path: &candidate_path_display,
+                candidate_published,
+                candidate_publication,
+                code,
+                error: &error,
+                next,
+            })),
+        };
+        finalize_debug(output, debug, debug_lines.clone())
+    };
+    let capture = match build_contract_upgrade_candidate(&root) {
+        Ok(capture) => capture,
+        Err(error) => {
+            let code = match error {
+                ContractUpgradeError::UnsupportedVersion
+                | ContractUpgradeError::NoRegisteredMigration => "upgrade_unsupported",
+                ContractUpgradeError::MissingOrUnsafeContract
+                | ContractUpgradeError::ContractTooLarge
+                | ContractUpgradeError::Read(_)
+                | ContractUpgradeError::RawParse(_)
+                | ContractUpgradeError::LegacyParse(_)
+                | ContractUpgradeError::Candidate(_) => "upgrade_failed",
+            };
+            return failure(
+                code,
+                error.to_string(),
+                Some("review ota.yaml and select a registered lossless migration"),
+                false,
+                "not_published",
+            );
+        }
+    };
+    let migration_id = capture
+        .candidate
+        .migration
+        .as_ref()
+        .expect("upgrade candidate carries migration evidence")
+        .id
+        .clone();
+    if let Err(error) = write_candidate_create_new(&root, candidate_out, &capture.candidate) {
+        return failure(
+            "upgrade_write_failed",
+            error.message().to_string(),
+            Some("choose a new in-repository candidate path and retry"),
+            error.candidate_published(),
+            error.posture(),
+        );
+    }
+    let candidate_json = match serde_json::to_value(&capture.candidate) {
+        Ok(value) => value,
+        Err(error) => {
+            return failure(
+                "upgrade_failed",
+                error.to_string(),
+                None,
+                false,
+                "not_published",
+            );
+        }
+    };
+    let output = match format {
+        OutputFormat::Text => CommandOutput::success(format!(
+            "{}\n\n{}\n{}\n{}",
+            format_command_header("CONTRACT UPGRADE", &root_display),
+            format_result_line("lossless upgrade candidate produced"),
+            format_result_line(&format!("migration {}", paint_code(&migration_id))),
+            format!(
+                "Review: {}\nNext: ota contract apply-candidate {} --json",
+                paint_code(&candidate_path_display),
+                paint_code(&candidate_path_display)
+            )
+        )),
+        OutputFormat::Json => CommandOutput::success(to_json(&ContractUpgradeSuccess {
+            ok: true,
+            path: &root_display,
+            written: false,
+            candidate_path: &candidate_path_display,
+            candidate_published: true,
+            candidate_publication: "durable",
+            migration_id: &migration_id,
+            candidate: candidate_json,
+        })),
+    };
+    finalize_debug(output, debug, debug_lines)
 }
 
 /// Re-derives a reviewed candidate and, only with `--write`, atomically creates a missing ota.yaml.
@@ -35979,13 +36120,6 @@ pub fn apply_contract_candidate(
         Ok(candidate) => candidate,
         Err(error) => return failure("candidate_malformed", error, None),
     };
-    if candidate.kind != CandidateKind::Detection {
-        return failure(
-            "candidate_unsupported",
-            String::from("candidate kind has no registered application carrier"),
-            Some("regenerate a detection candidate or wait for the matching application carrier"),
-        );
-    }
     if let Err(error) = candidate.verify_identities() {
         let code = match error {
             CandidateError::IdentityMismatch | CandidateError::ClosureIdentityMismatch => {
@@ -35994,6 +36128,93 @@ pub fn apply_contract_candidate(
             _ => "candidate_malformed",
         };
         return failure(code, error.to_string(), None);
+    }
+    if candidate.kind == CandidateKind::Upgrade {
+        if write {
+            return failure(
+                "candidate_unsupported",
+                String::from(
+                    "upgrade candidates are reviewable, but existing-contract publication is not enabled because the create-new writer cannot safely replace ota.yaml",
+                ),
+                Some(
+                    "review the dry-run result; do not replace ota.yaml until Ota ships an owned existing-contract update carrier",
+                ),
+            );
+        }
+        let current = match build_contract_upgrade_candidate(&root) {
+            Ok(current) => current,
+            Err(error) => {
+                return failure(
+                    "candidate_not_reproducible",
+                    format!("failed to re-derive the registered contract migration: {error}"),
+                    Some("rerun `ota contract upgrade --candidate-out <path>` and review it"),
+                );
+            }
+        };
+        if candidate != current.candidate {
+            return failure(
+                "candidate_stale",
+                String::from("current ota.yaml did not re-derive the reviewed upgrade candidate"),
+                Some("rerun `ota contract upgrade --candidate-out <path>` and review it"),
+            );
+        }
+        let projected_contract = match verify_candidate_application_projection(
+            &candidate,
+            Some(&current.existing_contract_value),
+        ) {
+            Ok(contract) => contract,
+            Err(error) => {
+                return failure(
+                    "candidate_incomplete",
+                    format!("upgrade projection did not re-derive a valid contract: {error}"),
+                    Some("regenerate and review the upgrade candidate"),
+                );
+            }
+        };
+        let resulting_bytes = match serde_yaml::to_string(&projected_contract) {
+            Ok(value) => value.into_bytes(),
+            Err(error) => return failure("candidate_incomplete", error.to_string(), None),
+        };
+        let migration = candidate
+            .migration
+            .as_ref()
+            .expect("verified upgrade candidate has migration evidence");
+        if contract_snapshot_hash(&resulting_bytes) != migration.resulting_content_identity {
+            return failure(
+                "candidate_identity_invalid",
+                String::from("upgrade resulting content identity did not re-derive"),
+                None,
+            );
+        }
+        let application_projection = candidate
+            .application_projection
+            .as_ref()
+            .expect("verified upgrade candidate has an application projection");
+        let output = match format {
+            OutputFormat::Text => CommandOutput::success(format!(
+                "{}\n\n{}\n{}\nDry-run only: ota.yaml was not changed; existing-contract publication remains disabled.",
+                format_command_header("CONTRACT CANDIDATE", &compact_repo_path(&root)),
+                format_result_line("upgrade candidate admission is reproducible"),
+                format_result_line(&format!("identity {}", paint_code(&candidate.identity))),
+            )),
+            OutputFormat::Json => {
+                CommandOutput::success(to_json(&ContractCandidateApplicationSuccess {
+                    ok: true,
+                    mode,
+                    candidate_path: &candidate_path_display,
+                    candidate_identity: &candidate.identity,
+                    implementation_identity: &candidate.implementation_identity,
+                    application_projection_identity: &application_projection.identity,
+                    resulting_contract_identity: &application_projection
+                        .resulting_contract_identity,
+                    admitted: true,
+                    written: false,
+                    no_op: false,
+                    residual_dispositions: Vec::new(),
+                }))
+            }
+        };
+        return finalize_debug(output, debug, debug_lines);
     }
     if candidate.application_projection.is_none() {
         return failure(
@@ -40138,6 +40359,8 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     .collect(),
                 comparison: None,
                 candidate_path: None,
+                candidate_published: None,
+                candidate_publication: None,
                 candidate: None,
             })),
         },
@@ -40387,6 +40610,8 @@ fn write_detected_merge(
                     .collect(),
                 comparison: Some(&comparison),
                 candidate_path: None,
+                candidate_published: None,
+                candidate_publication: None,
                 candidate: None,
             })),
         };
@@ -40632,6 +40857,8 @@ fn write_detected_merge(
                         .collect(),
                     comparison: post_write_comparison.as_ref(),
                     candidate_path: None,
+                    candidate_published: None,
+                    candidate_publication: None,
                     candidate: None,
                 }))
             }
@@ -40841,6 +41068,8 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     .collect(),
                 comparison: comparison.as_ref(),
                 candidate_path: None,
+                candidate_published: None,
+                candidate_publication: None,
                 candidate: None,
             })),
         },

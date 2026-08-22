@@ -17,9 +17,9 @@
     "changes"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "enum": [1, 2] },
     "identity": { "$ref": "#/$defs/identity" },
-    "kind": { "const": "detection" },
+    "kind": { "enum": ["detection", "upgrade"] },
     "logical_root": { "const": "." },
     "discovery_inventory_identity": { "$ref": "#/$defs/identity" },
     "discovery_inventory": {
@@ -29,10 +29,12 @@
     "evidence_manifest_identity": { "$ref": "#/$defs/identity" },
     "evidence_manifest": {
       "type": "array",
+      "uniqueItems": true,
       "items": { "$ref": "#/$defs/evidence" }
     },
     "existing_contract_snapshot_identity": { "$ref": "#/$defs/identity" },
     "implementation_identity": { "$ref": "#/$defs/identity" },
+    "migration": { "$ref": "#/$defs/migration" },
     "changes": {
       "type": "array",
       "items": { "$ref": "#/$defs/change" }
@@ -158,7 +160,7 @@
       "required": ["subject", "operation", "value"],
       "properties": {
         "subject": { "$ref": "#/$defs/subject" },
-        "operation": { "const": "add" },
+        "operation": { "enum": ["add", "replace"] },
         "value": {}
       }
     },
@@ -174,6 +176,26 @@
           "items": { "$ref": "#/$defs/applicationOperation" }
         },
         "resulting_contract_identity": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from_version",
+        "before_semantic_identity",
+        "after_semantic_identity",
+        "resulting_content_identity",
+        "formatting_impact"
+      ],
+      "properties": {
+        "id": { "const": "legacy_flat_toolchain_fulfillment_v1" },
+        "from_version": { "const": 1 },
+        "before_semantic_identity": { "$ref": "#/$defs/identity" },
+        "after_semantic_identity": { "$ref": "#/$defs/identity" },
+        "resulting_content_identity": { "$ref": "#/$defs/identity" },
+        "formatting_impact": { "const": "representation_only" }
       }
     }
   },
@@ -211,11 +233,114 @@
     {
       "if": { "properties": { "kind": { "const": "detection" } }, "required": ["kind"] },
       "then": {
+        "not": { "required": ["migration"] },
         "properties": {
+          "schema_version": { "const": 1 },
           "changes": {
             "items": {
               "properties": { "operation": { "const": "add" } },
               "required": ["operation"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "upgrade" } }, "required": ["kind"] },
+      "then": {
+        "required": ["migration", "existing_contract_snapshot_identity", "application_projection"],
+        "properties": {
+          "schema_version": { "const": 2 },
+          "discovery_inventory": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": {
+                "source_kind": { "const": "ota_contract" },
+                "path": { "const": "ota.yaml" }
+              }
+            }
+          },
+          "evidence_manifest": {
+            "minItems": 1,
+            "items": {
+              "properties": {
+                "source_kind": { "const": "ota_contract" },
+                "path": { "const": "ota.yaml" }
+              }
+            }
+          },
+          "changes": {
+            "minItems": 1,
+            "items": {
+              "not": { "required": ["execution_closure"] },
+              "properties": {
+                "subject": {
+                  "properties": {
+                    "path": {
+                      "prefixItems": [
+                        { "const": "toolchains" },
+                        { "type": "string", "minLength": 1 },
+                        { "const": "fulfillment" }
+                      ],
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  }
+                },
+                "field_family": { "const": "toolchain_fulfillment" },
+                "operation": { "const": "replace" },
+                "proposed_value": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["mode"],
+                  "properties": { "mode": { "enum": ["none", "run"] } }
+                },
+                "evidence": {
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "items": {
+                    "properties": {
+                      "source_kind": { "const": "ota_contract" },
+                      "path": { "const": "ota.yaml" }
+                    }
+                  }
+                },
+                "disposition": { "const": "applicable" }
+              },
+              "required": ["subject", "field_family", "operation", "proposed_value", "evidence", "disposition"]
+            }
+          },
+          "application_projection": {
+            "properties": {
+              "operations": {
+                "minItems": 1,
+                "items": {
+                  "properties": {
+                    "subject": {
+                      "properties": {
+                        "path": {
+                          "prefixItems": [
+                            { "const": "toolchains" },
+                            { "type": "string", "minLength": 1 },
+                            { "const": "fulfillment" }
+                          ],
+                          "minItems": 3,
+                          "maxItems": 3
+                        }
+                      }
+                    },
+                    "operation": { "const": "replace" },
+                    "value": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["mode"],
+                      "properties": { "mode": { "enum": ["none", "run"] } }
+                    }
+                  },
+                  "required": ["subject", "operation", "value"]
+                }
+              }
             }
           }
         }

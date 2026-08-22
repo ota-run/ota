@@ -68,6 +68,8 @@
         "candidate_path": {
           "type": "string"
         },
+        "candidate_published": { "const": true },
+        "candidate_publication": { "const": "durable" },
         "candidate": {
           "$ref": "./contract-candidate.json"
         }
@@ -76,7 +78,7 @@
         {
           "if": { "required": ["candidate"] },
           "then": {
-            "required": ["candidate_path"],
+            "required": ["candidate_path", "candidate_published", "candidate_publication"],
             "properties": { "written": { "const": false } }
           }
         },
@@ -86,6 +88,54 @@
             "required": ["candidate"],
             "properties": { "written": { "const": false } }
           }
+        },
+        {
+          "if": { "required": ["candidate_published"] },
+          "then": {
+            "required": ["candidate", "candidate_path", "candidate_publication"],
+            "properties": { "written": { "const": false } }
+          }
+        },
+        {
+          "if": { "required": ["candidate_publication"] },
+          "then": {
+            "required": ["candidate", "candidate_path", "candidate_published"],
+            "properties": { "written": { "const": false } }
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "written",
+        "candidate_path",
+        "candidate_published",
+        "candidate_publication",
+        "error",
+        "next"
+      ],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "written": { "const": false },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "candidate_published": { "type": "boolean" },
+        "candidate_publication": { "enum": ["not_published", "durability_uncertain"] },
+        "error": { "type": "string", "minLength": 1 },
+        "next": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "candidate_publication": { "const": "not_published" } } },
+          "then": { "properties": { "candidate_published": { "const": false } } }
+        },
+        {
+          "if": { "properties": { "candidate_publication": { "const": "durability_uncertain" } } },
+          "then": { "properties": { "candidate_published": { "const": true } } }
         }
       ]
     },

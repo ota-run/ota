@@ -1343,7 +1343,10 @@ fn detect_schema_includes_comparison_preview() {
     assert!(success.get("toolchain_opportunities").is_some());
     assert!(success.get("candidate_path").is_some());
     assert!(success.get("candidate").is_some());
-    assert_eq!(candidate["properties"]["schema_version"]["const"], json!(1));
+    assert_eq!(
+        candidate["properties"]["schema_version"]["enum"],
+        json!([1, 2])
+    );
     assert!(candidate["properties"].get("identity").is_some());
     assert!(candidate["properties"].get("evidence_manifest").is_some());
     assert!(candidate["properties"].get("changes").is_some());
@@ -1466,6 +1469,148 @@ fn contract_candidate_schema_rejects_noncanonical_detection_artifacts() {
         .as_object_mut()
         .expect("candidate object")
         .remove("existing_contract_snapshot_identity");
+    assert!(!compiled.is_valid(&candidate));
+}
+
+#[test]
+fn contract_candidate_schema_separates_registered_upgrade_artifacts() {
+    let schema = load_schema("docs/spec/json-schemas/contract-candidate.json");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("candidate schema should compile");
+    let digest = |value: char| format!("sha256:{}", value.to_string().repeat(64));
+    let mut candidate = json!({
+        "schema_version": 2,
+        "identity": digest('a'),
+        "kind": "upgrade",
+        "logical_root": ".",
+        "discovery_inventory_identity": digest('b'),
+        "discovery_inventory": [{
+            "source_kind": "ota_contract",
+            "path": "ota.yaml",
+            "content_identity": digest('c')
+        }],
+        "evidence_manifest_identity": digest('d'),
+        "evidence_manifest": [{
+            "source_kind": "ota_contract",
+            "path": "ota.yaml",
+            "content_identity": digest('c'),
+            "extraction": "toolchains.rust.fulfillment"
+        }],
+        "existing_contract_snapshot_identity": digest('c'),
+        "implementation_identity": digest('e'),
+        "migration": {
+            "id": "legacy_flat_toolchain_fulfillment_v1",
+            "from_version": 1,
+            "before_semantic_identity": digest('f'),
+            "after_semantic_identity": digest('f'),
+            "resulting_content_identity": digest('0'),
+            "formatting_impact": "representation_only"
+        },
+        "changes": [{
+            "subject": { "path": ["toolchains", "rust", "fulfillment"] },
+            "field_family": "toolchain_fulfillment",
+            "operation": "replace",
+            "proposed_value": { "mode": "run" },
+            "evidence": [{
+                "source_kind": "ota_contract",
+                "path": "ota.yaml",
+                "content_identity": digest('c'),
+                "extraction": "toolchains.rust.fulfillment"
+            }],
+            "confidence": "high",
+            "disposition": "applicable"
+        }],
+        "application_projection": {
+            "identity": digest('1'),
+            "base_contract_identity": digest('c'),
+            "operations": [{
+                "subject": { "path": ["toolchains", "rust", "fulfillment"] },
+                "operation": "replace",
+                "value": { "mode": "run" }
+            }],
+            "resulting_contract_identity": digest('f')
+        }
+    });
+    assert!(compiled.is_valid(&candidate));
+
+    let original_manifest = candidate["evidence_manifest"].clone();
+    candidate["evidence_manifest"] =
+        json!([original_manifest[0].clone(), original_manifest[0].clone()]);
+    assert!(
+        !compiled.is_valid(&candidate),
+        "schema accepted duplicate canonical evidence"
+    );
+    candidate["evidence_manifest"] = original_manifest;
+
+    for (pointer, replacement) in [
+        ("/schema_version", json!(1)),
+        ("/kind", json!("detection")),
+        ("/migration/id", json!("unregistered")),
+        ("/migration/from_version", json!(2)),
+        ("/changes/0/operation", json!("add")),
+        ("/changes/0/proposed_value/mode", json!("unknown")),
+        (
+            "/application_projection/operations/0/operation",
+            json!("add"),
+        ),
+    ] {
+        let original = candidate.pointer(pointer).expect("fixture pointer").clone();
+        *candidate.pointer_mut(pointer).expect("fixture pointer") = replacement;
+        assert!(!compiled.is_valid(&candidate), "schema accepted {pointer}");
+        *candidate.pointer_mut(pointer).expect("fixture pointer") = original;
+    }
+
+    for pointer in [
+        "/evidence_manifest/0/source_kind",
+        "/changes/0/evidence/0/source_kind",
+    ] {
+        let original = candidate.pointer(pointer).expect("fixture pointer").clone();
+        *candidate.pointer_mut(pointer).expect("fixture pointer") = json!("manifest");
+        assert!(!compiled.is_valid(&candidate), "schema accepted {pointer}");
+        *candidate.pointer_mut(pointer).expect("fixture pointer") = original;
+    }
+    for pointer in ["/evidence_manifest/0/path", "/changes/0/evidence/0/path"] {
+        let original = candidate.pointer(pointer).expect("fixture pointer").clone();
+        *candidate.pointer_mut(pointer).expect("fixture pointer") = json!("other.yaml");
+        assert!(!compiled.is_valid(&candidate), "schema accepted {pointer}");
+        *candidate.pointer_mut(pointer).expect("fixture pointer") = original;
+    }
+
+    let original_change_evidence = candidate["changes"][0]["evidence"].clone();
+    candidate["changes"][0]["evidence"] = json!([
+        original_change_evidence[0].clone(),
+        original_change_evidence[0].clone()
+    ]);
+    assert!(!compiled.is_valid(&candidate));
+    candidate["changes"][0]["evidence"] = original_change_evidence;
+
+    candidate["changes"][0]["execution_closure"] = json!({
+        "identity": digest('2'),
+        "working_directory": ".",
+        "platform": "linux",
+        "nodes": [],
+        "edges": [],
+        "requirements": [],
+        "effects": [],
+        "unresolved_reasons": []
+    });
+    assert!(!compiled.is_valid(&candidate));
+    candidate["changes"][0]
+        .as_object_mut()
+        .expect("change object")
+        .remove("execution_closure");
+
+    let original_operations = candidate["application_projection"]["operations"].clone();
+    candidate["application_projection"]["operations"] = json!([]);
+    assert!(!compiled.is_valid(&candidate));
+    candidate["application_projection"]["operations"] = original_operations;
+
+    candidate
+        .as_object_mut()
+        .expect("candidate object")
+        .remove("migration");
     assert!(!compiled.is_valid(&candidate));
 }
 

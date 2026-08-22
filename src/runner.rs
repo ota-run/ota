@@ -51018,6 +51018,24 @@ exec "$(dirname "$0")/docker-real" "$@"
         let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").expect("reserve a local port");
         let listener_port = listener.local_addr().expect("listener addr").port();
+        let bin_dir = TempDir::new().expect("fake binary directory");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(bin_dir.path(), "node", node_body);
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.path().to_path_buf()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths(path_entries).expect("joined test PATH"),
+            );
+        }
 
         let fixture = ContractFixture::new(&format!(
             r#"
@@ -51042,6 +51060,11 @@ tasks:
 
         let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev")
             .expect_err("native run should fail when fixed listener bind port is occupied");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         match error {
             RunError::NativeListenerBindConflict {
@@ -71179,6 +71202,12 @@ tasks:
             "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
         };
         write_fake_bin(&bin_dir, "node", node_body);
+        let corepack_body = if cfg!(windows) {
+            "@echo off\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\nexit 0\n"
+        };
+        write_fake_bin(&bin_dir, "corepack", corepack_body);
         let uv_body = if cfg!(windows) {
             "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo uv 0.7.12\r\n  exit /b 0\r\n)\r\n>> \"%OTA_PREPARE_LOG%\" echo uv^|%CD%^|%*\r\n"
         } else {

@@ -471,7 +471,9 @@ durable agent workflow belongs in the canonical Ota skill.
   is requested. `--write` locks the retained no-follow repository descriptor, rechecks current source and evidence,
   and atomically creates only a previously absent `ota.yaml` from the shared evaluator's returned
   validated contract; it never overwrites an existing contract, and semantic reapplication is a
-  no-op. Legacy mutation paths, owned existing-contract update, schema upgrades, and agent-safe promotion
+  no-op. The registered `legacy_flat_toolchain_fulfillment_v1` upgrade now emits a schema-v2
+  source-bound candidate and re-derives unchanged semantics in dry-run admission. Upgrade writes,
+  legacy mutation routing, the owned existing-contract update carrier, and agent-safe promotion
   remain unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
@@ -1167,7 +1169,13 @@ conflicts, and explicit closure facts. Equivalent existing truth is omitted befo
 dotted task names remain exact map keys and typed commands reconcile against equivalent detected
 invocations. Indexed environment-source fields traverse arrays, and explicit schema-default command
 posture reconciles with omission. The artifact cannot authorize a contract write or agent-safe
-task. Skills and Examples need no additional authoring shape for these reconciliation-only rules.
+task. Candidate JSON distinguishes artifact publication from contract mutation through
+`candidate_published` and `candidate_publication`; durability uncertainty never reports the
+artifact as absent. `ota contract upgrade --candidate-out` now publishes the registered
+legacy-flat-toolchain migration as a schema-v2 review artifact and `apply-candidate` dry-runs it
+against current source truth. Upgrade `--write` remains disabled because the create-new writer
+cannot safely replace an externally mutable existing contract. Skills, Examples, and Site require
+propagation for this operator workflow, but no contract-authoring shape changes.
 V12 effect-bound refusal assurance and V12.1 secret-delivery governance remain planning-only and
 inactive until their published prerequisites complete; do not widen the current authority
 implementation for either.

@@ -4733,6 +4733,11 @@ pub(crate) mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn systemd_startup_posture_is_reused_without_a_second_wire_preface() {
+        assert_eq!(
+            unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) },
+            0,
+            "test process must satisfy the launcher NoNewPrivileges profile"
+        );
         let mapping = format!("sha256:{}", "a".repeat(64));
         let (binding, _, _) =
             crate::crossing_authority::tests::broker_binding_v3_with_signing_keys();
