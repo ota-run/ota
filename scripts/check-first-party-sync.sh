@@ -65,9 +65,18 @@ load_changed_files() {
   fi
 
   if git -C "${root}" rev-parse --verify HEAD^ >/dev/null 2>&1; then
-    git -C "${root}" diff --name-only HEAD^..HEAD
+    {
+      git -C "${root}" diff --name-only HEAD^..HEAD
+      git -C "${root}" diff --name-only --cached
+      git -C "${root}" diff --name-only
+    } | sort -u
     return
   fi
+
+  {
+    git -C "${root}" diff --name-only --cached
+    git -C "${root}" diff --name-only
+  } | sort -u
 }
 
 read_status_field() {

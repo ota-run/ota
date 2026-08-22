@@ -4,6 +4,10 @@ version = "1.6.26"
 edition = "2024"
 license = "Apache-2.0"
 
+[features]
+# Non-default fault injection used only by publication regression tests.
+test-candidate-publication-faults = []
+
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
 clap_complete = { version = "4.6.2", features = ["unstable-dynamic"] }

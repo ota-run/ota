@@ -25,9 +25,9 @@
 version: 1
 repository: ota-run/skills
 mode: synced
-reviewed_ota_commit: "634a2c169e083da4e02abd72a7bf29ae388ddf3d"
-consumer_commit: "b4819684862b2c349b0ff645b86bf3bafad9ee2d"
+reviewed_ota_commit: "dced3a7cb7d2453b4d737e924692ba86402e2ab7"
+consumer_commit: "b02a4080edd8e849bccd9bd4f0f14faf16b1499c"
 waiver_reason: ""
 notes: >
-  Synced immutable independently administered positive pressure evidence while preserving the
-  administrator-driven reboot-recovery and provider-attestation boundaries.
+  Synced reviewed-candidate application guidance. The independently edited partner-facing
+  pressure-testing protocol remains outside this sync record.

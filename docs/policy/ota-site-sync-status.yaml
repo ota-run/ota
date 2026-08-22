@@ -25,9 +25,10 @@
 version: 1
 repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "634a2c169e083da4e02abd72a7bf29ae388ddf3d"
-consumer_commit: "d05ddad304f8698df73b00a188be232076d00a97"
+reviewed_ota_commit: "dced3a7cb7d2453b4d737e924692ba86402e2ab7"
+consumer_commit: "1aff98949635236478fa096161f8212d47e363b0"
 waiver_reason: ""
 notes: >
-  Synced immutable independently administered positive pressure evidence while preserving the
-  administrator-driven reboot-recovery and provider-attestation boundaries.
+  Synced the explicit reviewed-candidate writer reference: source/evidence revalidation,
+  no-follow repository locking, atomic no-replace first-contract publication, semantic no-op,
+  and durability-uncertain output.

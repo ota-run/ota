@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/contract-candidate-application.json",
+  "title": "Ota contract candidate application result",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "mode", "candidate_path", "candidate_identity", "implementation_identity", "application_projection_identity", "resulting_contract_identity", "admitted", "written"],
+      "properties": {
+        "ok": { "const": true },
+        "mode": { "enum": ["dry_run", "write"] },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "candidate_identity": { "$ref": "./contract-candidate.json#/$defs/identity" },
+        "implementation_identity": { "$ref": "./contract-candidate.json#/$defs/identity" },
+        "application_projection_identity": { "$ref": "./contract-candidate.json#/$defs/identity" },
+        "resulting_contract_identity": { "$ref": "./contract-candidate.json#/$defs/identity" },
+        "admitted": { "const": true },
+        "written": { "type": "boolean" },
+        "no_op": { "type": "boolean" },
+        "residual_dispositions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["unknown", "unsupported"] }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "dry_run" } }, "required": ["mode"] },
+          "then": { "properties": { "written": { "const": false } } }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "write" }, "written": { "const": false } },
+            "required": ["mode", "written"]
+          },
+          "then": { "properties": { "no_op": { "const": true } }, "required": ["no_op"] }
+        },
+        {
+          "if": { "properties": { "no_op": { "const": true } }, "required": ["no_op"] },
+          "then": {
+            "properties": { "mode": { "const": "write" }, "written": { "const": false } },
+            "required": ["mode", "written"]
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "mode", "candidate_path", "written", "code", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "mode": { "enum": ["dry_run", "write"] },
+        "candidate_path": { "type": "string", "minLength": 1 },
+        "written": { "type": "boolean" },
+        "code": {
+          "enum": [
+            "candidate_malformed",
+            "candidate_identity_invalid",
+            "candidate_implementation_incompatible",
+            "candidate_not_reproducible",
+            "candidate_stale",
+            "candidate_contract_mismatch",
+            "candidate_conflict",
+            "candidate_incomplete",
+            "candidate_unsupported",
+            "candidate_write_failed",
+            "candidate_write_durability_uncertain"
+          ]
+        },
+        "error": { "type": "string", "minLength": 1 },
+        "next": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "code": { "const": "candidate_write_durability_uncertain" } },
+            "required": ["code"]
+          },
+          "then": {
+            "properties": { "mode": { "const": "write" }, "written": { "const": true } },
+            "required": ["mode", "written"]
+          },
+          "else": { "properties": { "written": { "const": false } } }
+        }
+      ]
+    }
+  ]
+}

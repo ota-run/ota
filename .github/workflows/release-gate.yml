@@ -328,6 +328,11 @@ jobs:
             exit "$code"
           done
 
+      - name: Run release gate (non-Windows) - candidate publication fault boundaries
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test --features test-candidate-publication-faults --test json_output_conformance contract_candidate_write_faults_report_publication_truthfully -- --exact
+
       - name: Run release gate (non-Windows) - detect fixtures
         if: runner.os == 'macOS'
         timeout-minutes: 10

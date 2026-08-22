@@ -209,6 +209,12 @@ enum Commands {
         #[command(subcommand)]
         command: AssistCommands,
     },
+    #[command(display_order = 6)]
+    /// Review and admit source-bound contract candidates without changing the contract by default.
+    Contract {
+        #[command(subcommand)]
+        command: ContractCommands,
+    },
     #[command(
         display_order = 4,
         after_help = "Ordering:\n  Put ota command flags like `--agent`, `--sandbox-target`, `--grant`, `--expect-refusal`, `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, `--effect-override`, and `--reason` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run verify --agent --sandbox-target oci_local\n  ota run publish --grant approved-publish\n  ota run --agent --expect-refusal release\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
@@ -769,6 +775,26 @@ enum AuthorityCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum ContractCommands {
+    /// Re-derive a source-bound candidate; --write creates only a missing ota.yaml.
+    ApplyCandidate {
+        /// Candidate artifact to verify and re-derive.
+        candidate: PathBuf,
+        /// Atomically create a missing ota.yaml after lock-held revalidation; existing contracts refuse.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Refuse when the candidate retains unknown or unsupported changes.
+        #[arg(long, action = ArgAction::SetTrue)]
+        require_complete: bool,
+        /// Path to the repository root recorded by the candidate.
+        path: Option<PathBuf>,
     },
 }
 
@@ -4912,6 +4938,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Assist {
                 command: AssistCommands::DeclareReadiness { json: true, .. },
             }
+            | Commands::Contract {
+                command: ContractCommands::ApplyCandidate { json: true, .. },
+            }
             | Commands::Doctor { json: true, .. }
             | Commands::Explain { json: true, .. }
             | Commands::Check { json: true, .. }
@@ -5007,6 +5036,34 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 )
             } else {
                 commands::authority_inspect(format_from_json(json))
+            }
+        }
+        Commands::Contract {
+            command:
+                ContractCommands::ApplyCandidate {
+                    candidate,
+                    write,
+                    json,
+                    require_complete,
+                    path,
+                },
+        } => {
+            if file.is_some() {
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`ota contract apply-candidate` re-derives repository discovery and does not accept `--file`",
+                    ),
+                    2,
+                )
+            } else {
+                commands::apply_contract_candidate(
+                    path.as_deref(),
+                    &candidate,
+                    write,
+                    require_complete,
+                    format_from_json(json),
+                    debug,
+                )
             }
         }
         Commands::Env {
@@ -6423,6 +6480,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Authority { .. } => {
             "have the runner administrator repair the fixed prebound-file boundary, then rerun `ota authority inspect --json`"
         }
+        Commands::Contract { .. } => {
+            "regenerate the candidate with `ota detect --candidate-out <path>`, review it, then rerun `ota contract apply-candidate <path>`"
+        }
         Commands::Ci { .. } => {
             "run `ota ci github render --workflow <name>` to inspect the canonical managed projection"
         }
@@ -6646,6 +6706,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Assist {
             command: AssistCommands::Normalize { json, .. },
         }
+        | Commands::Contract {
+            command: ContractCommands::ApplyCandidate { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Proof {
             command: ProofCommands::Runtime { json, .. },
@@ -6767,6 +6830,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Authority {
             command: AuthorityCommands::Inspect { .. },
         } => "ota authority inspect",
+        Commands::Contract { command } => match command {
+            ContractCommands::ApplyCandidate { .. } => "ota contract apply-candidate",
+        },
         Commands::Ci { command } => match command {
             CiCommands::Projection { .. } => "ota ci projection",
             CiCommands::Github { command } => match command {
@@ -20333,6 +20399,18 @@ tasks:
                         receipt: false,
                         path: None,
                         inputs: Vec::new(),
+                    },
+                },
+            ),
+            (
+                "contract apply-candidate",
+                super::Commands::Contract {
+                    command: super::ContractCommands::ApplyCandidate {
+                        candidate: PathBuf::from(".ota/candidates/detect.json"),
+                        write: false,
+                        json: true,
+                        require_complete: false,
+                        path: None,
                     },
                 },
             ),

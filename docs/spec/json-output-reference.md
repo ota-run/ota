@@ -45,6 +45,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/run-preview.json](json-schemas/run-preview.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
 - [json-schemas/contract-candidate.json](json-schemas/contract-candidate.json)
+- [json-schemas/contract-candidate-application.json](json-schemas/contract-candidate-application.json)
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
@@ -6079,8 +6080,34 @@ value. This preserves dotted map keys and lets consumers distinguish semantic ta
 its YAML spelling. Ota omits proposals already represented by equivalent existing truth and marks
 real disagreement as `conflict`, not `applicable`. Existing-truth traversal supports canonical
 array indices, and task-command comparison normalizes schema-equivalent defaults including
-`interaction: auto` and root `cwd: .`. A candidate is review input only; it does not establish
-agent safety or authorize a contract write.
+`interaction: auto` and root `cwd: .`. When every selected applicable operation produces a
+complete valid contract, `application_projection` binds the exact normalized operations, reviewed
+base-contract identity, and resulting semantic contract identity. Candidates whose applicable
+operations cannot produce a complete valid contract omit that projection and cannot enter
+application admission. Unrelated `unknown` or `unsupported` residual findings do not make a
+projection incomplete; they remain review state and `--require-complete` refuses them. A candidate
+remains review input only; it does not establish agent safety or authorize execution.
+
+`ota contract apply-candidate CANDIDATE [--write] --json [PATH]` is the matching admission
+surface. Without `--write`, it returns `ok: true`, `mode: "dry_run"`, and `written: false` only
+when current repository truth re-derives the exact candidate. With `--write`, Ota locks the
+repository candidate lane, repeats that admission, rechecks current source and evidence, and
+atomically creates a previously absent `ota.yaml` from the `Contract` returned by the shared
+evaluator. It refuses to replace an existing contract. A successful reapplication where
+the current semantic contract already equals the reviewed result returns `mode: "write"`,
+`written: false`, and `no_op: true`. Every success carries the reviewed candidate and
+implementation identities plus the application-projection and resulting-contract identities. A
+refusal returns `ok: false`, `written: false`, one stable `code`, and an actionable
+`error`; current codes are `candidate_malformed`, `candidate_identity_invalid`,
+`candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
+`candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
+`candidate_unsupported`, `candidate_write_failed`, and
+`candidate_write_durability_uncertain`. A durability-uncertain failure has `written: true`, so
+callers must inspect the contract before retrying. Residual `unknown` and `unsupported`
+dispositions remain visible as review state and become a refusal only with `--require-complete`.
+The create-new writer currently requires Linux `renameat2(RENAME_NOREPLACE)` or macOS
+`renameatx_np(RENAME_EXCL)`; other platforms refuse rather than weaken no-replace publication.
+Legacy mutation commands have not yet migrated to this writer.
 
 ```json
 {

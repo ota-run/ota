@@ -22,9 +22,8 @@
 
 //! Versioned, source-bound contract-candidate domain.
 //!
-//! This module intentionally has no CLI entrypoint yet. It establishes the self-verifying review
-//! artifact that detect, init, and contract upgrades will share before any candidate is public or
-//! writable.
+//! It establishes the self-verifying review artifact that detect and dry-run candidate admission
+//! share before any candidate can write a contract.
 
 use std::collections::BTreeSet;
 #[cfg(unix)]
@@ -43,7 +42,9 @@ use std::os::unix::io::{AsRawFd as _, FromRawFd as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::schema::Contract;
 use crate::semantic_identity::semantic_contract_identity;
+use crate::validator::validate_contract_with_path;
 
 pub(crate) const CONTRACT_CANDIDATE_SCHEMA_VERSION: u32 = 1;
 
@@ -175,6 +176,23 @@ pub(crate) struct CandidateChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CandidateApplicationOperation {
+    pub subject: CandidateSubject,
+    pub operation: CandidateOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<JsonValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CandidateApplicationProjection {
+    pub identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_contract_identity: Option<String>,
+    pub operations: Vec<CandidateApplicationOperation>,
+    pub resulting_contract_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ContractCandidate {
     pub schema_version: u32,
     pub identity: String,
@@ -189,6 +207,8 @@ pub(crate) struct ContractCandidate {
     pub existing_contract_snapshot_identity: Option<String>,
     pub implementation_identity: String,
     pub changes: Vec<CandidateChange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_projection: Option<CandidateApplicationProjection>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -203,8 +223,69 @@ pub(crate) enum CandidateError {
     ClosureIdentityMismatch,
     #[error("candidate identity does not match its canonical content")]
     IdentityMismatch,
+    #[error("candidate application projection is incomplete or cannot produce a valid contract")]
+    ApplicationIncomplete,
+    #[error("candidate application projection is invalid: {0}")]
+    Application(String),
     #[error("candidate serialization failed: {0}")]
     Serialization(String),
+}
+
+/// Re-derives the only application projection currently supported by the detection carrier.
+///
+/// This is the sole domain evaluator for projected candidate changes. A future writer must use
+/// this result rather than interpret detector output or projection operations independently.
+pub(crate) fn derive_candidate_application_projection(
+    candidate: &ContractCandidate,
+    existing_contract: Option<&JsonValue>,
+) -> Result<Option<(CandidateApplicationProjection, Contract)>, CandidateError> {
+    let operations = expected_application_operations(candidate)?;
+    let mut projected = existing_contract
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "version": 1 }));
+    for operation in &operations {
+        apply_candidate_application_operation(&mut projected, operation)?;
+    }
+    let Ok(contract) = serde_json::from_value::<Contract>(projected) else {
+        return Ok(None);
+    };
+    if validate_contract_with_path(&contract, None).is_err() {
+        return Ok(None);
+    }
+    let resulting_contract_identity =
+        semantic_contract_identity(&contract).map_err(CandidateError::Serialization)?;
+    Ok(Some((
+        CandidateApplicationProjection {
+            identity: String::new(),
+            base_contract_identity: candidate.existing_contract_snapshot_identity.clone(),
+            operations,
+            resulting_contract_identity,
+        },
+        contract,
+    )))
+}
+
+/// Verifies a stored projection by rebuilding it from the actual base contract.
+pub(crate) fn verify_candidate_application_projection(
+    candidate: &ContractCandidate,
+    existing_contract: Option<&JsonValue>,
+) -> Result<Contract, CandidateError> {
+    let stored = candidate
+        .application_projection
+        .as_ref()
+        .ok_or(CandidateError::ApplicationIncomplete)?;
+    let Some((mut expected, contract)) =
+        derive_candidate_application_projection(candidate, existing_contract)?
+    else {
+        return Err(CandidateError::ApplicationIncomplete);
+    };
+    expected.identity.clear();
+    expected.identity =
+        semantic_contract_identity(&expected).map_err(CandidateError::Serialization)?;
+    if stored != &expected {
+        return Err(CandidateError::IdentityMismatch);
+    }
+    Ok(contract)
 }
 
 impl CandidateExecutionClosure {
@@ -273,6 +354,11 @@ impl ContractCandidate {
                 closure.finalize_identity()?;
             }
         }
+        if let Some(projection) = &mut self.application_projection {
+            projection.identity.clear();
+            projection.identity =
+                semantic_contract_identity(&projection).map_err(CandidateError::Serialization)?;
+        }
         self.discovery_inventory_identity = semantic_contract_identity(&self.discovery_inventory)
             .map_err(CandidateError::Serialization)?;
         self.evidence_manifest_identity = semantic_contract_identity(&self.evidence_manifest)
@@ -287,6 +373,26 @@ impl ContractCandidate {
         for change in &self.changes {
             if let Some(closure) = &change.execution_closure {
                 closure.verify_identity()?;
+            }
+        }
+        if let Some(projection) = &self.application_projection {
+            validate_identity(
+                &projection.resulting_contract_identity,
+                "resulting contract identity",
+            )?;
+            if projection.base_contract_identity != self.existing_contract_snapshot_identity {
+                return Err(CandidateError::IdentityMismatch);
+            }
+            let expected_operations = expected_application_operations(self)?;
+            if projection.operations != expected_operations {
+                return Err(CandidateError::IdentityMismatch);
+            }
+            let mut unsigned = projection.clone();
+            unsigned.identity.clear();
+            let expected =
+                semantic_contract_identity(&unsigned).map_err(CandidateError::Serialization)?;
+            if projection.identity != expected {
+                return Err(CandidateError::IdentityMismatch);
             }
         }
         let inventory_identity = semantic_contract_identity(&self.discovery_inventory)
@@ -378,6 +484,147 @@ impl ContractCandidate {
         }
         Ok(())
     }
+}
+
+fn projection_value_for_change(change: &CandidateChange) -> Option<JsonValue> {
+    let value = change.proposed_value.clone()?;
+    match change.subject.path.last().map(String::as_str) {
+        Some("command") => {
+            let mut object = value.as_object()?.clone();
+            if object.remove("kind") != Some(JsonValue::String(String::from("command"))) {
+                return None;
+            }
+            Some(JsonValue::Object(object))
+        }
+        Some("run") if value.get("kind").and_then(JsonValue::as_str) == Some("run") => {
+            value.get("body").cloned()
+        }
+        _ => Some(value),
+    }
+}
+
+fn expected_application_operations(
+    candidate: &ContractCandidate,
+) -> Result<Vec<CandidateApplicationOperation>, CandidateError> {
+    candidate
+        .changes
+        .iter()
+        .filter(|change| change.disposition == CandidateDisposition::Applicable)
+        .map(|change| {
+            let value = projection_value_for_change(change).ok_or_else(|| {
+                CandidateError::Application(format!(
+                    "candidate change `{}` has no canonical application value",
+                    change.subject.path.join(".")
+                ))
+            })?;
+            Ok(CandidateApplicationOperation {
+                subject: change.subject.clone(),
+                operation: change.operation,
+                value: Some(value),
+            })
+        })
+        .collect()
+}
+
+fn apply_candidate_application_operation(
+    document: &mut JsonValue,
+    operation: &CandidateApplicationOperation,
+) -> Result<(), CandidateError> {
+    if operation.operation != CandidateOperation::Add {
+        return Err(CandidateError::Application(String::from(
+            "detection application projection contains a non-add operation",
+        )));
+    }
+    let value = operation.value.clone().ok_or_else(|| {
+        CandidateError::Application(String::from("candidate add operation has no value"))
+    })?;
+    set_candidate_application_path(document, &operation.subject.path, &[], value)
+}
+
+fn set_candidate_application_path(
+    current: &mut JsonValue,
+    path: &[String],
+    parent_path: &[String],
+    value: JsonValue,
+) -> Result<(), CandidateError> {
+    let Some((segment, remaining)) = path.split_first() else {
+        return Err(CandidateError::Application(String::from(
+            "candidate operation has an empty subject path",
+        )));
+    };
+    if remaining.is_empty() {
+        return match current {
+            JsonValue::Object(object) => {
+                if object.insert(segment.clone(), value).is_some() {
+                    Err(CandidateError::Application(format!(
+                        "candidate add operation targets existing field `{}`",
+                        path.join(".")
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+            JsonValue::Array(array) => {
+                let index = segment.parse::<usize>().map_err(|_| {
+                    CandidateError::Application(format!(
+                        "candidate array path segment `{segment}` is not an index"
+                    ))
+                })?;
+                if index != array.len() {
+                    return Err(CandidateError::Application(format!(
+                        "candidate array add index `{index}` is not the next position"
+                    )));
+                }
+                array.push(value);
+                Ok(())
+            }
+            _ => Err(CandidateError::Application(format!(
+                "candidate subject `{}` crosses a scalar contract value",
+                path.join(".")
+            ))),
+        };
+    }
+
+    let mut next_parent = parent_path.to_vec();
+    next_parent.push(segment.clone());
+    match current {
+        JsonValue::Object(object) => {
+            let child = object.entry(segment.clone()).or_insert_with(|| {
+                if candidate_contract_array_container(&next_parent) {
+                    JsonValue::Array(Vec::new())
+                } else {
+                    JsonValue::Object(serde_json::Map::new())
+                }
+            });
+            set_candidate_application_path(child, remaining, &next_parent, value)
+        }
+        JsonValue::Array(array) => {
+            let index = segment.parse::<usize>().map_err(|_| {
+                CandidateError::Application(format!(
+                    "candidate array path segment `{segment}` is not an index"
+                ))
+            })?;
+            if index > array.len() {
+                return Err(CandidateError::Application(format!(
+                    "candidate array path skips index `{index}`"
+                )));
+            }
+            if index == array.len() {
+                array.push(JsonValue::Object(serde_json::Map::new()));
+            }
+            set_candidate_application_path(&mut array[index], remaining, &next_parent, value)
+        }
+        _ => Err(CandidateError::Application(format!(
+            "candidate subject `{}` crosses a scalar contract value",
+            path.join(".")
+        ))),
+    }
+}
+
+// Candidate subjects are schema paths, not strings that infer collection shape from a numeric key.
+// Add new array containers here with the corresponding contract-candidate schema/test change.
+fn candidate_contract_array_container(path: &[String]) -> bool {
+    path.iter().map(String::as_str).eq(["env", "sources"])
 }
 
 /// Publishes a reviewed candidate without granting any contract-application authority.
@@ -933,9 +1180,10 @@ fn validate_unique<'a>(
 mod tests {
     use super::{
         CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence,
-        CandidateDisposition, CandidateEvidence, CandidateKind, CandidateOperation,
+        CandidateDisposition, CandidateError, CandidateEvidence, CandidateKind, CandidateOperation,
         CandidateSubject, ClosureEvidence, ContractCandidate, DiscoveryInventoryEntry,
-        ExecutionClosureEdge, ExecutionClosureNode, write_candidate_create_new,
+        ExecutionClosureEdge, ExecutionClosureNode, derive_candidate_application_projection,
+        verify_candidate_application_projection, write_candidate_create_new,
     };
 
     fn identity(value: char) -> String {
@@ -967,7 +1215,11 @@ mod tests {
                 subject: CandidateSubject::new(["tasks", "test", "command"]),
                 field_family: String::from("task_command"),
                 operation: CandidateOperation::Add,
-                proposed_value: Some(serde_json::json!("npm test")),
+                proposed_value: Some(serde_json::json!({
+                    "kind": "command",
+                    "exe": "npm",
+                    "args": ["test"]
+                })),
                 evidence: vec![CandidateEvidence {
                     source_kind: String::from("manifest"),
                     path: String::from("package.json"),
@@ -978,6 +1230,7 @@ mod tests {
                 confidence: CandidateConfidence::High,
                 disposition: CandidateDisposition::Applicable,
             }],
+            application_projection: None,
         }
     }
 
@@ -994,6 +1247,126 @@ mod tests {
 
         assert_eq!(left.identity, right.identity);
         left.verify_identities().expect("candidate must verify");
+    }
+
+    #[test]
+    fn application_projection_is_bound_to_candidate_operations() {
+        let mut candidate = candidate();
+        let base = serde_json::json!({ "version": 1, "project": { "name": "candidate" } });
+        let (projection, _) = derive_candidate_application_projection(&candidate, Some(&base))
+            .expect("projection derivation")
+            .expect("candidate produces a valid contract");
+        candidate.application_projection = Some(projection);
+        candidate
+            .finalize_identities()
+            .expect("projection identities");
+        candidate
+            .verify_identities()
+            .expect("projection must verify");
+
+        candidate
+            .application_projection
+            .as_mut()
+            .expect("projection")
+            .operations[0]
+            .value = Some(serde_json::json!({ "exe": "npm", "args": ["run", "test"] }));
+        assert!(candidate.verify_identities().is_err());
+    }
+
+    #[test]
+    fn application_projection_rederives_result_identity_from_the_base_contract() {
+        let mut candidate = candidate();
+        let base = serde_json::json!({ "version": 1, "project": { "name": "candidate" } });
+        let (projection, _) = derive_candidate_application_projection(&candidate, Some(&base))
+            .expect("projection derivation")
+            .expect("candidate produces a valid contract");
+        candidate.application_projection = Some(projection);
+        candidate
+            .finalize_identities()
+            .expect("candidate identities");
+        verify_candidate_application_projection(&candidate, Some(&base))
+            .expect("matching projection must verify");
+
+        let changed_base = serde_json::json!({ "version": 1, "project": { "name": "changed" } });
+        assert!(verify_candidate_application_projection(&candidate, Some(&changed_base)).is_err());
+
+        candidate
+            .application_projection
+            .as_mut()
+            .expect("projection")
+            .resulting_contract_identity = identity('c');
+        candidate
+            .finalize_identities()
+            .expect("attacker can rehash artifact");
+        candidate
+            .verify_identities()
+            .expect("local identities alone do not verify the resulting contract");
+        assert!(verify_candidate_application_projection(&candidate, Some(&base)).is_err());
+    }
+
+    #[test]
+    fn application_projection_refuses_rehashed_operation_substitution_or_reordering() {
+        let mut candidate = candidate();
+        candidate.changes.push(CandidateChange {
+            subject: CandidateSubject::new(["project", "name"]),
+            field_family: String::from("project_name"),
+            operation: CandidateOperation::Add,
+            proposed_value: Some(serde_json::json!("candidate")),
+            evidence: candidate.changes[0].evidence.clone(),
+            execution_closure: None,
+            confidence: CandidateConfidence::High,
+            disposition: CandidateDisposition::Applicable,
+        });
+        let (projection, _) = derive_candidate_application_projection(&candidate, None)
+            .expect("projection derivation")
+            .expect("candidate produces a valid contract");
+        candidate.application_projection = Some(projection);
+        candidate
+            .finalize_identities()
+            .expect("candidate identities");
+        verify_candidate_application_projection(&candidate, None)
+            .expect("matching projection must verify");
+
+        candidate
+            .application_projection
+            .as_mut()
+            .expect("projection")
+            .operations
+            .reverse();
+        candidate
+            .finalize_identities()
+            .expect("attacker can rehash artifact");
+        assert!(candidate.verify_identities().is_err());
+
+        candidate.application_projection = None;
+        candidate
+            .finalize_identities()
+            .expect("candidate identities");
+        assert!(matches!(
+            verify_candidate_application_projection(&candidate, None),
+            Err(CandidateError::ApplicationIncomplete)
+        ));
+    }
+
+    #[test]
+    fn application_projection_keeps_numeric_task_names_as_map_keys() {
+        let mut candidate = candidate();
+        candidate.changes[0].subject = CandidateSubject::new(["tasks", "0", "command"]);
+        let base = serde_json::json!({ "version": 1, "project": { "name": "candidate" } });
+        let Some((projection, contract)) =
+            derive_candidate_application_projection(&candidate, Some(&base))
+                .expect("projection derivation")
+        else {
+            panic!("numeric task key must produce a valid contract");
+        };
+        candidate.application_projection = Some(projection);
+        candidate
+            .finalize_identities()
+            .expect("candidate identities");
+        verify_candidate_application_projection(&candidate, Some(&base))
+            .expect("numeric task projection must verify");
+        let serialized = serde_json::to_value(contract).expect("contract json");
+        assert!(serialized["tasks"].get("0").is_some());
     }
 
     #[test]

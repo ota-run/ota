@@ -23,6 +23,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+#[cfg(unix)]
+use std::ffi::CString;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
@@ -34,6 +36,10 @@ use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd};
+
+use fs2::FileExt;
 use include_dir::{Dir, include_dir};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
@@ -57,7 +63,10 @@ use crate::ci_projection::{
     CiProjection, CiProjectionProofAssurance, CiProjectionReplayInputPolicyRequirement,
     build_ci_projection, refresh_ci_projection_identity,
 };
-use crate::contract_candidate::write_candidate_create_new;
+use crate::contract_candidate::{
+    CandidateDisposition, CandidateError, CandidateKind, ContractCandidate,
+    verify_candidate_application_projection, write_candidate_create_new,
+};
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
@@ -100,6 +109,7 @@ use crate::github_projection::{
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
+    ContractCandidateApplicationFailure, ContractCandidateApplicationSuccess,
     ContractFieldProvenance, ContractIdentity, ContractIdentityCounts, ContractIdentityExecution,
     ContractIdentityMetadata, ContractIdentityProject, DetectComparison, DetectComparisonChange,
     DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
@@ -2649,19 +2659,19 @@ fn ci_github_atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
     ));
     fs::write(&temporary, contents)
         .map_err(|error| format!("could not write `{}`: {error}", temporary.display()))?;
-    ci_github_replace_file(&temporary, path).map_err(|error| {
+    atomic_replace_file(&temporary, path).map_err(|error| {
         let _ = fs::remove_file(&temporary);
         format!("could not atomically replace `{}`: {error}", path.display())
     })
 }
 
 #[cfg(not(windows))]
-fn ci_github_replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
+fn atomic_replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
     fs::rename(temporary, path)
 }
 
 #[cfg(windows)]
-fn ci_github_replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
+fn atomic_replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
     use std::iter::once;
     use std::os::windows::ffi::OsStrExt;
 
@@ -35893,6 +35903,600 @@ fn write_detect_candidate_artifact(
             }))
         }
     }
+}
+
+/// Re-derives a reviewed candidate and, only with `--write`, atomically creates a missing ota.yaml.
+pub fn apply_contract_candidate(
+    path: Option<&Path>,
+    candidate_path: &Path,
+    write: bool,
+    require_complete: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let mode = if write { "write" } else { "dry_run" };
+    let root = resolve_repo_path(path);
+    let candidate_file = if candidate_path.is_absolute() {
+        candidate_path.to_path_buf()
+    } else {
+        root.join(candidate_path)
+    };
+    let candidate_path_display = candidate_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=contract apply-candidate"),
+        format!("DEBUG repo_root={}", root.display()),
+        format!("DEBUG candidate_path={candidate_path_display}"),
+        format!("DEBUG write={write}"),
+        format!("DEBUG require_complete={require_complete}"),
+    ];
+    let failure = |code: &'static str, error: String, next: Option<&str>| {
+        let output = match format {
+            OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                "CONTRACT CANDIDATE",
+                &compact_repo_path(&root),
+                "Candidate was not admitted",
+                &format!("{code}: {error}"),
+                &next.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            )),
+            OutputFormat::Json => {
+                CommandOutput::failure(to_json(&ContractCandidateApplicationFailure {
+                    ok: false,
+                    mode,
+                    candidate_path: &candidate_path_display,
+                    written: false,
+                    code,
+                    error: &error,
+                    next,
+                }))
+            }
+        };
+        finalize_debug(output, debug, debug_lines.clone())
+    };
+
+    // The lock is rooted directly in the repository and covers source re-derivation through
+    // create-new publication. It is not relied on to overwrite external writers.
+    let _write_lock = if write {
+        match acquire_candidate_application_lock(&root) {
+            Ok(lock) => Some(lock),
+            Err(error) => {
+                return failure(
+                    "candidate_write_failed",
+                    error,
+                    Some("wait for the active candidate application to finish, then retry"),
+                );
+            }
+        }
+    } else {
+        None
+    };
+
+    let candidate = match fs::read(&candidate_file)
+        .map_err(|error| format!("failed to read candidate artifact: {error}"))
+        .and_then(|bytes| {
+            serde_json::from_slice::<ContractCandidate>(&bytes)
+                .map_err(|error| format!("failed to parse candidate artifact: {error}"))
+        }) {
+        Ok(candidate) => candidate,
+        Err(error) => return failure("candidate_malformed", error, None),
+    };
+    if candidate.kind != CandidateKind::Detection {
+        return failure(
+            "candidate_unsupported",
+            String::from("candidate kind has no registered application carrier"),
+            Some("regenerate a detection candidate or wait for the matching application carrier"),
+        );
+    }
+    if let Err(error) = candidate.verify_identities() {
+        let code = match error {
+            CandidateError::IdentityMismatch | CandidateError::ClosureIdentityMismatch => {
+                "candidate_identity_invalid"
+            }
+            _ => "candidate_malformed",
+        };
+        return failure(code, error.to_string(), None);
+    }
+    if candidate.application_projection.is_none() {
+        return failure(
+            "candidate_incomplete",
+            String::from("candidate has no complete validated application projection"),
+            Some("review the unresolved candidate evidence and regenerate the candidate"),
+        );
+    }
+    let application_projection = candidate
+        .application_projection
+        .as_ref()
+        .expect("candidate projection was checked above");
+
+    let current = match detect_repo(&root).and_then(|report| report.source_bound_candidate()) {
+        Ok(current) => current,
+        Err(error) => {
+            return failure(
+                "candidate_not_reproducible",
+                format!("failed to re-derive candidate from current repository truth: {error}"),
+                Some(
+                    "rerun `ota detect --candidate-out <path>` after resolving repository discovery errors",
+                ),
+            );
+        }
+    };
+    if candidate.implementation_identity != current.candidate.implementation_identity {
+        return failure(
+            "candidate_implementation_incompatible",
+            String::from("candidate was produced by a different detector implementation"),
+            Some("regenerate the candidate with the current Ota version"),
+        );
+    }
+    let semantic_no_op = write
+        && candidate.existing_contract_snapshot_identity
+            != current.candidate.existing_contract_snapshot_identity
+        && current_contract_semantic_identity(&root)
+            .ok()
+            .flatten()
+            .is_some_and(|identity| identity == application_projection.resulting_contract_identity);
+    if candidate.existing_contract_snapshot_identity
+        != current.candidate.existing_contract_snapshot_identity
+        && !semantic_no_op
+    {
+        return failure(
+            "candidate_contract_mismatch",
+            String::from("the current ota.yaml snapshot differs from the reviewed candidate"),
+            Some("review and regenerate the candidate against the current contract"),
+        );
+    }
+    let source_evidence_matches = if semantic_no_op {
+        candidate_evidence_matches_root(&candidate, &root)
+    } else {
+        candidate.evidence_manifest_identity == current.candidate.evidence_manifest_identity
+    };
+    if candidate.discovery_inventory_identity != current.candidate.discovery_inventory_identity
+        || !source_evidence_matches
+    {
+        return failure(
+            "candidate_stale",
+            String::from("the recorded discovery inventory or selected evidence has changed"),
+            Some("rerun `ota detect --candidate-out <path>` and review the new artifact"),
+        );
+    }
+    if !semantic_no_op && candidate != current.candidate {
+        return failure(
+            "candidate_not_reproducible",
+            String::from("current source evidence did not re-derive the reviewed candidate"),
+            Some("regenerate the candidate and review the semantic differences"),
+        );
+    }
+    let projected_contract = match verify_candidate_application_projection(
+        &candidate,
+        current.existing_contract_value.as_ref(),
+    ) {
+        Ok(contract) => Some(contract),
+        Err(_) if semantic_no_op => None,
+        Err(error) => {
+            return failure(
+                "candidate_incomplete",
+                format!(
+                    "candidate application projection did not re-derive a valid contract: {error}"
+                ),
+                Some("regenerate and review the candidate before attempting contract application"),
+            );
+        }
+    };
+    if candidate
+        .changes
+        .iter()
+        .any(|change| change.disposition == CandidateDisposition::Conflict)
+    {
+        return failure(
+            "candidate_conflict",
+            String::from("candidate retains a conflict with existing contract truth"),
+            Some("resolve the contract disagreement, then regenerate the candidate"),
+        );
+    }
+    let residual_dispositions = candidate
+        .changes
+        .iter()
+        .filter_map(|change| match change.disposition {
+            CandidateDisposition::Unknown => Some("unknown"),
+            CandidateDisposition::Unsupported => Some("unsupported"),
+            CandidateDisposition::Applicable | CandidateDisposition::Conflict => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if require_complete && !residual_dispositions.is_empty() {
+        return failure(
+            "candidate_incomplete",
+            format!("candidate retains {}", residual_dispositions.join(" and ")),
+            Some("review the residual findings or rerun without `--require-complete`"),
+        );
+    }
+
+    let written = if write && !semantic_no_op {
+        let contract = projected_contract
+            .as_ref()
+            .expect("non-no-op write must have a verified projected contract");
+        if let Err(error) = write_candidate_contract_create_new(
+            _write_lock
+                .as_ref()
+                .expect("write mode retains a protected repository directory"),
+            contract,
+            candidate.existing_contract_snapshot_identity.as_deref(),
+        ) {
+            let (error, code) = match error {
+                CandidatePublicationError::PrePublication(error) => {
+                    (error, "candidate_write_failed")
+                }
+                CandidatePublicationError::DurabilityUncertain(error) => {
+                    return candidate_publication_uncertain_failure(
+                        format,
+                        debug,
+                        debug_lines,
+                        mode,
+                        &candidate_path_display,
+                        error,
+                    );
+                }
+            };
+            return failure(
+                code,
+                error,
+                Some("review current contract state and regenerate the candidate before retrying"),
+            );
+        }
+        true
+    } else {
+        false
+    };
+
+    let output = match format {
+        OutputFormat::Text => {
+            let terminal = if write {
+                if semantic_no_op {
+                    "No-op: ota.yaml already matches the reviewed resulting contract."
+                } else {
+                    "Applied: ota.yaml was atomically created after lock-held revalidation."
+                }
+            } else {
+                "Dry-run only: ota.yaml was not changed. Pass --write to apply after review."
+            };
+            let mut stdout = format!(
+                "{}\n\n{}\n{}\n{}",
+                format_command_header("CONTRACT CANDIDATE", &compact_repo_path(&root)),
+                format_result_line("candidate admission is reproducible"),
+                format_result_line(&format!("identity {}", paint_code(&candidate.identity))),
+                terminal
+            );
+            if !residual_dispositions.is_empty() {
+                stdout.push_str(&format!(
+                    "\n\n{} {}",
+                    paint_key("Residual review:"),
+                    residual_dispositions.join(", ")
+                ));
+            }
+            CommandOutput::success(stdout)
+        }
+        OutputFormat::Json => {
+            CommandOutput::success(to_json(&ContractCandidateApplicationSuccess {
+                ok: true,
+                mode,
+                candidate_path: &candidate_path_display,
+                candidate_identity: &candidate.identity,
+                implementation_identity: &candidate.implementation_identity,
+                application_projection_identity: &application_projection.identity,
+                resulting_contract_identity: &application_projection.resulting_contract_identity,
+                admitted: true,
+                written,
+                no_op: semantic_no_op,
+                residual_dispositions,
+            }))
+        }
+    };
+    finalize_debug(output, debug, debug_lines)
+}
+
+fn candidate_evidence_matches_root(candidate: &ContractCandidate, root: &Path) -> bool {
+    let canonical_root = match fs::canonicalize(root) {
+        Ok(root) => root,
+        Err(_) => return false,
+    };
+    candidate.evidence_manifest.iter().all(|evidence| {
+        let path = root.join(&evidence.path);
+        let canonical_path = match fs::canonicalize(&path) {
+            Ok(path) => path,
+            Err(_) => return false,
+        };
+        canonical_path.starts_with(&canonical_root)
+            && fs::read(&path)
+                .ok()
+                .is_some_and(|bytes| contract_snapshot_hash(&bytes) == evidence.content_identity)
+    })
+}
+
+struct CandidateApplicationWriteGuard {
+    #[cfg(unix)]
+    root_directory: File,
+}
+
+#[cfg(unix)]
+fn acquire_candidate_application_lock(
+    root: &Path,
+) -> Result<CandidateApplicationWriteGuard, String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let root_directory = options.open(root).map_err(|error| {
+        format!(
+            "failed to open repository root `{}` without following aliases: {error}",
+            root.display()
+        )
+    })?;
+    root_directory.lock_exclusive().map_err(|error| {
+        format!("failed to acquire repository candidate application lock: {error}")
+    })?;
+    Ok(CandidateApplicationWriteGuard { root_directory })
+}
+
+fn candidate_publication_uncertain_failure(
+    format: OutputFormat,
+    debug: bool,
+    debug_lines: Vec<String>,
+    mode: &'static str,
+    candidate_path: &str,
+    error: String,
+) -> CommandOutput {
+    let output = match format {
+        OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+            "CONTRACT CANDIDATE",
+            ".",
+            "Candidate contract was created but durability is uncertain",
+            &format!("candidate_write_durability_uncertain: {error}"),
+            &[String::from(
+                "verify ota.yaml before retrying; do not assume this invocation can be repeated safely",
+            )],
+        )),
+        OutputFormat::Json => {
+            CommandOutput::failure(to_json(&ContractCandidateApplicationFailure {
+                ok: false,
+                mode,
+                candidate_path,
+                written: true,
+                code: "candidate_write_durability_uncertain",
+                error: &error,
+                next: Some(
+                    "verify ota.yaml before retrying; do not assume this invocation can be repeated safely",
+                ),
+            }))
+        }
+    };
+    finalize_debug(output, debug, debug_lines)
+}
+
+#[cfg(not(unix))]
+fn acquire_candidate_application_lock(
+    _root: &Path,
+) -> Result<CandidateApplicationWriteGuard, String> {
+    Err(String::from(
+        "candidate publication requires Unix no-follow directory support",
+    ))
+}
+
+fn current_contract_semantic_identity(root: &Path) -> Result<Option<String>, String> {
+    let path = root.join(DEFAULT_CONTRACT_FILE);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to inspect current contract `{}`: {error}",
+                path.display()
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!(
+            "current contract `{}` must be a regular non-symlink file",
+            path.display()
+        ));
+    }
+    let contents = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read current contract `{}`: {error}",
+            path.display()
+        )
+    })?;
+    let contract = parse_contract_str(&path, &contents).map_err(|error| {
+        format!(
+            "failed to parse current contract `{}`: {error}",
+            path.display()
+        )
+    })?;
+    semantic_contract_identity(&contract)
+        .map(Some)
+        .map_err(|error| {
+            format!(
+                "failed to identify current contract `{}`: {error}",
+                path.display()
+            )
+        })
+}
+
+enum CandidatePublicationError {
+    PrePublication(String),
+    DurabilityUncertain(String),
+}
+
+fn candidate_publication_fault(stage: &str) -> bool {
+    #[cfg(feature = "test-candidate-publication-faults")]
+    {
+        env::var("OTA_TEST_CANDIDATE_PUBLICATION_FAULT")
+            .ok()
+            .is_some_and(|configured| configured.split(',').any(|value| value == stage))
+    }
+    #[cfg(not(feature = "test-candidate-publication-faults"))]
+    {
+        let _ = stage;
+        false
+    }
+}
+
+#[cfg(unix)]
+fn remove_candidate_publication_temporary(
+    directory: &File,
+    temporary: &CString,
+) -> Result<(), String> {
+    if candidate_publication_fault("temporary_cleanup") {
+        return Err(String::from("test fault injected before temporary cleanup"));
+    }
+    let result = unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) };
+    if result < 0 {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_candidate_contract_create_new(
+    guard: &CandidateApplicationWriteGuard,
+    contract: &Contract,
+    expected_base_identity: Option<&str>,
+) -> Result<(), CandidatePublicationError> {
+    if expected_base_identity.is_some() {
+        return Err(CandidatePublicationError::PrePublication(String::from(
+            "candidate publication refuses to replace an existing ota.yaml; review the candidate and apply the contract through an owned update flow",
+        )));
+    }
+
+    let bytes = serde_yaml::to_string(contract)
+        .map_err(|error| {
+            CandidatePublicationError::PrePublication(format!(
+                "failed to serialize projected contract: {error}"
+            ))
+        })?
+        .into_bytes();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temporary_name = format!(".ota.yaml.candidate-apply-{}-{nonce}", std::process::id());
+    let temporary =
+        CString::new(temporary_name.clone()).expect("generated temporary name has no NUL");
+    let target = CString::new(DEFAULT_CONTRACT_FILE).expect("static contract name contains no NUL");
+    let fd = unsafe {
+        libc::openat(
+            guard.root_directory.as_raw_fd(),
+            temporary.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        return Err(CandidatePublicationError::PrePublication(format!(
+            "failed to create candidate publication temporary file: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        let cleanup = remove_candidate_publication_temporary(&guard.root_directory, &temporary)
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(CandidatePublicationError::PrePublication(format!(
+            "failed to persist candidate publication temporary file: {error}{cleanup}",
+        )));
+    }
+    if candidate_publication_fault("after_temporary_sync") {
+        let cleanup = remove_candidate_publication_temporary(&guard.root_directory, &temporary)
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(CandidatePublicationError::PrePublication(format!(
+            "test fault injected after candidate publication temporary file sync{cleanup}",
+        )));
+    }
+    if candidate_publication_fault("concurrent_target_creation") {
+        let external = unsafe {
+            libc::openat(
+                guard.root_directory.as_raw_fd(),
+                target.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if external >= 0 {
+            unsafe { libc::close(external) };
+        }
+    }
+    let published = publish_candidate_create_new(&guard.root_directory, &temporary, &target);
+    if published < 0 {
+        let cleanup = remove_candidate_publication_temporary(&guard.root_directory, &temporary)
+            .err()
+            .map(|cleanup| format!("; temporary cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(CandidatePublicationError::PrePublication(format!(
+            "failed to atomically create ota.yaml from candidate projection: {}{cleanup}",
+            io::Error::last_os_error(),
+        )));
+    }
+    if candidate_publication_fault("directory_sync") {
+        return Err(CandidatePublicationError::DurabilityUncertain(
+            String::from(
+                "test fault injected after ota.yaml publication before repository directory sync",
+            ),
+        ));
+    }
+    guard.root_directory.sync_all().map_err(|error| {
+        CandidatePublicationError::DurabilityUncertain(format!(
+            "ota.yaml was created but the repository directory could not be synced: {error}",
+        ))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn publish_candidate_create_new(directory: &File, temporary: &CString, target: &CString) -> i32 {
+    unsafe {
+        libc::renameat2(
+            directory.as_raw_fd(),
+            temporary.as_ptr(),
+            directory.as_raw_fd(),
+            target.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn publish_candidate_create_new(directory: &File, temporary: &CString, target: &CString) -> i32 {
+    unsafe {
+        libc::renameatx_np(
+            directory.as_raw_fd(),
+            temporary.as_ptr(),
+            directory.as_raw_fd(),
+            target.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn publish_candidate_create_new(_directory: &File, _temporary: &CString, _target: &CString) -> i32 {
+    unsafe {
+        *libc::__error() = libc::ENOTSUP;
+    }
+    -1
+}
+
+#[cfg(not(unix))]
+fn write_candidate_contract_create_new(
+    _guard: &CandidateApplicationWriteGuard,
+    _contract: &Contract,
+    _expected_base_identity: Option<&str>,
+) -> Result<(), CandidatePublicationError> {
+    Err(CandidatePublicationError::PrePublication(String::from(
+        "candidate publication requires Unix no-follow directory support",
+    )))
 }
 
 fn render_detect_contract_preview(

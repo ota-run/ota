@@ -98,6 +98,13 @@ candidate change
     unresolved reasons, and attributable source evidence for every recorded element
   confidence: high | medium | low
   disposition: applicable | conflict | unknown | unsupported
+
+application projection
+  projection identity: canonical content address of the exact contract mutation plan
+  base contract identity: absent | canonical existing-contract identity
+  operations: ordered canonical contract-path additions, replacements, or removals after
+    detector-to-contract normalization
+  resulting contract identity: canonical identity of the fully validated post-apply contract
 ```
 
 The candidate is not `ota.yaml`. It is a portable, versioned JSON review artifact. Its identity
@@ -106,6 +113,15 @@ semantic changes, complete closure records where applicable, and existing contra
 later write cannot silently apply a result discovered against different source truth. A closure
 digest is an address, not a substitute for its reviewable nodes, edges, classifications, unresolved
 reasons, and source evidence. Git provenance is carried beside that identity, not folded into it.
+
+Review evidence alone is not a writable patch. Before a candidate can expose `--write`, its
+registered producer must also serialize an `application_projection`: the exact canonical contract
+operations after all detector-owned representations have been normalized into published contract
+fields, plus the expected post-apply contract identity. The projection is identity-bound to the
+candidate, shown for review, re-derived with the candidate, and validated as a complete contract
+before publication. A writer never invents this mapping from detector facts at apply time. This
+prevents detector-internal representations from becoming a second, implicit contract authoring
+language.
 
 Evidence must be deterministic and path-specific. Initial supported source families are manifests,
 lockfiles, toolchain files, Compose files, checked-in CI workflows, checked-in root or nested agent
@@ -197,7 +213,7 @@ ota init --candidate-out <path> --json
 ota detect --candidate-out <path> --json
 ota contract upgrade --candidate-out <path> --json
 ota detect --candidate-out <path> --replace-candidate --json
-ota contract apply-candidate <path> --dry-run --json
+ota contract apply-candidate <path> --json
 ota contract apply-candidate <path> --write --json
 ota contract apply-candidate <path> --write --require-complete --json
 ```
@@ -212,14 +228,16 @@ Application treats the candidate as untrusted review input, not producer authori
 or write it must verify the artifact self-identity, require the exact registered detector or
 migration implementation identity, re-run that detector over the recorded logical root and
 discovery scope, require the discovery inventory and selected evidence identities to match, and
-re-derive the proposed semantic changes. A later implementation may be accepted only when the
-registry declares a versioned byte-equivalent derivation contract for that exact candidate schema
-and implementation identity. It refuses when the re-derived canonical candidate differs.
+re-derive the proposed semantic changes and application projection. A later implementation may be
+accepted only when the registry declares a versioned byte-equivalent derivation contract for that
+exact candidate schema and implementation identity. It refuses when the re-derived canonical
+candidate differs.
 Application is dry-run by default and writes atomically only with `--write`. Its typed non-zero
 outcomes are `candidate_malformed`, `candidate_identity_invalid`, `candidate_implementation_incompatible`,
 `candidate_not_reproducible`, `candidate_stale`, `candidate_contract_mismatch`,
-`candidate_conflict`, `candidate_incomplete`, and `candidate_unsupported`; a successful
-reapplication is an explicit semantic no-op.
+`candidate_conflict`, `candidate_incomplete`, `candidate_unsupported`, `candidate_write_failed`,
+and `candidate_write_durability_uncertain`; a successful reapplication is an explicit semantic
+no-op.
 
 - `ota init` may create a complete starter only when no contract exists and its candidate is
   explicit about every inferred source.
@@ -234,9 +252,14 @@ reapplication is an explicit semantic no-op.
   retaining unrelated `unknown` or `unsupported` entries as residual findings. It refuses the
   whole write only when an unresolved entry targets the same subject, would be required for a
   selected change's semantic validity, or the caller passes `--require-complete`.
-- An explicit write requires the candidate identity and the current contract snapshot identity to
-  match the reviewed values, and requires a re-derived candidate match. Any source, contract, or
-  semantic derivation drift refuses and asks for a new candidate.
+- An explicit write requires the candidate identity and current source/evidence identities to match
+  the reviewed values, requires a re-derived candidate and application-projection match, and
+  validates the exact projected post-apply contract identity. The initial carrier atomically
+  creates only a previously absent `ota.yaml` through a no-follow repository handle. It does not
+  replace an existing contract because a generic repository filesystem cannot safely
+  compare-and-swap arbitrary external writers. Any source, contract, or semantic derivation drift
+  refuses and asks for a new candidate; a post-publication directory-sync failure is reported as
+  written-but-durability-uncertain rather than as an unwritten failure.
 - Re-running detection over unchanged inputs must produce the same candidate identity and semantic
   diff. Applying an accepted candidate a second time is a no-op.
 

@@ -36,7 +36,8 @@
     "changes": {
       "type": "array",
       "items": { "$ref": "#/$defs/change" }
-    }
+    },
+    "application_projection": { "$ref": "#/$defs/applicationProjection" }
   },
   "$defs": {
     "identity": {
@@ -150,9 +151,63 @@
           "then": { "properties": { "evidence": { "minItems": 1 } }, "required": ["evidence"] }
         }
       ]
+    },
+    "applicationOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "operation", "value"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/subject" },
+        "operation": { "const": "add" },
+        "value": {}
+      }
+    },
+    "applicationProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "operations", "resulting_contract_identity"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identity" },
+        "base_contract_identity": { "$ref": "#/$defs/identity" },
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/applicationOperation" }
+        },
+        "resulting_contract_identity": { "$ref": "#/$defs/identity" }
+      }
     }
   },
   "allOf": [
+    {
+      "if": {
+        "required": ["existing_contract_snapshot_identity", "application_projection"]
+      },
+      "then": {
+        "properties": {
+          "application_projection": { "required": ["base_contract_identity"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["application_projection"],
+        "properties": {
+          "application_projection": { "required": ["base_contract_identity"] }
+        }
+      },
+      "then": { "required": ["existing_contract_snapshot_identity"] }
+    },
+    {
+      "if": {
+        "required": ["application_projection"],
+        "not": { "required": ["existing_contract_snapshot_identity"] }
+      },
+      "then": {
+        "properties": {
+          "application_projection": { "not": { "required": ["base_contract_identity"] } }
+        }
+      }
+    },
     {
       "if": { "properties": { "kind": { "const": "detection" } }, "required": ["kind"] },
       "then": {

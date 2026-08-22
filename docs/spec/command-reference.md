@@ -3143,6 +3143,51 @@ Candidate review behavior:
 - candidate changes remain review input. This command does not apply, replace, or remove contract
   fields, and unresolved closure/effect facts never establish agent safety
 
+## `ota contract apply-candidate`
+
+Re-derive and review one source-bound candidate against the repository's current evidence.
+
+```bash
+ota contract apply-candidate CANDIDATE [PATH]
+ota contract apply-candidate CANDIDATE --json [PATH]
+ota contract apply-candidate CANDIDATE --require-complete --json [PATH]
+ota contract apply-candidate CANDIDATE --write --json [PATH]
+```
+
+Use this after a maintainer has reviewed an artifact from `ota detect --candidate-out`. It verifies
+the artifact's identities, requires the current Ota detector implementation to match, rebuilds the
+candidate from current repository and existing-contract truth, and refuses if source inventory,
+selected evidence, contract snapshot, derived semantic candidate, or its normalized application
+projection changed. The projection binds the reviewed base contract, exact applicable operations,
+and fully validated resulting contract identity. Candidates that cannot produce a complete valid
+projection remain review artifacts and refuse application admission. Unrelated `unknown` or
+`unsupported` findings do not remove an otherwise complete projection; they remain visible and
+`--require-complete` turns them into a refusal. Without `--write`, it is dry-run only and
+`ota.yaml` is never changed. `--write` locks the retained no-follow repository directory, repeats admission
+against current truth, rechecks the reviewed base immediately before publication, and atomically
+creates a previously absent `ota.yaml` from the shared evaluator's validated `Contract`. It never
+replaces an existing contract, because an ordinary repository filesystem cannot safely
+compare-and-swap against an arbitrary external writer. Existing-contract candidates remain
+review-only until an owned update carrier is available. The create-new writer currently requires
+Linux `renameat2(RENAME_NOREPLACE)` or macOS `renameatx_np(RENAME_EXCL)`; other platforms refuse
+rather than weakening no-replace publication.
+
+Current behavior:
+
+- exits `0` only when the reviewed candidate is reproducible from current repository truth
+- reports residual `unknown` or `unsupported` candidate dispositions without treating them as
+  application authority; `--require-complete` refuses instead
+- with `--write`, applies only the verified projection; an unchanged second application is an
+  explicit semantic no-op (`mode: "write"`, `written: false`, `no_op: true`)
+- refuses a reviewed conflict rather than choosing a contract value
+- emits stable JSON failure codes: `candidate_malformed`, `candidate_identity_invalid`,
+  `candidate_implementation_incompatible`, `candidate_not_reproducible`, `candidate_stale`,
+  `candidate_contract_mismatch`, `candidate_conflict`, `candidate_incomplete`,
+  `candidate_unsupported`, `candidate_write_failed`, and
+  `candidate_write_durability_uncertain`
+- does not grant agent-safe status or authorize unreviewed candidate application; legacy detect
+  mutation paths have not yet migrated to this writer
+
 Current write behavior:
 
 - `ota detect --write` writes a conservative detect-write candidate: high-confidence detected

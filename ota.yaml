@@ -365,6 +365,37 @@ tasks:
       toolchains:
         - rust
     safe_for_agent: true
+  candidate-publication:faults:
+    description: Exercise contract-candidate publication fault boundaries
+    notes: |
+      Use this to verify concurrent target creation, pre-publication cleanup failure, and
+      post-publication durability uncertainty through the non-default test-only feature.
+      Production and ordinary debug binaries do not expose these fault controls.
+    category: test
+    command:
+      exe: cargo
+      args:
+        - test
+        - --features
+        - test-candidate-publication-faults
+        - --test
+        - json_output_conformance
+        - contract_candidate_write_faults_report_publication_truthfully
+        - --
+        - --exact
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: pwsh
+          args:
+            - -NoProfile
+            - -Command
+            - Write-Output 'Skipping contract-candidate publication fault tests on Windows'
+    requirements:
+      toolchains:
+        - rust
+    safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite
     notes: |
@@ -388,6 +419,7 @@ tasks:
         - rust
     depends_on:
       - ci
+      - candidate-publication:faults
       - compat
       - first-party:sync:check
       - dependency-update

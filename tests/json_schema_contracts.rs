@@ -1438,6 +1438,35 @@ fn contract_candidate_schema_rejects_noncanonical_detection_artifacts() {
 
     candidate["changes"][0]["evidence"] = json!([]);
     assert!(!compiled.is_valid(&candidate));
+
+    candidate["changes"][0]["evidence"] = json!([{
+        "source_kind": "manifest",
+        "path": "package.json",
+        "content_identity": format!("sha256:{}", "c".repeat(64)),
+        "extraction": "scripts.test"
+    }]);
+    candidate["application_projection"] = json!({
+        "identity": format!("sha256:{}", "f".repeat(64)),
+        "operations": [{
+            "subject": { "path": ["tasks", "test", "command"] },
+            "operation": "add",
+            "value": { "exe": "npm", "args": ["test"] }
+        }],
+        "resulting_contract_identity": format!("sha256:{}", "0".repeat(64))
+    });
+    assert!(compiled.is_valid(&candidate));
+
+    candidate["existing_contract_snapshot_identity"] = json!(format!("sha256:{}", "1".repeat(64)));
+    assert!(!compiled.is_valid(&candidate));
+    candidate["application_projection"]["base_contract_identity"] =
+        json!(format!("sha256:{}", "1".repeat(64)));
+    assert!(compiled.is_valid(&candidate));
+
+    candidate
+        .as_object_mut()
+        .expect("candidate object")
+        .remove("existing_contract_snapshot_identity");
+    assert!(!compiled.is_valid(&candidate));
 }
 
 #[test]

@@ -3327,6 +3327,35 @@ pub struct DetectFailure<'a> {
     pub next: Option<&'a str>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ContractCandidateApplicationSuccess<'a> {
+    pub ok: bool,
+    pub mode: &'static str,
+    pub candidate_path: &'a str,
+    pub candidate_identity: &'a str,
+    pub implementation_identity: &'a str,
+    pub application_projection_identity: &'a str,
+    pub resulting_contract_identity: &'a str,
+    pub admitted: bool,
+    pub written: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_op: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub residual_dispositions: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContractCandidateApplicationFailure<'a> {
+    pub ok: bool,
+    pub mode: &'static str,
+    pub candidate_path: &'a str,
+    pub written: bool,
+    pub code: &'static str,
+    pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContractFieldProvenance {
     pub field: String,

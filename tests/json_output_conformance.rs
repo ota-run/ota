@@ -122,6 +122,525 @@ fn detect_candidate_artifact_matches_published_schemas_without_writing_a_contrac
 }
 
 #[test]
+fn contract_candidate_application_rederives_or_refuses_review_artifacts() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-application\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("detect result"));
+    let admitted = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &admitted);
+    assert_eq!(admitted["ok"], true);
+    assert_eq!(admitted["mode"], "dry_run");
+    assert_eq!(admitted["written"], false);
+    assert!(!fixture.path().join("ota.yaml").exists());
+
+    let candidate_path = fixture.path().join(".ota/candidates/detect.json");
+    let mut candidate = load_json(&candidate_path);
+    candidate["kind"] = Value::String(String::from("upgrade"));
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&candidate).expect("unsupported candidate"),
+    )
+    .expect("write unsupported candidate");
+    let unsupported = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &unsupported);
+    assert_eq!(unsupported["ok"], false);
+    assert_eq!(unsupported["code"], "candidate_unsupported");
+
+    fs::remove_file(&candidate_path).expect("remove unsupported candidate");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("restored detect result"));
+    let mut candidate = load_json(&candidate_path);
+    candidate["identity"] = Value::String(format!("sha256:{}", "0".repeat(64)));
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&candidate).expect("tampered candidate"),
+    )
+    .expect("write tampered candidate");
+    let tampered = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/detect.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &tampered);
+    assert_eq!(tampered["ok"], false);
+    assert_eq!(tampered["code"], "candidate_identity_invalid");
+
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/review.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("detect result"));
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-application-changed\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("changed manifest");
+    let stale = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/review.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &stale);
+    assert_eq!(stale["ok"], false);
+    assert_eq!(stale["code"], "candidate_stale");
+
+    let conflict_fixture = tempfile::tempdir().expect("conflict tempdir");
+    fs::write(
+        conflict_fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"detected-name\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("conflict manifest");
+    fs::write(
+        conflict_fixture.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: existing-name\n",
+    )
+    .expect("existing contract");
+    fs::create_dir_all(conflict_fixture.path().join(".ota/candidates"))
+        .expect("conflict candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/conflict.json",
+            "--json",
+            ".",
+        ],
+        conflict_fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("conflict detect result"));
+    let conflict = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/conflict.json",
+            "--json",
+            ".",
+        ],
+        conflict_fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &conflict);
+    assert_eq!(conflict["ok"], false);
+    assert_eq!(conflict["code"], "candidate_conflict");
+
+    let incomplete_fixture = tempfile::tempdir().expect("incomplete tempdir");
+    fs::write(
+        incomplete_fixture.path().join("package.json"),
+        r#"{
+  "name": "candidate-incomplete",
+  "scripts": { "test": "vitest run && cargo test" }
+}"#,
+    )
+    .expect("incomplete manifest");
+    fs::create_dir_all(incomplete_fixture.path().join(".ota/candidates"))
+        .expect("incomplete candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/incomplete.json",
+            "--json",
+            ".",
+        ],
+        incomplete_fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("incomplete detect result"));
+    let incomplete = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/incomplete.json",
+            "--require-complete",
+            "--json",
+            ".",
+        ],
+        incomplete_fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &incomplete);
+    assert_eq!(incomplete["ok"], false);
+    assert_eq!(incomplete["code"], "candidate_incomplete");
+}
+
+#[test]
+fn contract_candidate_write_is_atomic_rechecked_and_idempotent() {
+    let fixture = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-write\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/write.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("detect result"));
+
+    let written = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/write.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &written);
+    assert_eq!(written["ok"], true);
+    assert_eq!(written["mode"], "write");
+    assert_eq!(written["written"], true);
+    assert!(!written.get("no_op").is_some_and(Value::is_boolean));
+    assert!(fixture.path().join("ota.yaml").is_file());
+    let validation = run_ota(&["validate", "--json", "."], fixture.path());
+    assert_eq!(validation["ok"], true);
+
+    let repeated = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/write.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &repeated);
+    assert_eq!(repeated["ok"], true);
+    assert_eq!(repeated["mode"], "write");
+    assert_eq!(repeated["written"], false);
+    assert_eq!(repeated["no_op"], true);
+    let mut contradictory_no_op = repeated.clone();
+    contradictory_no_op["mode"] = Value::String(String::from("dry_run"));
+    assert_rejected_by_schema("contract-candidate-application.json", &contradictory_no_op);
+
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-write-drifted\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("drift source after application");
+    let stale_no_op = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/write.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &stale_no_op);
+    assert_eq!(stale_no_op["ok"], false);
+    assert_eq!(stale_no_op["code"], "candidate_stale");
+
+    let stale = tempfile::tempdir().expect("stale tempdir");
+    fs::write(
+        stale.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-write\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("stale manifest");
+    fs::write(
+        stale.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: candidate-write\n",
+    )
+    .expect("base contract");
+    fs::create_dir_all(stale.path().join(".ota/candidates")).expect("stale candidate directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            ".ota/candidates/stale.json",
+            "--json",
+            ".",
+        ],
+        stale.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("stale detect result"));
+    fs::write(
+        stale.path().join("ota.yaml"),
+        "version: 1\nproject:\n  name: changed-after-review\n",
+    )
+    .expect("changed base contract");
+    let stale_write = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/stale.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        stale.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &stale_write);
+    assert_eq!(stale_write["ok"], false);
+    assert_eq!(stale_write["code"], "candidate_contract_mismatch");
+    assert!(
+        fs::read_to_string(stale.path().join("ota.yaml"))
+            .expect("current contract")
+            .contains("changed-after-review")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn contract_candidate_write_does_not_use_aliased_state_directory_for_its_lock() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let outside = tempfile::tempdir().expect("outside tempdir");
+    fs::write(
+        fixture.path().join("Cargo.toml"),
+        "[package]\nname = \"candidate-lock\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    fs::create_dir(fixture.path().join("review")).expect("review directory");
+    let detected = run_ota(
+        &[
+            "detect",
+            "--candidate-out",
+            "review/candidate.json",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert!(detected["ok"].as_bool().expect("detect result"));
+    symlink(outside.path(), fixture.path().join(".ota")).expect("aliased state directory");
+    let outside_lock = outside.path().join("outside-lock");
+    fs::write(&outside_lock, "outside lock content").expect("outside lock");
+    fs::hard_link(
+        &outside_lock,
+        fixture.path().join(".ota.contract-candidate.apply.lock"),
+    )
+    .expect("hardlinked legacy lock path");
+
+    let written = run_ota(
+        &[
+            "contract",
+            "apply-candidate",
+            "review/candidate.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("contract-candidate-application.json", &written);
+    assert_eq!(written["ok"], true);
+    assert!(fixture.path().join("ota.yaml").is_file());
+    assert_eq!(
+        fs::read_to_string(&outside_lock).expect("outside lock"),
+        "outside lock content"
+    );
+    assert!(
+        !outside
+            .path()
+            .join("contract-candidate.apply.lock")
+            .exists()
+    );
+    assert!(
+        fs::read_dir(fixture.path())
+            .expect("repository entries")
+            .all(|entry| !entry
+                .expect("repository entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ota.yaml.candidate-apply-")),
+        "publication must not leave a writable temporary alias to ota.yaml"
+    );
+}
+
+#[cfg(feature = "test-candidate-publication-faults")]
+#[test]
+fn contract_candidate_write_faults_report_publication_truthfully() {
+    let prepare = |name: &str| {
+        let fixture = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            fixture.path().join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .expect("manifest");
+        fs::create_dir_all(fixture.path().join(".ota/candidates")).expect("candidate directory");
+        let detected = run_ota(
+            &[
+                "detect",
+                "--candidate-out",
+                ".ota/candidates/write.json",
+                "--json",
+                ".",
+            ],
+            fixture.path(),
+        );
+        assert!(detected["ok"].as_bool().expect("detect result"));
+        fixture
+    };
+
+    let durability = prepare("candidate-write-durability");
+    let uncertain = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/write.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        durability.path(),
+        &[("OTA_TEST_CANDIDATE_PUBLICATION_FAULT", "directory_sync")],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &uncertain);
+    assert_eq!(uncertain["code"], "candidate_write_durability_uncertain");
+    assert_eq!(uncertain["written"], true);
+    assert!(durability.path().join("ota.yaml").is_file());
+    let mut contradictory_durability = uncertain.clone();
+    contradictory_durability["written"] = Value::Bool(false);
+    assert_rejected_by_schema(
+        "contract-candidate-application.json",
+        &contradictory_durability,
+    );
+
+    let concurrent = prepare("candidate-write-concurrent");
+    let refused = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/write.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        concurrent.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "concurrent_target_creation",
+        )],
+        false,
+    );
+    assert_matches_schema("contract-candidate-application.json", &refused);
+    assert_eq!(refused["code"], "candidate_write_failed");
+    assert_eq!(refused["written"], false);
+    assert!(concurrent.path().join("ota.yaml").is_file());
+
+    let cleanup = prepare("candidate-write-cleanup");
+    let prepublication_failure = run_ota_with_env(
+        &[
+            "contract",
+            "apply-candidate",
+            ".ota/candidates/write.json",
+            "--write",
+            "--json",
+            ".",
+        ],
+        cleanup.path(),
+        &[(
+            "OTA_TEST_CANDIDATE_PUBLICATION_FAULT",
+            "after_temporary_sync,temporary_cleanup",
+        )],
+        false,
+    );
+    assert_matches_schema(
+        "contract-candidate-application.json",
+        &prepublication_failure,
+    );
+    assert_eq!(prepublication_failure["code"], "candidate_write_failed");
+    assert_eq!(prepublication_failure["written"], false);
+    assert!(
+        fs::read_dir(cleanup.path())
+            .expect("repository entries")
+            .any(|entry| entry
+                .expect("repository entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ota.yaml.candidate-apply-")),
+        "pre-publication cleanup failure must be reported with the retained temporary file"
+    );
+}
+
+#[test]
 fn crossing_grant_preview_refusal_matches_published_schema() {
     let fixture = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -338,6 +857,25 @@ fn load_json(path: &Path) -> Value {
 }
 
 fn assert_matches_schema(schema_name: &str, instance: &Value) {
+    let compiled = compile_schema(schema_name);
+    if let Err(errors) = compiled.validate(instance) {
+        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        panic!(
+            "instance did not match schema `{schema_name}`:\n{}",
+            messages.join("\n")
+        );
+    }
+}
+
+fn assert_rejected_by_schema(schema_name: &str, instance: &Value) {
+    let compiled = compile_schema(schema_name);
+    assert!(
+        compiled.validate(instance).is_err(),
+        "instance unexpectedly matched schema `{schema_name}`"
+    );
+}
+
+fn compile_schema(schema_name: &str) -> JSONSchema {
     let schema_path = schema_dir().join(schema_name);
     let raw_schema = load_json(&schema_path);
     let mut options = JSONSchema::options();
@@ -353,14 +891,7 @@ fn assert_matches_schema(schema_name: &str, instance: &Value) {
             options.with_document(id.to_string(), document);
         }
     }
-    let compiled = options.compile(&raw_schema).expect("schema should compile");
-    if let Err(errors) = compiled.validate(instance) {
-        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
-        panic!(
-            "instance did not match schema `{schema_name}`:\n{}",
-            messages.join("\n")
-        );
-    }
+    options.compile(&raw_schema).expect("schema should compile")
 }
 
 fn assert_negative_control_projection_consistent(proof: &Value) -> Result<(), &'static str> {

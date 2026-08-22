@@ -462,8 +462,17 @@ durable agent workflow belongs in the canonical Ota skill.
   exists. `ota detect --candidate-out <root-relative path>` now publishes that same
   self-verifying review artifact from one command-owned immutable source snapshot, with
   descriptor-safe create-new collision refusal and no `ota.yaml` mutation.
-  Candidate application and agent-safe promotion remain unimplemented; it does not consume
-  crossing records as approval authority. V12 effect-bound
+  `ota contract apply-candidate` now supplies candidate admission and explicit `--write`: it
+  self-verifies the reviewed artifact, requires the exact detector implementation, re-derives
+  current source and existing-contract truth, and reconciles an identity-bound application
+  projection over the reviewed base contract, exact normalized operations, and fully validated
+  resulting contract identity. Candidates without a complete valid projection refuse admission;
+  unrelated `unknown` or `unsupported` findings remain review state unless `--require-complete`
+  is requested. `--write` locks the retained no-follow repository descriptor, rechecks current source and evidence,
+  and atomically creates only a previously absent `ota.yaml` from the shared evaluator's returned
+  validated contract; it never overwrites an existing contract, and semantic reapplication is a
+  no-op. Legacy mutation paths, owned existing-contract update, schema upgrades, and agent-safe promotion
+  remain unimplemented; it does not consume crossing records as approval authority. V12 effect-bound
   refusal assurance is also planning-only and inactive until V11.22 completes; it does not widen
   the completed
   crossing implementation. See [V11.7](../planning/v11.7/plan.md),
@@ -1141,8 +1150,17 @@ V11.22 is active for its source-bound candidate and fail-closed closure-classifi
 Its first implementation checkpoint demotes task-name, wrapper, opaque-shell, CI-fragment, and
 agent-guidance signals from agent authorization: they may remain review evidence, but cannot emit
 `safe_for_agent` or a starter executable agent boundary. `ota detect --candidate-out` now writes
-the self-verifying source-bound review artifact without writing `ota.yaml`; candidate application,
-contract writes through the candidate evaluator, and external pressure remain open. The artifact
+the self-verifying source-bound review artifact without writing `ota.yaml`; `ota contract
+apply-candidate` independently rebuilds its exact application projection and validated resulting
+contract identity. Without `--write`, admission is dry-run only. With `--write`, Ota locks the
+retained no-follow repository directory, re-derives current source/evidence, and atomically creates
+only a missing `ota.yaml`; existing contracts refuse, and a matching resulting contract is an
+explicit no-op. The non-default publication fault adapter remains unavailable to ordinary builds,
+while `candidate-publication:faults` and the non-Windows Release Gate permanently exercise
+concurrent target creation, pre-publication cleanup failure, and post-publication durability
+uncertainty. A missing projection refuses admission;
+unrelated `unknown` or `unsupported` findings remain visible review state unless
+`--require-complete` is requested. External pressure and legacy-writer migration remain open. The artifact
 binds a required content identity for every inventory entry, every normalized evidence tuple,
 structured contract-path segments, canonical semantic proposal values, existing-contract
 conflicts, and explicit closure facts. Equivalent existing truth is omitted before publication;

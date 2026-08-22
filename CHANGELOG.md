@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- Added `ota contract apply-candidate` as the dry-run admission surface for reviewed
+  source-bound detection candidates. It verifies self-identity, detector compatibility, current
+  contract/sources/evidence, exact re-derivation, and an identity-bound application projection
+  before reporting a typed result. Candidates without a complete valid projection cannot enter
+  application admission; unrelated `unknown` or `unsupported` findings remain visible review
+  state unless `--require-complete` is used.
+
+- Added explicit `ota contract apply-candidate --write` for reviewed detection candidates. It
+  takes an exclusive no-follow repository lock, re-derives and validates current source evidence
+  under that lock, and atomically creates a previously absent `ota.yaml` from the shared
+  evaluator's `Contract`. It never overwrites an existing contract; a repeated matching result is
+  a semantic no-op, and a post-publication directory-sync failure is reported as durability
+  uncertainty rather than as an unwritten failure.
+
 - Added `ota detect --candidate-out <path>` for a durable, source-bound contract-candidate review
   artifact. It derives from a command-owned immutable source snapshot, uses canonical create-new
   publication, refuses contract/evidence collisions and output aliases, and never modifies
@@ -33,7 +47,8 @@
   evidence tuple is retained, and each change binds a structured contract path plus a canonical
   semantic value. Equivalent existing truth is omitted, including typed commands equivalent to a
   detected package-script invocation, schema-default command fields, and indexed environment-source
-  fields; disagreements are emitted as `conflict`. Candidate application remains unshipped.
+  fields; disagreements are emitted as `conflict`. Candidate application is dry-run by default,
+  with an explicit create-new-only writer for a previously absent contract.
 
 - Tighten `ota detect` agent-safety inference. Detected task names, package/task-runner wrappers,
   opaque shell scripts, and CI `run:` fragments no longer emit `safe_for_agent: true` merely

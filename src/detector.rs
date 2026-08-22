@@ -17,6 +17,7 @@ use crate::contract_candidate::{
     CONTRACT_CANDIDATE_SCHEMA_VERSION, CandidateChange, CandidateConfidence, CandidateDisposition,
     CandidateEvidence, CandidateKind, CandidateOperation, CandidateSubject, ClosureEvidence,
     ContractCandidate, DiscoveryInventoryEntry, ExecutionClosureNode,
+    derive_candidate_application_projection,
 };
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
@@ -426,6 +427,7 @@ pub struct DetectReport {
 #[derive(Debug)]
 pub(crate) struct SourceBoundCandidateCapture {
     pub candidate: ContractCandidate,
+    pub existing_contract_value: Option<JsonValue>,
     pub contract: DetectContract,
     pub inferences: Vec<Inference>,
 }
@@ -623,8 +625,15 @@ impl DetectReport {
             &report.inferences,
             existing_contract.as_ref().map(|snapshot| &snapshot.value),
         )?;
-        candidate.existing_contract_snapshot_identity =
-            existing_contract.map(|snapshot| snapshot.identity);
+        candidate.existing_contract_snapshot_identity = existing_contract
+            .as_ref()
+            .map(|snapshot| snapshot.identity.clone());
+        candidate.application_projection = derive_candidate_application_projection(
+            &candidate,
+            existing_contract.as_ref().map(|snapshot| &snapshot.value),
+        )
+        .map_err(|error| DetectError::Candidate(error.to_string()))?
+        .map(|(projection, _)| projection);
         candidate
             .finalize_identities()
             .map_err(|error| DetectError::Candidate(error.to_string()))?;
@@ -633,6 +642,7 @@ impl DetectReport {
             .map_err(|error| DetectError::Candidate(error.to_string()))?;
         Ok(SourceBoundCandidateCapture {
             candidate,
+            existing_contract_value: existing_contract.map(|snapshot| snapshot.value),
             contract: report.contract,
             inferences: report.inferences,
         })
@@ -1035,6 +1045,7 @@ fn source_bound_candidate_foundation_with_existing_contract(
         existing_contract_snapshot_identity: None,
         implementation_identity,
         changes,
+        application_projection: None,
     };
     candidate
         .finalize_identities()
@@ -11747,6 +11758,7 @@ edition = "2024"
                 .iter()
                 .any(|inference| inference.field == "tasks.verify.run")
         );
+        assert!(capture.candidate.application_projection.is_some());
     }
 
     #[test]
@@ -11758,6 +11770,7 @@ edition = "2024"
         let second = report.source_bound_candidate().expect("second candidate");
 
         assert_eq!(first.candidate.identity, second.candidate.identity);
+        assert!(first.candidate.application_projection.is_none());
         assert!(first.candidate.changes.iter().any(|change| {
             change.subject.is_path(&["project", "name"])
                 && change.proposed_value
